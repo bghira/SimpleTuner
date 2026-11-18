@@ -333,7 +333,6 @@ class TestStreamingTextPreparation(unittest.TestCase):
 
         service = CacheJobService(broadcast_fn=MagicMock())
         metadata = SimpleNamespace(
-            read_only=False,
             read_cache=lambda: {"1.0": ["accepted.jpg", "also-accepted.jpg"]},
             get_metadata_by_filepath=lambda ref: {},
         )
@@ -379,15 +378,8 @@ class TestStreamingTextPreparation(unittest.TestCase):
         self.assertEqual([record["prompt"] for record in captured], ["accepted", "also-accepted"])
         self.assertEqual((job.current, job.total), (2, 2))
 
-    def test_standalone_preparation_rejects_rank_local_training_buckets(self):
-        records = CacheJobService._iter_prompt_records(None, {"id": "dataset"}, None, SimpleNamespace(read_only=True))
-        with self.assertRaisesRegex(ValueError, "unsplit dataset metadata"):
-            next(records)
-
     def test_standalone_preparation_requires_an_accepted_sample_view(self):
-        records = CacheJobService._iter_prompt_records(
-            None, {"id": "dataset"}, None, SimpleNamespace(read_only=False, read_cache=lambda: {})
-        )
+        records = CacheJobService._iter_prompt_records(None, {"id": "dataset"}, None, SimpleNamespace(read_cache=lambda: {}))
         with self.assertRaisesRegex(ValueError, "scan the dataset"):
             next(records)
 

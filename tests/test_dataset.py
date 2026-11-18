@@ -22,7 +22,6 @@ class TestMultiAspectDataset(unittest.TestCase):
         self.instance_data_dir = "/some/fake/path"
         self.accelerator = Mock()
         self.metadata_backend = Mock(spec=DiscoveryMetadataBackend)
-        self.metadata_backend.__len__ = Mock(return_value=10)
         self.image_metadata = {
             "image_path": "fake_image_path",
             "original_size": (16, 8),
@@ -35,20 +34,7 @@ class TestMultiAspectDataset(unittest.TestCase):
         self.image_path = "fake_image_path"
         # Mock the Path.exists method to return True
         with patch("pathlib.Path.exists", return_value=True):
-            self.dataset = MultiAspectDataset(
-                id="foo",
-                datasets=[range(10)],
-            )
-
-    def test_init_invalid_instance_data_dir(self):
-        MultiAspectDataset(
-            id="foo",
-            datasets=[range(10)],
-        )
-
-    def test_len(self):
-        self.metadata_backend.__len__.return_value = 10
-        self.assertEqual(len(self.dataset), 10)
+            self.dataset = MultiAspectDataset(id="foo")
 
     def test_getitem_valid_image(self):
         mock_image_data = b"fake_image_data"

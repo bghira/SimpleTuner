@@ -842,6 +842,11 @@ class StateTracker:
         return output
 
     @classmethod
+    def get_dataset(cls, data_backend_id: str):
+        """The DatasetRuntime that ties a dataset's data backend, metadata backend and traversal together."""
+        return cls.data_backends[data_backend_id]["dataset_runtime"]
+
+    @classmethod
     def set_accelerator(cls, accelerator):
         cls.accelerator = accelerator
 

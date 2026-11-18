@@ -895,7 +895,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
 def print_bucket_info(metadata_backend, dataset_type: str = "image"):
     # Print table header
     if get_rank() == 0:
-        tqdm.write(f"{rank_info()} | {'bucket':<10} | {'sample count (per-GPU)':<20}")
+        tqdm.write(f"{rank_info()} | {'bucket':<10} | {'sample count':<20}")
 
         # Print separator
         tqdm.write("-" * 40)
@@ -3145,18 +3145,21 @@ class FactoryRegistry:
             if hasattr(metadata_backend, "configure_mock"):
                 metadata_backend.configure_mock(id=init_backend["id"])
 
+    @staticmethod
+    def _copies_metadata(backend: Dict[str, Any]) -> bool:
+        """Whether the dataset takes its bucket lists from another dataset instead of its own cache."""
+        return backend.get("metadata_clone_source_id") is not None or backend.get("conditioning_type") in (
+            "reference_strict",
+            "mask",
+        )
+
     def _handle_bucket_operations(
         self,
         backend: Dict[str, Any],
         init_backend: Dict[str, Any],
         conditioning_type: Optional[str],
-        skip_bucket_split: bool = False,
     ) -> None:
-        """Handle bucket refreshing and validation.
-
-        Args:
-            skip_bucket_split: If True, skip split_buckets_between_processes (used for audio-only datasets).
-        """
+        """Handle bucket refreshing and validation."""
         metadata_clone_source_id = backend.get("metadata_clone_source_id")
         has_metadata_clone_source = metadata_clone_source_id is not None
         if (
@@ -3241,10 +3244,7 @@ class FactoryRegistry:
                     f" You have to reduce your batch size, or increase your dataset size (id={init_backend['id']})."
                 )
 
-        apply_padding = not self.args.max_train_steps or self.args.allow_dataset_oversubscription
-
         if has_metadata_clone_source:
-            # when we're duplicating a metadata set, it's already split between processes.
             info_log(f"Duplicating metadata for generated dataset from {metadata_clone_source_id}")
             DatasetDuplicator.copy_metadata(
                 source_backend=StateTracker.get_data_backend(metadata_clone_source_id),
@@ -3281,37 +3281,10 @@ class FactoryRegistry:
                 source_backend=StateTracker.get_data_backend(source_dataset_id),
                 target_backend=init_backend,
             )
-            if skip_bucket_split:
-                info_log(f"(id={init_backend['id']}) Skipping bucket split for audio-only dataset.")
-            elif not getattr(init_backend["metadata_backend"], "read_only", False):
-                init_backend["metadata_backend"].split_buckets_between_processes(
-                    gradient_accumulation_steps=self.args.gradient_accumulation_steps,
-                    apply_padding=apply_padding,
-                )
-            else:
-                info_log(f"(id={init_backend['id']}) Skipping bucket split; metadata already aligned from source dataset.")
 
-            # Check if this is a conditioning backend and if it has no images after splitting
-            if (
-                not skip_bucket_split
-                and init_backend.get("dataset_type") == "conditioning"
-                and sum(len(bucket) for bucket in init_backend["metadata_backend"].aspect_ratio_bucket_indices.values()) == 0
-            ):
-                if self.accelerator.is_main_process:
-                    logger.warning(
-                        f"Conditioning backend {target_dataset_id} has no images after splitting between processes. "
-                        f"This can happen when using multiple GPUs with small datasets. "
-                        f"Consider using a larger dataset or fewer GPUs."
-                    )
-        else:
-            if skip_bucket_split:
-                info_log(f"(id={init_backend['id']}) Skipping bucket split for audio-only dataset.")
-            elif not self._is_eval_dataset(init_backend["id"]):
-                # Validation divides its own work between ranks, so its datasets stay whole.
-                init_backend["metadata_backend"].split_buckets_between_processes(
-                    gradient_accumulation_steps=self.args.gradient_accumulation_steps,
-                    apply_padding=apply_padding,
-                )
+        # Every rank holds the whole bucket lists; the main process alone writes them back.
+        if not self.accelerator.is_main_process:
+            init_backend["metadata_backend"].set_readonly()
 
         self._handle_config_versioning(backend, init_backend)
 
@@ -3430,9 +3403,7 @@ class FactoryRegistry:
         )
 
         dataset_type = init_backend.get("dataset_type")
-        dataset_empty = len(init_backend["metadata_backend"]) == 0
-        if bucket_report := init_backend.get("bucket_report"):
-            bucket_report.record_stage("sampler_batches", sample_count=len(init_backend["metadata_backend"]))
+        dataset_empty = not any(init_backend["metadata_backend"].aspect_ratio_bucket_indices.values())
 
         if dataset_empty and not missing_instance_dir:
             bucket_report = init_backend.get("bucket_report")
@@ -3448,15 +3419,7 @@ class FactoryRegistry:
             if dataset_type in ("image", "video", "conditioning", "audio"):
                 raise ValueError(
                     f"(id={init_backend['id']}) Dataset produced no usable samples. "
-                    f"This typically happens when:\n"
-                    f"  - batch_size * num_gpus * gradient_accumulation_steps is too large for the dataset size\n"
-                    f"  - repeats is too low\n"
-                    f"  - samples were filtered out due to resolution/aspect ratio constraints\n"
-                    f"\nSuggestions:\n"
-                    f"  - Reduce batch_size or gradient_accumulation_steps\n"
-                    f"  - Increase repeats\n"
-                    f"  - Use fewer GPUs\n"
-                    f"  - Add more samples to the dataset"
+                    f"This typically happens when samples were filtered out due to resolution/aspect ratio constraints."
                     f"{error_details}"
                 )
             else:
@@ -3502,7 +3465,6 @@ class FactoryRegistry:
 
         init_backend["train_dataset"] = MultiAspectDataset(
             id=init_backend["id"],
-            datasets=[init_backend["metadata_backend"]],
             is_regularisation_data=is_regularisation_data,
             is_i2v_data=is_i2v_data,
             slider_strength=slider_strength,
@@ -3537,14 +3499,27 @@ class FactoryRegistry:
                 "disable_multiline_split": backend.get("disable_multiline_split", False),
             },
         )
+        batch_size = init_backend["config"].get(
+            "train_batch_size",
+            resolve_dataset_train_batch_size(backend, self.args, dataset_type),
+        )
+        init_backend["dataset_runtime"].configure_cursor(
+            accelerator=self.accelerator,
+            batch_size=batch_size,
+            # Validation divides its own work between ranks, conditioning samples are read by the
+            # path of whichever training sample a rank draws, and audio-only datasets have always
+            # been read whole.
+            shared_by_all_ranks=(
+                dataset_type in (DatasetType.EVAL, DatasetType.CONDITIONING)
+                or self._is_eval_dataset(init_backend["id"])
+                or self._is_audio_only_mode(backend)
+            ),
+        )
         init_backend["sampler"] = MultiAspectSampler(
             dataset_runtime=init_backend["dataset_runtime"],
             model=self.model,
             accelerator=self.accelerator,
-            batch_size=init_backend["config"].get(
-                "train_batch_size",
-                resolve_dataset_train_batch_size(backend, self.args, dataset_type),
-            ),
+            batch_size=batch_size,
             debug_aspect_buckets=self.args.debug_aspect_buckets,
             delete_unwanted_images=backend.get("delete_unwanted_images", self.args.delete_unwanted_images),
             resolution=backend.get("resolution", self.args.resolution),
@@ -3553,6 +3528,10 @@ class FactoryRegistry:
             is_regularisation_data=is_regularisation_data,
             source_dataset_id=init_backend["config"].get("source_dataset_id", None),
         )
+        # Building the cursor checks that every bucket can fill an effective batch.
+        batches_per_epoch = len(init_backend["sampler"])
+        if bucket_report := init_backend.get("bucket_report"):
+            bucket_report.record_stage("sampler_batches", sample_count=batches_per_epoch)
         if caption_strategy == "parquet":
             configure_parquet_database(backend, self.args, init_backend["data_backend"])
         init_backend["train_dataloader"] = torch.utils.data.DataLoader(
@@ -3758,7 +3737,6 @@ class FactoryRegistry:
                 prompt_records,
                 return_concat=False,
                 load_from_cache=False,
-                split_between_processes=not bool(backend.get("max_num_samples")),
             )
             info_log(f"(id={init_backend['id']}) Completed processing {len(captions)} captions.")
 
@@ -3940,7 +3918,6 @@ class FactoryRegistry:
                 prompt_records,
                 return_concat=False,
                 load_from_cache=False,
-                split_between_processes=not bool(backend.get("max_num_samples")),
             )
             info_log(f"(id={dataset_id}) Completed processing {len(captions)} captions with image context.")
 
@@ -4269,6 +4246,7 @@ class FactoryRegistry:
             nsfw_check_video_frame_selection=getattr(self.args, "nsfw_check_video_frame_selection", "uniform"),
             nsfw_check_video_min_flagged_frames=getattr(self.args, "nsfw_check_video_min_flagged_frames", 1),
             delete_nsfw_images=backend.get("delete_nsfw_images", getattr(self.args, "delete_nsfw_images", False)),
+            dataset_runtime=init_backend["dataset_runtime"],
         )
         init_backend["vaecache"].set_webhook_handler(StateTracker.get_webhook_handler())
 
@@ -4619,7 +4597,7 @@ class FactoryRegistry:
 
         init_backend = init_backend_config(backend, self.args, self.accelerator)
         dataset_type_enum = ensure_dataset_type(init_backend.get("dataset_type"), default=DatasetType.IMAGE)
-        is_audio_only_dataset = self._materialize_audio_only_mode(backend, init_backend)
+        self._materialize_audio_only_mode(backend, init_backend)
         if (
             dataset_type_enum in {DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.CONDITIONING}
             and "cache_dir_vae" not in backend
@@ -4680,8 +4658,7 @@ class FactoryRegistry:
             self.data_backends[init_backend["id"]] = init_backend
             return
 
-        # Audio-only datasets contain no video stream to split into spatial buckets.
-        self._handle_bucket_operations(backend, init_backend, conditioning_type, skip_bucket_split=is_audio_only_dataset)
+        self._handle_bucket_operations(backend, init_backend, conditioning_type)
 
         self._create_dataset_and_sampler(backend, init_backend, conditioning_type)
 
@@ -4750,6 +4727,14 @@ class FactoryRegistry:
 
         StateTracker.register_data_backend(init_backend)
         init_backend["metadata_backend"].save_cache()
+        # Preparation may have removed samples. Ranks derive their shares from the bucket lists,
+        # so every rank has to read what the main process just wrote. Copied metadata is not
+        # written back, and its dataset is whole on every rank.
+        if self._is_multi_process():
+            self.accelerator.wait_for_everyone()
+            if not self.accelerator.is_main_process and not self._copies_metadata(backend):
+                init_backend["metadata_backend"].reload_cache(set_config=False)
+        init_backend["dataset_runtime"].rebuild_cursor()
 
         self.data_backends[init_backend["id"]] = init_backend
 

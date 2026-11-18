@@ -2277,59 +2277,10 @@ class TestTrainer(unittest.TestCase):
             self.assertEqual(trainer.state["current_epoch"], 2)
             self.assertEqual(trainer.extra_lr_scheduler_kwargs["epoch"], 2)
 
-    def test_epoch_rollover_reuses_initial_bucket_padding_policy(self):
-        cases = (
-            ("fixed_steps", False, False, False),
-            ("epoch_driven", True, False, True),
-            ("oversubscribed_fixed_steps", False, True, True),
-        )
-
-        for name, overrode_max_train_steps, allow_oversubscription, expected in cases:
-            with self.subTest(name=name):
-                trainer = object.__new__(Trainer)
-                trainer.state = {"first_epoch": 1, "current_epoch": 1}
-                trainer.accelerator = MagicMock(is_main_process=True)
-                trainer.extra_lr_scheduler_kwargs = {}
-                trainer.get_steps_per_epoch_for_epoch = MagicMock(return_value=100)
-                trainer.config = SimpleNamespace(
-                    num_train_epochs=5,
-                    aspect_bucket_disable_rebuild=False,
-                    lr_scheduler="constant",
-                    num_update_steps_per_epoch=100,
-                    gradient_accumulation_steps=3,
-                    overrode_max_train_steps=overrode_max_train_steps,
-                    allow_dataset_oversubscription=allow_oversubscription,
-                )
-                metadata_backend = MagicMock(read_only=True)
-                metadata_backend.aspect_ratio_bucket_indices = {"1.0": ["image-0.jpg"]}
-                backends = {"train": {"metadata_backend": metadata_backend}}
-                backend_config = {
-                    "crop": True,
-                    "crop_aspect": "random",
-                }
-
-                with (
-                    patch("simpletuner.helpers.training.trainer.StateTracker.set_epoch"),
-                    patch(
-                        "simpletuner.helpers.training.trainer.StateTracker.get_data_backends",
-                        return_value=backends,
-                    ),
-                    patch(
-                        "simpletuner.helpers.training.trainer.StateTracker.get_data_backend_config",
-                        return_value=backend_config,
-                    ),
-                ):
-                    trainer._epoch_rollover(2)
-
-                metadata_backend.split_buckets_between_processes.assert_called_once_with(
-                    gradient_accumulation_steps=3,
-                    apply_padding=expected,
-                )
-
-    def _rollover_fixture(self, bucket_contents, usable_batches):
+    def _rollover_fixture(self, bucket_contents, is_main_process=True):
         trainer = object.__new__(Trainer)
         trainer.state = {"first_epoch": 1, "current_epoch": 1}
-        trainer.accelerator = MagicMock(is_main_process=True)
+        trainer.accelerator = MagicMock(is_main_process=is_main_process)
         trainer.extra_lr_scheduler_kwargs = {}
         trainer.get_steps_per_epoch_for_epoch = MagicMock(return_value=100)
         trainer.config = SimpleNamespace(
@@ -2337,16 +2288,11 @@ class TestTrainer(unittest.TestCase):
             aspect_bucket_disable_rebuild=False,
             lr_scheduler="constant",
             num_update_steps_per_epoch=100,
-            gradient_accumulation_steps=1,
-            overrode_max_train_steps=False,
-            allow_dataset_oversubscription=False,
         )
-        metadata_backend = MagicMock(read_only=True, batch_size=4)
+        metadata_backend = MagicMock()
         metadata_backend.aspect_ratio_bucket_indices = bucket_contents
-        metadata_backend.__len__.return_value = usable_batches
-        vaecache = MagicMock()
-        backends = {"train": {"metadata_backend": metadata_backend, "vaecache": vaecache}}
-        return trainer, metadata_backend, vaecache, backends
+        backends = {"train": {"metadata_backend": metadata_backend, "vaecache": MagicMock(), "dataset_runtime": MagicMock()}}
+        return trainer, backends
 
     @contextmanager
     def _rollover_patches(self, backends):
@@ -2363,52 +2309,53 @@ class TestTrainer(unittest.TestCase):
         ):
             yield
 
-    def test_epoch_rollover_rejects_a_rank_the_resplit_left_empty(self):
-        trainer, metadata_backend, vaecache, backends = self._rollover_fixture(
-            bucket_contents={"1.0": [], "1.5": []}, usable_batches=0
-        )
+    def test_epoch_rollover_rejects_a_dataset_the_rebucketing_left_empty(self):
+        trainer, backends = self._rollover_fixture(bucket_contents={"1.0": [], "1.5": []})
 
         with self._rollover_patches(backends):
             with self.assertRaises(ValueError) as context:
                 trainer._epoch_rollover(2)
 
         self.assertIn("Dataset produced no usable samples", str(context.exception))
-        # The rejection must land after the re-split and before anything downstream
-        # consumes the new schedule.
-        metadata_backend.split_buckets_between_processes.assert_called_once()
-        vaecache.rebuild_cache.assert_not_called()
+        # Nothing downstream may consume the empty lists.
+        backends["train"]["dataset_runtime"].rebuild_cursor.assert_not_called()
+        backends["train"]["vaecache"].rebuild_cache.assert_not_called()
 
-    def test_epoch_rollover_keeps_a_rank_that_cannot_fill_a_batch(self):
-        # One sample against batch_size=4, so the startup guard's len() would read 0 here.
-        # This guard asks only whether the shard is empty, and this rank keeps training on
-        # recycled samples exactly as it does today.
-        trainer, metadata_backend, vaecache, backends = self._rollover_fixture(
-            bucket_contents={"1.0": ["image-0.jpg"]}, usable_batches=0
-        )
+    def test_epoch_rollover_rebuckets_on_the_main_process_and_every_rank_takes_its_new_share(self):
+        for is_main_process in (True, False):
+            with self.subTest(is_main_process=is_main_process):
+                trainer, backends = self._rollover_fixture(
+                    bucket_contents={"1.0": ["image-0.jpg"]}, is_main_process=is_main_process
+                )
+                backend = backends["train"]
+                calls = Mock()
+                calls.attach_mock(backend["metadata_backend"].compute_aspect_ratio_bucket_indices, "recompute")
+                calls.attach_mock(backend["metadata_backend"].reload_cache, "reload")
+                calls.attach_mock(backend["dataset_runtime"].rebuild_cursor, "rebuild_cursor")
+                calls.attach_mock(backend["vaecache"].rebuild_cache, "rebuild_vae_cache")
 
-        with self._rollover_patches(backends):
-            trainer._epoch_rollover(2)
+                with self._rollover_patches(backends):
+                    trainer._epoch_rollover(2)
 
-        metadata_backend.split_buckets_between_processes.assert_called_once()
-        vaecache.rebuild_cache.assert_called_once()
+                # The VAE cache encodes the rank's share, so the share has to be current first.
+                expected = ["reload", "rebuild_cursor", "rebuild_vae_cache"]
+                if is_main_process:
+                    expected.insert(0, "recompute")
+                self.assertEqual([name for name, _args, _kwargs in calls.mock_calls], expected)
 
     def test_epoch_rollover_drops_what_is_left_of_the_previous_epoch(self):
         # A rank stopped by another rank's epoch end must not carry its unread batches forward.
-        trainer, _metadata_backend, _vaecache, backends = self._rollover_fixture(
-            bucket_contents={"1.0": ["image-0.jpg"]}, usable_batches=1
-        )
+        trainer, backends = self._rollover_fixture(bucket_contents={"1.0": ["image-0.jpg"]})
         sampler = backends["train"]["sampler"] = MagicMock()
 
         with self._rollover_patches(backends):
             trainer._epoch_rollover(1)
             sampler.drop_unfinished_epoch.assert_not_called()
+            backends["train"]["dataset_runtime"].rebuild_cursor.assert_not_called()
             trainer._epoch_rollover(2)
 
         sampler.drop_unfinished_epoch.assert_called_once()
-        # The buckets were recomputed for the new epoch, so the sampler has to read them again.
-        self.assertEqual(
-            [name for name, _args, _kwargs in sampler.method_calls], ["drop_unfinished_epoch", "rebuild_cursor"]
-        )
+        backends["train"]["dataset_runtime"].rebuild_cursor.assert_called_once()
 
     @patch(
         "simpletuner.helpers.training.trainer.Trainer.parse_arguments",

@@ -162,7 +162,7 @@ class DatasetDuplicator:
         if conditioning_data_type == "i2v_first_frame" and hasattr(target_meta, "save_cache"):
             target_meta.save_cache()
 
-        # Bucket indices may be rank-local here; do not overwrite the canonical target cache.
+        # The target mirrors the source's bucket lists and is copied again on every start, so it is never written back.
         target_meta.set_readonly()
         if hasattr(target_meta, "save_image_metadata"):
             target_meta.save_image_metadata()

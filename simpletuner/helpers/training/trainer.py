@@ -6062,9 +6062,6 @@ class Trainer:
                 # when the aspect ratio is random, we need to shuffle the dataset on each epoch.
                 if self.accelerator.is_main_process:
                     # we only compute the aspect ratio indices on the main process.
-                    # we have to set read_only to False since we're generating a new, un-split list.
-                    # otherwise, we can't actually save the new cache to disk.
-                    backend["metadata_backend"].read_only = False
                     # this will generate+save the new cache to the storage backend.
                     backend["metadata_backend"].compute_aspect_ratio_bucket_indices(ignore_existing_cache=True)
                 self.accelerator.wait_for_everyone()
@@ -6072,28 +6069,14 @@ class Trainer:
                 backend["metadata_backend"].reload_cache(set_config=False)
                 logger.info("Waiting for other threads to finish..")
                 self.accelerator.wait_for_everyone()
-                # we'll have to split the buckets between GPUs again now, so that the VAE cache distributes properly.
-                logger.info("Splitting buckets across GPUs")
-                backend["metadata_backend"].split_buckets_between_processes(
-                    gradient_accumulation_steps=self.config.gradient_accumulation_steps,
-                    apply_padding=(self.config.overrode_max_train_steps or self.config.allow_dataset_oversubscription),
-                )
-                local_sample_count = sum(
-                    len(bucket) for bucket in backend["metadata_backend"].aspect_ratio_bucket_indices.values()
-                )
-                if local_sample_count == 0:
+                if not any(backend["metadata_backend"].aspect_ratio_bucket_indices.values()):
                     raise ValueError(
-                        f"(id={backend_id}) Dataset produced no usable samples. The epoch rollover"
-                        f" re-split left this rank with zero samples, so epoch {epoch} would train"
-                        f" against an empty schedule here.\n"
-                        f"This usually means per-epoch re-bucketing (e.g., crop_aspect=random) produced"
-                        f" buckets too small to divide across the data-parallel ranks, or that samples"
-                        f" were filtered out of the cache during the previous epoch.\n"
-                        f"Enable --allow_dataset_oversubscription so short buckets are padded across"
-                        f" ranks, use fewer GPUs, or add more samples to the dataset."
+                        f"(id={backend_id}) Dataset produced no usable samples. Per-epoch re-bucketing"
+                        f" left it empty, so epoch {epoch} would train against an empty schedule."
                     )
-                if "sampler" in backend:
-                    backend["sampler"].rebuild_cursor()
+                # Every rank takes its share of the new bucket lists, which also checks that each
+                # bucket can still fill an effective batch.
+                backend["dataset_runtime"].rebuild_cursor()
                 # we have to rebuild the VAE cache if it exists.
                 if "vaecache" in backend:
                     logger.info("Rebuilding VAE cache..")

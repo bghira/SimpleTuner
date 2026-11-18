@@ -24,9 +24,11 @@ def _checkpoint_worker(rank, port, output_dir):
         WORLD_SIZE="2",
         OMP_NUM_THREADS="1",
     )
+    # Tests that import simpletuner.cli leave this in the environment; a trainer never runs with it.
+    os.environ.pop("SIMPLETUNER_SKIP_TORCH", None)
     from accelerate import Accelerator
 
-    from simpletuner.helpers.data_backend.cursor import DatasetCursor
+    from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
     from simpletuner.helpers.multiaspect.sampler import MultiAspectSampler
     from simpletuner.helpers.multiaspect.state import BucketStateManager
     from simpletuner.helpers.training.save_hooks import SaveHookManager
@@ -94,25 +96,23 @@ def _checkpoint_worker(rank, port, output_dir):
     sampler.logger = logging.getLogger("checkpoint-test")
     sampler.state_manager = BucketStateManager(sampler.id)
 
-    def new_cursor():
-        return DatasetCursor(
-            sampler.id,
-            {"1.0": [f"rank{rank}-a", f"rank{rank}-b"]},
-            batch_size=1,
-            repeats=0,
-            seed=5,
-            dp_size=1,
-            dp_rank=0,
-            gradient_accumulation_steps=1,
-            allow_oversubscription=False,
-            is_eval=False,
-        )
+    StateTracker.set_args(trainer.config)
+    StateTracker.set_data_backend_config(sampler.id, {})
+    metadata_backend = SimpleNamespace(aspect_ratio_bucket_indices={"1.0": ["a", "b", "c", "d"]})
+    sampler.dataset_runtime = DatasetRuntime(sampler.id, Mock(id=sampler.id), metadata_backend, {})
 
-    sampler._cursor = new_cursor()
+    def new_cursor():
+        # The run is unseeded, so the ranks agree on a seed here: both must make the call.
+        sampler.dataset_runtime.configure_cursor(accelerator=accelerator, batch_size=1, shared_by_all_ranks=False)
+
+    new_cursor()
+    share = sampler.cursor.rank_share()["1.0"]
+    assert len(share) == 2
+    shares = accelerator.gather_for_metrics([share], use_gather_object=True)
+    assert sorted(ref for rank_share in shares for ref in rank_share) == ["a", "b", "c", "d"], shares
     sampler.cursor.finish_epoch()
     sampler.cursor.finish_epoch()
     sampler.cursor.next_batch()
-    StateTracker.set_args(trainer.config)
     original_parameters = [p.detach().clone() for p in model.parameters()]
     for tempdir, rolling in [(True, False), (False, True)]:
         trainer.config.checkpointing_use_tempdir = tempdir
@@ -131,7 +131,7 @@ def _checkpoint_worker(rank, port, output_dir):
         assert (Path(path) / ".guard").exists()
         saved_sampler = sampler.state_manager.load_state(str(Path(path) / hooks.training_state_path))
         assert saved_sampler["epoch"] == 3 and sum(saved_sampler["consumed"].values()) == 1
-        sampler._cursor = new_cursor()
+        new_cursor()
         with torch.no_grad():
             for parameter in model.parameters():
                 parameter.add_(10)
@@ -145,6 +145,7 @@ def _checkpoint_worker(rank, port, output_dir):
         assert all(torch.equal(p, old) for p, old in zip(model.parameters(), original_parameters))
         sampler.load_states(str(Path(path) / hooks.training_state_path))
         assert sampler.cursor.state() == saved_sampler
+        assert sampler.cursor.rank_share()["1.0"] == share
         accelerator.wait_for_everyone()
     accelerator.end_training()
 

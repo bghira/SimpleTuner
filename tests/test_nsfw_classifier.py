@@ -85,19 +85,16 @@ class FakeMetadataBackend:
         self.saved = True
 
 
-class FakeReadOnlyMetadataBackend:
-    def __init__(self, split_cache, unsplit_cache):
-        self.aspect_ratio_bucket_indices = {key: list(value) for key, value in split_cache.items()}
-        self.unsplit_cache = {key: list(value) for key, value in unsplit_cache.items()}
+class FakeBucketListMetadataBackend:
+    def __init__(self, buckets, on_save):
+        self.aspect_ratio_bucket_indices = {key: list(value) for key, value in buckets.items()}
         self.saved_cache = None
         self.filtering_statistics = None
         self.bucket_report = None
-        self.read_only = True
-
-    def reload_cache(self, set_config=True):
-        self.aspect_ratio_bucket_indices = {key: list(value) for key, value in self.unsplit_cache.items()}
+        self.on_save = on_save
 
     def save_cache(self, enforce_constraints=False):
+        self.on_save()
         self.saved_cache = {key: list(value) for key, value in self.aspect_ratio_bucket_indices.items()}
 
 
@@ -240,12 +237,13 @@ class VaeNsfwFilterTest(unittest.TestCase):
         self.assertEqual(vae.image_data_backend.deleted, [bad])
         self.assertEqual(vae._nsfw_scan_report["deleted_images"], 1)
 
-    def test_read_only_metadata_cache_is_reloaded_before_deleting_rejected_sample(self):
+    def test_metadata_cache_is_saved_without_the_rejected_sample_before_its_file_is_deleted(self):
         bad = "bad.png"
         vae = make_vae_for_nsfw_filter({}, rejected_paths=set(), delete_nsfw_images=True)
-        vae.metadata_backend = FakeReadOnlyMetadataBackend(
-            split_cache={"1.0": [bad]},
-            unsplit_cache={"1.0": ["good.png", bad], "2.0": ["other.png"]},
+        deleted_at_save = []
+        vae.metadata_backend = FakeBucketListMetadataBackend(
+            {"1.0": ["good.png", bad], "2.0": ["other.png"]},
+            on_save=lambda: deleted_at_save.extend(vae.image_data_backend.deleted),
         )
         vae._queue_metadata_filter_action(
             filepath=bad,
@@ -256,8 +254,8 @@ class VaeNsfwFilterTest(unittest.TestCase):
 
         vae._finalize_deferred_metadata_filters()
 
-        self.assertEqual(vae.metadata_backend.aspect_ratio_bucket_indices, {"1.0": [bad]})
         self.assertEqual(vae.metadata_backend.saved_cache, {"1.0": ["good.png"], "2.0": ["other.png"]})
+        self.assertEqual(deleted_at_save, [])
         self.assertEqual(vae.image_data_backend.deleted, [bad])
         self.assertEqual(vae._nsfw_scan_report["deleted_images"], 1)
 

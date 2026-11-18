@@ -11,41 +11,13 @@ from simpletuner.helpers.training.state_tracker import StateTracker
 
 
 class DummyAccelerator:
-    """Lightweight stand-in for accelerate.Accelerator used to deterministically split data."""
+    """Stand-in for accelerate.Accelerator: one rank of a run."""
 
     def __init__(self, num_processes: int, process_index: int):
         self.num_processes = num_processes
         self.process_index = process_index
         self.is_main_process = process_index == 0
         self.is_local_main_process = self.is_main_process
-
-    class _SplitContext:
-        def __init__(self, data, num_processes: int, process_index: int, apply_padding: bool):
-            self._data = list(data)
-            self._num_processes = max(num_processes, 1)
-            self._process_index = process_index
-            self._apply_padding = apply_padding
-
-        def __enter__(self):
-            import math
-
-            if self._num_processes == 1:
-                return self._data
-
-            chunk_size = math.ceil(len(self._data) / self._num_processes)
-            start = self._process_index * chunk_size
-            end = start + chunk_size
-            subset = self._data[start:end]
-
-            if self._apply_padding and len(subset) < chunk_size and len(self._data) > 0:
-                subset = subset + [None] * (chunk_size - len(subset))
-            return subset
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-    def split_between_processes(self, data, apply_padding: bool = False):
-        return self._SplitContext(data, self.num_processes, self.process_index, apply_padding)
 
 
 class InMemoryDataBackend:
@@ -106,16 +78,10 @@ class SharedDataBackend:
         raise NotImplementedError("Image reads are not required for this unit test.")
 
 
-class TestConditioningSplitAlignment(unittest.TestCase):
-    def setUp(self):
-        self._previous_shuffle = os.environ.get("SIMPLETUNER_SHUFFLE_BUCKETS")
-        os.environ["SIMPLETUNER_SHUFFLE_BUCKETS"] = "0"
+class TestConditioningMetadataCopy(unittest.TestCase):
+    """A conditioning dataset that mirrors its source takes the source's bucket lists, whole, on every rank."""
 
     def tearDown(self):
-        if self._previous_shuffle is None:
-            os.environ.pop("SIMPLETUNER_SHUFFLE_BUCKETS", None)
-        else:
-            os.environ["SIMPLETUNER_SHUFFLE_BUCKETS"] = self._previous_shuffle
         StateTracker.clear_data_backends()
         StateTracker.all_image_files = {}
         StateTracker.all_conditioning_image_embed_files = {}
@@ -158,12 +124,11 @@ class TestConditioningSplitAlignment(unittest.TestCase):
         source_data_backend: InMemoryDataBackend | None = None,
         conditioning_data_backend: InMemoryDataBackend | None = None,
         before_copy_callback=None,
-        apply_padding: bool = False,
     ):
         source_config = {
             "resolution_type": "area",
             "resolution": 1.0,
-            "repeats": 1,  # Increased from 0 to pass validation (16 images × 2 = 32 samples for effective_batch_size=32)
+            "repeats": 1,
             "instance_data_dir": source_dir,
         }
         if source_config_overrides:
@@ -197,12 +162,11 @@ class TestConditioningSplitAlignment(unittest.TestCase):
                 "dataset_type": "image",
             }
         )
-        training_metadata.split_buckets_between_processes(apply_padding=apply_padding)
 
         conditioning_config = {
             "resolution_type": "area",
             "resolution": 1.0,
-            "repeats": 1,  # Increased from 0 to pass validation
+            "repeats": 1,
             "instance_data_dir": conditioning_dir,
             "source_dataset_id": source_id,
         }
@@ -280,16 +244,18 @@ class TestConditioningSplitAlignment(unittest.TestCase):
         self.assertIsNot(cond_meta.aspect_ratio_bucket_indices["1.0"], train_meta.aspect_ratio_bucket_indices["1.0"])
         self.assertTrue(cond_meta.read_only)
 
-    def test_conditioning_split_matches_training_split(self):
+    def test_conditioning_lists_mirror_the_training_lists_on_every_rank(self):
         base_images = {
             "1.0": [f"/datasets/train/img_{i}.png" for i in range(4)],
             "1.5": [f"/datasets/train/img_{i}.png" for i in range(4, 8)],
         }
-        num_processes = 2
-
-        for process_index in range(num_processes):
+        expected = {
+            bucket: [path.replace("/datasets/train", "/datasets/train_control", 1) for path in paths]
+            for bucket, paths in base_images.items()
+        }
+        for process_index in range(2):
             with self.subTest(process=process_index):
-                accelerator = self._init_state(num_processes=num_processes, process_index=process_index)
+                accelerator = self._init_state(num_processes=2, process_index=process_index)
                 train_meta, cond_meta = self._prepare_metadata_backends(
                     accelerator=accelerator,
                     base_buckets=base_images,
@@ -298,47 +264,9 @@ class TestConditioningSplitAlignment(unittest.TestCase):
                     conditioning_id="multigpu_control",
                     conditioning_dir="/datasets/train_control",
                 )
-                training_buckets = {bucket: list(paths) for bucket, paths in train_meta.aspect_ratio_bucket_indices.items()}
-                conditioning_buckets = {
-                    bucket: list(paths) for bucket, paths in cond_meta.aspect_ratio_bucket_indices.items()
-                }
-
-                self.assertTrue(
-                    getattr(cond_meta, "read_only", False),
-                    msg="Conditioning metadata should be marked read-only after duplication.",
-                )
-                self.assertEqual(set(training_buckets), set(conditioning_buckets))
-
-                for bucket in training_buckets:
-                    expected_paths = [
-                        path.replace("/datasets/train", "/datasets/train_control", 1) for path in training_buckets[bucket]
-                    ]
-                    self.assertListEqual(
-                        conditioning_buckets[bucket],
-                        expected_paths,
-                        msg=f"Bucket {bucket} mismatch on process {process_index}",
-                    )
-
-                cond_meta_clone = DiscoveryMetadataBackend(
-                    id=f"{cond_meta.id}_clone",
-                    instance_data_dir=cond_meta.instance_data_dir,
-                    cache_file=f"{cond_meta.instance_data_dir}/aspect_ratio_bucket_indices_clone",
-                    metadata_file=f"{cond_meta.instance_data_dir}/aspect_ratio_bucket_metadata_clone",
-                    data_backend=InMemoryDataBackend(f"{cond_meta.id}_clone"),
-                    accelerator=accelerator,
-                    batch_size=1,
-                    resolution=1.0,
-                    resolution_type="area",
-                    repeats=0,
-                )
-                cond_meta_clone.aspect_ratio_bucket_indices = deepcopy(cond_meta.aspect_ratio_bucket_indices)
-                cond_meta_clone.split_buckets_between_processes()
-                mutated = {bucket: list(paths) for bucket, paths in cond_meta_clone.aspect_ratio_bucket_indices.items()}
-                self.assertNotEqual(
-                    conditioning_buckets,
-                    mutated,
-                    msg="Double splitting should alter conditioning buckets — guard against this.",
-                )
+                self.assertTrue(cond_meta.read_only)
+                self.assertEqual(train_meta.aspect_ratio_bucket_indices, base_images)
+                self.assertEqual(cond_meta.aspect_ratio_bucket_indices, expected)
 
     def test_absolute_source_paths_stay_absolute_with_relative_dataset_dirs(self):
         accelerator = self._init_state(num_processes=1, process_index=0)
@@ -420,7 +348,7 @@ class TestConditioningSplitAlignment(unittest.TestCase):
         self.assertEqual(conditioning_config["crop_aspect"], source_config_overrides["crop_aspect"])
         self.assertEqual(conditioning_config["crop_style"], source_config_overrides["crop_style"])
         self.assertEqual(conditioning_config["crop_aspect_buckets"], source_config_overrides["crop_aspect_buckets"])
-        self.assertGreater(len(cond_meta), 0, "Conditioning metadata should provide batches after duplication.")
+        self.assertEqual(len(cond_meta.aspect_ratio_bucket_indices["1.0"]), 26)
 
     def test_reference_strict_duplication_survives_stale_cache_reload(self):
         base_images = {"1.0": [f"/datasets/train/img_{i}.png" for i in range(16)]}
@@ -429,14 +357,8 @@ class TestConditioningSplitAlignment(unittest.TestCase):
         conditioning_id = "stale_control"
         stale_backend = StaleReadDataBackend(source_id)
 
-        def before_copy(train_meta, cond_meta, train_backend, cond_backend, source_entry, conditioning_entry):
-            split_view = {bucket: list(paths) for bucket, paths in train_meta.aspect_ratio_bucket_indices.items()}
-            original_read_only = getattr(train_meta, "read_only", False)
-            train_meta.read_only = False
-            train_meta.aspect_ratio_bucket_indices = deepcopy(base_images)
+        def before_copy(train_meta, *_args):
             train_meta.save_cache()
-            train_meta.aspect_ratio_bucket_indices = split_view
-            train_meta.read_only = original_read_only
             stale_backend.simulate_stale_read = True
 
         _, cond_meta = self._prepare_metadata_backends(
@@ -450,22 +372,19 @@ class TestConditioningSplitAlignment(unittest.TestCase):
             before_copy_callback=before_copy,
         )
 
-        total_conditioning_images = sum(len(paths) for paths in cond_meta.aspect_ratio_bucket_indices.values())
-        self.assertGreater(
-            total_conditioning_images,
-            0,
+        self.assertEqual(
+            len(cond_meta.aspect_ratio_bucket_indices["1.0"]),
+            16,
             "Conditioning duplication should retain samples even when cache reload returns empty data.",
         )
 
-    def test_rank_local_conditioning_schedule_does_not_overwrite_target_cache(self):
+    def test_copied_lists_are_taken_from_memory_and_not_written_to_either_cache(self):
         base_images = {"1.0": [f"/datasets/train/img_{i}.png" for i in range(16)]}
         accelerator = self._init_state(num_processes=4, process_index=1, train_batch_size=8)
-        source_schedule = {}
         source_sentinel = {"config": {}, "aspect_ratio_bucket_indices": {"1.0": ["canonical-source-cache"]}}
         sentinel = {"config": {}, "aspect_ratio_bucket_indices": {"1.0": ["canonical-target-cache"]}}
 
         def before_copy(train_meta, cond_meta, train_backend, cond_backend, *_args):
-            source_schedule.update({bucket: list(paths) for bucket, paths in train_meta.aspect_ratio_bucket_indices.items()})
             train_backend.write(train_meta.cache_file, json.dumps(source_sentinel))
             cond_backend.write(cond_meta.cache_file, json.dumps(sentinel))
 
@@ -479,9 +398,8 @@ class TestConditioningSplitAlignment(unittest.TestCase):
             before_copy_callback=before_copy,
         )
 
-        self.assertTrue(train_meta.read_only)
         self.assertTrue(cond_meta.read_only)
-        self.assertEqual(source_schedule, train_meta.aspect_ratio_bucket_indices)
+        self.assertEqual(train_meta.aspect_ratio_bucket_indices, base_images)
         self.assertEqual(json.loads(train_meta.data_backend.read(train_meta.cache_file)), source_sentinel)
         self.assertEqual(
             json.loads(cond_meta.data_backend.read(cond_meta.cache_file))["aspect_ratio_bucket_indices"],
@@ -489,73 +407,35 @@ class TestConditioningSplitAlignment(unittest.TestCase):
         )
         self.assertEqual(
             cond_meta.aspect_ratio_bucket_indices["1.0"],
-            [path.replace("/datasets/train", "/datasets/control", 1) for path in source_schedule["1.0"]],
+            [path.replace("/datasets/train", "/datasets/control", 1) for path in base_images["1.0"]],
         )
 
-    def test_duplication_preserves_the_padded_split_source_schedule(self):
-        # The main process persists the unsplit discovery list before the split, and the
-        # post-split save is a no-op because the split marks the backend read-only. Duplication
-        # must not reload that unsplit list back over the rank-local schedule.
+    def test_the_conditioning_cache_does_not_depend_on_which_rank_wrote_it(self):
         source_dir = "/datasets/pad_train"
         conditioning_dir = "/datasets/pad_control"
         base_images = {"1.0": [f"{source_dir}/img_{index}.png" for index in range(4)]}
-        num_processes = 8
         conditioning_backend = InMemoryDataBackend("pad_control")
-        conditioning_cache_path = f"{conditioning_dir}/aspect_ratio_bucket_indices.json"
-
-        source_shards = []
         conditioning_cache_snapshots = []
 
-        def persist_unsplit_source_cache(train_meta, *_args):
-            split_view = {bucket: list(paths) for bucket, paths in train_meta.aspect_ratio_bucket_indices.items()}
-            original_read_only = train_meta.read_only
-            train_meta.read_only = False
-            train_meta.aspect_ratio_bucket_indices = deepcopy(base_images)
-            train_meta.save_cache()
-            train_meta.aspect_ratio_bucket_indices = split_view
-            train_meta.read_only = original_read_only
-
-        for process_index in range(num_processes):
+        for process_index in range(8):
             with self.subTest(process=process_index):
-                accelerator = self._init_state(num_processes=num_processes, process_index=process_index)
-                source_backend = InMemoryDataBackend("pad_train")
-                train_meta, cond_meta = self._prepare_metadata_backends(
+                accelerator = self._init_state(num_processes=8, process_index=process_index)
+                _train_meta, cond_meta = self._prepare_metadata_backends(
                     accelerator=accelerator,
                     base_buckets=base_images,
                     source_id="pad_train",
                     source_dir=source_dir,
                     conditioning_id="pad_control",
                     conditioning_dir=conditioning_dir,
-                    source_data_backend=source_backend,
                     conditioning_data_backend=conditioning_backend,
-                    before_copy_callback=persist_unsplit_source_cache,
-                    apply_padding=True,
                 )
-
-                # The clobber source has to be present, or this test proves nothing.
-                self.assertIn(f"{source_dir}/aspect_ratio_bucket_indices.json", source_backend._storage)
-
-                # The clobber also coerces bucket keys to float, so do not index by "1.0".
-                (shard,) = (list(paths) for paths in train_meta.aspect_ratio_bucket_indices.values())
-                source_shards.append(shard)
-                conditioning_cache_snapshots.append(conditioning_backend._storage.get(conditioning_cache_path))
-
-                (conditioning_shard,) = (list(paths) for paths in cond_meta.aspect_ratio_bucket_indices.values())
+                conditioning_cache_snapshots.append(dict(conditioning_backend._storage))
                 self.assertEqual(
-                    conditioning_shard,
-                    [path.replace(source_dir, conditioning_dir, 1) for path in shard],
-                    msg=f"Conditioning dataset did not inherit the rank {process_index} shard.",
+                    cond_meta.aspect_ratio_bucket_indices["1.0"],
+                    [path.replace(source_dir, conditioning_dir, 1) for path in base_images["1.0"]],
                 )
 
-        self.assertEqual([len(shard) for shard in source_shards], [1] * num_processes)
-        self.assertEqual(
-            sorted({path for shard in source_shards for path in shard}),
-            base_images["1.0"],
-            msg="The eight rank shards no longer cover the dataset.",
-        )
-        # Every rank writes the conditioning cache to the same path, so its contents must not
-        # depend on which rank wrote last.
-        self.assertEqual(len(set(conditioning_cache_snapshots)), 1)
+        self.assertTrue(all(snapshot == conditioning_cache_snapshots[0] for snapshot in conditioning_cache_snapshots))
 
     def test_reference_strict_duplication_multi_process_reload(self):
         manager = multiprocessing.Manager()
@@ -596,8 +476,8 @@ class TestConditioningSplitAlignment(unittest.TestCase):
 
             self.assertEqual(len(results), num_processes)
             for rank, train_total, cond_total in results:
-                self.assertGreater(train_total, 0, f"Process {rank} should retain training buckets.")
-                self.assertGreater(cond_total, 0, f"Process {rank} should retain conditioning buckets.")
+                self.assertEqual(train_total, 16, f"Process {rank} should retain training buckets.")
+                self.assertEqual(cond_total, 16, f"Process {rank} should retain conditioning buckets.")
         finally:
             manager.shutdown()
 
@@ -616,8 +496,7 @@ def _run_reference_strict_duplication_worker(
     cache_ready,
     result_queue,
 ):
-    test_case = TestConditioningSplitAlignment()
-    test_case.setUp()
+    test_case = TestConditioningMetadataCopy()
     try:
         accelerator = test_case._init_state(
             num_processes=num_processes,
@@ -638,13 +517,7 @@ def _run_reference_strict_duplication_worker(
             conditioning_entry,
         ):
             if process_index == 0:
-                split_view = {bucket: list(paths) for bucket, paths in train_meta.aspect_ratio_bucket_indices.items()}
-                original_read_only = getattr(train_meta, "read_only", False)
-                train_meta.read_only = False
-                train_meta.aspect_ratio_bucket_indices = deepcopy(base_images)
                 train_meta.save_cache()
-                train_meta.aspect_ratio_bucket_indices = split_view
-                train_meta.read_only = original_read_only
                 cache_ready.set()
             else:
                 cache_ready.wait()

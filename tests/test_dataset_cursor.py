@@ -1,14 +1,10 @@
 import json
 import unittest
 from collections import Counter
-from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from simpletuner.helpers.data_backend.cursor import DatasetCursor
-from simpletuner.helpers.data_backend.dataset_types import DatasetType
-from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
-from simpletuner.helpers.training.state_tracker import StateTracker
 
 
 def make_buckets(**sizes):
@@ -27,7 +23,7 @@ def make_cursor(buckets, **overrides):
         dp_rank=0,
         gradient_accumulation_steps=1,
         allow_oversubscription=False,
-        is_eval=False,
+        shared_by_all_ranks=False,
     )
     options.update(overrides)
     return DatasetCursor("ds", buckets, **options)
@@ -44,6 +40,10 @@ def drain(cursor):
 
 def samples(batches):
     return [ref for _, batch in batches for ref in batch]
+
+
+def share_pairs(cursor):
+    return [(bucket, ref) for bucket, refs in cursor.rank_share().items() for ref in refs]
 
 
 def per_bucket(batches):
@@ -116,24 +116,24 @@ class TestEpoch(unittest.TestCase):
         buckets["2.0"] = []
         cursor = make_cursor(buckets)
         self.assertEqual({bucket for bucket, _ in drain(cursor)}, {"1.0"})
-        self.assertEqual({bucket for bucket, _ in cursor.rank_share()}, {"1.0"})
+        self.assertEqual(set(cursor.rank_share()), {"1.0"})
 
 
 class TestRankShare(unittest.TestCase):
     def test_shares_are_disjoint_and_cover_each_bucket(self):
         buckets = make_buckets(b1_0=37, b1_5=16)
-        shares = [list(make_cursor(buckets, dp_size=4, dp_rank=rank).rank_share()) for rank in range(4)]
+        shares = [share_pairs(make_cursor(buckets, dp_size=4, dp_rank=rank)) for rank in range(4)]
         combined = [entry for share in shares for entry in share]
         self.assertEqual(len(combined), len(set(combined)))
         self.assertEqual(sorted(combined), sorted((bucket, ref) for bucket, refs in buckets.items() for ref in refs))
 
     def test_share_does_not_change_between_epochs(self):
         cursor = make_cursor(make_buckets(b1_0=37), dp_size=4, dp_rank=1)
-        share = list(cursor.rank_share())
+        share = cursor.rank_share()
         first = drain(cursor)
-        self.assertEqual(list(cursor.rank_share()), share)
-        self.assertEqual(set(samples(first)), {ref for _, ref in share})
-        self.assertEqual(set(samples(drain(cursor))), {ref for _, ref in share})
+        self.assertEqual(cursor.rank_share(), share)
+        self.assertEqual(set(samples(first)), set(share["1.0"]))
+        self.assertEqual(set(samples(drain(cursor))), set(share["1.0"]))
 
     def test_ranks_have_equal_lengths_and_the_same_bucket_schedule(self):
         buckets = make_buckets(b1_0=37, b1_5=18, b0_5=9)
@@ -148,8 +148,8 @@ class TestRankShare(unittest.TestCase):
         buckets = make_buckets(b1_0=9)
         long_rank = make_cursor(buckets, batch_size=1, dp_size=4, dp_rank=0)
         short_rank = make_cursor(buckets, batch_size=1, dp_size=4, dp_rank=3)
-        self.assertEqual(len(list(long_rank.rank_share())), 3)
-        self.assertEqual(len(list(short_rank.rank_share())), 2)
+        self.assertEqual(len(long_rank.rank_share()["1.0"]), 3)
+        self.assertEqual(len(short_rank.rank_share()["1.0"]), 2)
         order = samples(drain(short_rank))
         self.assertEqual(len(order), 3)
         self.assertEqual(order[2], order[0])
@@ -164,69 +164,16 @@ class TestRankShare(unittest.TestCase):
         buckets = make_buckets(b1_0=3)
         cursors = [make_cursor(buckets, batch_size=1, repeats=7, dp_size=8, dp_rank=rank) for rank in range(8)]
         self.assertEqual({len(cursor) for cursor in cursors}, {8})
-        owners = Counter(ref for cursor in cursors for _, ref in cursor.rank_share())
+        owners = Counter(ref for cursor in cursors for ref in cursor.rank_share()["1.0"])
         self.assertEqual(sorted(owners.values()), [2, 3, 3])
 
-    def test_eval_dataset_is_whole_on_every_rank(self):
+    def test_shared_dataset_is_whole_on_every_rank(self):
         buckets = make_buckets(b1_0=3)
         for rank in range(4):
-            cursor = make_cursor(buckets, batch_size=4, dp_size=4, dp_rank=rank, gradient_accumulation_steps=4, is_eval=True)
-            self.assertEqual(sorted(ref for _, ref in cursor.rank_share()), buckets["1.0"])
-
-
-class TestRankShareMatchesSplit(unittest.TestCase):
-    """The cursor must give a rank the samples split_buckets_between_processes gives it today."""
-
-    def _split(self, buckets, *, seed, batch_size, repeats, dp_size, dp_rank, allow_oversubscription):
-        backend = MagicMock(spec=MetadataBackend)
-        backend.id = "ds"
-        backend.batch_size = batch_size
-        backend.repeats = repeats
-        backend.bucket_report = None
-        backend.dataset_type = DatasetType.IMAGE
-        backend.aspect_ratio_bucket_indices = {bucket: list(refs) for bucket, refs in buckets.items()}
-        backend.read_only = False
-        backend.accelerator = MagicMock(num_processes=dp_size, process_index=dp_rank, is_main_process=dp_rank == 0)
-        with (
-            patch.dict("os.environ", {"SIMPLETUNER_SHUFFLE_BUCKETS": "1"}),
-            patch.object(
-                StateTracker,
-                "get_args",
-                return_value=SimpleNamespace(allow_dataset_oversubscription=allow_oversubscription, seed=seed),
-            ),
-            patch.object(StateTracker, "get_data_backend_config", return_value={"repeats": repeats}),
-            patch(
-                "simpletuner.helpers.metadata.backends.base.get_cp_aware_dp_info",
-                return_value=(dp_size, dp_rank, 1),
-            ),
-        ):
-            MetadataBackend.split_buckets_between_processes(backend, gradient_accumulation_steps=1)
-        return backend.aspect_ratio_bucket_indices
-
-    def test_partition(self):
-        buckets = make_buckets(b1_0=37, b1_5=16, b0_5=9)
-        for dp_size in (1, 2, 4, 8):
-            for dp_rank in range(dp_size):
-                options = dict(
-                    seed=dp_size, batch_size=1, repeats=0, dp_size=dp_size, dp_rank=dp_rank, allow_oversubscription=False
-                )
-                split = self._split(buckets, **options)
-                share = per_bucket((bucket, [ref]) for bucket, ref in make_cursor(buckets, **options).rank_share())
-                self.assertEqual(share, split, f"dp_size={dp_size} dp_rank={dp_rank}")
-
-    def test_oversubscribed_bucket(self):
-        buckets = make_buckets(b1_0=64, b1_5=3, b0_5=5)
-        for seed in range(6):
-            for dp_rank in range(4):
-                options = dict(seed=seed, batch_size=2, repeats=0, dp_size=4, dp_rank=dp_rank, allow_oversubscription=True)
-                split = self._split(buckets, **options)
-                cursor = make_cursor(buckets, **options)
-                self.assertEqual(len(split["1.5"]), 4)
-                self.assertEqual(
-                    {bucket: sorted(refs) for bucket, refs in per_bucket(drain(cursor)).items()},
-                    {bucket: sorted(refs) for bucket, refs in split.items()},
-                    f"seed={seed} dp_rank={dp_rank}",
-                )
+            cursor = make_cursor(
+                buckets, batch_size=4, dp_size=4, dp_rank=rank, gradient_accumulation_steps=4, shared_by_all_ranks=True
+            )
+            self.assertEqual(sorted(cursor.rank_share()["1.0"]), buckets["1.0"])
 
 
 class TestBucketSizeCheck(unittest.TestCase):
@@ -260,8 +207,20 @@ class TestBucketSizeCheck(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "manually set repeats=1"):
             make_cursor(make_buckets(b1_5=3), batch_size=2, dp_size=4, repeats=1, allow_oversubscription=True)
 
-    def test_eval_dataset_is_not_checked_against_the_training_batch_size(self):
-        make_cursor(make_buckets(b1_0=1), batch_size=4, dp_size=4, gradient_accumulation_steps=4, is_eval=True)
+    def test_an_empty_bucket_is_not_an_undersized_bucket(self):
+        buckets = make_buckets(b1_0=2)
+        buckets["1.5"] = []
+        with self.assertRaisesRegex(ValueError, "zero usable batches") as raised:
+            make_cursor(buckets, batch_size=1, dp_size=8)
+        self.assertNotIn("Bucket 1.5", str(raised.exception))
+        cursors = [
+            make_cursor(buckets, batch_size=1, dp_size=8, dp_rank=rank, allow_oversubscription=True) for rank in range(8)
+        ]
+        self.assertEqual([len(cursor) for cursor in cursors], [1] * 8)
+        self.assertEqual(Counter(ref for cursor in cursors for ref in samples(drain(cursor))), Counter(buckets["1.0"] * 4))
+
+    def test_shared_dataset_is_not_checked_against_the_training_batch_size(self):
+        make_cursor(make_buckets(b1_0=1), batch_size=4, dp_size=4, gradient_accumulation_steps=4, shared_by_all_ranks=True)
 
 
 class TestState(unittest.TestCase):
@@ -293,7 +252,7 @@ class TestState(unittest.TestCase):
         cursor.next_batch()
         resumed = self._resumed(cursor.state(), seed=99, dp_size=2, dp_rank=1)
         self.assertEqual(resumed.epoch, 2)
-        self.assertEqual(list(resumed.rank_share()), list(cursor.rank_share()))
+        self.assertEqual(resumed.rank_share(), cursor.rank_share())
         self.assertEqual(per_bucket(drain(resumed)), per_bucket(drain(cursor)))
 
     def test_old_format_state_is_refused(self):
@@ -308,9 +267,23 @@ class TestState(unittest.TestCase):
             options = {"repeats": 1, "dp_rank": 0, **overrides}
             with self.assertRaisesRegex(ValueError, "different dataset layout"):
                 make_cursor(self.buckets, **options).load_state(state, allow_batch_size_change=True)
+
+    def test_changed_dataset_starts_the_epoch_over(self):
+        cursor = make_cursor(self.buckets, repeats=1)
+        drain(cursor)
+        cursor.next_batch()
         grown = {**self.buckets, "1.0": self.buckets["1.0"] + ["b1_0/new.png"]}
-        with self.assertRaisesRegex(ValueError, "different dataset layout"):
-            make_cursor(grown, repeats=1, dp_size=2).load_state(state, allow_batch_size_change=True)
+        resumed = make_cursor(grown, repeats=1, seed=99)
+        with patch("simpletuner.helpers.data_backend.cursor.logger") as logger:
+            resumed.load_state(json.loads(json.dumps(cursor.state())), allow_batch_size_change=False)
+        logger.warning.assert_called_once()
+        self.assertIn("23 samples then, 24 now", logger.warning.call_args.args[0])
+        self.assertEqual(resumed.epoch, 2)
+        self.assertEqual(resumed.state()["seed"], 7)
+        counts = Counter(samples(drain(resumed)))
+        self.assertEqual(len(counts), 24)
+        self.assertEqual(set(counts.values()), {2})
+        self.assertEqual(resumed.epoch, 3)
 
     def test_changed_batch_size_needs_the_override(self):
         state = make_cursor(self.buckets, repeats=1).state()

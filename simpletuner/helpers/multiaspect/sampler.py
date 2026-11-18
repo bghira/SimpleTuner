@@ -10,10 +10,9 @@ from PIL import Image
 from simpletuner.helpers.data_backend.cursor import DatasetCursor
 from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
-from simpletuner.helpers.metadata.backends.base import get_cp_aware_dp_info
 from simpletuner.helpers.multiaspect.state import BucketStateManager
 from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
-from simpletuner.helpers.training.multi_process import broadcast_object_from_main, rank_info
+from simpletuner.helpers.training.multi_process import rank_info
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.utils.pathing import canonicalize_data_uri
 
@@ -95,40 +94,10 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.disable_multiline_split = dataset_runtime.config["disable_multiline_split"]
         self.state_manager = BucketStateManager(self.id)
         self._val_master_list = sorted(sum(self.metadata_backend.aspect_ratio_bucket_indices.values(), []))
-        # Every rank must shuffle with the same seed, and drawing one is a collective call,
-        # so it happens here, where the ranks construct their samplers in step.
-        self._cursor_seed = getattr(StateTracker.get_args(), "seed", None)
-        if self._cursor_seed is None:
-            is_main_process = self.accelerator.is_main_process
-            self._cursor_seed = broadcast_object_from_main(
-                random.SystemRandom().getrandbits(64) if is_main_process else None
-            )
-        self._cursor = None
 
     @property
     def cursor(self) -> DatasetCursor:
-        # Built on first use: the bucket lists are still being filtered when the sampler is constructed.
-        if self._cursor is None:
-            self._cursor = DatasetCursor(
-                self.id,
-                self.metadata_backend.aspect_ratio_bucket_indices,
-                batch_size=self.batch_size,
-                repeats=int(StateTracker.get_data_backend_config(self.id).get("repeats") or 0),
-                seed=self._cursor_seed,
-                dp_size=1,
-                dp_rank=0,
-                gradient_accumulation_steps=1,
-                allow_oversubscription=False,
-                # split_buckets_between_processes has already partitioned and checked these lists.
-                is_eval=True,
-            )
-        return self._cursor
-
-    def rebuild_cursor(self) -> None:
-        """Pick up bucket lists that were recomputed between epochs."""
-        epoch = self.cursor.epoch
-        self._cursor = None
-        self.cursor.epoch = epoch
+        return self.dataset_runtime.cursor()
 
     @property
     def current_epoch(self) -> int:
@@ -263,7 +232,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         bucket_report = getattr(self.metadata_backend, "bucket_report", None)
         if bucket_report:
             bucket_report.add_note("Sampler attempted to reset buckets but none were available.")
-            bucket_report.record_stage("sampler_batches", sample_count=len(self.metadata_backend))
+            bucket_report.record_stage("sampler_batches", sample_count=0)
             return bucket_report.format_empty_dataset_message()
         empty_report = getattr(self.metadata_backend, "empty_dataset_report", None)
         if empty_report:
@@ -278,54 +247,12 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             else os.path.join(self.metadata_backend.instance_data_dir, image)
         )
 
-    @staticmethod
-    def _positive_int(value):
-        try:
-            value = int(value)
-        except (TypeError, ValueError):
-            return None
-        return value if value > 0 else None
-
-    def _configured_max_samples(self, data_backend_config):
-        configured_max_samples = self._positive_int(data_backend_config.get("max_num_samples"))
-        if configured_max_samples is not None:
-            return configured_max_samples
-        return self._positive_int(getattr(self.metadata_backend, "max_num_samples", None))
-
-    def _bucket_report_total(self, stage: str):
-        bucket_report = getattr(self.metadata_backend, "bucket_report", None)
-        bucket_summaries = getattr(bucket_report, "bucket_summaries", None)
-        if not isinstance(bucket_summaries, dict):
-            return None
-        summary = bucket_summaries.get(stage)
-        if not isinstance(summary, dict):
-            return None
-        return self._positive_int(summary.get("total_samples"))
-
-    def _model_card_sample_count(self, data_backend_config):
-        configured_max_samples = self._configured_max_samples(data_backend_config)
-        report_total = self._bucket_report_total("post_refresh")
-        if report_total is not None:
-            total_sample_count = report_total
-            approximate = False
-        else:
-            total_sample_count = sum(len(indices) for indices in self.metadata_backend.aspect_ratio_bucket_indices.values())
-            effective_dp_size, _dp_rank, _cp_size = get_cp_aware_dp_info(self.accelerator)
-            approximate = effective_dp_size > 1
-            if approximate:
-                total_sample_count *= effective_dp_size
-
-        if configured_max_samples is not None:
-            total_sample_count = min(total_sample_count, configured_max_samples)
-            approximate = False
-        return f"~{total_sample_count}" if approximate else total_sample_count
-
     def log_state(self, show_rank: bool = True, alt_stats: bool = False):
         if alt_stats:
             # Return an overview instead of a snapshot.
             # Eg. return totals, and not "as it is now"
             data_backend_config = StateTracker.get_data_backend_config(self.id)
-            total_image_count = self._model_card_sample_count(data_backend_config)
+            total_image_count = sum(len(bucket) for bucket in self.metadata_backend.aspect_ratio_bucket_indices.values())
             printed_state = [f"- Repeats: {data_backend_config.get('repeats', 0)}"]
             printed_state.append(f"- Total number of {self.sample_type_strs}: {total_image_count}")
             printed_state.append(

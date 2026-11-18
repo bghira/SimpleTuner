@@ -1,8 +1,10 @@
 import unittest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 from simpletuner.helpers.multiaspect.sampler import MultiAspectSampler
+from simpletuner.helpers.training.state_tracker import StateTracker
 
 
 class TestAudioSampler(unittest.TestCase):
@@ -19,14 +21,6 @@ class TestAudioSampler(unittest.TestCase):
         self.mock_metadata = MagicMock()
         self.mock_metadata.id = "test_backend"
         self.mock_metadata.aspect_ratio_bucket_indices = {"10s": ["a.wav", "b.wav"], "20s": ["c.wav"]}
-        self.mock_metadata.seen_images = {}
-        self.mock_metadata.is_seen = (
-            lambda x, occurrence_index=0: int(self.mock_metadata.seen_images.get(x, 0)) > occurrence_index
-        )
-        self.mock_metadata.mark_batch_as_seen = lambda batch: [
-            self.mock_metadata.seen_images.update({x: int(self.mock_metadata.seen_images.get(x, 0)) + 1}) for x in batch
-        ]
-        self.mock_metadata.reset_seen_images = lambda: self.mock_metadata.seen_images.clear()
         self.mock_metadata.instance_data_dir = ""
 
         def get_metadata(path):
@@ -44,6 +38,7 @@ class TestAudioSampler(unittest.TestCase):
         # Mock Accelerator
         self.mock_accelerator = MagicMock()
         self.mock_accelerator.num_processes = 1
+        self.mock_accelerator.process_index = 0
 
         # Mock PromptHandler to avoid magic prompt logic
         self.patcher_prompt = patch("simpletuner.helpers.prompts.PromptHandler.magic_prompt")
@@ -60,9 +55,17 @@ class TestAudioSampler(unittest.TestCase):
         self.patcher_prompt.stop()
         self.patcher_logger.stop()
 
+    def _runtime(self):
+        runtime = DatasetRuntime("test_backend", self.mock_data, self.mock_metadata, {"dataset_type": "audio"})
+        # The one-clip bucket only fills a batch because short buckets may be padded.
+        args = SimpleNamespace(seed=1, allow_dataset_oversubscription=True)
+        with patch.object(StateTracker, "get_args", return_value=args):
+            runtime.configure_cursor(accelerator=self.mock_accelerator, batch_size=2, shared_by_all_ranks=False)
+        return runtime
+
     def test_sampler_iterates_audio_buckets(self):
         sampler = MultiAspectSampler(
-            dataset_runtime=DatasetRuntime("test_backend", self.mock_data, self.mock_metadata, {"dataset_type": "audio"}),
+            dataset_runtime=self._runtime(),
             model=self.mock_model,
             accelerator=self.mock_accelerator,
             batch_size=2,
@@ -105,7 +108,7 @@ class TestAudioSampler(unittest.TestCase):
     def test_sampler_bucket_exhaustion(self):
         # Test that sampler correctly resets when all exhausted
         sampler = MultiAspectSampler(
-            dataset_runtime=DatasetRuntime("test_backend", self.mock_data, self.mock_metadata, {"dataset_type": "audio"}),
+            dataset_runtime=self._runtime(),
             model=self.mock_model,
             accelerator=self.mock_accelerator,
             batch_size=2,
@@ -132,7 +135,7 @@ class TestAudioSampler(unittest.TestCase):
         self.mock_tracker.get_args.return_value.model_family = "minimaxmusic"
         self.mock_metadata.get_metadata_by_filepath.side_effect = lambda _: None
         sampler = MultiAspectSampler(
-            dataset_runtime=DatasetRuntime("test_backend", self.mock_data, self.mock_metadata, {"dataset_type": "audio"}),
+            dataset_runtime=self._runtime(),
             model=self.mock_model,
             accelerator=self.mock_accelerator,
             batch_size=1,

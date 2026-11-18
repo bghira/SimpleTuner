@@ -794,18 +794,3 @@ class DiscoveryMetadataBackend(MetadataBackend):
                     Path(probe_path).unlink(missing_ok=True)
                 except Exception:
                     pass
-
-    def __len__(self):
-        """
-        Returns:
-            int: The number of batches in the dataset, accounting for images that can't form a complete batch and are discarded.
-        """
-
-        def repeat_len(bucket):
-            return len(bucket) * (self.repeats + 1)
-
-        return sum(
-            (repeat_len(bucket) + (self.batch_size - 1)) // self.batch_size
-            for bucket in self.aspect_ratio_bucket_indices.values()
-            if repeat_len(bucket) >= self.batch_size
-        )

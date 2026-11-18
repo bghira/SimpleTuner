@@ -459,8 +459,6 @@ class CacheJobService:
     ) -> Iterator[Dict[str, Any]]:
         from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 
-        if metadata_backend.read_only:
-            raise ValueError("Standalone text preparation requires unsplit dataset metadata.")
         config = dict(dataset_config)
         config["use_captions"] = not config.get("only_instance_prompt", False) and (
             config.get("caption_strategy", "filename") != "instanceprompt"

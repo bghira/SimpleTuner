@@ -47,7 +47,11 @@ class TestVaeCacheTraversal(unittest.TestCase):
     def test_default_traversal_retains_bucket_order(self):
         self._run_pipeline(webshart=False)
 
-    def _run_pipeline(self, webshart):
+    @patch.dict("os.environ", {"SIMPLETUNER_SHUFFLE_ASPECTS": "false"})
+    def test_a_training_rank_encodes_its_share_of_the_dataset(self):
+        self._run_pipeline(webshart=False, training_rank=True)
+
+    def _run_pipeline(self, webshart, training_rank=False):
         wide0, wide1 = "webshart://0/0/wide.jpg", "webshart://1/0/wide.jpg"
         square0, square1 = "webshart://0/1/square.jpg", "webshart://1/1/square.jpg"
         restored = "webshart://0/2/restored.jpg"
@@ -61,7 +65,15 @@ class TestVaeCacheTraversal(unittest.TestCase):
         cache.debug_log = Mock()
         cache._list_cached_images = Mock(return_value={"cached"})
         cache.metadata_backend = Mock()
-        cache.metadata_backend.read_cache.return_value = buckets
+        if training_rank:
+            # The metadata holds every rank's samples; the cursor says which of them are this rank's.
+            cache.metadata_backend.read_cache.return_value = {"wide": [*buckets["wide"], "not-ours"], "square": ["not-ours"]}
+            cache.dataset_runtime = SimpleNamespace(
+                cursor=lambda: SimpleNamespace(rank_share=lambda: copy.deepcopy(buckets))
+            )
+        else:
+            cache.metadata_backend.read_cache.return_value = buckets
+            cache.dataset_runtime = None
         cache.metadata_backend.get_metadata_attribute_by_filepath.return_value = "wide"
         cache.local_unprocessed_files = [wide0, wide1, square0, square1, "cached", restored]
         cache.generate_vae_cache_filename = lambda path: (path + ".pt", path)

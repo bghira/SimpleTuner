@@ -1,7 +1,7 @@
 import logging
 import os
 import random
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from math import ceil
 
 from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
@@ -35,18 +35,20 @@ class DatasetCursor:
         dp_rank: int,
         gradient_accumulation_steps: int,
         allow_oversubscription: bool,
-        is_eval: bool,
+        shared_by_all_ranks: bool,
     ):
         self.dataset_id = dataset_id
         self.batch_size = int(batch_size)
         self.repeats = int(repeats)
         self.seed = seed
-        # Eval datasets are whole on every rank and are not trained, so neither the rank count
-        # nor gradient accumulation limits their bucket sizes.
-        self.dp_size = 1 if is_eval else int(dp_size)
-        self.dp_rank = 0 if is_eval else int(dp_rank)
+        # A dataset every rank reads whole (evaluation, conditioning) is not partitioned, and no
+        # optimizer step depends on its buckets filling an effective batch.
+        self.dp_size = 1 if shared_by_all_ranks else int(dp_size)
+        self.dp_rank = 0 if shared_by_all_ranks else int(dp_rank)
         self.gradient_accumulation_steps = int(gradient_accumulation_steps)
-        self.effective_batch_size = 1 if is_eval else self.batch_size * self.dp_size * self.gradient_accumulation_steps
+        self.effective_batch_size = (
+            1 if shared_by_all_ranks else self.batch_size * self.dp_size * self.gradient_accumulation_steps
+        )
         self.epoch = 1
 
         self._buckets = buckets
@@ -178,11 +180,9 @@ class DatasetCursor:
         """Samples consumed in this epoch, and samples in an epoch."""
         return sum(self._consumed.values()), sum(self._lengths.values())
 
-    def rank_share(self) -> Iterator[tuple[str, str]]:
-        """The distinct samples this rank trains on. It does not change between epochs."""
-        for bucket, share in self._share.items():
-            for ref in dict.fromkeys(share):
-                yield bucket, ref
+    def rank_share(self) -> dict[str, list[str]]:
+        """The distinct samples this rank trains on, by bucket. It does not change between epochs."""
+        return {bucket: list(dict.fromkeys(share)) for bucket, share in self._share.items()}
 
     def finish_epoch(self) -> None:
         self.epoch += 1
@@ -214,7 +214,7 @@ class DatasetCursor:
                 "and cannot be resumed."
             )
         saved, current = state["layout"], self._layout()
-        if {**saved, "batch_size": current["batch_size"]} != current:
+        if {**saved, "batch_size": current["batch_size"], "counts": current["counts"]} != current:
             raise ValueError(
                 f"Dataset '{self.dataset_id}': the checkpoint was written for a different dataset layout "
                 f"(saved {_describe_layout(saved)}, current {_describe_layout(current)})."
@@ -229,14 +229,19 @@ class DatasetCursor:
             self.seed = state["seed"]
             self._share = self._build_share()
         self.epoch = state["epoch"]
+        self._orders = None
+        if saved["counts"] != current["counts"]:
+            logger.warning(
+                f"Dataset '{self.dataset_id}' has changed since the checkpoint was written "
+                f"({sum(saved['counts'].values())} samples then, {sum(current['counts'].values())} now). "
+                f"Epoch {self.epoch} starts over."
+            )
+            self._consumed = dict.fromkeys(self._counts, 0)
+            return
         # An oversubscribed bucket's length follows the batch size, so a count saved under another
         # batch size can exceed it.
         self._consumed = {bucket: min(state["consumed"][bucket], self._lengths[bucket]) for bucket in self._counts}
-        self._orders = None
 
 
 def _describe_layout(layout: dict) -> str:
-    return (
-        f"repeats={layout['repeats']} dp_size={layout['dp_size']} dp_rank={layout['dp_rank']} "
-        f"samples={sum(layout['counts'].values())} buckets={len(layout['counts'])}"
-    )
+    return f"repeats={layout['repeats']} dp_size={layout['dp_size']} dp_rank={layout['dp_rank']}"

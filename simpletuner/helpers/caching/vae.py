@@ -5,7 +5,6 @@ import random
 import threading
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from copy import deepcopy
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
@@ -148,8 +147,12 @@ class VAECache(WebhookMixin):
         nsfw_check_video_frame_selection: str = "uniform",
         nsfw_check_video_min_flagged_frames: int = 1,
         delete_nsfw_images: bool = False,
+        dataset_runtime=None,
     ):
         self.id = id
+        # Set when the cache is one rank's part of a training run. Standalone preparation runs
+        # in one process and encodes the whole dataset.
+        self.dataset_runtime = dataset_runtime
         self.dataset_type_enum = ensure_dataset_type(dataset_type, default=DatasetType.IMAGE)
         self.dataset_type = self.dataset_type_enum.value
         _base_search_types = ["image", "video", "conditioning"]
@@ -400,17 +403,9 @@ class VAECache(WebhookMixin):
         delete_from_backend: bool = False,
         details: dict = None,
     ) -> None:
-        buckets = getattr(self.metadata_backend, "aspect_ratio_bucket_indices", None)
-        shard_lengths = (
-            {shard: len(images) for shard, images in buckets.items()}
-            if isinstance(buckets, dict) and getattr(self.metadata_backend, "read_only", False)
-            else None
-        )
         removed = self._remove_image_from_metadata_backend(self.metadata_backend, filepath, bucket)
         if removed:
             self._record_filter_stat(reason, bucket, filepath)
-            if shard_lengths is not None:
-                self._restore_split_shard_lengths(shard_lengths)
         self._queue_metadata_filter_action(
             filepath=filepath,
             bucket=bucket,
@@ -418,20 +413,6 @@ class VAECache(WebhookMixin):
             delete_from_backend=delete_from_backend,
             details=details,
         )
-
-    def _restore_split_shard_lengths(self, shard_lengths: dict) -> None:
-        """Refill a post-split shard the filter just shortened.
-
-        Every data-parallel rank has to schedule the same number of samples, so removing an
-        entry from one rank's shard desynchronises them. The removed slots are refilled by
-        repeating the final surviving sample, which is how the splitter pads. A bucket the
-        filter emptied has nothing to repeat and stays empty until the next split.
-        """
-        for bucket, length in shard_lengths.items():
-            images = self.metadata_backend.aspect_ratio_bucket_indices.get(bucket)
-            if not images or len(images) >= length:
-                continue
-            images.extend([images[-1]] * (length - len(images)))
 
     def _handle_nsfw_rejected_sample(self, filepath: str, bucket: str, classification: dict) -> None:
         rejected_entry = {
@@ -487,15 +468,7 @@ class VAECache(WebhookMixin):
             return True
 
         metadata_backend = self.metadata_backend
-        original_read_only = getattr(metadata_backend, "read_only", False)
-        original_bucket_indices = deepcopy(getattr(metadata_backend, "aspect_ratio_bucket_indices", {}))
-        original_filtering_statistics = deepcopy(getattr(metadata_backend, "filtering_statistics", None))
-
         try:
-            if original_read_only:
-                metadata_backend.read_only = False
-                metadata_backend.reload_cache(set_config=False)
-
             removed_count = 0
             for action in actions:
                 filepath = action["filepath"]
@@ -516,16 +489,11 @@ class VAECache(WebhookMixin):
             return True
         except Exception as exc:
             logger.error(
-                "Could not persist filtered sample removals to the unsplit metadata cache for backend %s: %s",
+                "Could not persist filtered sample removals to the metadata cache for backend %s: %s",
                 self.id,
                 exc,
             )
             return False
-        finally:
-            if original_read_only:
-                metadata_backend.aspect_ratio_bucket_indices = original_bucket_indices
-                metadata_backend.filtering_statistics = original_filtering_statistics
-                metadata_backend.read_only = original_read_only
 
     def _finalize_deferred_metadata_filters(self) -> None:
         actions = getattr(self, "_deferred_metadata_filter_actions", [])
@@ -2078,7 +2046,10 @@ class VAECache(WebhookMixin):
         self.debug_log("Listing cached images")
         processed_images = self._list_cached_images()
         self.debug_log("Reading the cache and copying")
-        aspect_bucket_cache = {bucket: list(files) for bucket, files in self.metadata_backend.read_cache().items()}
+        if self.dataset_runtime is None:
+            aspect_bucket_cache = {bucket: list(files) for bucket, files in self.metadata_backend.read_cache().items()}
+        else:
+            aspect_bucket_cache = self.dataset_runtime.cursor().rank_share()
         if self.local_unprocessed_files:
             bucket_files = {filepath for files in aspect_bucket_cache.values() for filepath in files}
             for filepath in self.local_unprocessed_files:

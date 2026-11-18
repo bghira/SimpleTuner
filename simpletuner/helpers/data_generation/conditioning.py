@@ -471,7 +471,7 @@ class DataGenerator:
         self._start_transform_workers()
         try:
             futures, batch_id = [], 0
-            aspect_cache = self.source_metadata_backend.read_cache().copy()
+            aspect_cache = self.source_backend["dataset_runtime"].cursor().rank_share()
             buckets = list(aspect_cache.keys())
             if os.environ.get("SIMPLETUNER_SHUFFLE_ASPECTS", "true").lower() == "true":
                 shuffle(buckets)

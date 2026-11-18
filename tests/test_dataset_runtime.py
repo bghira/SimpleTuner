@@ -270,3 +270,133 @@ class DatasetRuntimeTests(unittest.TestCase):
             with self.assertRaisesRegex(Exception, "did not have its metadata"):
                 sampler._validate_and_yield_images_from_samples(["sample.jpg"], "1.0")
         self.metadata_backend.caption_cache_entry.assert_not_called()
+
+
+class DatasetRuntimeCursorTests(unittest.TestCase):
+    """The runtime owns the dataset's traversal: one rank's share of the bucket lists."""
+
+    def setUp(self):
+        self.metadata_backend = SimpleNamespace(
+            aspect_ratio_bucket_indices={"1.0": [f"image{index}.jpg" for index in range(8)]}
+        )
+        self.runtime = DatasetRuntime("images", Mock(id="images"), self.metadata_backend, {})
+        self.args = SimpleNamespace(seed=11, gradient_accumulation_steps=1, allow_dataset_oversubscription=False)
+        self.config = {}
+        for target, value in (("get_args", self.args), ("get_data_backend_config", self.config)):
+            patcher = patch.object(StateTracker, target, return_value=value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _configure(self, runtime=None, *, dp_size=1, dp_rank=0, is_main_process=True, **options):
+        accelerator = SimpleNamespace(num_processes=dp_size, process_index=dp_rank, is_main_process=is_main_process)
+        options = {"batch_size": 2, "shared_by_all_ranks": False, **options}
+        (runtime or self.runtime).configure_cursor(accelerator=accelerator, **options)
+
+    def test_a_dataset_without_a_configured_traversal_has_no_cursor(self):
+        with self.assertRaisesRegex(RuntimeError, "configure_cursor"):
+            self.runtime.cursor()
+
+    def test_ranks_take_disjoint_shares_of_the_bucket_lists(self):
+        shares = []
+        for rank in range(4):
+            runtime = DatasetRuntime("images", Mock(id="images"), self.metadata_backend, {})
+            self._configure(runtime, dp_size=4, dp_rank=rank, batch_size=1)
+            shares.append(runtime.cursor().rank_share()["1.0"])
+        self.assertEqual([len(share) for share in shares], [2] * 4)
+        self.assertEqual(
+            sorted(ref for share in shares for ref in share), self.metadata_backend.aspect_ratio_bucket_indices["1.0"]
+        )
+
+    def test_context_parallel_ranks_of_one_group_take_the_same_share(self):
+        with patch(
+            "simpletuner.helpers.data_backend.dataset_runtime.get_cp_aware_dp_info", return_value=(2, 1, 2)
+        ) as dp_info:
+            self._configure(dp_size=4, dp_rank=3, batch_size=1)
+        dp_info.assert_called_once()
+        state = self.runtime.cursor().state()
+        self.assertEqual((state["layout"]["dp_size"], state["layout"]["dp_rank"]), (2, 1))
+        self.assertEqual(len(self.runtime.cursor().rank_share()["1.0"]), 4)
+
+    def test_the_cursor_is_built_from_the_bucket_lists_at_first_use(self):
+        self._configure()
+        self.metadata_backend.aspect_ratio_bucket_indices = {"1.5": ["wide0.jpg", "wide1.jpg"]}
+        self.assertEqual(sorted(self.runtime.cursor().rank_share()["1.5"]), ["wide0.jpg", "wide1.jpg"])
+        self.assertIs(self.runtime.cursor(), self.runtime.cursor())
+
+    def test_dataset_options_reach_the_cursor(self):
+        self.config["repeats"] = 2
+        self.args.gradient_accumulation_steps = 2
+        self._configure()
+        self.assertEqual(len(self.runtime.cursor()), 12)
+        self.metadata_backend.aspect_ratio_bucket_indices = {"1.0": ["only.jpg"]}
+        self._configure(batch_size=4)
+        with self.assertRaisesRegex(ValueError, "Effective batch size: 8"):
+            self.runtime.cursor()
+        self.args.allow_dataset_oversubscription = True
+        self.config["repeats"] = 0
+        self._configure(batch_size=4)
+        self.assertEqual(len(self.runtime.cursor()), 2)
+        self._configure(batch_size=4, shared_by_all_ranks=True)
+        self.assertEqual(len(self.runtime.cursor()), 1)
+
+    def test_a_seeded_run_uses_its_seed(self):
+        with patch("simpletuner.helpers.data_backend.dataset_runtime.broadcast_object_from_main") as broadcast:
+            self._configure()
+        broadcast.assert_not_called()
+        self.assertEqual(self.runtime.cursor().seed, 11)
+
+    def test_an_unseeded_run_takes_the_seed_the_main_process_drew(self):
+        self.args.seed = None
+        for is_main_process in (True, False):
+            with (
+                self.subTest(is_main_process=is_main_process),
+                patch(
+                    "simpletuner.helpers.data_backend.dataset_runtime.broadcast_object_from_main", return_value=1234
+                ) as broadcast,
+            ):
+                self._configure(is_main_process=is_main_process)
+                (drawn,), _kwargs = broadcast.call_args
+                self.assertEqual(drawn is None, not is_main_process)
+                self.assertEqual(self.runtime.cursor().seed, 1234)
+
+    def test_a_rank_the_seed_did_not_reach_refuses_to_divide_the_dataset(self):
+        self.args.seed = None
+        with patch(
+            "simpletuner.helpers.data_backend.dataset_runtime.broadcast_object_from_main", side_effect=lambda value: value
+        ):
+            self._configure(is_main_process=True)
+            with self.assertRaisesRegex(RuntimeError, "did not receive the shuffle seed"):
+                self._configure(is_main_process=False)
+
+    def test_rebuilding_reads_the_new_bucket_lists_and_keeps_the_epoch_and_seed(self):
+        self.args.seed = None
+        self._configure()
+        cursor = self.runtime.cursor()
+        cursor.finish_epoch()
+        self.metadata_backend.aspect_ratio_bucket_indices = {"1.5": ["wide0.jpg", "wide1.jpg"]}
+        self.runtime.rebuild_cursor()
+        rebuilt = self.runtime.cursor()
+        self.assertIsNot(rebuilt, cursor)
+        self.assertEqual((rebuilt.epoch, rebuilt.seed), (2, cursor.seed))
+        self.assertEqual(
+            {bucket: sorted(refs) for bucket, refs in rebuilt.rank_share().items()}, {"1.5": ["wide0.jpg", "wide1.jpg"]}
+        )
+
+    def test_rebuilding_keeps_the_seed_a_resumed_run_took_from_its_checkpoint(self):
+        self._configure()
+        saved = self.runtime.cursor().state()
+        self.args.seed = 99
+        self._configure()
+        self.runtime.cursor().load_state(saved, allow_batch_size_change=False)
+        self.runtime.rebuild_cursor()
+        self.assertEqual(self.runtime.cursor().seed, 11)
+
+    def test_rebuilding_before_first_use_builds_nothing(self):
+        self._configure()
+        self.metadata_backend.aspect_ratio_bucket_indices = {"1.0": ["only.jpg"]}
+        self.runtime.rebuild_cursor()
+        self.assertIsNone(self.runtime._cursor)
+
+    def test_state_tracker_locates_the_runtime_by_dataset_id(self):
+        with patch.object(StateTracker, "data_backends", {"images": {"dataset_runtime": self.runtime}}):
+            self.assertIs(StateTracker.get_dataset("images"), self.runtime)

@@ -27,22 +27,16 @@ class MultiAspectDataset(Dataset):
     def __init__(
         self,
         id: str,
-        datasets: list,
         print_names: bool = False,
         is_regularisation_data: bool = False,
         is_i2v_data: bool = False,
         slider_strength: float = 1.0,
     ):
         self.id = id
-        self.datasets = datasets
         self.print_names = print_names
         self.is_regularisation_data = is_regularisation_data
         self.is_i2v_data = is_i2v_data
         self.slider_strength = slider_strength
-
-    def __len__(self):
-        # Sum the length of all data backends:
-        return sum([len(dataset) for dataset in self.datasets])
 
     def __getitem__(self, image_tuple: list[dict[str, Any] | TrainingSample]):
         state_args = StateTracker.get_args()

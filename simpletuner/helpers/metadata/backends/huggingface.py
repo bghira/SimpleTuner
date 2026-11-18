@@ -912,17 +912,6 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             self.bucket_report.update_statistics(statistics)
             self.bucket_report.record_bucket_snapshot("post_refresh", self.aspect_ratio_bucket_indices)
 
-    def __len__(self):
-
-        def repeat_len(bucket):
-            return len(bucket) * (self.repeats + 1)
-
-        return sum(
-            (repeat_len(bucket) + (self.batch_size - 1)) // self.batch_size
-            for bucket in self.aspect_ratio_bucket_indices.values()
-            if repeat_len(bucket) >= self.batch_size
-        )
-
     def remove_images(self, image_paths: List[str]):
         if not isinstance(image_paths, list):
             image_paths = [image_paths]

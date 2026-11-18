@@ -1,12 +1,16 @@
 """Dataset access shared by training and preparation consumers."""
 
+import random
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from copy import deepcopy
 from typing import Any
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
-from simpletuner.helpers.metadata.backends.base import MetadataBackend
+from simpletuner.helpers.data_backend.cursor import DatasetCursor
+from simpletuner.helpers.metadata.backends.base import MetadataBackend, get_cp_aware_dp_info
 from simpletuner.helpers.prompts import CaptionNotFoundError, PromptHandler
+from simpletuner.helpers.training.multi_process import broadcast_object_from_main
+from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.utils.pathing import normalize_data_path
 
 
@@ -30,6 +34,54 @@ class DatasetRuntime:
             "disable_multiline_split": False,
             **deepcopy(config),
         }
+        self._cursor_options: dict[str, Any] | None = None
+        self._cursor: DatasetCursor | None = None
+
+    def configure_cursor(self, *, accelerator, batch_size: int, shared_by_all_ranks: bool) -> None:
+        """Fix how this dataset is traversed. Every rank must call this at the same point."""
+        args = StateTracker.get_args()
+        seed = getattr(args, "seed", None)
+        if seed is None:
+            # Drawing a seed is a collective call: every rank has to shuffle with the same one.
+            seed = broadcast_object_from_main(random.SystemRandom().getrandbits(64) if accelerator.is_main_process else None)
+            if seed is None:
+                raise RuntimeError(
+                    f"Dataset '{self.id}': this rank did not receive the shuffle seed from the main process,"
+                    " so it would divide the dataset differently from the other ranks."
+                )
+        dp_size, dp_rank, _cp_size = get_cp_aware_dp_info(accelerator)
+        self._cursor_options = {
+            "batch_size": batch_size,
+            "seed": seed,
+            "dp_size": dp_size,
+            "dp_rank": dp_rank,
+            "gradient_accumulation_steps": getattr(args, "gradient_accumulation_steps", 1),
+            "allow_oversubscription": bool(getattr(args, "allow_dataset_oversubscription", False)),
+            "shared_by_all_ranks": shared_by_all_ranks,
+        }
+        self._cursor = None
+
+    def cursor(self) -> DatasetCursor:
+        """This rank's traversal of the dataset, built from the bucket lists on first use."""
+        if self._cursor is None:
+            if self._cursor_options is None:
+                raise RuntimeError(f"Dataset '{self.id}' has no traversal configured; call configure_cursor first.")
+            self._cursor = DatasetCursor(
+                self.id,
+                self.metadata_backend.aspect_ratio_bucket_indices,
+                repeats=int(StateTracker.get_data_backend_config(self.id).get("repeats") or 0),
+                **self._cursor_options,
+            )
+        return self._cursor
+
+    def rebuild_cursor(self) -> None:
+        """Read the bucket lists again after they changed. The epoch and the seed are kept."""
+        previous = self._cursor
+        if previous is None:
+            return
+        self._cursor_options["seed"] = previous.seed
+        self._cursor = None
+        self.cursor().epoch = previous.epoch
 
     def read_samples(self, sample_refs: Sequence[str]) -> list[dict[str, Any]]:
         """Return independent occurrence metadata in request order, including duplicates."""

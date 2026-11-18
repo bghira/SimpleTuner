@@ -315,6 +315,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
                     {
                         "data_backend": MagicMock(id=backend["id"], type="local"),
                         "metadata_backend": MagicMock(),
+                        "dataset_runtime": MagicMock(),
                         "instance_data_dir": self.temp_dir,
                     }
                 )
@@ -349,6 +350,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 self.assertFalse(self.args.vae_cache_disable)
                 self.assertEqual(expected_disable, kwargs["vae_cache_disable"])
                 self.assertTrue(kwargs["vae_cache_ondemand"])
+                self.assertIs(kwargs["dataset_runtime"], init_backend["dataset_runtime"])
                 self.assertEqual(expected_disable, init_backend["config"]["vae_cache_disable"])
                 self.assertTrue(init_backend["config"]["vae_cache_ondemand"])
                 mock_vae_instance.discover_all_files.assert_not_called()
@@ -372,7 +374,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
         self.assertTrue(init_backend["config"]["hash_filenames"])
         set_config.assert_called_once_with("image-dataset", init_backend["config"])
 
-    def test_text_embed_precompute_splits_full_dataset_records_between_processes(self):
+    def test_text_embed_precompute_leaves_the_split_between_processes_to_the_cache(self):
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
         from simpletuner.helpers.models.common import TextEmbedCacheKey
 
@@ -416,15 +418,16 @@ class TestFactoryEdgeCases(unittest.TestCase):
             factory._process_text_embeddings({}, init_backend, None)
 
         cache.compute_embeddings_for_prompts.assert_called_once()
-        self.assertTrue(cache.compute_embeddings_for_prompts.call_args.kwargs["split_between_processes"])
+        # Every rank holds the whole dataset, so the cache's own split is never switched off.
+        self.assertNotIn("split_between_processes", cache.compute_embeddings_for_prompts.call_args.kwargs)
 
-    def test_bounded_text_precompute_covers_every_rank_local_sample(self):
+    def test_bounded_text_precompute_encodes_each_sample_on_one_rank(self):
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
         from simpletuner.helpers.models.common import TextEmbedCacheKey
 
         for deferred in (False, True):
             with self.subTest(deferred=deferred):
-                encoded = set()
+                encoded = []
                 for rank in range(4):
                     factory = FactoryRegistry.__new__(FactoryRegistry)
                     factory._uses_text_embeddings_cache = lambda: True
@@ -442,7 +445,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
                         requires_text_embed_image_context=lambda: False,
                         text_embed_cache_key=lambda: TextEmbedCacheKey.DATASET_AND_FILENAME,
                     )
-                    paths = [f"{index}.png" for index in range(rank * 4, (rank + 1) * 4)]
+                    paths = [f"{index}.png" for index in range(16)]
                     metadata = SimpleNamespace(
                         max_num_samples=16,
                         aspect_ratio_bucket_indices={"1.0": paths},
@@ -450,10 +453,10 @@ class TestFactoryEdgeCases(unittest.TestCase):
                     )
                     cache = SimpleNamespace(text_cache_ondemand=False)
 
-                    def encode(records, *, split_between_processes, **_kwargs):
+                    def encode(records, *, split_between_processes=True, rank=rank, **_kwargs):
                         if split_between_processes:
-                            records = records[rank : rank + 1]
-                        encoded.update(record["key"] for record in records)
+                            records = records[rank * 4 : (rank + 1) * 4]
+                        encoded.extend(record["key"] for record in records)
 
                     cache.compute_embeddings_for_prompts = encode
                     backend = {"caption_strategy": "instanceprompt", "max_num_samples": 16}
@@ -490,9 +493,9 @@ class TestFactoryEdgeCases(unittest.TestCase):
                             factory._process_deferred_text_embeddings()
                         else:
                             factory._process_text_embeddings(backend, init_backend, None)
-                self.assertEqual(encoded, {f"image-dataset:{index}.png" for index in range(16)})
+                self.assertEqual(sorted(encoded), sorted(f"image-dataset:{index}.png" for index in range(16)))
 
-    def test_deferred_text_embed_precompute_splits_full_dataset_records_between_processes(self):
+    def test_deferred_text_embed_precompute_leaves_the_split_between_processes_to_the_cache(self):
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
         from simpletuner.helpers.models.common import TextEmbedCacheKey
 
@@ -531,7 +534,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
             factory._process_deferred_text_embeddings()
 
         cache.compute_embeddings_for_prompts.assert_called_once()
-        self.assertTrue(cache.compute_embeddings_for_prompts.call_args.kwargs["split_between_processes"])
+        # Every rank holds the whole dataset, so the cache's own split is never switched off.
+        self.assertNotIn("split_between_processes", cache.compute_embeddings_for_prompts.call_args.kwargs)
         self.assertEqual(factory._deferred_text_embed_backends, [])
 
     def test_text_embed_disable_config_implies_ondemand_without_mutating_global_args(self):
@@ -584,7 +588,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
         result = init_backend_config(backend, self.args, self.accelerator)
         self.assertEqual(result["config"]["webshart"], backend["webshart"])
         result["metadata_backend"] = MagicMock(config=deepcopy(result["config"]))
-        result["metadata_backend"].__len__.return_value = 1
+        result["metadata_backend"].aspect_ratio_bucket_indices = {"1.0": ["sample.jpg"]}
         factory = FactoryRegistry.__new__(FactoryRegistry)
         factory.args = self.args
         self.args.override_dataset_config = False
@@ -609,7 +613,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
         result = init_backend_config(backend, self.args, self.accelerator)
         self.assertEqual(result["config"]["webshart"], backend["webshart"])
         result["metadata_backend"] = MagicMock(config=deepcopy(result["config"]))
-        result["metadata_backend"].__len__.return_value = 1
+        result["metadata_backend"].aspect_ratio_bucket_indices = {"1.0": ["sample.jpg"]}
         factory = FactoryRegistry.__new__(FactoryRegistry)
         factory.args = self.args
         self.args.override_dataset_config = False
@@ -729,7 +733,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
         metadata_backend = MagicMock()
         metadata_backend.config = {"train_batch_size": cached_train_batch_size}
         metadata_backend.batch_size = effective_train_batch_size
-        metadata_backend.__len__.return_value = 1
+        metadata_backend.aspect_ratio_bucket_indices = {"1.0": ["sample.jpg"]}
         init_backend["metadata_backend"] = metadata_backend
         init_backend["data_backend"] = MagicMock()
 
@@ -868,7 +872,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
             "end_epoch": None,
             "end_step": None,
         }
-        metadata_backend.__len__.return_value = 1
+        metadata_backend.aspect_ratio_bucket_indices = {"1.0": ["sample.jpg"]}
         init_backend["metadata_backend"] = metadata_backend
 
         factory = FactoryRegistry(
@@ -910,7 +914,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
             "end_epoch": 8,
             "end_step": 16000,
         }
-        metadata_backend.__len__.return_value = 1
+        metadata_backend.aspect_ratio_bucket_indices = {"1.0": ["sample.jpg"]}
         init_backend["metadata_backend"] = metadata_backend
 
         factory = FactoryRegistry(
@@ -1238,9 +1242,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
             with patch("simpletuner.helpers.metadata.backends.discovery.DiscoveryMetadataBackend") as mock_metadata:
                 mock_metadata_instance = MagicMock()
                 mock_metadata_instance.refresh_buckets.return_value = None
-                mock_metadata_instance.split_buckets_between_processes.return_value = None
                 mock_metadata_instance.save_cache.return_value = None
-                mock_metadata_instance.__len__.return_value = 10  # Non-zero to pass validation
                 mock_metadata_instance.aspect_ratio_bucket_indices = {"1.0": ["img1.jpg", "img2.jpg"]}
                 mock_metadata_instance.config = {}
                 mock_metadata_instance.resolution_type = "area"
@@ -1509,9 +1511,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
         mock_metadata_instance = MagicMock()
         mock_metadata_instance.refresh_buckets.return_value = None
         mock_metadata_instance.has_single_underfilled_bucket.return_value = False
-        mock_metadata_instance.split_buckets_between_processes.return_value = None
         mock_metadata_instance.save_cache.return_value = None
-        mock_metadata_instance.__len__.return_value = 10
+        mock_metadata_instance.aspect_ratio_bucket_indices = {"1.0": ["sample.jpg"]}
         mock_metadata_instance.config = {}
         mock_metadata_instance.resolution_type = "area"
         mock_metadata_instance.resolution = 1024
@@ -1554,9 +1555,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
             mock_state_tracker.register_data_backend.return_value = None
 
             with patch("simpletuner.helpers.data_backend.factory.init_backend_config") as mock_init:
-                # Mock metadata backend that returns 0 length (no usable samples)
                 mock_metadata = MagicMock()
-                mock_metadata.__len__.return_value = 0
                 mock_metadata.aspect_ratio_bucket_indices = {"1.0": []}
 
                 mock_init_backend = {
@@ -1583,8 +1582,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
                     factory._handle_config_versioning(backend_config, mock_init_backend)
 
                 self.assertIn("Dataset produced no usable samples", str(context.exception))
-                self.assertIn("batch_size", str(context.exception))
-                self.assertIn("repeats", str(context.exception))
+                self.assertIn("Test: No usable samples", str(context.exception))
 
     def test_empty_dataset_validation_conditioning(self):
         """Test that conditioning datasets with no usable samples raise an error."""
@@ -1608,9 +1606,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
             mock_state_tracker.register_data_backend.return_value = None
 
             with patch("simpletuner.helpers.data_backend.factory.init_backend_config") as mock_init:
-                # Mock metadata backend that returns 0 length (no usable samples)
                 mock_metadata = MagicMock()
-                mock_metadata.__len__.return_value = 0
                 mock_metadata.aspect_ratio_bucket_indices = {}
 
                 mock_init_backend = {
@@ -1637,234 +1633,11 @@ class TestFactoryEdgeCases(unittest.TestCase):
                     factory._handle_config_versioning(backend_config, mock_init_backend)
 
                 self.assertIn("Dataset produced no usable samples", str(context.exception))
-                self.assertIn("batch_size", str(context.exception))
+                self.assertIn("Test: No usable samples", str(context.exception))
 
-    def test_early_validation_impossible_config(self):
-        """Test that impossible configurations are caught early with specific guidance."""
-        from simpletuner.helpers.metadata.backends.base import MetadataBackend
-        from simpletuner.helpers.training.state_tracker import StateTracker
-
-        # Create a mock backend with only the necessary attributes for split_buckets
-        mock_backend = MagicMock(spec=MetadataBackend)
-        mock_backend.id = "test_impossible"
-        mock_backend.batch_size = 4
-        mock_backend.repeats = 0
-        mock_backend.bucket_report = None
-        mock_backend.aspect_ratio_bucket_indices = {"1.0": ["img1.jpg", "img2.jpg", "img3.jpg", "img4.jpg"]}
-
-        # Mock accelerator with 8 GPUs
-        mock_accelerator = MagicMock()
-        mock_accelerator.num_processes = 8
-        mock_accelerator.process_index = 0
-        mock_backend.accelerator = mock_accelerator
-
-        # Mock StateTracker.get_args() to return args with allow_dataset_oversubscription=False
-        with patch.object(StateTracker, "get_args") as mock_get_args:
-            mock_args = MagicMock()
-            mock_args.allow_dataset_oversubscription = False
-            mock_get_args.return_value = mock_args
-
-            # Mock StateTracker.get_data_backend_config to return empty config (no manual repeats)
-            with patch.object(StateTracker, "get_data_backend_config", return_value={}):
-                # Call the real split_buckets_between_processes method
-                # This should raise ValueError with specific guidance
-                # 4 images × (0+1) repeats = 4 samples
-                # batch_size=4 × 8 GPUs × 1 grad_accum = 32 effective batch size
-                # 4 samples < 32 effective batch size → should fail
-                with self.assertRaises(ValueError) as context:
-                    MetadataBackend.split_buckets_between_processes(mock_backend, gradient_accumulation_steps=1)
-
-        error_msg = str(context.exception)
-        # Check that error message contains key information
-        self.assertIn("Dataset configuration will produce zero usable batches", error_msg)
-        self.assertIn("Total samples: 4", error_msg)
-        self.assertIn("Repeats: 0", error_msg)
-        self.assertIn("Batch size: 4", error_msg)
-        self.assertIn("Number of GPUs: 8", error_msg)
-        self.assertIn("Effective batch size: 32", error_msg)
-        self.assertIn("Minimum repeats required:", error_msg)
-        # Should suggest repeats=7 (4 images × 8 = 32 samples needed, so need repeats=7)
-        self.assertIn("Increase repeats to at least 7", error_msg)
-
-    def test_early_validation_sufficient_repeats(self):
-        """Test that configuration works when repeats are sufficient."""
-        from simpletuner.helpers.metadata.backends.base import MetadataBackend
-        from simpletuner.helpers.training.state_tracker import StateTracker
-
-        # Create a mock backend with sufficient repeats
-        mock_backend = MagicMock(spec=MetadataBackend)
-        mock_backend.id = "test_sufficient"
-        mock_backend.batch_size = 1
-        mock_backend.repeats = 1  # This should be sufficient
-        mock_backend.bucket_report = None
-        mock_backend.aspect_ratio_bucket_indices = {"1.0": ["img1.jpg", "img2.jpg", "img3.jpg", "img4.jpg"]}
-
-        # Mock accelerator with 2 GPUs
-        mock_accelerator = MagicMock()
-        mock_accelerator.num_processes = 2
-        mock_accelerator.process_index = 0
-        mock_backend.accelerator = mock_accelerator
-
-        # Mock StateTracker.get_args() to return args with allow_dataset_oversubscription=False
-        with patch.object(StateTracker, "get_args") as mock_get_args:
-            mock_args = MagicMock()
-            mock_args.allow_dataset_oversubscription = False
-            mock_get_args.return_value = mock_args
-
-            # Mock StateTracker.get_data_backend_config to return empty config (no manual repeats)
-            with patch.object(StateTracker, "get_data_backend_config", return_value={}):
-                # 4 images with repeats=1
-                # 4 images × (1+1) repeats = 8 samples
-                # batch_size=1 × 2 GPUs × 1 grad_accum = 2 effective batch size
-                # 8 samples >= 2 effective batch size → should succeed (not raise during validation)
-                try:
-                    MetadataBackend.split_buckets_between_processes(mock_backend, gradient_accumulation_steps=1)
-                except ValueError as e:
-                    if "Dataset configuration will produce zero usable batches" in str(e):
-                        self.fail(f"Should not raise ValueError with sufficient repeats: {e}")
-
-    def test_eval_dataset_ignores_gradient_accumulation(self):
-        """Eval datasets should not fail bucket validation due to gradient accumulation."""
-        from simpletuner.helpers.metadata.backends.base import MetadataBackend
-        from simpletuner.helpers.training.state_tracker import StateTracker
-
-        mock_backend = MagicMock(spec=MetadataBackend)
-        mock_backend.id = "test_eval_ga"
-        mock_backend.batch_size = 1
-        mock_backend.repeats = 0
-        mock_backend.bucket_report = None
-        mock_backend.dataset_type = DatasetType.EVAL
-        mock_backend.aspect_ratio_bucket_indices = {"1.0": ["img1.jpg", "img2.jpg"]}
-
-        mock_accelerator = MagicMock()
-        mock_accelerator.num_processes = 1
-        mock_accelerator.process_index = 0
-        mock_backend.accelerator = mock_accelerator
-
-        with (
-            patch.object(StateTracker, "get_args") as mock_get_args,
-            patch.object(StateTracker, "get_data_backend_config", return_value={}),
-        ):
-            mock_args = MagicMock()
-            mock_args.allow_dataset_oversubscription = False
-            mock_get_args.return_value = mock_args
-
-            try:
-                MetadataBackend.split_buckets_between_processes(mock_backend, gradient_accumulation_steps=4)
-            except ValueError as e:
-                if "Dataset configuration will produce zero usable batches" in str(e):
-                    self.fail(f"Eval dataset should not consider grad accumulation: {e}")
-
-    def test_oversubscription_auto_adjustment(self):
-        """Test that --allow_dataset_oversubscription automatically adjusts repeats."""
-        from simpletuner.helpers.metadata.backends.base import MetadataBackend
-        from simpletuner.helpers.training.state_tracker import StateTracker
-
-        # Create a mock backend with insufficient images
-        mock_backend = MagicMock(spec=MetadataBackend)
-        mock_backend.id = "test_auto_adjust"
-        mock_backend.batch_size = 4
-        mock_backend.repeats = 0
-        mock_backend.bucket_report = None
-        mock_backend.aspect_ratio_bucket_indices = {"1.0": ["img1.jpg", "img2.jpg", "img3.jpg", "img4.jpg"]}
-
-        # Mock accelerator with 8 GPUs
-        mock_accelerator = MagicMock()
-        mock_accelerator.num_processes = 8
-        mock_accelerator.process_index = 0
-        mock_backend.accelerator = mock_accelerator
-
-        # Mock StateTracker to enable oversubscription and NO user-set repeats
-        with patch.object(StateTracker, "get_args") as mock_get_args:
-            mock_args = MagicMock()
-            mock_args.allow_dataset_oversubscription = True
-            mock_get_args.return_value = mock_args
-
-            with patch.object(StateTracker, "get_data_backend_config") as mock_get_config:
-                # Return config WITHOUT 'repeats' key (not user-set)
-                mock_get_config.return_value = {"id": "test_auto_adjust"}
-
-                # Should NOT raise, should auto-adjust repeats
-                try:
-                    MetadataBackend.split_buckets_between_processes(mock_backend, gradient_accumulation_steps=1)
-                    self.assertEqual(mock_backend.repeats, 0)
-                    self.assertEqual(len(mock_backend.aspect_ratio_bucket_indices["1.0"]), 4)
-                except ValueError as e:
-                    self.fail(f"Should not raise with oversubscription enabled: {e}")
-
-    def test_oversubscription_respects_manual_repeats(self):
-        """Test that manual repeats settings are respected even with oversubscription enabled."""
-        from simpletuner.helpers.metadata.backends.base import MetadataBackend
-        from simpletuner.helpers.training.state_tracker import StateTracker
-
-        # Create a mock backend with manually-set but insufficient repeats
-        mock_backend = MagicMock(spec=MetadataBackend)
-        mock_backend.id = "test_manual_repeats"
-        mock_backend.batch_size = 4
-        mock_backend.repeats = 2  # User set this, but it's not enough (needs 7)
-        mock_backend.bucket_report = None
-        mock_backend.aspect_ratio_bucket_indices = {"1.0": ["img1.jpg", "img2.jpg", "img3.jpg", "img4.jpg"]}
-
-        mock_accelerator = MagicMock()
-        mock_accelerator.num_processes = 8
-        mock_accelerator.process_index = 0
-        mock_backend.accelerator = mock_accelerator
-
-        # Mock StateTracker with oversubscription enabled BUT user set repeats
-        with patch.object(StateTracker, "get_args") as mock_get_args:
-            mock_args = MagicMock()
-            mock_args.allow_dataset_oversubscription = True
-            mock_get_args.return_value = mock_args
-
-            with patch.object(StateTracker, "get_data_backend_config") as mock_get_config:
-                # Return config WITH 'repeats' key (user-set)
-                mock_get_config.return_value = {"id": "test_manual_repeats", "repeats": 2}
-
-                # Should raise because manual repeats are insufficient
-                with self.assertRaises(ValueError) as context:
-                    MetadataBackend.split_buckets_between_processes(mock_backend, gradient_accumulation_steps=1)
-
-                error_msg = str(context.exception)
-                self.assertIn("Dataset configuration will produce zero usable batches", error_msg)
-                self.assertIn("manually set repeats=2", error_msg)
-                self.assertIn("will not override manual repeats", error_msg)
-
-    def test_oversubscription_disabled_raises_error(self):
-        """Test that error is raised when oversubscription is disabled."""
-        from simpletuner.helpers.metadata.backends.base import MetadataBackend
-        from simpletuner.helpers.training.state_tracker import StateTracker
-
-        mock_backend = MagicMock(spec=MetadataBackend)
-        mock_backend.id = "test_disabled"
-        mock_backend.batch_size = 4
-        mock_backend.repeats = 0
-        mock_backend.bucket_report = None
-        mock_backend.aspect_ratio_bucket_indices = {"1.0": ["img1.jpg", "img2.jpg", "img3.jpg", "img4.jpg"]}
-
-        mock_accelerator = MagicMock()
-        mock_accelerator.num_processes = 8
-        mock_accelerator.process_index = 0
-        mock_backend.accelerator = mock_accelerator
-
-        # Mock StateTracker with oversubscription DISABLED
-        with patch.object(StateTracker, "get_args") as mock_get_args:
-            mock_args = MagicMock()
-            mock_args.allow_dataset_oversubscription = False
-            mock_get_args.return_value = mock_args
-
-            with patch.object(StateTracker, "get_data_backend_config") as mock_get_config:
-                mock_get_config.return_value = {"id": "test_disabled"}
-
-                # Should raise error with suggestion to enable flag
-                with self.assertRaises(ValueError) as context:
-                    MetadataBackend.split_buckets_between_processes(mock_backend, gradient_accumulation_steps=1)
-
-                error_msg = str(context.exception)
-                self.assertIn("Dataset configuration will produce zero usable batches", error_msg)
-                self.assertIn("Enable --allow_dataset_oversubscription", error_msg)
-
-    def test_bucket_split_padding_policy_matches_training_mode(self):
-        """Factory padding covers epoch and explicit oversubscription policies."""
+    def test_datasets_that_are_not_divided_between_ranks(self):
+        """Training datasets are divided between ranks; validation, conditioning and audio-only datasets stay whole."""
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
 
         factory = FactoryRegistry(
@@ -1874,79 +1647,43 @@ class TestFactoryEdgeCases(unittest.TestCase):
             tokenizers=self.tokenizers,
             model=self.model,
         )
-        factory._handle_config_versioning = MagicMock()
-
+        factory._supports_audio_only_training = lambda: False
         cases = (
-            ("fixed_steps", 100, False, False),
-            ("oversubscribed_fixed_steps", 100, True, True),
-            ("epoch_driven", 0, False, True),
+            ("no_eval_selection", None, {"id": "train"}, False),
+            ("training_dataset_with_eval_string", "eval", {"id": "train"}, False),
+            ("training_dataset_with_eval_list", ["eval"], {"id": "train"}, False),
+            ("eval_dataset_string", "eval", {"id": "eval"}, True),
+            ("eval_dataset_list", ["eval", "other"], {"id": "eval"}, True),
+            ("training_id_is_substring_of_eval_id", "evaluation", {"id": "eval"}, False),
+            ("eval_dataset_type", None, {"id": "held-out", "dataset_type": "eval"}, True),
+            ("conditioning_dataset", None, {"id": "control", "dataset_type": "conditioning"}, True),
+            ("audio_dataset", None, {"id": "speech", "dataset_type": "audio"}, False),
+            ("audio_only_dataset", None, {"id": "speech", "dataset_type": "audio", "audio": {"audio_only": True}}, True),
         )
-        for name, max_train_steps, allow_oversubscription, expected in cases:
-            with self.subTest(name=name):
-                factory.args.max_train_steps = max_train_steps
-                factory.args.allow_dataset_oversubscription = allow_oversubscription
-                factory.args.skip_file_discovery = "aspect"
-                factory.args.eval_dataset_id = None
-
-                metadata_backend = MagicMock()
-                init_backend = {
-                    "id": "train",
-                    "config": {},
-                    "dataset_type": "image",
-                    "metadata_backend": metadata_backend,
-                }
-                factory._handle_bucket_operations(
-                    backend={"id": "train", "skip_file_discovery": "aspect"},
-                    init_backend=init_backend,
-                    conditioning_type=None,
-                )
-
-                metadata_backend.split_buckets_between_processes.assert_called_once_with(
-                    gradient_accumulation_steps=factory.args.gradient_accumulation_steps,
-                    apply_padding=expected,
-                )
-
-    def test_bucket_split_follows_eval_dataset_selection(self):
-        """Training datasets are divided between ranks; datasets reserved for validation stay whole."""
-        from simpletuner.helpers.data_backend.factory import FactoryRegistry
-
-        factory = FactoryRegistry(
-            args=self.args,
-            accelerator=self.accelerator,
-            text_encoders=self.text_encoders,
-            tokenizers=self.tokenizers,
-            model=self.model,
-        )
-        factory._handle_config_versioning = MagicMock()
-        factory.args.max_train_steps = 100
-        factory.args.allow_dataset_oversubscription = False
-        factory.args.skip_file_discovery = "aspect"
-
-        cases = (
-            ("no_eval_selection", None, "train", True),
-            ("training_dataset_with_eval_string", "eval", "train", True),
-            ("training_dataset_with_eval_list", ["eval"], "train", True),
-            ("eval_dataset_string", "eval", "eval", False),
-            ("eval_dataset_list", ["eval", "other"], "eval", False),
-            ("training_id_is_substring_of_eval_id", "evaluation", "eval", True),
-        )
-        for name, eval_dataset_id, dataset_id, expect_split in cases:
+        for name, eval_dataset_id, backend, expected in cases:
             with self.subTest(name=name):
                 factory.args.eval_dataset_id = eval_dataset_id
                 metadata_backend = MagicMock()
-                factory._handle_bucket_operations(
-                    backend={"id": dataset_id, "skip_file_discovery": "aspect"},
-                    init_backend={
-                        "id": dataset_id,
-                        "config": {},
-                        "dataset_type": "image",
-                        "metadata_backend": metadata_backend,
-                    },
-                    conditioning_type=None,
+                metadata_backend.aspect_ratio_bucket_indices = {"1.0": ["sample.jpg"]}
+                init_backend = {
+                    "id": backend["id"],
+                    "config": {"train_batch_size": 3},
+                    "dataset_type": backend.get("dataset_type", "image"),
+                    "metadata_backend": metadata_backend,
+                    "data_backend": MagicMock(),
+                }
+                with (
+                    patch("simpletuner.helpers.data_backend.factory.MultiAspectDataset"),
+                    patch("simpletuner.helpers.data_backend.factory.MultiAspectSampler"),
+                    patch("simpletuner.helpers.data_backend.factory.torch.utils.data.DataLoader"),
+                    patch.object(DatasetRuntime, "configure_cursor") as configure_cursor,
+                ):
+                    factory._create_dataset_and_sampler(backend, init_backend, conditioning_type=None)
+                configure_cursor.assert_called_once_with(
+                    accelerator=self.accelerator, batch_size=3, shared_by_all_ranks=expected
                 )
-                self.assertEqual(metadata_backend.split_buckets_between_processes.called, expect_split)
 
-    def test_all_ranks_reload_bucket_geometry_before_split(self):
+    def test_all_ranks_reload_bucket_geometry_after_discovery(self):
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
         from simpletuner.helpers.multiaspect.image import MultiaspectImage
         from simpletuner.helpers.training.state_tracker import StateTracker
@@ -1954,8 +1691,6 @@ class TestFactoryEdgeCases(unittest.TestCase):
         self.accelerator.num_processes = 2
         self.args.skip_file_discovery = ""
         self.args.eval_dataset_id = None
-        self.args.max_train_steps = 100
-        self.args.allow_dataset_oversubscription = False
         self.args.output_dir = self.temp_dir
         self.args.aspect_bucket_alignment = 16
         self.args.aspect_bucket_rounding = 2
@@ -1973,18 +1708,12 @@ class TestFactoryEdgeCases(unittest.TestCase):
         def finish_discovery():
             Path(self.temp_dir, f"aspect_resolution_map-{resolution}.json").write_text(json.dumps({"0.68": expected_size}))
 
-        def check_geometry(**kwargs):
-            target_size, _, aspect = MultiaspectImage.calculate_new_size_by_pixel_area(0.68, resolution, (680, 1000))
-            self.assertEqual(aspect, 0.68)
-            self.assertEqual(target_size, expected_size)
-
         self.accelerator.wait_for_everyone.side_effect = finish_discovery
         for is_main_process in (True, False):
             with self.subTest(is_main_process=is_main_process):
                 self.accelerator.is_main_process = is_main_process
                 self.accelerator.is_local_main_process = is_main_process
                 metadata_backend = MagicMock()
-                metadata_backend.split_buckets_between_processes.side_effect = check_geometry
                 init_backend = {
                     "id": "train",
                     "config": {"resolution": resolution},
@@ -2000,8 +1729,12 @@ class TestFactoryEdgeCases(unittest.TestCase):
                         init_backend=init_backend,
                         conditioning_type=None,
                     )
+                    target_size, _, aspect = MultiaspectImage.calculate_new_size_by_pixel_area(0.68, resolution, (680, 1000))
+                self.assertEqual(aspect, 0.68)
+                self.assertEqual(target_size, expected_size)
                 metadata_backend.reload_cache.assert_called_once_with()
-                metadata_backend.split_buckets_between_processes.assert_called_once()
+                # Only the main process writes the bucket lists back.
+                self.assertEqual(metadata_backend.set_readonly.called, not is_main_process)
 
     @patch("simpletuner.helpers.data_backend.factory.DatasetDuplicator.copy_metadata")
     @patch("simpletuner.helpers.data_backend.factory.StateTracker")

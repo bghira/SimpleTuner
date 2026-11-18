@@ -146,7 +146,6 @@ class BucketReport:
         recommendations: List[str] = []
         discovered = self.stages.get("file_discovery")
         post_refresh = self.bucket_summaries.get("post_refresh")
-        post_split = self.bucket_summaries.get("post_split")
         min_size = self.constraints.get("minimum_image_size")
         resolution_type = self.constraints.get("resolution_type")
 
@@ -160,10 +159,8 @@ class BucketReport:
         if self.skip_counts.get("metadata_missing"):
             recommendations.append("Ensure metadata cache files are accessible and not corrupted.")
         exhausted_by_batch = any(event for event in self.bucket_events if event.reason == "insufficient_for_batch")
-        if exhausted_by_batch and self.constraints.get("effective_batch_size"):
-            recommendations.append(
-                "Reduce 'train_batch_size' or dataset repeats to satisfy the effective batch size requirement."
-            )
+        if exhausted_by_batch:
+            recommendations.append("Reduce 'train_batch_size' or raise dataset repeats so every bucket can fill a batch.")
         if self.skip_counts.get("too_long") and self.constraints.get("max_duration_seconds") is not None:
             recommendations.append(
                 f"Increase 'audio.max_duration_seconds' (currently {self.constraints['max_duration_seconds']}) "
@@ -178,10 +175,6 @@ class BucketReport:
             recommendations.append("Some audio samples failed during processing. Check logs for detailed error messages.")
         if post_refresh and post_refresh["total_samples"] == 0 and not self.skip_counts:
             recommendations.append("Confirm skip filters (caption, quality, or custom filters) leave usable samples.")
-        if post_split and post_split["total_samples"] == 0 and post_refresh and post_refresh["total_samples"] > 0:
-            recommendations.append(
-                "Increase dataset size or decrease effective batch size so each process receives samples."
-            )
 
         return recommendations
 
@@ -200,7 +193,6 @@ class BucketReport:
                 "resolution_type",
                 "minimum_aspect_ratio",
                 "maximum_aspect_ratio",
-                "effective_batch_size",
                 "bucket_strategy",
                 "duration_interval",
                 "max_duration_seconds",
