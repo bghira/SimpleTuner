@@ -170,63 +170,27 @@ def resize_validation_images(validation_images, edge_length):
 
 
 def reset_eval_datasets():
-    eval_datasets = StateTracker.get_datasets("eval")
-    for dataset_name, dataset in eval_datasets.items():
-        if dataset.training_dataset is None or dataset.sampler is None:
-            logger.debug(f"Skipping eval set {dataset_name} because it lacks a sampler or dataset.")
+    for dataset in StateTracker.get_datasets("eval").values():
+        if dataset.training_dataloader is not None:
+            dataset.reset_evaluation()
+
+
+def iter_eval_batches(dataset_name=None):
+    """Traverse each selected evaluation schedule once."""
+    for name, dataset in StateTracker.get_datasets("eval").items():
+        if dataset.training_dataloader is None or (dataset_name is not None and name != dataset_name):
             continue
         try:
-            dataset.sampler._reset_buckets(raise_exhaustion_signal=False)
+            yield from dataset
         except MultiDatasetExhausted:
-            pass
+            continue
 
 
 def retrieve_eval_images(dataset_name=None):
-    """
-    If `dataset_name` is provided, only fetch samples from that specific dataset.
-    Otherwise, we iterate over *all* eval datasets until we find a valid sample.
-
-    Returns:
-        A collated batch from the eval dataset(s), or raises MultiDatasetExhausted.
-    """
-    eval_datasets = StateTracker.get_datasets("eval")
-    output = {}
-    from simpletuner.helpers.training.collate import collate_fn
-
-    new_sample = None
-    # We loop until we successfully retrieve one collated batch or exhaust the data.
-    while new_sample is None:
-        # Decide which dataset(s) to pull from
-        if dataset_name is not None:
-            # Only attempt to pull from the requested dataset
-            dataset_keys = [dataset_name]
-        else:
-            # Fallback: iterate over *all* eval datasets
-            dataset_keys = list(eval_datasets.keys())
-
-        for ds_name in dataset_keys:
-            dataset = eval_datasets.get(ds_name)
-            if dataset is None or dataset.training_dataset is None or dataset.sampler is None:
-                logger.debug(f"Skipping eval set {ds_name} because it lacks a dataloader.")
-                continue
-            try:
-                new_sample = next(iter(dataset.sampler))
-                data_loaded = dataset.training_dataset[new_sample]
-                if data_loaded:
-                    output = collate_fn([data_loaded], dataset=dataset)
-                # Indicate that we've found a batch and can break out of the loop
-                new_sample = False
-                break
-
-            except MultiDatasetExhausted as e:
-                logger.debug(f"Ran out of evaluation samples for dataset {ds_name}. Resetting buckets.")
-                dataset.sampler._reset_buckets(raise_exhaustion_signal=False)
-                # We re-raise if we've exhausted this dataset. If `dataset_name` is set,
-                # we effectively stop; if it's None, we move to the next dataset.
-                if dataset_name is not None:
-                    raise e
-
-    return output
+    try:
+        return next(iter_eval_batches(dataset_name))
+    except StopIteration as exc:
+        raise MultiDatasetExhausted() from exc
 
 
 def _coerce_validation_image_input(image_data):
@@ -5435,8 +5399,10 @@ class Evaluation:
         eval_datasets = StateTracker.get_datasets("eval")
         if dataset_name is not None:
             ds = eval_datasets.get(dataset_name)
-            return len(ds.sampler) if ds and ds.sampler is not None else 0
-        return sum(len(dataset.sampler) for dataset in eval_datasets.values() if dataset.sampler is not None)
+            return ds.training_batch_count() if ds and ds.training_dataloader is not None else 0
+        return sum(
+            dataset.training_batch_count() for dataset in eval_datasets.values() if dataset.training_dataloader is not None
+        )
 
     def get_timestep_schedule(self, noise_scheduler, latents: torch.Tensor | None = None):
         accept_mu = "mu" in set(inspect.signature(noise_scheduler.set_timesteps).parameters.keys())
@@ -5501,6 +5467,7 @@ class Evaluation:
         last_latent_hw = None
         logger.debug("Evaluation timesteps will be initialized after the first batch to account for dynamic shifts.")
 
+        eval_batches = iter_eval_batches(dataset_name)
         while eval_batch is not False and evaluated_sample_count < total_batches:
             try:
                 evaluated_sample_count += 1
@@ -5508,9 +5475,9 @@ class Evaluation:
                     reset_eval_datasets()
                     raise MultiDatasetExhausted("Max eval samples reached, resetting evaluations.")
                 # Pass the dataset_name so we fetch from the correct place
-                eval_batch = retrieve_eval_images(dataset_name=dataset_name)
+                eval_batch = next(eval_batches)
 
-            except MultiDatasetExhausted:
+            except (StopIteration, MultiDatasetExhausted):
                 logger.info(f"Evaluation loss calculation completed for dataset: {dataset_name}")
                 eval_batch = False
 

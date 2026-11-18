@@ -443,7 +443,7 @@ class EvaluationTimestepOverrideTests(unittest.TestCase):
         with (
             patch.object(self.evaluator, "total_eval_batches", return_value=1),
             patch.object(self.evaluator, "get_timestep_schedule", return_value=[250.0]),
-            patch("simpletuner.helpers.training.validation.retrieve_eval_images", return_value={"sample": 1}),
+            patch("simpletuner.helpers.training.validation.iter_eval_batches", return_value=iter([{"sample": 1}])),
             patch("simpletuner.helpers.training.validation.reset_eval_datasets"),
         ):
             accumulated = self.evaluator._evaluate_dataset_pass(

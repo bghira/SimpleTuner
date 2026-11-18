@@ -225,6 +225,16 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             self.training_cursor.close()
             self.training_cursor = None
 
+    def reset_evaluation(self):
+        if self.epoch_provider is None:
+            self._reset_buckets(raise_exhaustion_signal=False)
+            return
+        if self.training_cursor is not None:
+            self.training_cursor.close()
+            self.training_cursor = None
+        self.current_epoch = 1
+        self.consumed_state = None
+
     def acknowledge_batch(self, continuation):
         if self.tracks_consumed_batches:
             self._legacy_progress.acknowledge(continuation)

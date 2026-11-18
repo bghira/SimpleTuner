@@ -5,13 +5,16 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from PIL import Image
+from torch.utils.data import DataLoader
 
 from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.validation import (
     Evaluation,
     _validation_input_is_configured,
     _validation_reference_prompt_metadata,
+    iter_eval_batches,
     reset_eval_datasets,
     retrieve_eval_images,
     retrieve_validation_edit_images,
@@ -56,14 +59,30 @@ class EvalDatasetSelectionTests(unittest.TestCase):
         sampler.__len__.return_value = 1
         dataset = self._register("held-out", sampler=sampler, config={"dataset_type": "eval"})
         dataset.training_dataset = [{"loaded": True}]
+        collate = MagicMock(return_value={"prepared": True})
+        dataset.training_dataloader = DataLoader(dataset.training_dataset, sampler=sampler, collate_fn=collate)
         self._register("training")
-        with patch("simpletuner.helpers.training.collate.collate_fn", return_value={"prepared": True}) as collate:
-            result = retrieve_eval_images("held-out")
+        result = retrieve_eval_images("held-out")
         self.assertEqual(result, {"prepared": True})
-        collate.assert_called_once_with([{"loaded": True}], dataset=dataset)
+        collate.assert_called_once_with([{"loaded": True}])
         self.assertEqual(Evaluation.total_eval_batches(None), 1)
         reset_eval_datasets()
-        sampler._reset_buckets.assert_called_once_with(raise_exhaustion_signal=False)
+        sampler.reset_evaluation.assert_called_once_with()
+
+    def test_empty_or_exhausted_evaluation_pass_ends_without_restarting_a_dataset(self):
+        with self.assertRaises(MultiDatasetExhausted):
+            retrieve_eval_images()
+
+        class OneBatch:
+            def __iter__(self):
+                yield {"batch": 1}
+                raise MultiDatasetExhausted()
+
+        exhausted = self._register("exhausted", config={"dataset_type": "eval"})
+        exhausted.training_dataloader = OneBatch()
+        other = self._register("other", config={"dataset_type": "eval"})
+        other.training_dataloader = [{"batch": 2}]
+        self.assertEqual(list(iter_eval_batches()), [{"batch": 1}, {"batch": 2}])
 
     def test_s2v_validation_resolves_audio_from_the_registered_binding(self):
         model = self._build_base_model_mock()

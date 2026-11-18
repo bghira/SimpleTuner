@@ -3373,7 +3373,7 @@ class FactoryRegistry:
             conditioning_type=conditioning_type,
             is_regularisation_data=is_regularisation_data,
             source_dataset_id=init_backend["config"].get("source_dataset_id", None),
-            track_consumed=True,
+            track_consumed=dataset_type is not DatasetType.EVAL,
         )
         init_backend["dataset_runtime"].sampler = init_backend["sampler"]
         init_backend["dataset_runtime"].training_dataset = init_backend["train_dataset"]

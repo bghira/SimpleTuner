@@ -77,6 +77,9 @@ class DatasetRuntime:
         """Count the per-rank batches scheduled by the training dataloader."""
         return len(self.training_dataloader)
 
+    def reset_evaluation(self):
+        self.sampler.reset_evaluation()
+
     def acknowledge_batch(self, continuation):
         """Commit the provider's continuation for a consumed training batch."""
         self.sampler.acknowledge_batch(continuation)

@@ -1043,7 +1043,9 @@ class TestWebshartParquetBackend(unittest.TestCase):
             self.assertEqual(first_preview[0][:3], same_preview[0][:3])
             self.assertEqual(first_preview[0][3].tobytes(), same_preview[0][3].tobytes())
             self.assertEqual(sampler.training_cursor.state_dict(), training_state)
-            sampler.training_cursor.close()
+            sampler.reset_evaluation()
+            self.assertEqual(next(iter(sampler))[0], first)
+            sampler.reset_evaluation()
             metadata.reload_cache()
             with metadata.open_preparation_view(worker=1, workers=2) as view:
                 refs = list(view)
