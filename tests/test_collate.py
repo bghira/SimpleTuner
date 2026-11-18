@@ -9,6 +9,7 @@ import torch
 from PIL import Image
 
 import tests.test_stubs  # noqa: F401
+from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 from simpletuner.helpers.training.collate import (
     check_latent_shapes,
     collate_fn,
@@ -130,12 +131,28 @@ class CollateFunctionTests(unittest.TestCase):
     def _patch_state_tracker(self, *, model, data_backend, text_outputs, backend_lookup=None):
         backend_lookup = backend_lookup or {}
 
-        def _get_backend(backend_id):
-            if backend_id in backend_lookup:
-                return backend_lookup[backend_id]
-            return data_backend
+        def make_runtime(dataset_id, entry):
+            config = entry.get("config", {})
+            runtime = DatasetRuntime(
+                dataset_id,
+                entry.get("data_backend"),
+                SimpleNamespace(instance_data_dir=config.get("instance_data_dir")),
+                config,
+            )
+            runtime.text_embed_cache = entry.get("text_embed_cache")
+            runtime.vae_cache = entry.get("vaecache")
+            runtime.conditioning_image_embed_cache = entry.get("conditioning_image_embed_cache")
+            return runtime
 
-        backend_patcher = patch.object(StateTracker, "get_data_backend", side_effect=_get_backend)
+        def _get_dataset(dataset_id):
+            entry = backend_lookup.get(dataset_id, data_backend)
+            runtime = make_runtime(dataset_id, entry)
+            runtime.conditioning_datasets = tuple(
+                make_runtime(link["id"], backend_lookup.get(link["id"], link)) for link in entry.get("conditioning_data", ())
+            )
+            return runtime
+
+        backend_patcher = patch.object(StateTracker, "get_dataset", side_effect=_get_dataset)
         config_patcher = patch.object(
             StateTracker,
             "get_data_backend_config",

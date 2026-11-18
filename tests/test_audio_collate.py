@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 
 import torch
 
+from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 from simpletuner.helpers.training.collate import check_latent_shapes, collate_fn
 
 
@@ -34,10 +35,8 @@ class TestAudioCollate(unittest.TestCase):
         self.mock_model.requires_conditioning_latents.return_value = False
         self.mock_state_tracker.get_model.return_value = self.mock_model
 
-        # Mock Data Backend
-        self.mock_backend = MagicMock()
-        self.mock_backend.get.side_effect = {"config": {"instance_data_dir": "/tmp"}}.get
-        self.mock_state_tracker.get_data_backend.return_value = self.mock_backend
+        self.dataset = DatasetRuntime("b1", None, None, {"instance_data_dir": "/tmp"})
+        self.mock_state_tracker.get_dataset.return_value = self.dataset
 
         # Mock Text Embed Cache
         self.mock_text_cache = MagicMock()
@@ -46,7 +45,7 @@ class TestAudioCollate(unittest.TestCase):
         self.mock_text_cache.read_training_batch.side_effect = lambda records, device=None: [
             {"prompt_embeds": torch.randn(1, 10, 32), "attention_masks": torch.ones(1, 10)} for _ in records
         ]
-        self.mock_backend.__getitem__.return_value = self.mock_text_cache  # backend['text_embed_cache']
+        self.dataset.text_embed_cache = self.mock_text_cache
 
     def tearDown(self):
         self.mock_state_tracker_patcher.stop()
@@ -77,13 +76,7 @@ class TestAudioCollate(unittest.TestCase):
         self.assertEqual(result["latent_batch"].shape, (2, *latent_shape))
 
     def test_collate_uses_normalized_audio_only_mode(self):
-        self.mock_backend.get.side_effect = lambda key, default=None: {
-            "config": {
-                "dataset_type": "audio",
-                "instance_data_dir": "/tmp",
-                "audio": {"audio_only": True},
-            }
-        }.get(key, default)
+        self.dataset.config.update(dataset_type="audio", audio={"audio_only": True})
         batch = [
             {
                 "training_samples": [
