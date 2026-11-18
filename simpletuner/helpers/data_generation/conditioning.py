@@ -373,16 +373,13 @@ class DataGenerator:
     def discover_all_files(self) -> List[str]:
         """find unprocessed source files and build path mappings"""
         from simpletuner.helpers.training import image_file_extensions
-        from simpletuner.helpers.training.state_tracker import StateTracker
 
-        source_files = StateTracker.get_image_files(
-            data_backend_id=self.source_backend["id"]
-        ) or StateTracker.set_image_files(
+        inventory = self.source_data_backend.source_files
+        source_files = inventory.read() or inventory.publish(
             self.source_data_backend.list_files(
                 instance_data_dir=self.source_instance_dir,
                 file_extensions=image_file_extensions,
-            ),
-            data_backend_id=self.source_backend["id"],
+            )
         )
         target_files = self.target_data_backend.list_files(
             instance_data_dir=self.target_instance_dir,

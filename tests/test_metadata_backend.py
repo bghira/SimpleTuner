@@ -14,6 +14,7 @@ from PIL import Image
 
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.data_backend.filters import build_dataset_filter
+from simpletuner.helpers.data_backend.source_inventory import SourceFileInventory
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend
 from simpletuner.helpers.metadata.backends.huggingface import HuggingfaceMetadataBackend
@@ -138,50 +139,23 @@ class TestMetadataBackend(unittest.TestCase):
         self.data_backend.read.assert_called_once_with("image.png")
 
     def test_discover_new_files(self):
-        # Assuming that StateTracker.get_image_files returns known files
-        # and list_files should return both known and potentially new files
-        with (
-            patch(
-                "simpletuner.helpers.training.state_tracker.StateTracker.get_image_files",
-                return_value=["image1.jpg", "image2.png", "image3.jpg", "image4.png"],
-            ),
-            patch(
-                "simpletuner.helpers.training.state_tracker.StateTracker.set_image_files",
-                return_value=None,
-            ),
-            patch.object(
-                self.data_backend,
-                "list_files",
-                return_value=["image1.jpg", "image2.png", "image3.jpg", "image4.png"],
-            ),
-        ):
-
-            self.metadata_backend.aspect_ratio_bucket_indices = {"1.0": ["image1.jpg", "image2.png"]}
-            new_files = self.metadata_backend._discover_new_files(for_metadata=False)
-            # Assuming the method's logic excludes files known (["image1.jpg", "image2.png"])
-            # The expectation is that only ["image3.jpg", "image4.png"] are returned as new
-            self.assertEqual(sorted(new_files), sorted(["image3.jpg", "image4.png"]))
+        self.data_backend.source_files.publish([("", [], ["image1.jpg", "image2.png", "image3.jpg", "image4.png"])])
+        self.metadata_backend.aspect_ratio_bucket_indices = {"1.0": ["image1.jpg", "image2.png"]}
+        self.assertEqual(sorted(self.metadata_backend._discover_new_files()), ["image3.jpg", "image4.png"])
+        self.data_backend.list_files.assert_not_called()
 
     def test_discover_new_files_applies_path_filter(self):
         self.metadata_backend.dataset_filter = build_dataset_filter(
             {"filter_func": {"path": {"include": ["keep"], "exclude": ["blocked"]}}}
         )
-        with (
-            patch(
-                "simpletuner.helpers.training.state_tracker.StateTracker.get_image_files",
-                return_value=["keep/image1.jpg", "drop/image2.png", "keep/blocked.png", "keep/image3.jpg"],
-            ),
-            patch.object(
-                self.data_backend,
-                "list_files",
-                return_value=["keep/image1.jpg", "drop/image2.png", "keep/blocked.png", "keep/image3.jpg"],
-            ),
-        ):
-            self.metadata_backend.aspect_ratio_bucket_indices = {}
+        paths = ["keep/image1.jpg", "drop/image2.png", "keep/blocked.png", "keep/image3.jpg"]
+        self.data_backend.list_files.return_value = [("", [], paths)]
+        self.metadata_backend.aspect_ratio_bucket_indices = {}
 
-            new_files = self.metadata_backend._discover_new_files(for_metadata=False)
+        new_files = self.metadata_backend._discover_new_files(for_metadata=False)
 
-        self.assertEqual(sorted(new_files), sorted(["keep/image1.jpg", "keep/image3.jpg"]))
+        self.assertEqual(sorted(new_files), ["keep/image1.jpg", "keep/image3.jpg"])
+        self.assertEqual(list(self.data_backend.source_files.read()), paths)
 
     def test_load_cache_valid(self):
         valid_cache_data = {
@@ -1069,20 +1043,33 @@ class TestFilteringStatistics(unittest.TestCase):
         self.assertIsNone(self.metadata_backend.filtering_statistics)
 
 
-class TestStateTrackerDiskCache(unittest.TestCase):
-    def test_set_image_files_creates_missing_output_dir(self):
+class TestSourceFileInventory(unittest.TestCase):
+    def test_source_inventory_persists_legacy_files_and_isolates_other_bindings(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            output_dir = Path(temp_dir) / "output" / "scan"
-            StateTracker.set_args(SimpleNamespace(output_dir=str(output_dir)))
-            StateTracker.all_image_files = {}
+            root = Path(temp_dir)
+            path = root / "output" / "scan" / "all_image_files_subject-1024.json"
+            report = Mock()
+            inventory = SourceFileInventory(path, report)
+            other = SourceFileInventory(root / "other" / path.name)
+            reader = SourceFileInventory(path)
+            self.assertIsNone(reader.read())
+            self.assertIsNone(other.read())
 
-            result = StateTracker.set_image_files(
-                [("subdir", [], ["image_a.png", "image_b.png"])],
-                data_backend_id="subject-1024",
+            result = inventory.publish(
+                [("one", [], ["image_a.png", "image_b.png"]), ("two", [], ["image_a.png", "image_c.png"])]
             )
 
-            self.assertEqual(result, {"image_a.png": False, "image_b.png": False})
-            self.assertTrue((output_dir / "all_image_files_subject-1024.json").exists())
+            self.assertEqual(list(result), ["image_a.png", "image_b.png", "image_c.png"])
+            self.assertEqual(result, json.loads(path.read_text()))
+            self.assertEqual(reader.read(), result)
+            self.assertIsNone(other.read())
+            report.record_stage.assert_called_once_with("file_discovery", sample_count=3, directories=2)
+
+    def test_empty_inventory_roundtrips_as_present(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "all_image_files_test.json"
+            SourceFileInventory(path).publish([])
+            self.assertEqual(SourceFileInventory(path).read(), {})
 
 
 if __name__ == "__main__":

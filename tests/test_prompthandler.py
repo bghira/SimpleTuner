@@ -132,10 +132,10 @@ class TestPromptHandler(unittest.TestCase):
         self.assertEqual(result_caption, "a photo of a cat")
         self.assertEqual([result_caption], PromptHandler._normalize_caption_payload(result_caption))
 
-    @patch("simpletuner.helpers.prompts.StateTracker.get_image_files", return_value=["image.png"])
     @patch("simpletuner.helpers.prompts.StateTracker.get_data_backend", return_value={})
     @patch("simpletuner.helpers.prompts.StateTracker.get_data_backend_config", return_value={})
     def test_textfile_training_captions_match_precache(self, *_):
+        self.data_backend.source_files.read.return_value = ["image.png"]
         cases = (
             (" woven into a rug, the symbol 囍 appears. ", False, False, "woven into a rug, the symbol 囍 appears."),
             (b"  caption \r\n", False, False, ["caption"]),

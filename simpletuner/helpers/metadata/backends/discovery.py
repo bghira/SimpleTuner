@@ -265,7 +265,8 @@ class DiscoveryMetadataBackend(MetadataBackend):
         Returns:
             list: A list of new files.
         """
-        all_image_files = StateTracker.get_image_files(data_backend_id=self.data_backend.id)
+        inventory = self.data_backend.source_files
+        all_image_files = inventory.read()
         if all_image_files is None:
             logger.debug("No image file cache available, retrieving fresh")
             if self.dataset_type is DatasetType.AUDIO:
@@ -280,7 +281,7 @@ class DiscoveryMetadataBackend(MetadataBackend):
                 instance_data_dir=self.instance_data_dir,
                 file_extensions=extension_pool,
             )
-            all_image_files = StateTracker.set_image_files(all_image_files, data_backend_id=self.data_backend.id)
+            all_image_files = inventory.publish(all_image_files)
         else:
             logger.debug("Using cached image file list")
 

@@ -903,12 +903,12 @@ class VAECache(WebhookMixin):
             extension_pool = video_file_extensions
         else:
             extension_pool = image_file_extensions
-        all_image_files = StateTracker.get_image_files(data_backend_id=self.id) or StateTracker.set_image_files(
+        inventory = self.image_data_backend.source_files
+        all_image_files = inventory.read() or inventory.publish(
             self.image_data_backend.list_files(
                 instance_data_dir=self.instance_data_dir,
                 file_extensions=extension_pool,
-            ),
-            data_backend_id=self.id,
+            )
         )
         logger.debug(f"Checking {self.cache_dir=}")
         if not self._read_artifact_files():
@@ -1006,7 +1006,7 @@ class VAECache(WebhookMixin):
         return results
 
     def discover_unprocessed_files(self):
-        all_image_files = set(StateTracker.get_image_files(data_backend_id=self.id))
+        all_image_files = self.image_data_backend.source_files.read()
         existing_cache_files = self._read_artifact_files()
         already_cached_images = []
         for cache_file in existing_cache_files:

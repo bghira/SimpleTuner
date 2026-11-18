@@ -1040,7 +1040,7 @@ class MetadataBackend:
         """discover new files and clean up missing ones"""
         self.compute_aspect_ratio_bucket_indices()
         logger.debug(f"Refreshing buckets for rank {rank} via data_backend id {self.id}.")
-        existing_files = StateTracker.get_image_files(data_backend_id=self.id)
+        existing_files = self.data_backend.source_files.read()
 
         if not StateTracker.get_args().ignore_missing_files:
             self.update_buckets_with_existing_files(existing_files)

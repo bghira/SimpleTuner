@@ -666,7 +666,7 @@ class PromptHandler:
             for bucket in sorted(bucket_indices.keys(), key=str):
                 all_image_files.extend(bucket_indices[bucket])
         else:
-            all_image_files = StateTracker.get_image_files(data_backend_id=data_backend.id) or data_backend.list_files(
+            all_image_files = data_backend.source_files.read() or data_backend.list_files(
                 instance_data_dir=instance_data_dir, file_extensions=image_file_extensions
             )
         if isinstance(all_image_files, list) and len(all_image_files) > 0 and isinstance(all_image_files[0], tuple):

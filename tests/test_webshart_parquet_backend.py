@@ -207,7 +207,6 @@ class TestWebshartParquetBackend(unittest.TestCase):
             patch.object(StateTracker, "get_data_backend_config", return_value=config),
             patch.object(StateTracker, "get_args", return_value=args),
             patch.object(StateTracker, "get_model", return_value=None),
-            patch.object(StateTracker, "set_image_files"),
         ):
             metadata = WebshartMetadataBackend(
                 id=self.backend.id,
@@ -915,7 +914,7 @@ class TestWebshartParquetBackend(unittest.TestCase):
             patch.object(StateTracker, "get_args", return_value=args),
             patch.object(StateTracker, "get_model", return_value=None),
             patch.object(StateTracker, "get_s2v_datasets", return_value=[]),
-            patch.object(StateTracker, "set_image_files", side_effect=AssertionError("corpus inventory")),
+            patch.object(self.backend.source_files, "publish", side_effect=AssertionError("corpus inventory")),
             patch.object(self.backend, "read", side_effect=AssertionError("whole geometry or membership read")),
         ):
             metadata = WebshartMetadataBackend(
@@ -1113,7 +1112,6 @@ class TestWebshartParquetBackend(unittest.TestCase):
             patch.object(StateTracker, "get_data_backend_config", return_value=config),
             patch.object(StateTracker, "get_args", return_value=args),
             patch.object(StateTracker, "get_model", return_value=None),
-            patch.object(StateTracker, "set_image_files"),
             patch.object(self.backend.loader, "load_sample", side_effect=AssertionError("unexpected payload read")),
         ):
             metadata = WebshartMetadataBackend(

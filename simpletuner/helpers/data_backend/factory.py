@@ -2949,6 +2949,7 @@ class FactoryRegistry:
             self.args,
             instance_data_dir=init_backend["instance_data_dir"],
             cache_root=metadata_cache_root,
+            bucket_report=init_backend.get("bucket_report"),
         )
         if backend.get("metadata_backend") == "filesystem":
             backend["metadata_backend"] = "discovery"
@@ -3800,10 +3801,8 @@ class FactoryRegistry:
                     return
             if self._is_multi_process():
                 self.accelerator.wait_for_everyone()
-        all_image_files = StateTracker.get_image_files(
-            data_backend_id=init_backend["id"],
-            retry_limit=3,  # some filesystems maybe take longer to make it available.
-        )
+        inventory = init_backend["data_backend"].source_files
+        all_image_files = inventory.read(retry_limit=3)
         if all_image_files is None:
             from simpletuner.helpers.training import image_file_extensions
 
@@ -3818,7 +3817,7 @@ class FactoryRegistry:
                     f"(id={init_backend['id']}) Skipping VAE cache file discovery because data directory was not found: {init_backend.get('instance_data_dir')}"
                 )
                 return
-            all_image_files = StateTracker.set_image_files(all_image_files, data_backend_id=init_backend["id"])
+            all_image_files = inventory.publish(all_image_files)
 
         init_backend["vaecache"].build_vae_cache_filename_map(all_image_files=all_image_files)
 

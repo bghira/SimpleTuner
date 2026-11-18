@@ -327,7 +327,6 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 ):
                     mock_state_tracker.get_vae.return_value = MagicMock()
                     mock_state_tracker.get_webhook_handler.return_value = None
-                    mock_state_tracker.get_image_files.return_value = {}
 
                     mock_vae_instance = MagicMock()
                     mock_vae_instance.vae_cache_ondemand = True
@@ -354,7 +353,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 self.assertTrue(init_backend["config"]["vae_cache_ondemand"])
                 mock_vae_instance.discover_all_files.assert_not_called()
                 mock_vae_instance.build_vae_cache_filename_map.assert_not_called()
-                mock_state_tracker.get_image_files.assert_not_called()
+                init_backend["data_backend"].source_files.read.assert_not_called()
 
     def test_ondemand_text_embed_backend_skips_dataset_precomputation(self):
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
@@ -1391,8 +1390,6 @@ class TestFactoryEdgeCases(unittest.TestCase):
 
         # Additional mocks for complete configuration
         mock_state_tracker.get_vae.return_value = MagicMock()
-        mock_state_tracker.get_image_files.return_value = ["image1.jpg", "image2.jpg"]
-        mock_state_tracker.set_image_files.return_value = ["image1.jpg", "image2.jpg"]
         mock_state_tracker.get_conditioning_mappings.return_value = []
         mock_state_tracker.delete_cache_files.return_value = None
         mock_state_tracker.load_aspect_resolution_map.return_value = None
@@ -2540,7 +2537,7 @@ class TestEvalDatasetVAECacheMetadata(TestFactoryEdgeCases):
             instance_data_dir=data_dir,
             file_extensions=image_file_extensions,
         )
-        StateTracker.set_image_files(all_files, data_backend_id="eval-test")
+        data_backend.source_files.publish(all_files)
 
         metadata_backend = DiscoveryMetadataBackend(
             id="eval-test",
@@ -2634,7 +2631,7 @@ class TestEvalDatasetVAECacheMetadata(TestFactoryEdgeCases):
             instance_data_dir=data_dir,
             file_extensions=image_file_extensions,
         )
-        StateTracker.set_image_files(all_files, data_backend_id="eval-test")
+        data_backend.source_files.publish(all_files)
 
         # --- MAIN PROCESS: refresh_buckets writes metadata to disk ---
         main_metadata_backend = DiscoveryMetadataBackend(
@@ -2758,7 +2755,7 @@ class TestEvalDatasetVAECacheMetadata(TestFactoryEdgeCases):
             instance_data_dir=data_dir,
             file_extensions=image_file_extensions,
         )
-        StateTracker.set_image_files(all_files, data_backend_id="eval-test")
+        data_backend.source_files.publish(all_files)
 
         metadata_backend = DiscoveryMetadataBackend(
             id="eval-test",

@@ -136,7 +136,6 @@ class TestImageEmbedCache(unittest.TestCase):
         self._old_args = getattr(StateTracker, "args", None)
         StateTracker.set_args(SimpleNamespace(output_dir=self.tempdir.name))
 
-        self._old_image_files = StateTracker.all_image_files.copy()
         self._old_data_backends = StateTracker.data_backends.copy()
 
     def tearDown(self):
@@ -144,7 +143,6 @@ class TestImageEmbedCache(unittest.TestCase):
             StateTracker.set_args(self._old_args)
         else:
             StateTracker.set_args(None)
-        StateTracker.all_image_files = self._old_image_files
         StateTracker.data_backends = self._old_data_backends
         self.tempdir.cleanup()
 

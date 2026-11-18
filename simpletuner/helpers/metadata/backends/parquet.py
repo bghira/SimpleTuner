@@ -264,7 +264,8 @@ class ParquetMetadataBackend(MetadataBackend):
         return self.caption_cache.get(str(index), None)
 
     def _discover_new_files(self, for_metadata: bool = False, ignore_existing_cache: bool = False):
-        all_image_files = StateTracker.get_image_files(data_backend_id=self.data_backend.id)
+        inventory = self.data_backend.source_files
+        all_image_files = inventory.read()
         if all_image_files is None:
             extension_pool = audio_file_extensions if self.dataset_type is DatasetType.AUDIO else image_file_extensions
             all_image_files = self.data_backend.list_files(
@@ -274,7 +275,7 @@ class ParquetMetadataBackend(MetadataBackend):
             # Flatten nested lists
             if any(isinstance(i, list) for i in all_image_files):
                 all_image_files = [item for sublist in all_image_files for item in sublist]
-            all_image_files = StateTracker.set_image_files(all_image_files, data_backend_id=self.data_backend.id)
+            all_image_files = inventory.publish(all_image_files)
         else:
             # flatten if necessary
             if any(isinstance(i, list) for i in all_image_files):

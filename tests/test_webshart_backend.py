@@ -786,7 +786,6 @@ class TestWebshartCaptionKeyIntegration(unittest.TestCase):
 
         with (
             patch.object(StateTracker, "get_data_backend_config", return_value={"caption_strategy": "webshart"}),
-            patch.object(StateTracker, "set_image_files"),
             patch.object(StateTracker, "set_data_backend_config"),
         ):
             main = self._metadata_backend(self._backend("short"))
@@ -816,7 +815,6 @@ class TestWebshartCaptionKeyIntegration(unittest.TestCase):
 
         with (
             patch.object(StateTracker, "get_data_backend_config", return_value={"caption_strategy": "webshart"}),
-            patch.object(StateTracker, "set_image_files"),
             patch.object(StateTracker, "set_data_backend_config"),
         ):
             backend = self._backend("short")

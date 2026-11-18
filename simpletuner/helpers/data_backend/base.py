@@ -2,9 +2,13 @@ import gzip
 from abc import ABC, abstractmethod
 from collections import defaultdict, deque
 from contextlib import closing
+from functools import cached_property
 from io import BytesIO
+from pathlib import Path
 
 import torch
+
+from simpletuner.helpers.data_backend.source_inventory import SourceFileInventory
 
 
 def ordered_sample_payloads(dataset_id, refs, returned):
@@ -22,6 +26,14 @@ def ordered_sample_payloads(dataset_id, refs, returned):
 class BaseDataBackend(ABC):
     # A sharded provider can choose a canonical number of source shards per prepared partition.
     prepared_partition_shards = None
+
+    @cached_property
+    def source_files(self):
+        return SourceFileInventory()
+
+    def bind_source_inventory(self, output_dir, bucket_report=None):
+        path = Path(output_dir) / f"all_image_files_{self.id}.json" if output_dir is not None else None
+        self.source_files = SourceFileInventory(path, bucket_report)
 
     def count_source_rows(self, *, exclude_null_images=False):
         """Return the exact source row count when the provider supports it."""

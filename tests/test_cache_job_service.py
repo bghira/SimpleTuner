@@ -421,7 +421,6 @@ class TestStreamingTextPreparation(unittest.TestCase):
 
     def test_job_streams_accepted_samples_without_inventory_discovery(self):
         from simpletuner.helpers.models.common import TextEmbedCacheKey
-        from simpletuner.helpers.training.state_tracker import StateTracker
 
         service = CacheJobService(broadcast_fn=MagicMock())
         metadata = _LegacyPreparationMetadata(
@@ -429,7 +428,9 @@ class TestStreamingTextPreparation(unittest.TestCase):
             read_cache=lambda: {"1.0": ["accepted.jpg", "also-accepted.jpg"]},
             get_metadata_by_filepath=lambda ref: {},
         )
-        data_backend = SimpleNamespace(id="stream-test")
+        inventory = MagicMock()
+        inventory.read.side_effect = AssertionError("source file inventory")
+        data_backend = SimpleNamespace(id="stream-test", source_files=inventory)
         model = SimpleNamespace(
             text_encoders=[],
             tokenizers=[],
@@ -466,7 +467,6 @@ class TestStreamingTextPreparation(unittest.TestCase):
                 patch.object(service, "_cleanup_gpu"),
                 patch("simpletuner.helpers.caching.text_embeds.TextEmbeddingCache", return_value=cache),
                 patch("simpletuner.helpers.data_backend.factory.move_text_encoders"),
-                patch.object(StateTracker, "get_image_files", side_effect=AssertionError("global inventory")),
             ):
                 service._execute_text_embed_cache(job, config, {"model_family": "test"})
         self.assertEqual([record["prompt"] for record in captured], ["accepted", "also-accepted"])

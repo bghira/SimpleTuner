@@ -45,9 +45,6 @@ class StateTracker:
     epoch_micro_step = 0
     epoch = 1
 
-    ## Caches
-    all_image_files = {}
-
     ## Backend entities for retrieval
     default_text_embed_cache = None
     _dataset_resources = ExitStack()
@@ -111,6 +108,9 @@ class StateTracker:
             if data_backend_id:
                 data_backend_id_suffix = f"_{data_backend_id}"
             cache_path = Path(cls.args.output_dir) / f"{cache_name}{data_backend_id_suffix}.json"
+            if cache_name == "all_image_files":
+                cache_path.unlink(missing_ok=True)
+                continue
             if not cache_path.exists():
                 continue
 
@@ -206,51 +206,6 @@ class StateTracker:
         if set_value is not None:
             cls._is_sdxl_refiner = set_value
         return cls._is_sdxl_refiner
-
-    @classmethod
-    def set_image_files(cls, raw_file_list: list, data_backend_id: str):
-        if data_backend_id not in cls.all_image_files or cls.all_image_files[data_backend_id] is None:
-            cls.all_image_files[data_backend_id] = {}
-        else:
-            cls.all_image_files[data_backend_id].clear()
-        for subdirectory_list in raw_file_list:
-            _, _, files = subdirectory_list
-            for image in files:
-                cls.all_image_files[data_backend_id][image] = False
-        cls._save_to_disk(
-            "all_image_files_{}".format(data_backend_id),
-            cls.all_image_files[data_backend_id],
-        )
-        logger.debug(f"set_image_files found {len(cls.all_image_files[data_backend_id])} samples.")
-        bucket_report = cls.data_backends.get(data_backend_id, {}).get("bucket_report")
-        if bucket_report:
-            bucket_report.record_stage(
-                "file_discovery",
-                sample_count=len(cls.all_image_files[data_backend_id]),
-                directories=len(raw_file_list),
-            )
-        return cls.all_image_files[data_backend_id]
-
-    @classmethod
-    def get_image_files(cls, data_backend_id: str, retry_limit: int = 0):
-        if data_backend_id in cls.all_image_files and cls.all_image_files[data_backend_id] is None:
-            # we should probaby try to reload it from disk if it failed earlier.
-            logger.debug(
-                f"(rank={os.environ.get('RANK')}) Clearing out invalid pre-loaded cache entry for {data_backend_id}"
-            )
-            del cls.all_image_files[data_backend_id]
-        if data_backend_id not in cls.all_image_files:
-            logger.debug(f"(rank={os.environ.get('RANK')}) Attempting to load from disk: {data_backend_id}")
-            cls.all_image_files[data_backend_id] = cls._load_from_disk(
-                "all_image_files_{}".format(data_backend_id), retry_limit=retry_limit
-            )
-            logger.debug(
-                f"(rank={os.environ.get('RANK')}) Completed load from disk: {data_backend_id}: {type(cls.all_image_files[data_backend_id])}"
-            )
-        logger.debug(
-            f"(rank={os.environ.get('RANK')}) Returning {type(cls.all_image_files[data_backend_id])} for {data_backend_id}"
-        )
-        return cls.all_image_files[data_backend_id]
 
     @classmethod
     def get_global_resume_step(cls):

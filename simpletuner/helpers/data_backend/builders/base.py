@@ -27,7 +27,16 @@ logger = logging.getLogger("BaseBackendBuilder")
 
 
 def create_metadata_provider(
-    dataset_id, backend_dict, data_backend, accelerator, args, *, instance_data_dir, cache_root, preparation_only=False
+    dataset_id,
+    backend_dict,
+    data_backend,
+    accelerator,
+    args,
+    *,
+    instance_data_dir,
+    cache_root,
+    preparation_only=False,
+    bucket_report=None,
 ):
     """Construct the resolved metadata provider for a trainer or standalone dataset job."""
     metadata_backend_args = {}
@@ -87,6 +96,10 @@ def create_metadata_provider(
         metadata_backend_args["preparation_only"] = preparation_only
     else:
         raise ValueError(f"Unknown metadata backend type: {metadata_backend_type}")
+
+    native_webshart = metadata_backend_type == "webshart" and (backend_dict.get("webshart") or {}).get("sampling_policy")
+    if not is_caption_dataset and not native_webshart:
+        data_backend.bind_source_inventory(get_arg_value(args, "output_dir"), bucket_report)
 
     video_config = backend_dict.get("video", {})
     train_batch_size = resolve_dataset_train_batch_size(backend_dict, args, dataset_type, dataset_id)

@@ -177,7 +177,7 @@ class WebshartMetadataBackend(MetadataBackend):
         sample_ids = self._bucketed_sample_ids()
         if not sample_ids:
             return
-        StateTracker.set_image_files([("", [], sample_ids)], data_backend_id=self.data_backend.id)
+        self.data_backend.source_files.publish([("", [], sample_ids)])
 
     def caption_cache_entry(self, index: str) -> Optional[CaptionValue]:
         return self.data_backend.get_caption(self.data_backend.normalize_sample_id(index))
