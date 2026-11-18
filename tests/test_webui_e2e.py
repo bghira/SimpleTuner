@@ -1958,17 +1958,19 @@ class DatasetManagementTestCase(_TrainerPageMixin, WebUITestCase):
 class DatasetViewerRevisionTestCase(_TrainerPageMixin, WebUITestCase):
     MAX_BROWSERS = 1
 
-    def test_replaced_view_refreshes_bucket_choices(self) -> None:
+    def test_replaced_view_refreshes_bucket_choices_from_bucket_and_file(self) -> None:
         from simpletuner.helpers.metadata.backends.webshart_membership import write_membership
 
         root = self.home_path / "viewer-data"
         root.mkdir(exist_ok=True)
+        source = root / "source"
+        source.mkdir()
         config = {
             "type": "webshart",
             "id": "indexed",
             "dataset_type": "image",
             "caption_strategy": "textfile",
-            "webshart": {"source": "fixture", "cache_dir": str(root), "format": "parquet", "manifest": "dataset.json"},
+            "webshart": {"source": str(source), "cache_dir": str(root), "format": "parquet", "manifest": "dataset.json"},
         }
         (self.config_dir / "default" / "multidatabackend.json").write_text(json.dumps([config]))
         publication = root / "aspect_ratio_bucket_indices_source_0123456789abcdef_indexed.json"
@@ -1997,7 +1999,15 @@ class DatasetViewerRevisionTestCase(_TrainerPageMixin, WebUITestCase):
             wait.until(lambda d: "wide" in d.find_element(By.CSS_SELECTOR, ".viewer-bucket-list").text)
             self.assertFalse(driver.find_elements(By.CSS_SELECTOR, ".viewer-bucket-btn.active"))
 
-        self.for_each_browser("test_replaced_view_refreshes_bucket_choices", scenario)
+            wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, ".viewer-bucket-btn"))).click()
+            thumbnail = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, ".viewer-thumbnail-item")))
+            self.assertIn("new", thumbnail.text)
+            write_membership(publication, {"portrait": ["latest"]}, properties)
+            thumbnail.click()
+            wait.until(lambda d: "portrait" in d.find_element(By.CSS_SELECTOR, ".viewer-bucket-list").text)
+            self.assertFalse(driver.find_elements(By.CSS_SELECTOR, ".viewer-bucket-btn.active"))
+
+        self.for_each_browser("test_replaced_view_refreshes_bucket_choices_from_bucket_and_file", scenario)
 
 
 class DatasetCaptioningTabSmokeTestCase(_TrainerPageMixin, WebUITestCase):

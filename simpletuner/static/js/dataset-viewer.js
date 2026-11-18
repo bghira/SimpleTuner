@@ -582,12 +582,7 @@ window.datasetViewerComponent = function () {
                 if (revision) params.set('view_revision', revision);
                 const resp = await fetch('/api/datasets/viewer/thumbnails?' + params);
                 if (resp.status === 409) {
-                    this.thumbnails = [];
-                    this.selectedBucket = null;
-                    this.thumbnailOffset = 0;
-                    this._saveNavState();
-                    await this._refreshDatasetSummary(datasetId);
-                    window.showToast?.('The dataset changed. Select a bucket to browse its current contents.', 'info');
+                    await this._refreshStaleView(datasetId);
                     return;
                 }
                 if (!resp.ok) {
@@ -602,6 +597,15 @@ window.datasetViewerComponent = function () {
             } finally {
                 this.loadingThumbnails = false;
             }
+        },
+
+        async _refreshStaleView(datasetId) {
+            this.thumbnails = [];
+            this.selectedBucket = null;
+            this.thumbnailOffset = 0;
+            this._saveNavState();
+            await this._refreshDatasetSummary(datasetId);
+            window.showToast?.('The dataset changed. Select a bucket to browse its current contents.', 'info');
         },
 
         async nextPage(datasetId) {
@@ -633,15 +637,21 @@ window.datasetViewerComponent = function () {
                 dataset_id: datasetId,
                 file_path: filePath,
             });
+            const ds = this.datasets.find(d => d.dataset_id === datasetId);
+            if (ds?.view_revision) params.set('view_revision', ds.view_revision);
+            let staleView = false;
+            const readDetail = response => {
+                staleView ||= response.status === 409;
+                return response.ok ? response.json() : null;
+            };
 
             // Load metadata and preview in parallel
             const fetches = [
-                fetch('/api/datasets/viewer/file-metadata?' + params).then(r => r.ok ? r.json() : null),
-                fetch('/api/datasets/viewer/preview?' + params).then(r => r.ok ? r.json() : null),
+                fetch('/api/datasets/viewer/file-metadata?' + params).then(readDetail),
+                fetch('/api/datasets/viewer/preview?' + params).then(readDetail),
             ];
 
             // Also fetch conditioning match if this dataset has conditioning
-            const ds = this.datasets.find(d => d.dataset_id === datasetId);
             const hasConditioning = (ds?.conditioning_data?.length > 0) ||
                                     (ds?.conditioning_generators?.length > 0);
             if (hasConditioning) {
@@ -653,6 +663,13 @@ window.datasetViewerComponent = function () {
             }
 
             const results = await Promise.allSettled(fetches);
+            if (staleView) {
+                this.closeFileDetail();
+                this.loadingFileDetail = false;
+                this.loadingPreview = false;
+                await this._refreshStaleView(datasetId);
+                return;
+            }
 
             if (results[0].status === 'fulfilled' && results[0].value) {
                 this.selectedFile = results[0].value;
