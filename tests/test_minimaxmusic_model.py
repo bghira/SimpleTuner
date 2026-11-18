@@ -1536,7 +1536,7 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
         model.tokenizers = [self._FakeTokenizer()]
         cached = torch.tensor([[1, 0, 0, 0], [2, 1, 0, 0]], dtype=torch.long)
         vae_cache = SimpleNamespace(retrieve_from_cache=MagicMock(return_value=cached))
-        with patch.object(StateTracker, "get_vaecache", return_value=vae_cache):
+        with patch.object(StateTracker, "get_dataset", return_value=SimpleNamespace(vae_cache=vae_cache)):
             payload = model.collate_audio_tokens(
                 [
                     {
@@ -1571,7 +1571,7 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
             )
         )
 
-        with patch.object(StateTracker, "get_vaecache", return_value=vae_cache):
+        with patch.object(StateTracker, "get_dataset", return_value=SimpleNamespace(vae_cache=vae_cache)):
             payload = model.collate_audio_tokens(
                 [
                     {
@@ -1613,7 +1613,7 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
         )
 
         with (
-            patch.object(StateTracker, "get_vaecache", return_value=vae_cache),
+            patch.object(StateTracker, "get_dataset", return_value=SimpleNamespace(vae_cache=vae_cache)),
             patch("torch.randint", return_value=torch.tensor([2])),
         ):
             payload = model.collate_audio_tokens(

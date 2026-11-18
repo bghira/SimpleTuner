@@ -676,11 +676,9 @@ class StateTracker:
 
     @classmethod
     def get_conditioning_mappings(cls) -> list[tuple[str, str]]:
-        conditioning_mappings = []
-        for data_backend_id, data_backend in cls.data_backends.items():
-            conds = data_backend.get("conditioning_data", [])
-            conditioning_mappings.extend((data_backend_id, x["id"]) for x in conds)
-        return conditioning_mappings
+        return [
+            (dataset.id, reference.id) for dataset in cls.datasets.values() for reference in dataset.conditioning_datasets
+        ]
 
     @classmethod
     def own_dataset_resource(cls, resource):
@@ -785,26 +783,14 @@ class StateTracker:
         return cls.distillation_method
 
     @classmethod
-    def get_vaecache(cls, id: str):
-        return cls.data_backends[id].get("vaecache", None)
-
-    @classmethod
     def any_vae_cache_uses_ondemand(cls) -> bool:
-        for data_backend in cls.data_backends.values():
-            vae_cache = data_backend.get("vaecache") if isinstance(data_backend, dict) else None
-            if vae_cache is not None and getattr(vae_cache, "vae_cache_ondemand", False):
-                return True
-        return False
+        return any(getattr(dataset.vae_cache, "vae_cache_ondemand", False) for dataset in cls.datasets.values())
 
     @classmethod
     def any_text_cache_uses_ondemand(cls) -> bool:
-        caches = [
-            data_backend.get("text_embed_cache")
-            for data_backend in cls.data_backends.values()
-            if isinstance(data_backend, dict)
-        ]
-        caches.append(cls.default_text_embed_cache)
-        return any(cache is not None and getattr(cache, "text_cache_ondemand", False) for cache in caches)
+        return getattr(cls.default_text_embed_cache, "text_cache_ondemand", False) or any(
+            getattr(dataset.text_embed_cache, "text_cache_ondemand", False) for dataset in cls.datasets.values()
+        )
 
     @classmethod
     def set_default_text_embed_cache(cls, default_text_embed_cache):
@@ -813,10 +799,6 @@ class StateTracker:
     @classmethod
     def get_default_text_embed_cache(cls):
         return cls.default_text_embed_cache
-
-    @classmethod
-    def get_embedcache(cls, data_backend_id: str):
-        return cls.data_backends[data_backend_id]["text_embed_cache"]
 
     @classmethod
     def get_metadata_by_filepath(

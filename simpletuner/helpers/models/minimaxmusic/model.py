@@ -1417,7 +1417,7 @@ class MiniMaxMusic(AudioModelFoundation):
                     )
                 from simpletuner.helpers.training.state_tracker import StateTracker
 
-                codes = StateTracker.get_vaecache(id=backend_id).retrieve_from_cache(filepath)
+                codes = StateTracker.get_dataset(backend_id).vae_cache.retrieve_from_cache(filepath)
         if isinstance(codes, dict):
             metadata = codes.get("metadata")
             if isinstance(metadata, dict):
