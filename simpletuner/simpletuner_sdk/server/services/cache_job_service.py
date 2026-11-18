@@ -465,7 +465,7 @@ class CacheJobService:
         )
         return (os.path.abspath(resolved) if absolute else resolved) if resolved else None
 
-    def _create_data_backend_and_metadata(
+    def _create_dataset_runtime(
         self,
         dataset_config: Dict[str, Any],
         args: _CacheArgsNamespace,
@@ -473,14 +473,9 @@ class CacheJobService:
         *,
         preparation_only: bool = False,
     ):
-        """Create data backend and metadata backend for a single dataset.
-
-        Returns ``(config, data_backend, metadata_backend, config_id)``
-        where *config_id* must be cleaned up from StateTracker after use.
-        """
+        """Open a dataset using the same resolved settings as its metadata provider."""
         from simpletuner.helpers.data_backend.builders import create_backend_builder
         from simpletuner.helpers.data_backend.config import create_backend_config
-        from simpletuner.helpers.training.state_tracker import StateTracker
 
         from .dataset_scan_service import DatasetScanService
 
@@ -492,7 +487,6 @@ class CacheJobService:
                 args_dict[k] = getattr(args, k, None)
 
         config = create_backend_config(dataset_config, args_dict)
-        StateTracker.set_data_backend_config(config.id, config.to_dict()["config"])
 
         builder = create_backend_builder(config.backend_type, accelerator, args)
         data_backend = builder.build(config)
@@ -500,7 +494,13 @@ class CacheJobService:
             config, data_backend, args_dict, preparation_only=preparation_only
         )
 
-        return config, data_backend, metadata_backend, config.id
+        resolved = {
+            **dataset_config,
+            **config.to_dict()["config"],
+            "id": config.id,
+            "instance_data_dir": metadata_backend.instance_data_dir,
+        }
+        return self._text_dataset(resolved, data_backend, metadata_backend, args)
 
     @staticmethod
     def _text_dataset(config, data_backend, metadata_backend, args=None):
@@ -567,26 +567,26 @@ class CacheJobService:
     # Cache execution per type
     # ------------------------------------------------------------------
 
-    def _prepare_image_artifacts(self, job, config, source, metadata, binding, cache):
-        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+    @staticmethod
+    def _register_runtime(runtime):
         from simpletuner.helpers.training.state_tracker import StateTracker
 
-        runtime = DatasetRuntime(config["id"], source, metadata, config)
-        if binding == "vaecache":
-            runtime.vae_cache = cache
-        else:
-            runtime.conditioning_image_embed_cache = cache
         StateTracker.register_dataset(runtime)
-        StateTracker.data_backends[runtime.id].update(
-            id=runtime.id,
-            dataset_type=runtime.config["dataset_type"],
-            data_backend=source,
-            metadata_backend=metadata,
-            dataset_runtime=runtime,
-            **{binding: cache},
+        StateTracker.register_data_backend(
+            {
+                "id": runtime.id,
+                "dataset_type": runtime.config["dataset_type"],
+                "data_backend": runtime.data_backend,
+                "metadata_backend": runtime.metadata_backend,
+                "dataset_runtime": runtime,
+            }
         )
+
+    def _prepare_image_artifacts(self, job, runtime, binding, cache):
+        setattr(runtime, binding, cache)
+        self._register_runtime(runtime)
         job.status = CacheJobStatus.RUNNING
-        job.stage = "Preparing latents" if binding == "vaecache" else "Preparing conditioning embeddings"
+        job.stage = "Preparing latents" if binding == "vae_cache" else "Preparing conditioning embeddings"
         last_update = 0.0
 
         def progress(current, total):
@@ -660,13 +660,11 @@ class CacheJobService:
             job.stage = "Setting up data backend"
             self._broadcast("dataset_cache", self._job_to_dict(job))
 
-            config, data_backend, metadata_backend, config_id = self._create_data_backend_and_metadata(
-                dataset_config, args, accelerator
-            )
-            scope.callback(metadata_backend.close)
+            runtime = self._create_dataset_runtime(dataset_config, args, accelerator)
+            scope.callback(runtime.close)
 
             cache_store, _ = self._image_artifact_store(
-                dataset_config, dataset_plan, args, accelerator, data_backend, "image_embeds"
+                dataset_config, dataset_plan, args, accelerator, runtime.data_backend, "image_embeds"
             )
             cache_dir_vae = self._resolve_cache_dir(
                 dataset_config.get("cache_dir_vae") or self._resolve_global_key(global_config, "cache_dir_vae"),
@@ -679,18 +677,16 @@ class CacheJobService:
 
             from simpletuner.helpers.caching.vae import VAECache
 
-            dataset_type = str(dataset_config.get("dataset_type", "image")).lower()
-
             vae_cache = VAECache(
-                id=dataset_config["id"],
-                dataset_type=dataset_type,
+                id=runtime.id,
+                dataset_type=runtime.config["dataset_type"],
                 model=model,
                 vae=vae,
                 accelerator=accelerator,
-                metadata_backend=metadata_backend,
-                image_data_backend=data_backend,
+                metadata_backend=runtime.metadata_backend,
+                image_data_backend=runtime.data_backend,
                 cache_data_backend=cache_store,
-                instance_data_dir=dataset_config.get("instance_data_dir", ""),
+                instance_data_dir=runtime.config["instance_data_dir"],
                 cache_dir=cache_dir_vae,
                 vae_batch_size=int(global_config.get("vae_batch_size", 4) or 4),
                 write_batch_size=int(global_config.get("write_batch_size", 64) or 64),
@@ -698,12 +694,12 @@ class CacheJobService:
                 process_queue_size=int(global_config.get("process_queue_size", 16) or 16),
                 hash_filenames=True,
                 cache_inventory_dir=args.output_dir,
-                dataset_config=config.to_dict()["config"],
+                dataset_config=runtime.config,
             )
 
             self._check_cancelled(job)
 
-            self._prepare_image_artifacts(job, dataset_config, data_backend, metadata_backend, "vaecache", vae_cache)
+            self._prepare_image_artifacts(job, runtime, "vae_cache", vae_cache)
 
         finally:
             StateTracker.set_args(original_args)
@@ -787,10 +783,8 @@ class CacheJobService:
             job.stage = "Setting up data backend"
             self._broadcast("dataset_cache", self._job_to_dict(job))
 
-            config, data_backend, metadata_backend, _ = self._create_data_backend_and_metadata(
-                dataset_config, args, accelerator, preparation_only=True
-            )
-            scope.callback(metadata_backend.close)
+            source_runtime = self._create_dataset_runtime(dataset_config, args, accelerator, preparation_only=True)
+            scope.callback(source_runtime.close)
 
             store_config, store, cache_dir_text = self._text_embed_store(
                 dataset_config, dataset_plan, global_config, args, accelerator
@@ -813,18 +807,15 @@ class CacheJobService:
                 preparation_listing=build_text_preparation_listing(store_config, store, cache_dir_text, args, accelerator),
             )
 
-            self._check_cancelled(job)
-
             scope.enter_context(closing(text_cache))
+            self._check_cancelled(job)
 
             job.stage = "Collecting captions"
             self._broadcast("dataset_cache", self._job_to_dict(job))
 
             batch_size = max(text_cache.read_batch_size, text_cache.text_encoder_batch_size)
-            source = StateTracker.get_data_backend(dataset_config["id"])
-            source_runtime = self._text_dataset(dataset_config, data_backend, metadata_backend, args)
-            StateTracker.register_dataset(source_runtime)
-            source.update(data_backend=data_backend, metadata_backend=metadata_backend, dataset_runtime=source_runtime)
+            source_runtime.text_embed_cache = text_cache
+            self._register_runtime(source_runtime)
             conditioning = None
             ids = dataset_config.get("conditioning_data")
             if ids and getattr(model, "requires_text_embed_image_context", lambda: False)():
@@ -837,14 +828,9 @@ class CacheJobService:
                         raise ValueError(f"Missing conditioning dataset {ref_id!r} in the standalone cache plan.")
                     ref_config = available[ref_id]
                     scope.enter_context(self._job_registration(ref_id))
-                    _, ref_backend, ref_metadata, _ = self._create_data_backend_and_metadata(
-                        ref_config, args, accelerator, preparation_only=True
-                    )
-                    scope.callback(ref_metadata.close)
-                    runtime = self._text_dataset(ref_config, ref_backend, ref_metadata, args)
-                    StateTracker.register_dataset(runtime)
-                    entry = StateTracker.get_data_backend(ref_id)
-                    entry.update(id=ref_id, dataset_runtime=runtime, data_backend=ref_backend, metadata_backend=ref_metadata)
+                    runtime = self._create_dataset_runtime(ref_config, args, accelerator, preparation_only=True)
+                    scope.callback(runtime.close)
+                    self._register_runtime(runtime)
                     conditioning.append(runtime)
             prompt_records = self._iter_prompt_records(
                 model, source_runtime, batch_size=batch_size, args=args, conditioning_datasets=conditioning
@@ -926,13 +912,11 @@ class CacheJobService:
             job.stage = "Setting up data backend"
             self._broadcast("dataset_cache", self._job_to_dict(job))
 
-            config, data_backend, metadata_backend, config_id = self._create_data_backend_and_metadata(
-                dataset_config, args, accelerator
-            )
-            scope.callback(metadata_backend.close)
+            runtime = self._create_dataset_runtime(dataset_config, args, accelerator)
+            scope.callback(runtime.close)
 
             cache_store, store_config = self._image_artifact_store(
-                dataset_config, dataset_plan, args, accelerator, data_backend, "conditioning_image_embeds"
+                dataset_config, dataset_plan, args, accelerator, runtime.data_backend, "conditioning_image_embeds"
             )
             store_directory = store_config.get("cache_dir")
             if store_directory == dataset_config.get("cache_dir_vae"):
@@ -950,17 +934,15 @@ class CacheJobService:
 
             from simpletuner.helpers.caching.image_embed import ImageEmbedCache
 
-            dataset_type = str(dataset_config.get("dataset_type", "conditioning")).lower()
-
             embed_cache = ImageEmbedCache(
-                id=dataset_config["id"],
-                dataset_type=dataset_type,
+                id=runtime.id,
+                dataset_type=runtime.config["dataset_type"],
                 model=model,
                 accelerator=accelerator,
-                metadata_backend=metadata_backend,
-                image_data_backend=data_backend,
+                metadata_backend=runtime.metadata_backend,
+                image_data_backend=runtime.data_backend,
                 cache_data_backend=cache_store,
-                instance_data_dir=dataset_config.get("instance_data_dir", ""),
+                instance_data_dir=runtime.config["instance_data_dir"],
                 cache_dir=cache_dir,
                 write_batch_size=int(global_config.get("write_batch_size", 64) or 64),
                 read_batch_size=int(global_config.get("read_batch_size", 25) or 25),
@@ -970,9 +952,7 @@ class CacheJobService:
 
             self._check_cancelled(job)
 
-            self._prepare_image_artifacts(
-                job, dataset_config, data_backend, metadata_backend, "conditioning_image_embed_cache", embed_cache
-            )
+            self._prepare_image_artifacts(job, runtime, "conditioning_image_embed_cache", embed_cache)
 
         finally:
             StateTracker.set_args(original_args)

@@ -329,8 +329,6 @@ class ImageBackendConfig(BaseBackendConfig):
         self.resolution_type = "area"
 
     def apply_defaults(self, args: Dict[str, Any]) -> None:
-        self._apply_common_defaults(args)
-
         if self.backend_type == "huggingface":
             if self.metadata_backend is None:
                 self.metadata_backend = "huggingface"
@@ -341,6 +339,8 @@ class ImageBackendConfig(BaseBackendConfig):
                 self.metadata_backend = "webshart"
             if self.caption_strategy is None:
                 self.caption_strategy = "webshart"
+
+        self._apply_common_defaults(args)
 
         if self.vae_cache_ondemand:
             self.config["vae_cache_ondemand"] = True

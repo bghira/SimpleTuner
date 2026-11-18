@@ -140,6 +140,27 @@ class TestWebshartParquetBackend(unittest.TestCase):
         self.assertEqual(datasets[0].dataset.fingerprint, datasets[1].dataset.fingerprint)
         self.assertEqual(len(list(metadata_cache.glob("capture-catalogue-*.sqlite3"))), 1)
 
+    def test_standalone_runtime_binds_the_providers_default_caption_strategy(self):
+        from simpletuner.helpers.training.state_tracker import StateTracker
+        from simpletuner.simpletuner_sdk.server.services.cache_job_service import CacheJobService, _CacheAcceleratorStub
+
+        service = CacheJobService()
+        args = service._build_args({"resolution": 8, "resolution_type": "pixel"})
+        cache_dir = self.root / "standalone"
+        config = {
+            "id": "standalone",
+            "type": "webshart",
+            "source": str(self.source),
+            "webshart": {"format": "parquet", "sampling_policy": "global", "cache_dir": str(cache_dir)},
+            "preserve_data_backend_cache": True,
+        }
+        with patch.object(StateTracker, "set_data_backend_config", side_effect=AssertionError("registry configuration")):
+            runtime = service._create_dataset_runtime(config, args, _CacheAcceleratorStub(device="cpu"))
+        self.addCleanup(runtime.close)
+        self.assertEqual(runtime.config["caption_strategy"], "webshart")
+        self.assertEqual(Path(runtime.config["instance_data_dir"]), cache_dir)
+        self.assertIs(runtime.metadata_backend.active_dataset_config, runtime.config)
+
     def test_filtered_rows_keep_physical_identity_captions_and_pixels(self):
         entries = self.backend.list_samples_in_shard(0)
         self.assertEqual([e["sample_idx"] for e in entries], [0, 2])

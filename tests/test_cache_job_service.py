@@ -413,15 +413,12 @@ class TestImageArtifactPreparation(unittest.TestCase):
                     "aws_access_key_id": "example",
                     "aws_secret_access_key": "example",
                 }
-                config = Mock()
-                config.to_dict.return_value = {"config": dataset}
                 metadata = Mock()
+                runtime = service._text_dataset({**dataset, "instance_data_dir": "source"}, source, metadata)
                 job = CacheJob("job", "source", kind)
                 with (
                     patch.object(service, "_load_model", return_value=Mock()),
-                    patch.object(
-                        service, "_create_data_backend_and_metadata", return_value=(config, source, metadata, "source")
-                    ),
+                    patch.object(service, "_create_dataset_runtime", return_value=runtime),
                     patch.object(service, "_prepare_image_artifacts"),
                     patch("simpletuner.helpers.data_backend.builders.aws.S3DataBackend", return_value=store) as s3,
                     patch(implementation) as cache,
@@ -510,11 +507,10 @@ class TestStreamingTextPreparation(unittest.TestCase):
         job = CacheJob(job_id="stream-job", dataset_id="stream-test", cache_type="text_embeds")
         with TemporaryDirectory() as cache_dir:
             config = {"id": "stream-test", "caption_strategy": "filename", "cache_dir_text": cache_dir}
+            runtime = service._text_dataset(config, data_backend, metadata)
             with (
                 patch.object(service, "_load_model", return_value=model),
-                patch.object(
-                    service, "_create_data_backend_and_metadata", return_value=(None, data_backend, metadata, None)
-                ),
+                patch.object(service, "_create_dataset_runtime", return_value=runtime),
                 patch.object(service, "_cleanup_gpu"),
                 patch("simpletuner.helpers.caching.text_embeds.TextEmbeddingCache", return_value=cache),
                 patch("simpletuner.helpers.data_backend.factory.move_text_encoders"),
