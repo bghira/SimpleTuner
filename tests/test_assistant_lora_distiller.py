@@ -290,33 +290,40 @@ class AssistantLoRADistillerTests(unittest.TestCase):
 
     def test_trainer_checkpoint_paths_restore_caption_and_generation_cursors_together(self):
         from simpletuner.helpers.data_backend.caption_dataset import CaptionDataset
-        from simpletuner.helpers.data_backend.caption_sampler import CaptionSampler
         from simpletuner.helpers.training.caption_collate import collate_caption_batch
-        from tests.helpers.data_backend.test_caption_pipeline import DummyCaptionMetadataBackend
+        from simpletuner.helpers.training.state_tracker import StateTracker
+        from tests.helpers.data_backend.test_caption_pipeline import DummyCaptionMetadataBackend, caption_sampler
 
         model = self.make_model()
         metadata = DummyCaptionMetadataBackend(3)
         dataset = CaptionDataset("caption", metadata)
 
         def make_sampler():
-            return CaptionSampler("caption", metadata, model.accelerator, 1, shuffle=False)
+            return caption_sampler(metadata, model.accelerator, 1)
 
         def generate(distiller, sampler):
             raw = collate_caption_batch([dataset[next(iter(sampler))]])
             return distiller.prepare_caption_batch(raw, model, {"global_step": 0})
 
-        sampler = make_sampler()
-        distiller = self.make_distiller(model)
-        with tempfile.TemporaryDirectory() as directory, self.caption_context(model):
-            generate(distiller, sampler)
+        traversal_args = SimpleNamespace(seed=42, gradient_accumulation_steps=1)
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            self.caption_context(model),
+            patch.object(StateTracker, "args", traversal_args),
+            patch.object(StateTracker, "data_backends", {}),
+        ):
+            sampler = make_sampler()
+            distiller = self.make_distiller(model)
+            first = generate(distiller, sampler)
             trainer_state = Path(directory, "training_state.json")
             trainer_state.write_text('{"global_step": 1}')
             distiller.on_save_checkpoint(1, directory)
             sampler.save_state(state_path=str(trainer_state))
             self.assertEqual(json.loads(trainer_state.read_text()), {"global_step": 1})
             saved_sampler = json.loads(Path(directory, "training_state-caption.json").read_text())
-            self.assertEqual(saved_sampler["cursor"], 1)
+            self.assertEqual(saved_sampler["consumed"], {"captions": 1})
             expected = generate(distiller, sampler)
+            self.assertNotEqual(expected["captions"], first["captions"])
 
             resumed_distiller = self.make_distiller(model)
             resumed_sampler = make_sampler()
@@ -324,7 +331,7 @@ class AssistantLoRADistillerTests(unittest.TestCase):
             resumed_sampler.load_states(state_path=str(trainer_state))
             resumed_sampler.log_state()
             actual = generate(resumed_distiller, resumed_sampler)
-            self.assertEqual(actual["captions"], ["caption 1"])
+            self.assertEqual(actual["captions"], expected["captions"])
             self.assertEqual(actual["assistant_generation_seeds"], expected["assistant_generation_seeds"])
             torch.testing.assert_close(actual["latents"], expected["latents"])
 

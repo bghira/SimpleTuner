@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 from simpletuner.helpers.data_backend.caption_sampler import CaptionSampler
 from simpletuner.helpers.data_backend.factory import FactoryRegistry
 from simpletuner.helpers.metadata.backends.caption import CaptionMetadataBackend
+from simpletuner.helpers.training.state_tracker import StateTracker
 
 
 class _CaptionConfig:
@@ -13,8 +14,9 @@ class _CaptionConfig:
 
 
 class _CaptionMetadata(CaptionMetadataBackend):
-    def __init__(self, events):
+    def __init__(self, events, caption_ids=()):
         self.events = events
+        self.aspect_ratio_bucket_indices = {"captions": list(caption_ids)}
 
     def load_image_metadata(self):
         self.events.append("load")
@@ -27,9 +29,9 @@ class _CaptionMetadata(CaptionMetadataBackend):
 
 
 class FactoryCaptionBackendTests(unittest.TestCase):
-    def _configure_backend(self, *, global_batch_size, dataset_batch_size=None):
+    def _configure_backend(self, *, global_batch_size, dataset_batch_size=None, caption_ids=()):
         events = []
-        metadata_backend = _CaptionMetadata(events)
+        metadata_backend = _CaptionMetadata(events, caption_ids)
         accelerator = SimpleNamespace(
             is_local_main_process=True,
             num_processes=2,
@@ -76,6 +78,8 @@ class FactoryCaptionBackendTests(unittest.TestCase):
                 },
             ),
             patch("simpletuner.helpers.data_backend.factory.StateTracker") as state_tracker,
+            patch.object(StateTracker, "args", factory.args),
+            patch.object(StateTracker, "data_backends", {}),
         ):
             state_tracker.register_data_backend.side_effect = lambda _backend: events.append("register")
             factory._configure_caption_backend(backend)
@@ -89,7 +93,15 @@ class FactoryCaptionBackendTests(unittest.TestCase):
         self.assertIsInstance(registered_backend["sampler"], CaptionSampler)
         self.assertEqual(registered_backend["sampler"].batch_size, 3)
         self.assertIs(registered_backend["train_dataloader"].sampler, registered_backend["sampler"])
+        self.assertIs(registered_backend["sampler"].dataset_runtime, registered_backend["dataset_runtime"])
+        self.assertEqual(registered_backend["dataset_runtime"].cursor().seed, 123)
         self.assertEqual(events, ["wait", "load", "register"])
+
+    def test_captions_that_cannot_fill_a_batch_fail_at_configuration(self):
+        with self.assertRaisesRegex(ValueError, "zero usable batches"):
+            self._configure_backend(global_batch_size=2, caption_ids=["a", "b", "c"])
+        registered_backend, _events = self._configure_backend(global_batch_size=2, caption_ids=["a", "b", "c", "d"])
+        self.assertEqual(len(registered_backend["sampler"]), 1)
 
     def test_caption_backend_uses_global_batch_size_fallback(self):
         registered_backend, _events = self._configure_backend(global_batch_size=5)

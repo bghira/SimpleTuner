@@ -1,5 +1,6 @@
 """Dataset access shared by training and preparation consumers."""
 
+import os
 import random
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from copy import deepcopy
@@ -82,6 +83,15 @@ class DatasetRuntime:
         self._cursor_options["seed"] = previous.seed
         self._cursor = None
         self.cursor().epoch = previous.epoch
+
+    def load_cursor_state(self, state: dict) -> None:
+        """Continue this rank's traversal from the state a checkpoint saved for it."""
+        allow_batch_size_change = os.environ.get("SIMPLETUNER_ALLOW_MODIFYING_BSZ", "").lower() in (
+            "1",
+            "true",
+            "yes",
+        ) or bool(getattr(StateTracker.get_args(), "i_know_what_i_am_doing", False))
+        self.cursor().load_state(state, allow_batch_size_change=allow_batch_size_change)
 
     def read_samples(self, sample_refs: Sequence[str]) -> list[dict[str, Any]]:
         """Return independent occurrence metadata in request order, including duplicates."""

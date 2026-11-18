@@ -123,18 +123,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         if not state:
             self.logger.info(f"Dataset '{self.id}' has no sampler state in this checkpoint; it starts a new epoch.")
             return
-        allow_batch_size_change = os.environ.get("SIMPLETUNER_ALLOW_MODIFYING_BSZ", "").lower() in (
-            "1",
-            "true",
-            "yes",
-        ) or getattr(StateTracker.get_args(), "i_know_what_i_am_doing", False)
-        saved_batch_size = state.get("layout", {}).get("batch_size", self.batch_size)
-        self.cursor.load_state(state, allow_batch_size_change=bool(allow_batch_size_change))
-        if saved_batch_size != self.batch_size:
-            self.logger.warning(
-                f"Dataset '{self.id}': resuming with batch_size={self.batch_size} but checkpoint recorded "
-                f"batch_size={saved_batch_size}. Proceeding because override is set."
-            )
+        self.dataset_runtime.load_cursor_state(state)
 
     def retrieve_validation_set(self, batch_size: int):
         """

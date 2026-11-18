@@ -294,7 +294,10 @@ class TestState(unittest.TestCase):
         cursor = make_cursor(self.buckets, repeats=1)
         expected = per_bucket(drain(make_cursor(self.buckets, repeats=1)))
         before = per_bucket(cursor.next_batch() for _ in range(9))
-        resumed = self._resumed(cursor.state(), batch_size=3, allow_batch_size_change=True)
+        with patch("simpletuner.helpers.data_backend.cursor.logger") as logger:
+            resumed = self._resumed(cursor.state(), batch_size=3, allow_batch_size_change=True)
+        logger.warning.assert_called_once()
+        self.assertIn("batch_size=3 but checkpoint recorded batch_size=", logger.warning.call_args.args[0])
         after = per_bucket(drain(resumed))
         for bucket, refs in expected.items():
             consumed = before.get(bucket, [])

@@ -3558,9 +3558,10 @@ class FactoryRegistry:
         """Attach CaptionDataset + CaptionSampler + caption collate to the backend."""
         if getattr(self.args, "dataloader_prefetch", False):
             raise ValueError("Caption datasets require dataloader_prefetch=false to preserve sampler checkpoint position.")
-        repeats = max(int(init_backend["config"].get("repeats", 0) or 0), 0)
-        shuffle = backend.get("shuffle", True)
-        seed = getattr(self.args, "seed", 0)
+        if backend.get("shuffle") is False:
+            raise ValueError(
+                f"(id={init_backend['id']}) Caption datasets are always read in a seeded shuffle; remove shuffle=false."
+            )
         batch_size = init_backend["config"].get(
             "train_batch_size",
             resolve_dataset_train_batch_size(backend, self.args, DatasetType.CAPTION),
@@ -3570,15 +3571,18 @@ class FactoryRegistry:
             id=init_backend["id"],
             metadata_backend=init_backend["metadata_backend"],
         )
-        init_backend["sampler"] = CaptionSampler(
+        init_backend["dataset_runtime"] = DatasetRuntime(
             id=init_backend["id"],
+            data_backend=init_backend["data_backend"],
             metadata_backend=init_backend["metadata_backend"],
-            accelerator=self.accelerator,
-            batch_size=batch_size,
-            repeats=repeats,
-            shuffle=shuffle,
-            seed=seed,
+            config={**init_backend["config"], "dataset_type": DatasetType.CAPTION},
         )
+        init_backend["dataset_runtime"].configure_cursor(
+            accelerator=self.accelerator, batch_size=batch_size, shared_by_all_ranks=False
+        )
+        init_backend["sampler"] = CaptionSampler(init_backend["dataset_runtime"])
+        # Building the cursor checks that the captions can fill an effective batch.
+        len(init_backend["sampler"])
         init_backend["train_dataloader"] = torch.utils.data.DataLoader(
             init_backend["train_dataset"],
             batch_size=1,

@@ -219,11 +219,16 @@ class DatasetCursor:
                 f"Dataset '{self.dataset_id}': the checkpoint was written for a different dataset layout "
                 f"(saved {_describe_layout(saved)}, current {_describe_layout(current)})."
             )
-        if saved["batch_size"] != self.batch_size and not allow_batch_size_change:
-            raise ValueError(
-                f"Dataset '{self.dataset_id}' checkpoint batch_size={saved['batch_size']} does not match "
-                f"current batch_size={self.batch_size}. Resume with the same per-dataset train_batch_size, "
-                f"or set --i_know_what_i_am_doing / SIMPLETUNER_ALLOW_MODIFYING_BSZ=1 to bypass."
+        if saved["batch_size"] != self.batch_size:
+            if not allow_batch_size_change:
+                raise ValueError(
+                    f"Dataset '{self.dataset_id}' checkpoint batch_size={saved['batch_size']} does not match "
+                    f"current batch_size={self.batch_size}. Resume with the same per-dataset train_batch_size, "
+                    f"or set --i_know_what_i_am_doing / SIMPLETUNER_ALLOW_MODIFYING_BSZ=1 to bypass."
+                )
+            logger.warning(
+                f"Dataset '{self.dataset_id}': resuming with batch_size={self.batch_size} but checkpoint recorded "
+                f"batch_size={saved['batch_size']}. Proceeding because override is set."
             )
         if state["seed"] != self.seed:
             self.seed = state["seed"]

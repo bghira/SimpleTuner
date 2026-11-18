@@ -1,12 +1,17 @@
 import unittest
+from itertools import islice
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from simpletuner.helpers.data_backend.caption_dataset import CaptionDataset
 from simpletuner.helpers.data_backend.caption_sampler import CaptionSampler
 from simpletuner.helpers.data_backend.config.image import ImageBackendConfig
+from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.metadata.captions import CaptionRecord
 from simpletuner.helpers.training.caption_collate import collate_caption_batch
+from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
+from simpletuner.helpers.training.state_tracker import StateTracker
 
 
 class DummyCaptionMetadataBackend:
@@ -20,6 +25,10 @@ class DummyCaptionMetadataBackend:
             for index in range(count)
         }
 
+    @property
+    def aspect_ratio_bucket_indices(self):
+        return {"captions": list(self._records)}
+
     def list_metadata_ids(self):
         return list(self._records.keys())
 
@@ -30,10 +39,21 @@ class DummyCaptionMetadataBackend:
         return len(self._records)
 
 
+def caption_sampler(metadata_backend, accelerator, batch_size):
+    """A caption sampler over its own runtime, traversed as StateTracker's args and dataset config say."""
+    runtime = DatasetRuntime("caption", None, metadata_backend, {"dataset_type": DatasetType.CAPTION})
+    runtime.configure_cursor(accelerator=accelerator, batch_size=batch_size, shared_by_all_ranks=False)
+    return CaptionSampler(runtime)
+
+
 class CaptionDatasetPipelineTests(unittest.TestCase):
     def setUp(self):
         self.backend = DummyCaptionMetadataBackend()
         self.accelerator = SimpleNamespace(num_processes=1, process_index=0)
+        for key, value in [("args", SimpleNamespace(seed=42, gradient_accumulation_steps=1)), ("data_backends", {})]:
+            patcher = patch.object(StateTracker, key, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def test_dataset_returns_payloads(self):
         dataset = CaptionDataset("caption", self.backend)
@@ -45,41 +65,25 @@ class CaptionDatasetPipelineTests(unittest.TestCase):
         self.assertEqual(captions, ["caption 0", "caption 1"])
 
     def test_sampler_batches_cover_all_records(self):
-        sampler = CaptionSampler(
-            id="caption",
-            metadata_backend=self.backend,
-            accelerator=self.accelerator,
-            batch_size=2,
-            repeats=0,
-            shuffle=False,
-        )
-        batches = list(iter(sampler))
+        sampler = caption_sampler(self.backend, self.accelerator, 2)
         self.assertEqual(len(sampler), 2)
-        self.assertEqual(len(batches), 2)
+        batches = list(islice(sampler, 2))
         self.assertTrue(all(len(batch) == 2 for batch in batches))
         flattened = [item for batch in batches for item in batch]
-        self.assertEqual(flattened[:3], self.backend.list_metadata_ids())
+        self.assertEqual(sorted(flattened[:3]), self.backend.list_metadata_ids())
+        # The batch the captions cannot fill is completed from the head of the epoch's order.
+        self.assertEqual(flattened[3], flattened[0])
+        with self.assertRaises(MultiDatasetExhausted):
+            next(iter(sampler))
 
     def test_sampler_respects_distributed_slicing(self):
         distributed_backend = DummyCaptionMetadataBackend(count=4)
         acc0 = SimpleNamespace(num_processes=2, process_index=0)
         acc1 = SimpleNamespace(num_processes=2, process_index=1)
-        sampler_rank0 = CaptionSampler(
-            id="caption",
-            metadata_backend=distributed_backend,
-            accelerator=acc0,
-            batch_size=2,
-            shuffle=False,
-        )
-        sampler_rank1 = CaptionSampler(
-            id="caption",
-            metadata_backend=distributed_backend,
-            accelerator=acc1,
-            batch_size=2,
-            shuffle=False,
-        )
-        batches_rank0 = list(iter(sampler_rank0))
-        batches_rank1 = list(iter(sampler_rank1))
+        sampler_rank0 = caption_sampler(distributed_backend, acc0, 2)
+        sampler_rank1 = caption_sampler(distributed_backend, acc1, 2)
+        batches_rank0 = list(islice(sampler_rank0, 1))
+        batches_rank1 = list(islice(sampler_rank1, 1))
         self.assertEqual(len(sampler_rank0), 1)
         self.assertEqual(len(sampler_rank1), 1)
         flat_rank0 = [item for batch in batches_rank0 for item in batch]
