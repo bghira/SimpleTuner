@@ -331,6 +331,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
 
                     mock_vae_instance = MagicMock()
                     mock_vae_instance.vae_cache_ondemand = True
+                    mock_vae_instance.needs_legacy_cache_inventory.return_value = False
                     mock_vae_instance.set_webhook_handler.return_value = None
                     mock_vae_instance.build_vae_cache_filename_map.return_value = None
                     mock_vae_cache.return_value = mock_vae_instance
@@ -352,6 +353,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 self.assertEqual(expected_disable, init_backend["config"]["vae_cache_disable"])
                 self.assertTrue(init_backend["config"]["vae_cache_ondemand"])
                 mock_vae_instance.discover_all_files.assert_not_called()
+                mock_vae_instance.build_vae_cache_filename_map.assert_not_called()
+                mock_state_tracker.get_image_files.assert_not_called()
 
     def test_ondemand_text_embed_backend_skips_dataset_precomputation(self):
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
@@ -372,167 +375,77 @@ class TestFactoryEdgeCases(unittest.TestCase):
         self.assertTrue(init_backend["config"]["hash_filenames"])
         set_config.assert_called_once_with("image-dataset", init_backend["config"])
 
-    def test_text_embed_precompute_splits_full_dataset_records_between_processes(self):
+    def test_cli_text_preparation_uses_the_published_view_before_or_after_binding_conditioning(self):
+        from io import BytesIO
+
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
+        from simpletuner.helpers.metadata.backends.base import MetadataBackend
         from simpletuner.helpers.models.common import TextEmbedCacheKey
 
-        factory = FactoryRegistry.__new__(FactoryRegistry)
-        factory._uses_text_embeddings_cache = lambda: True
-        factory._append_image_context_dropout_prompt_record = lambda *_args, **_kwargs: None
-        factory.args = SimpleNamespace(
-            prepend_instance_prompt=False,
-            instance_prompt=None,
-            only_instance_prompt=False,
-            skip_file_discovery="",
-        )
-        factory.accelerator = SimpleNamespace(device="cpu")
-        factory.text_encoders = []
-        factory.model = SimpleNamespace(
-            requires_text_embed_image_context=lambda: False,
-            text_embed_cache_key=lambda: TextEmbedCacheKey.CAPTION,
-        )
-        cache = MagicMock(text_cache_ondemand=False)
-        init_backend = {
-            "id": "image-dataset",
-            "config": {"caption_strategy": "textfile"},
-            "data_backend": object(),
-            "instance_data_dir": "dataset",
-            "metadata_backend": MagicMock(),
-            "text_embed_cache": cache,
-        }
-
-        with (
-            patch(
-                "simpletuner.helpers.data_backend.factory.PromptHandler.get_all_captions",
-                return_value=(["caption"], [], ["dataset/sample.png"]),
-            ),
-            patch("simpletuner.helpers.data_backend.factory.move_text_encoders"),
-            patch(
-                "simpletuner.helpers.data_backend.factory.StateTracker.get_args",
-                return_value=SimpleNamespace(output_dir="output"),
-            ),
-            patch("simpletuner.helpers.data_backend.factory.StateTracker.set_data_backend_config"),
-        ):
-            factory._process_text_embeddings({}, init_backend, None)
-
-        cache.compute_embeddings_for_prompts.assert_called_once()
-        self.assertTrue(cache.compute_embeddings_for_prompts.call_args.kwargs["split_between_processes"])
-
-    def test_bounded_text_precompute_covers_every_rank_local_sample(self):
-        from simpletuner.helpers.data_backend.factory import FactoryRegistry
-        from simpletuner.helpers.models.common import TextEmbedCacheKey
+        class Provider(MetadataBackend):
+            pass
 
         for deferred in (False, True):
             with self.subTest(deferred=deferred):
-                encoded = set()
-                for rank in range(4):
-                    factory = FactoryRegistry.__new__(FactoryRegistry)
-                    factory._uses_text_embeddings_cache = lambda: True
-                    factory._append_image_context_dropout_prompt_record = lambda *_args, **_kwargs: None
-                    factory.args = SimpleNamespace(
-                        caption_strategy="instanceprompt",
-                        prepend_instance_prompt=False,
-                        instance_prompt="caption",
-                        only_instance_prompt=False,
-                        skip_file_discovery="",
-                    )
-                    factory.accelerator = SimpleNamespace(device="cpu")
-                    factory.text_encoders = []
-                    factory.model = SimpleNamespace(
-                        requires_text_embed_image_context=lambda: False,
-                        text_embed_cache_key=lambda: TextEmbedCacheKey.DATASET_AND_FILENAME,
-                    )
-                    paths = [f"{index}.png" for index in range(rank * 4, (rank + 1) * 4)]
-                    metadata = SimpleNamespace(
-                        max_num_samples=16,
-                        aspect_ratio_bucket_indices={"1.0": paths},
-                        get_metadata_by_filepath=lambda _path: {},
-                    )
-                    cache = SimpleNamespace(text_cache_ondemand=False)
-
-                    def encode(records, *, split_between_processes, **_kwargs):
-                        if split_between_processes:
-                            records = records[rank : rank + 1]
-                        encoded.update(record["key"] for record in records)
-
-                    cache.compute_embeddings_for_prompts = encode
-                    backend = {"caption_strategy": "instanceprompt", "max_num_samples": 16}
-                    init_backend = {
-                        "id": "image-dataset",
-                        "config": {"caption_strategy": "instanceprompt"},
-                        "data_backend": SimpleNamespace(id="image-dataset"),
-                        "instance_data_dir": "dataset",
-                        "metadata_backend": metadata,
-                        "text_embed_cache": cache,
-                    }
-                    factory._deferred_text_embed_backends = [(backend, init_backend)]
-                    with (
-                        patch("simpletuner.helpers.data_backend.factory.move_text_encoders"),
-                        patch(
-                            "simpletuner.helpers.data_backend.factory.StateTracker.get_args",
-                            return_value=SimpleNamespace(output_dir="output"),
-                        ),
-                        patch(
-                            "simpletuner.helpers.data_backend.factory.StateTracker.get_data_backend_config",
-                            return_value=init_backend["config"],
-                        ),
-                        patch(
-                            "simpletuner.helpers.data_backend.factory.StateTracker.get_data_backend",
-                            return_value=init_backend,
-                        ),
-                        patch(
-                            "simpletuner.helpers.data_backend.factory.StateTracker.get_conditioning_datasets",
-                            return_value=[],
-                        ),
-                        patch("simpletuner.helpers.data_backend.factory.StateTracker.set_data_backend_config"),
-                    ):
+                factory = FactoryRegistry.__new__(FactoryRegistry)
+                factory._uses_text_embeddings_cache = lambda: True
+                factory.args = SimpleNamespace(skip_file_discovery="")
+                factory.accelerator = SimpleNamespace(device="cpu", num_processes=4)
+                factory.model = SimpleNamespace(
+                    requires_text_embed_image_context=lambda: deferred,
+                    text_embed_cache_key=lambda: TextEmbedCacheKey.DATASET_AND_FILENAME,
+                )
+                factory.text_encoders = []
+                factory._deferred_text_embed_backends = []
+                refs = [f"{index}.png" for index in range(16)]
+                published = json.dumps({"aspect_ratio_bucket_indices": {"square": refs}}).encode()
+                metadata = object.__new__(Provider)
+                metadata.cache_file = "membership.json"
+                metadata.read_only = True
+                backend = MagicMock(
+                    id="images",
+                    read=MagicMock(side_effect=AssertionError("full bucket index read")),
+                    open_read_stream=MagicMock(side_effect=lambda _: BytesIO(published)),
+                )
+                metadata.data_backend = backend
+                metadata.get_metadata_by_filepath = MagicMock(return_value={})
+                config = {
+                    "caption_strategy": "instanceprompt",
+                    "instance_prompt": "caption",
+                    "conditioning_data": ["reference"] if deferred else [],
+                }
+                runtime = DatasetRuntime("images", backend, metadata, config)
+                prepared = []
+                cache = SimpleNamespace(
+                    text_cache_ondemand=False,
+                    read_batch_size=2,
+                    text_encoder_batch_size=2,
+                    precompute_embeddings=lambda records, **kwargs: prepared.extend(records),
+                )
+                runtime.text_embed_cache = cache
+                bundle = {
+                    "id": "images",
+                    "instance_data_dir": None,
+                    "config": dict(config),
+                    "dataset_runtime": runtime,
+                    "text_embed_cache": cache,
+                }
+                with (
+                    patch("simpletuner.helpers.data_backend.factory.move_text_encoders"),
+                    patch("simpletuner.helpers.data_backend.factory.StateTracker.set_data_backend_config"),
+                    patch(
+                        "simpletuner.helpers.prompts.PromptHandler.get_all_captions", side_effect=AssertionError("inventory")
+                    ),
+                ):
+                    for rank in range(4):
+                        factory.accelerator.process_index = rank
+                        metadata.aspect_ratio_bucket_indices = {"square": [refs[0], refs[0]]}
+                        factory._process_text_embeddings(config, bundle, None)
                         if deferred:
+                            self.assertEqual(factory._deferred_text_embed_backends, [bundle])
                             factory._process_deferred_text_embeddings()
-                        else:
-                            factory._process_text_embeddings(backend, init_backend, None)
-                self.assertEqual(encoded, {f"image-dataset:{index}.png" for index in range(16)})
-
-    def test_deferred_text_embed_precompute_splits_full_dataset_records_between_processes(self):
-        from simpletuner.helpers.data_backend.factory import FactoryRegistry
-        from simpletuner.helpers.models.common import TextEmbedCacheKey
-
-        factory = FactoryRegistry.__new__(FactoryRegistry)
-        factory._uses_text_embeddings_cache = lambda: True
-        factory._append_image_context_dropout_prompt_record = lambda *_args, **_kwargs: None
-        factory.args = SimpleNamespace(
-            caption_strategy="textfile",
-            prepend_instance_prompt=False,
-            instance_prompt=None,
-            only_instance_prompt=False,
-        )
-        factory.accelerator = SimpleNamespace(device="cpu")
-        factory.text_encoders = []
-        factory.model = SimpleNamespace(text_embed_cache_key=lambda: TextEmbedCacheKey.CAPTION)
-        cache = MagicMock(text_cache_ondemand=False)
-        backend = {"caption_strategy": "textfile"}
-        init_backend = {
-            "id": "image-dataset",
-            "config": {"caption_strategy": "textfile"},
-            "data_backend": object(),
-            "instance_data_dir": "dataset",
-            "metadata_backend": MagicMock(),
-            "text_embed_cache": cache,
-        }
-        factory._deferred_text_embed_backends = [(backend, init_backend)]
-
-        with (
-            patch("simpletuner.helpers.data_backend.factory.StateTracker.get_conditioning_datasets", return_value=[]),
-            patch(
-                "simpletuner.helpers.data_backend.factory.PromptHandler.get_all_captions",
-                return_value=(["caption"], [], ["dataset/sample.png"]),
-            ),
-            patch("simpletuner.helpers.data_backend.factory.move_text_encoders"),
-        ):
-            factory._process_deferred_text_embeddings()
-
-        cache.compute_embeddings_for_prompts.assert_called_once()
-        self.assertTrue(cache.compute_embeddings_for_prompts.call_args.kwargs["split_between_processes"])
-        self.assertEqual(factory._deferred_text_embed_backends, [])
+                self.assertCountEqual([record["key"] for record in prepared], [f"images:{ref}" for ref in refs])
 
     def test_text_embed_disable_config_implies_ondemand_without_mutating_global_args(self):
         from simpletuner.helpers.data_backend.factory import init_backend_config
@@ -1963,6 +1876,24 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 metadata_backend.reload_cache.assert_called_once_with()
                 metadata_backend.split_buckets_between_processes.assert_called_once()
 
+    def test_loading_another_resolution_preserves_the_first_geometry_map(self):
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        with (
+            patch.object(StateTracker, "aspect_resolution_map", {}),
+            patch.object(
+                StateTracker,
+                "_load_from_disk",
+                side_effect=[{"1.0": [512, 512]}, {"1.0": [1024, 1024]}, {"1.0": [528, 528]}],
+            ),
+        ):
+            StateTracker.load_aspect_resolution_map(0.25)
+            StateTracker.load_aspect_resolution_map(1.0)
+            self.assertEqual(StateTracker.get_resolution_by_aspect(0.25, 1.0), [512, 512])
+            StateTracker.load_aspect_resolution_map(0.25)
+            self.assertEqual(StateTracker.get_resolution_by_aspect(0.25, 1.0), [528, 528])
+            self.assertEqual(StateTracker.get_resolution_by_aspect(1.0, 1.0), [1024, 1024])
+
     @patch("simpletuner.helpers.data_backend.factory.DatasetDuplicator.copy_metadata")
     @patch("simpletuner.helpers.data_backend.factory.StateTracker")
     def test_metadata_clone_requires_explicit_source_marker(self, mock_state_tracker, mock_copy_metadata):
@@ -2416,6 +2347,41 @@ class TestMetadataBackendEmptyStringHandling(unittest.TestCase):
 
             # Should auto-set to "huggingface"
             self.assertEqual(backend["metadata_backend"], "huggingface")
+
+    def test_conditioning_geometry_is_resolved_before_provider_construction(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        factory = FactoryRegistry.__new__(FactoryRegistry)
+        factory.args = SimpleNamespace(
+            resolution=512,
+            resolution_type="pixel",
+            minimum_image_size=256,
+            maximum_image_size=None,
+            target_downsample_size=None,
+        )
+        for source_first in (True, False):
+            with self.subTest(source_first=source_first):
+                source = {
+                    "id": "images",
+                    "type": "local",
+                    "conditioning_data": ["references"],
+                    "resolution": 1024,
+                    "resolution_type": "pixel_area",
+                    "minimum_image_size": 512,
+                }
+                references = {
+                    "id": "references",
+                    "type": "aws",
+                    "dataset_type": "conditioning",
+                    "resolution": 256,
+                    "resolution_type": "pixel",
+                }
+                config = [source, references] if source_first else [references, source]
+                factory._resolve_conditioning_geometry(config)
+                self.assertEqual(references["resolution_type"], "area")
+                self.assertEqual(references["resolution"], source["resolution"])
+                self.assertEqual(references["minimum_image_size"], source["minimum_image_size"])
+                self.assertEqual(references["resolution"], 1.048576)
 
     def test_configure_metadata_backend_empty_string_uses_discovery(self):
         """_configure_metadata_backend should treat empty string as 'discovery'."""

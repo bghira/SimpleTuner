@@ -346,7 +346,6 @@ class CaptionGeneratorConfigTests(unittest.TestCase):
             ):
                 setattr(factory, name, MagicMock(return_value=False))
             for name in (
-                "synchronize_conditioning_settings",
                 "_validate_audio_only_datasets",
                 "_validate_edit_model_conditioning_type",
                 "_process_deferred_text_embeddings",
