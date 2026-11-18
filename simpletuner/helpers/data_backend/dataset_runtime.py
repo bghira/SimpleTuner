@@ -9,12 +9,29 @@ from itertools import batched, islice
 from typing import Any
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend, ordered_sample_payloads
+from simpletuner.helpers.data_backend.dataset_types import get_arg_value
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.helpers.prompts import CaptionNotFoundError, PromptHandler
 from simpletuner.helpers.utils.pathing import normalize_data_path
 
 
 class DatasetRuntime:
+    @classmethod
+    def from_config(cls, config, args, accelerator, *, preparation_only=False):
+        """Open one standalone dataset with resolved source and metadata providers."""
+        from simpletuner.helpers.data_backend.builders import create_backend_builder
+        from simpletuner.helpers.data_backend.config import create_backend_config
+
+        args_dict = (
+            args if isinstance(args, dict) else {key: value for key, value in vars(args).items() if not key.startswith("_")}
+        )
+        settings = create_backend_config(config, args_dict)
+        builder = create_backend_builder(settings.backend_type, accelerator, args)
+        source = builder.build(settings)
+        metadata = builder.create_metadata_backend(settings, source, args_dict, preparation_only=preparation_only)
+        resolved = {**config, **settings.to_dict()["config"], "instance_data_dir": metadata.instance_data_dir}
+        return cls(settings.id, source, metadata, {**resolved, **cls.caption_config(resolved, args)})
+
     def __init__(
         self,
         id: str,
@@ -97,18 +114,18 @@ class DatasetRuntime:
 
     @staticmethod
     def caption_config(config, args=None):
-        strategy = config.get("caption_strategy", getattr(args, "caption_strategy", "filename"))
+        strategy = config.get("caption_strategy", get_arg_value(args, "caption_strategy", "filename"))
         return {
             "caption_strategy": strategy,
             "use_captions": not (
                 config.get("only_instance_prompt")
-                or getattr(args, "only_instance_prompt", False)
+                or get_arg_value(args, "only_instance_prompt", False)
                 or strategy == "instanceprompt"
             ),
             "prepend_instance_prompt": config.get(
-                "prepend_instance_prompt", getattr(args, "prepend_instance_prompt", False)
+                "prepend_instance_prompt", get_arg_value(args, "prepend_instance_prompt", False)
             ),
-            "instance_prompt": config.get("instance_prompt", getattr(args, "instance_prompt", None)),
+            "instance_prompt": config.get("instance_prompt", get_arg_value(args, "instance_prompt")),
             "disable_multiline_split": config.get("disable_multiline_split", False),
         }
 
@@ -287,6 +304,11 @@ class DatasetRuntime:
 
     def scan_cache_and_metadata(self, cache_behavior):
         self.metadata_backend.scan_dataset_cache(self, cache_behavior)
+
+    def prepare_view(self, *, force_rescan=False, progress_callback=None):
+        self.metadata_backend.compute_aspect_ratio_bucket_indices(
+            ignore_existing_cache=force_rescan, progress_callback=progress_callback
+        )
 
     def iter_accepted_captions(self, *, worker=0, workers=1, batch_size=128):
         if self.config["dataset_type"] == "caption":

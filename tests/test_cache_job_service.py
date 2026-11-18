@@ -5,6 +5,7 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
+from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.simpletuner_sdk.server.services.cache_job_service import (
     CacheJob,
@@ -415,7 +416,7 @@ class TestImageArtifactPreparation(unittest.TestCase):
                     "aws_secret_access_key": "example",
                 }
                 metadata = Mock()
-                runtime = service._text_dataset({**dataset, "instance_data_dir": "source"}, source, metadata)
+                runtime = DatasetRuntime("source", source, metadata, {**dataset, "instance_data_dir": "source"})
                 job = CacheJob("job", "source", kind)
                 with (
                     patch.object(service, "_load_model", return_value=Mock()),
@@ -511,7 +512,7 @@ class TestStreamingTextPreparation(unittest.TestCase):
         job = CacheJob(job_id="stream-job", dataset_id="stream-test", cache_type="text_embeds")
         with TemporaryDirectory() as cache_dir:
             config = {"id": "stream-test", "caption_strategy": "filename", "cache_dir_text": cache_dir}
-            runtime = service._text_dataset(config, data_backend, metadata)
+            runtime = DatasetRuntime(config["id"], data_backend, metadata, config)
             with (
                 patch.object(service, "_load_model", return_value=model),
                 patch.object(service, "_create_dataset_runtime", return_value=runtime),
@@ -527,14 +528,15 @@ class TestStreamingTextPreparation(unittest.TestCase):
     def test_standalone_preparation_rejects_rank_local_training_buckets(self):
         records = CacheJobService._iter_prompt_records(
             None,
-            CacheJobService._text_dataset(
-                {"id": "dataset"},
+            DatasetRuntime(
+                "dataset",
                 None,
                 _LegacyPreparationMetadata(
                     read_only=True,
                     cache_file="missing.json",
                     data_backend=Mock(open_read_stream=Mock(side_effect=FileNotFoundError)),
                 ),
+                {},
             ),
         )
         with self.assertRaisesRegex(ValueError, "publish accepted membership"):
@@ -543,9 +545,7 @@ class TestStreamingTextPreparation(unittest.TestCase):
     def test_standalone_preparation_requires_an_accepted_sample_view(self):
         records = CacheJobService._iter_prompt_records(
             None,
-            CacheJobService._text_dataset(
-                {"id": "dataset"}, None, _LegacyPreparationMetadata(read_only=False, read_cache=lambda: {})
-            ),
+            DatasetRuntime("dataset", None, _LegacyPreparationMetadata(read_only=False, read_cache=lambda: {}), {}),
         )
         with self.assertRaisesRegex(ValueError, "scan the dataset"):
             next(records)

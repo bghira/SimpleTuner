@@ -1424,6 +1424,7 @@ class TestWebshartParquetBackend(unittest.TestCase):
                         self.backend.read_caption_batch(refs)
 
     def test_text_preparation_after_real_rank_split_still_covers_all_accepted_rows(self):
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
         from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBackend
         from simpletuner.helpers.models.common import TextEmbedCacheKey
         from simpletuner.helpers.training.state_tracker import StateTracker
@@ -1461,12 +1462,11 @@ class TestWebshartParquetBackend(unittest.TestCase):
             with patch.object(metadata, "read_cache", side_effect=AssertionError("read rank-local membership")):
                 records = list(
                     CacheJobService._iter_prompt_records(
-                        model, CacheJobService._text_dataset(config, self.backend, metadata)
+                        model, DatasetRuntime(self.backend.id, self.backend, metadata, config)
                     )
                 )
             self.assertEqual([r["prompt"] for r in records], ["first", "third"])
 
-            from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
             from simpletuner.helpers.data_backend.factory import FactoryRegistry
 
             args.output_dir = str(self.root)

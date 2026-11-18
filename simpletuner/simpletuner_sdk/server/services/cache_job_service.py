@@ -465,49 +465,13 @@ class CacheJobService:
         )
         return (os.path.abspath(resolved) if absolute else resolved) if resolved else None
 
-    def _create_dataset_runtime(
-        self,
-        dataset_config: Dict[str, Any],
-        args: _CacheArgsNamespace,
-        accelerator: _CacheAcceleratorStub,
-        *,
-        preparation_only: bool = False,
-    ):
-        """Open a dataset using the same resolved settings as its metadata provider."""
-        from simpletuner.helpers.data_backend.builders import create_backend_builder
-        from simpletuner.helpers.data_backend.config import create_backend_config
+    def _create_dataset_runtime(self, dataset_config, args, accelerator, *, preparation_only=False):
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 
         from .dataset_scan_service import DatasetScanService
 
-        dataset_config = DatasetScanService._convert_pixel_area(dataset_config, args)
-
-        args_dict = {}
-        for k in vars(args):
-            if not k.startswith("_"):
-                args_dict[k] = getattr(args, k, None)
-
-        config = create_backend_config(dataset_config, args_dict)
-
-        builder = create_backend_builder(config.backend_type, accelerator, args)
-        data_backend = builder.build(config)
-        metadata_backend = builder.create_metadata_backend(
-            config, data_backend, args_dict, preparation_only=preparation_only
-        )
-
-        resolved = {
-            **dataset_config,
-            **config.to_dict()["config"],
-            "id": config.id,
-            "instance_data_dir": metadata_backend.instance_data_dir,
-        }
-        return self._text_dataset(resolved, data_backend, metadata_backend, args)
-
-    @staticmethod
-    def _text_dataset(config, data_backend, metadata_backend, args=None):
-        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
-
-        config = {**config, **DatasetRuntime.caption_config(config, args)}
-        return DatasetRuntime(config["id"], data_backend, metadata_backend, config)
+        config = DatasetScanService._convert_pixel_area(dataset_config, args)
+        return DatasetRuntime.from_config(config, args, accelerator, preparation_only=preparation_only)
 
     @staticmethod
     def _iter_prompt_records(model, runtime, *, batch_size=1, args=None, conditioning_datasets=None):

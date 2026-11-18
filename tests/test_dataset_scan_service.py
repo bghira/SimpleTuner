@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from threading import Event
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from PIL import Image
 
@@ -102,6 +102,22 @@ def wait_for_scan_cancel(connection, cancelled, dataset_config, global_config, f
 
 
 class TestDatasetScanProcess(unittest.TestCase):
+    def test_scan_uses_a_scoped_runtime_without_setting_dataset_registry_config(self):
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        runtime = Mock()
+        progress = Mock()
+        with (
+            patch.object(DatasetRuntime, "from_config", return_value=runtime),
+            patch.object(StateTracker, "set_args"),
+            patch.object(StateTracker, "set_accelerator"),
+            patch.object(StateTracker, "set_data_backend_config", side_effect=AssertionError("global dataset settings")),
+        ):
+            DatasetScanService()._execute_scan({"id": "dataset", "type": "local"}, {}, True, progress)
+        runtime.prepare_view.assert_called_once_with(force_rescan=True, progress_callback=progress)
+        runtime.close.assert_called_once_with()
+
     def test_scan_preserves_live_registration_of_same_id(self):
         from simpletuner.helpers.training.state_tracker import StateTracker
 

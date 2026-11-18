@@ -9,7 +9,7 @@ import shutil
 import threading
 import time
 import uuid
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -558,8 +558,7 @@ class DatasetScanService:
         on_progress,
     ):
         """Execute the actual metadata scan using existing infrastructure."""
-        from simpletuner.helpers.data_backend.builders import create_backend_builder
-        from simpletuner.helpers.data_backend.config import create_backend_config
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
         from simpletuner.helpers.training.state_tracker import StateTracker
 
         # Build args namespace from global config and dataset config
@@ -589,19 +588,8 @@ class DatasetScanService:
         StateTracker.set_args(scan_args)
         StateTracker.set_accelerator(accelerator)
 
-        args_dict = vars(scan_args)
-        config = create_backend_config(dataset_config, args_dict)
-        StateTracker.set_data_backend_config(config.id, config.to_dict()["config"])
-        builder = create_backend_builder(config.backend_type, accelerator, scan_args)
-        data_backend = builder.build(config)
-        metadata_backend = builder.create_metadata_backend(config, data_backend, args_dict)
-        try:
-            metadata_backend.compute_aspect_ratio_bucket_indices(
-                ignore_existing_cache=force_rescan,
-                progress_callback=on_progress,
-            )
-        finally:
-            metadata_backend.close()
+        with closing(DatasetRuntime.from_config(dataset_config, scan_args, accelerator)) as dataset:
+            dataset.prepare_view(force_rescan=force_rescan, progress_callback=on_progress)
 
 
 # Module-level singleton
