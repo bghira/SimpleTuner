@@ -53,6 +53,8 @@ class BaseBackendBuilder(ABC):
         data_backend: BaseDataBackend,
         args: Dict[str, Any],
         instance_data_dir: Optional[str] = None,
+        *,
+        preparation_only: bool = False,
     ) -> Any:
         backend_dict = config.to_dict()["config"]
         metadata_backend_args = {}
@@ -106,6 +108,7 @@ class BaseBackendBuilder(ABC):
             if is_caption_dataset:
                 raise ValueError("Webshart metadata backend is not supported for caption-only datasets.")
             MetadataBackendCls = WebshartMetadataBackend
+            metadata_backend_args["preparation_only"] = preparation_only
         else:
             raise ValueError(f"Unknown metadata backend type: {metadata_backend_type}")
 

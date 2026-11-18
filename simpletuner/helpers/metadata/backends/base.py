@@ -4,6 +4,8 @@ import os
 import random
 import threading
 import time
+from contextlib import contextmanager
+from itertools import batched, chain, count, islice
 from math import ceil, floor
 from multiprocessing import Process, Queue
 from pathlib import Path
@@ -22,6 +24,12 @@ from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.data_backend.filters import build_dataset_filter
 from simpletuner.helpers.data_backend.runtime.context_parallel_sync import get_cp_info
+from simpletuner.helpers.metadata.preparation import (
+    DatasetDescription,
+    PreparationView,
+    read_bucket_groups,
+    read_bucket_page,
+)
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
 from simpletuner.helpers.training.multi_process import broadcast_object_from_main, should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -95,6 +103,10 @@ def get_cp_aware_dp_info(accelerator) -> Tuple[int, int, int]:
 
 
 class MetadataBackend:
+    # Providers with a reconstructible schedule expose epoch_spec, open_epoch,
+    # scheduled_batches and open_validation here.
+    epoch_provider = None
+
     def __init__(
         self,
         id: str,
@@ -118,6 +130,7 @@ class MetadataBackend:
         cache_file_suffix: str = None,
         repeats: int = 0,
         max_num_samples: int = None,
+        load_cache_on_init: bool = True,
     ):
         self.id = id
         if self.id != data_backend.id:
@@ -154,7 +167,8 @@ class MetadataBackend:
         self.audio_lyrics_format = self._resolve_audio_lyrics_format()
         self.audio_lyrics_extension = self._resolve_audio_lyrics_extension()
         self.audio_lyrics_suffix = self._resolve_audio_lyrics_suffix()
-        self.reload_cache()
+        if load_cache_on_init:
+            self.reload_cache()
         self.resolution = float(resolution)
         self.resolution_type = resolution_type
         self.delete_problematic_images = delete_problematic_images
@@ -690,9 +704,9 @@ class MetadataBackend:
                     metadata_update = metadata_updates_queue.get()
                     if type(metadata_update) is tuple and metadata_update[0] == "statistics":
                         logger.debug(f"Received statistics update: {metadata_update[1]}")
-                        for reason, count in metadata_update[1]["skipped"].items():
+                        for reason, skip_count in metadata_update[1]["skipped"].items():
                             aggregated_statistics["skipped"].setdefault(reason, 0)
-                            aggregated_statistics["skipped"][reason] += count
+                            aggregated_statistics["skipped"][reason] += skip_count
                         aggregated_statistics["total_processed"] += metadata_update[1]["total_processed"]
                         continue
                     for filepath, meta in metadata_update.items():
@@ -1171,9 +1185,12 @@ class MetadataBackend:
         image_path: str = None,
         image: Image = None,
         image_metadata: dict = None,
+        *,
+        dataset_config: dict | None = None,
     ):
         """check if image meets resolution and frame count requirements"""
-        if self.dataset_config.get("dataset_type", None) in ["conditioning"]:
+        metadata_config = self.dataset_config if dataset_config is None else dataset_config
+        if metadata_config.get("dataset_type", None) in ["conditioning"]:
             return True
         if self.dataset_type is DatasetType.AUDIO:
             return True
@@ -1273,10 +1290,8 @@ class MetadataBackend:
                     f"--minimum_image_size was given with a value of {self.minimum_image_size} but resolution_type is area, which means this value is most likely too large. Please use a value less than 5."
                 )
             minimum_image_size = self.minimum_image_size * 1_000_000
-            if (
-                StateTracker.get_data_backend_config(self.id).get("crop", False)
-                and StateTracker.get_data_backend_config(self.id).get("crop_aspect", "square") == "square"
-            ):
+            crop_config = StateTracker.get_data_backend_config(self.id) if dataset_config is None else dataset_config
+            if crop_config.get("crop", False) and crop_config.get("crop_aspect", "square") == "square":
                 # square crop needs minimum edge length check
                 pixel_edge_len = floor(np.sqrt(minimum_image_size))
                 if not (pixel_edge_len <= width and pixel_edge_len <= height):
@@ -1326,6 +1341,57 @@ class MetadataBackend:
 
         return False
 
+    def close(self):
+        """Release provider resources scoped to this dataset."""
+
+    def iter_validation_cycles(self):
+        ordered = sorted(chain.from_iterable(self.aspect_ratio_bucket_indices.values()))
+        while True:
+            yield iter(ordered)
+
+    @contextmanager
+    def _open_accepted_groups(self):
+        if not self.read_only:
+            yield self.read_cache().items()
+            return
+        try:
+            stream = self.data_backend.open_read_stream(self.cache_file)
+        except FileNotFoundError as exc:
+            raise ValueError("Scan the dataset to publish accepted membership before using a split dataset.") from exc
+        with stream as source:
+            yield read_bucket_groups(source)
+
+    def iter_preparation_batches(self, worker, workers, batch_size):
+        positions = count()
+        with self._open_accepted_groups() as groups:
+            for bucket, refs in groups:
+                assigned = (ref for ref in refs if next(positions) % workers == worker)
+                for batch in batched(assigned, batch_size):
+                    yield bucket, batch
+
+    def read_page(self, *, bucket=None, offset=0, limit=50):
+        with self._open_accepted_groups() as groups:
+            return read_bucket_page(groups, bucket, offset, limit)
+
+    def describe(self, spec=None):
+        if spec is not None:
+            raise ValueError("An epoch specification requires a native training cursor.")
+        summaries = getattr(self.bucket_report, "bucket_summaries", {}) if self.bucket_report else {}
+        return DatasetDescription(accepted_samples=summaries.get("post_refresh", {}).get("total_samples"))
+
+    @contextmanager
+    def open_preparation_view(self, *, worker=0, workers=1):
+        """Traverse accepted membership independently of the training split."""
+        with self._open_accepted_groups() as groups:
+            refs = chain.from_iterable(refs for _, refs in groups)
+            first = next(refs, None)
+            if first is None:
+                raise ValueError(
+                    "No accepted samples in dataset metadata; scan the dataset before preparing text embeddings."
+                )
+            partition = islice(chain((first,), refs), worker, None, workers)
+            yield PreparationView(partition, self)
+
     def read_cache(self):
         return self.aspect_ratio_bucket_indices
 
@@ -1358,6 +1424,10 @@ class MetadataBackend:
             self.image_metadata[filepath] = metadata
             if update_json:
                 self.save_image_metadata()
+
+    def get_metadata_batch(self, refs):
+        """Read metadata in request order, preserving duplicates and missing entries."""
+        return (self.get_metadata_by_filepath(ref) for ref in refs)
 
     def get_metadata_by_filepath(self, filepath: str):
         """retrieve metadata by filepath, trying both relative and absolute paths"""
@@ -1455,13 +1525,8 @@ class MetadataBackend:
                 if vae_cache_behavior == "sync":
                     expected_bucket = str(self._get_aspect_ratio_from_tensor(cache_content))
                     self._modify_cache_entry_bucket(cache_file, expected_bucket)
-                elif vae_cache_behavior == "recreate":
-                    if self.is_cache_inconsistent(vae_cache, cache_file, cache_content):
-                        threading.Thread(
-                            target=self.data_backend.delete,
-                            args=(cache_file,),
-                            daemon=True,
-                        ).start()
+                elif self.is_cache_inconsistent(vae_cache, cache_file, cache_content):
+                    vae_cache.cache_data_backend.delete(cache_file)
         except Exception as e:
             logger.debug(f"Error running VAE cache scan: {e}")
             return
@@ -1481,13 +1546,15 @@ class MetadataBackend:
 
     def is_cache_inconsistent(self, vae_cache, cache_file, cache_content):
         """check if cache file tensor doesn't match expected bucket"""
+        image_filename = vae_cache._image_filename_from_vaecache_filename(cache_file)
+        if image_filename is None:
+            return False
         if cache_content is None:
             return True
         # check for corrupt tensor values
         if torch.isnan(cache_content).any() or torch.isinf(cache_content).any():
             logger.warning(f"Cache file {cache_file} contains NaN or Inf values.")
             return True
-        image_filename = vae_cache._image_filename_from_vaecache_filename(cache_file)
         logger.debug(f"Checking cache file {cache_file} for inconsistencies. Image filename: {image_filename}")
         actual_resolution = self._get_image_size_from_tensor(cache_content)
         original_resolution = self.get_metadata_attribute_by_filepath(image_filename, "original_size")

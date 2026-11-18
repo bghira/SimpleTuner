@@ -86,17 +86,17 @@ class BucketReport:
         """Capture a lightweight summary of bucket distribution."""
         if bucket_indices is None:
             return
-        total_samples = 0
-        bucket_sizes = []
-        for bucket_key, samples in bucket_indices.items():
+        counts = {}
+        for bucket, samples in bucket_indices.items():
             try:
-                size = len(samples)
+                counts[bucket] = len(samples)
             except TypeError:
-                size = 0
-            total_samples += size
-            bucket_sizes.append((bucket_key, size))
+                counts[bucket] = 0
+        self.record_bucket_counts(name, counts)
 
-        bucket_sizes.sort(key=lambda item: item[1], reverse=True)
+    def record_bucket_counts(self, name: str, counts: Dict[Any, int]) -> None:
+        total_samples = sum(counts.values())
+        bucket_sizes = sorted(counts.items(), key=lambda item: item[1], reverse=True)
         top_buckets = bucket_sizes[:3]
 
         with self._lock:
