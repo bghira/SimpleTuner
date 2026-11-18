@@ -535,7 +535,7 @@ window.datasetViewerComponent = function () {
 
         async pairsNextPage(sourceId, conditioningId) {
             if (!this.conditioningPairs) return;
-            if (this.pairsOffset + this.pairsLimit >= this.conditioningPairs.total_pairs) return;
+            if (this.pairsOffset + this.pairsLimit >= (this.conditioningPairs.source_total ?? this.conditioningPairs.total_pairs)) return;
             this.pairsOffset += this.pairsLimit;
             await this.loadConditioningPairs(sourceId, conditioningId);
         },
@@ -578,7 +578,18 @@ window.datasetViewerComponent = function () {
                     limit: String(this.thumbnailLimit),
                     offset: String(this.thumbnailOffset),
                 });
+                const revision = this.datasets.find(ds => ds.dataset_id === datasetId)?.view_revision;
+                if (revision) params.set('view_revision', revision);
                 const resp = await fetch('/api/datasets/viewer/thumbnails?' + params);
+                if (resp.status === 409) {
+                    this.thumbnails = [];
+                    this.selectedBucket = null;
+                    this.thumbnailOffset = 0;
+                    this._saveNavState();
+                    await this._refreshDatasetSummary(datasetId);
+                    window.showToast?.('The dataset changed. Select a bucket to browse its current contents.', 'info');
+                    return;
+                }
                 if (!resp.ok) {
                     console.error('Failed to load thumbnails:', resp.status);
                     this.thumbnails = [];

@@ -13,11 +13,162 @@ from unittest.mock import MagicMock, patch
 from PIL import Image
 
 from simpletuner.simpletuner_sdk.server.services.dataset_viewer_service import (
+    DatasetViewChanged,
     DatasetViewerService,
     _data_backend_cache,
     generate_thumbnail,
     generate_thumbnail_from_pil,
 )
+
+
+class TestWebshartMembershipPages(unittest.TestCase):
+    def test_published_pages_are_bounded_and_survive_replacement(self):
+        from simpletuner.helpers.metadata.backends.webshart_membership import MembershipPages, write_membership
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = {
+                "id": "images",
+                "type": "webshart",
+                "webshart": {
+                    "source": "s3://example",
+                    "cache_dir": directory,
+                    "format": "parquet",
+                    "manifest": "capture.json",
+                },
+            }
+            path = root / "aspect_ratio_bucket_indices_source_0123456789abcdef_images.json"
+            refs = [f'path/{i} "snow 雪"\n' for i in range(900)]
+            buckets = {"empty": [], "square": refs, "wide": ["repeat", "repeat", "last"]}
+            write_membership(path, buckets, {"config": config})
+            self.assertEqual(json.loads(path.read_text())["aspect_ratio_bucket_indices"], buckets)
+            service = DatasetViewerService(project_root=root)
+            with (
+                patch.object(service, "_load_cache", side_effect=AssertionError("full JSON read")),
+                path.open("rb") as source,
+            ):
+                old = MembershipPages.open(source)
+                for key, offset, limit, expected, total in [
+                    ("square", 255, 3, refs[255:258], 900),
+                    (None, 899, 8, [refs[-1], *buckets["wide"]], 903),
+                    ("wide", 1, 1, ["repeat"], 3),
+                    ("missing", 1, 8, [], 0),
+                    (None, 0, 0, [], 903),
+                    (None, 2000, 1, [], 903),
+                ]:
+                    page = service.get_dataset_files(config, bucket_key=key, offset=offset, limit=limit)
+                    self.assertEqual((page.files, page.total), (expected, total))
+                self.assertEqual(service.get_dataset_summary(config).total_files, 903)
+                with patch.object(service, "get_dataset_files", side_effect=AssertionError("caption inventory")):
+                    coverage = service.get_caption_status({**config, "caption_strategy": "filename"})
+                    self.assertEqual((coverage.captioned_files, coverage.coverage_ratio), (903, 1.0))
+                    coverage = service.get_caption_status({**config, "caption_strategy": "csv"})
+                    self.assertIsNone(coverage.coverage_ratio)
+                with patch.object(old.source, "readline", wraps=old.source.readline) as lines:
+                    self.assertEqual(old.read_page(None, 868, 3), (refs[868:871], 903))
+                    self.assertEqual(lines.call_count, 1)
+                self.assertEqual(list(old.partition(6, 7)), refs[774:] + buckets["wide"])
+                write_membership(path, {"square": ["new"]}, {"config": config})
+                self.assertEqual(old.read_page(None, 900, 3)[0], buckets["wide"])
+                with self.assertRaises(DatasetViewChanged):
+                    service.get_dataset_files(config, view_revision=old.header["view_revision"])
+                new_page = service.get_dataset_files(config)
+                self.assertEqual(new_page.files, ["new"])
+                self.assertEqual(service.get_dataset_files(config, view_revision=new_page.view_revision), new_page)
+                other = {**config, "webshart": {**config["webshart"], "manifest": "another.json"}}
+                self.assertFalse(service.get_dataset_summary(other).has_cache)
+
+    def test_conditioning_queries_page_native_views_and_apply_exclusions(self):
+        import sqlite3
+        from contextlib import closing
+
+        from simpletuner.helpers.metadata.backends.webshart_exclusions import Exclusions, _publish
+        from simpletuner.helpers.metadata.backends.webshart_geometry import snapshot_path, stage_geometry
+        from simpletuner.helpers.metadata.backends.webshart_membership import MembershipPages, publish_indexed_membership
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            service = DatasetViewerService(project_root=root)
+            configs = []
+            refs = [f"webshart://{i}/0/image.jpg" for i in range(5)]
+            for name, accepted in [("source", refs[:4]), ("conditioning", refs[1:])]:
+                config = {"id": name, "type": "webshart", "webshart": {"cache_dir": directory, "format": "parquet"}}
+                configs.append(config)
+                metadata = root / f"geometry-{name}.json"
+                publication = root / f"aspect_ratio_bucket_indices_source_test_{name}.json"
+                with stage_geometry(metadata, shards_per_partition=2) as (writer, staging):
+                    pruned = refs[0] if name == "conditioning" else refs[-1]
+                    for partition, start in enumerate(range(0, len(refs), 2)):
+                        with writer.stage_partition(partition) as (group, part):
+                            for shard, ref in enumerate(refs[start : start + 2], start):
+                                if ref in accepted or ref == pruned:
+                                    group.add(
+                                        "pruned" if ref == pruned else "wide", ref, {"original_size": [8, 16]}, shard=shard
+                                    )
+                        writer.adopt_partition(partition, part)
+                    writer.finish()
+                    digest = writer.digest.hexdigest()
+                    writer.db.commit()
+                    writer.publish(metadata)
+                    staging.replace(snapshot_path(metadata, digest))
+                publish_indexed_membership(
+                    publication,
+                    {
+                        "view_revision": digest,
+                        "bucket_counts": {"wide": len(accepted)},
+                        "config": config,
+                        "geometry_format": "sqlite-v1",
+                        "geometry_partition_shards": 2,
+                        "geometry_name": metadata.name,
+                        "geometry_sha256": digest,
+                    },
+                )
+            with publication.open("rb") as source, closing(sqlite3.connect("")) as db:
+                pages = MembershipPages.open(source)
+                ledger = Exclusions(db)
+                ledger.add(refs[2], "wide", "nsfw")
+                _publish(publication, pages.header["view_revision"], db)
+            self.assertEqual(service.get_dataset_summary(configs[1]).total_files, 3)
+            self.assertEqual(service.get_file_metadata(configs[1], refs[4]).original_size, [8, 16])
+            filtered_page = service.get_dataset_files(configs[1], bucket_key="wide", offset=1, limit=1)
+            self.assertEqual((filtered_page.files, filtered_page.total), ([refs[3]], 3))
+            with patch.object(service, "get_dataset_files", side_effect=AssertionError("unbounded listing")):
+                report = service.get_conditioning_pairs(*configs, offset=1, limit=2)
+                self.assertEqual(report["pairs"], [{"source_path": refs[1], "conditioning_path": refs[1]}])
+                self.assertEqual((report["source_total"], report["total_pairs"]), (4, None))
+                orphans = service.get_orphaned_files(*configs)
+                self.assertEqual((orphans.source_orphans, orphans.conditioning_orphans), ([refs[0], refs[2]], [refs[4]]))
+                self.assertEqual(service.get_conditioning_pairs(configs[0], {"type": "local"})["scope"], "unavailable")
+                from PIL import Image
+
+                image = root / "image.png"
+                Image.new("RGB", (8, 8)).save(image)
+                local = {
+                    "id": "frames",
+                    "type": "local",
+                    "instance_data_dir": directory,
+                    "conditioning_config": {"type": "i2v_first_frame"},
+                }
+                linked = {**configs[0], "conditioning_data": ["frames"]}
+                match = service.get_conditioning_file_match(linked, [local], refs[1])
+                self.assertEqual(match["file_path"], str(image.resolve()))
+                self.assertIsNone(service.get_conditioning_file_match(linked, [local], refs[-1]))
+
+
+class TestLegacyMembershipPages(unittest.TestCase):
+    def test_viewer_reads_legacy_page_without_loading_full_cache(self):
+        with tempfile.TemporaryDirectory() as directory:
+            service = DatasetViewerService(project_root=Path(directory))
+            publication = Path(directory) / "buckets.json"
+            publication.write_text(json.dumps({"aspect_ratio_bucket_indices": {"wide": ["a", "b", "c"], "square": ["d"]}}))
+            with (
+                patch.object(service, "_find_cache_file", return_value=publication),
+                patch.object(service, "_load_cache", side_effect=AssertionError("full cache read")),
+            ):
+                page = service.get_dataset_files({"id": "images"}, offset=2, limit=1)
+                square = service.get_dataset_files({"id": "images"}, bucket_key="square")
+            self.assertEqual((page.files, page.total), (["c"], 4))
+            self.assertEqual((square.files, square.total), (["d"], 1))
 
 
 class TestFindCacheFile(unittest.TestCase):

@@ -6,9 +6,9 @@ from __future__ import annotations
 
 import importlib.metadata
 import importlib.util
-from typing import Any, Dict, List, Literal, Optional
+from typing import Annotated, Any, Dict, List, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, conlist
 
 from simpletuner.simpletuner_sdk.server.services.cache_job_service import get_cache_service
@@ -21,6 +21,7 @@ from simpletuner.simpletuner_sdk.server.services.dataset_viewer_service import (
     DatasetFilePage,
     DatasetGraph,
     DatasetSummary,
+    DatasetViewChanged,
     DatasetViewerService,
     FilteredFilesReport,
     OrphanReport,
@@ -109,14 +110,22 @@ async def get_viewer_summaries(
 async def get_viewer_files(
     dataset_id: str,
     bucket_key: Optional[str] = None,
-    limit: int = 50,
-    offset: int = 0,
+    limit: Annotated[int, Query(ge=0, le=1024)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    view_revision: Optional[str] = None,
     _user: User = Depends(get_current_user),
 ) -> DatasetFilePage:
     """Paginated file listing from a dataset's bucket cache."""
-    return _get_viewer_service().get_dataset_files(
-        _require_dataset_config(dataset_id), bucket_key=bucket_key, limit=limit, offset=offset
-    )
+    try:
+        return _get_viewer_service().get_dataset_files(
+            _require_dataset_config(dataset_id),
+            bucket_key=bucket_key,
+            limit=limit,
+            offset=offset,
+            view_revision=view_revision,
+        )
+    except DatasetViewChanged as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/viewer/file-metadata")
@@ -134,14 +143,22 @@ async def get_viewer_file_metadata(
 async def get_viewer_thumbnails(
     dataset_id: str,
     bucket_key: Optional[str] = None,
-    limit: int = 24,
-    offset: int = 0,
+    limit: Annotated[int, Query(ge=0, le=128)] = 24,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    view_revision: Optional[str] = None,
     _user: User = Depends(get_current_user),
 ) -> List[ViewerThumbnailInfo]:
     """Thumbnails for files in a dataset bucket."""
-    return _get_viewer_service().get_dataset_thumbnails(
-        _require_dataset_config(dataset_id), bucket_key=bucket_key, limit=limit, offset=offset
-    )
+    try:
+        return _get_viewer_service().get_dataset_thumbnails(
+            _require_dataset_config(dataset_id),
+            bucket_key=bucket_key,
+            limit=limit,
+            offset=offset,
+            view_revision=view_revision,
+        )
+    except DatasetViewChanged as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/viewer/preview")
@@ -409,8 +426,8 @@ async def get_viewer_filter_summary(dataset_id: str, _user: User = Depends(get_c
 async def get_viewer_filtered_files(
     dataset_id: str,
     reason: Optional[str] = None,
-    limit: int = 50,
-    offset: int = 0,
+    limit: Annotated[int, Query(ge=0, le=1024)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
     _user: User = Depends(get_current_user),
 ) -> FilteredFilesReport:
     """Files that were filtered out by size/aspect ratio settings."""
@@ -438,8 +455,8 @@ async def get_viewer_graph(_user: User = Depends(get_current_user)) -> DatasetGr
 async def get_viewer_conditioning_pairs(
     source_id: str,
     conditioning_id: str,
-    limit: int = 12,
-    offset: int = 0,
+    limit: Annotated[int, Query(ge=0, le=128)] = 12,
+    offset: Annotated[int, Query(ge=0)] = 0,
     _user: User = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """Matched conditioning pairs between source and conditioning datasets."""
@@ -468,12 +485,18 @@ async def get_viewer_conditioning_match(
 
 @router.get("/viewer/conditioning-orphans", response_model=OrphanReport)
 async def get_viewer_conditioning_orphans(
-    source_id: str, conditioning_id: str, _user: User = Depends(get_current_user)
+    source_id: str,
+    conditioning_id: str,
+    limit: Annotated[int, Query(ge=0, le=500)] = 500,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    _user: User = Depends(get_current_user),
 ) -> OrphanReport:
     """Orphaned files between source and conditioning datasets."""
     return _get_viewer_service().get_orphaned_files(
         _require_dataset_config(source_id),
         _require_dataset_config(conditioning_id),
+        limit=limit,
+        offset=offset,
     )
 
 
@@ -613,7 +636,13 @@ async def get_cache_capabilities(_user: User = Depends(get_current_user)) -> Dic
 @router.post("/cache/start")
 async def start_cache_job(request: CacheStartRequest, _user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Start a background cache job for a dataset."""
-    config = _require_dataset_config(request.dataset_id)
+    try:
+        plan = _load_plan()
+    except ValueError:
+        plan = []
+    config = next((entry for entry in plan if entry.get("id") == request.dataset_id), None)
+    if config is None:
+        raise HTTPException(status_code=404, detail=f"Dataset '{request.dataset_id}' not found in plan")
     global_config = _get_global_config()
     try:
         job_id = get_cache_service().start_cache_job(
@@ -621,6 +650,7 @@ async def start_cache_job(request: CacheStartRequest, _user: User = Depends(get_
             request.cache_type,
             config,
             global_config,
+            dataset_plan=plan,
         )
     except RuntimeError as e:
         raise HTTPException(status_code=409, detail=str(e))

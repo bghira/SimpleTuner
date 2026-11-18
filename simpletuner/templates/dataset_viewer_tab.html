@@ -212,7 +212,7 @@
                                 <h6><i class="fas fa-comment-alt me-1"></i>Caption Health</h6>
                                 <div class="d-flex align-items-center gap-2">
                                     <span class="badge bg-dark" x-text="captionStatus[ds.dataset_id]?.strategy || 'unknown'"></span>
-                                    <div class="progress flex-grow-1" style="height: 6px;">
+                                    <div class="progress flex-grow-1" style="height: 6px;" x-show="captionStatus[ds.dataset_id]?.coverage_ratio != null">
                                         <div class="progress-bar"
                                              :class="{
                                                  'bg-success': (captionStatus[ds.dataset_id]?.coverage_ratio || 0) > 0.95,
@@ -223,7 +223,7 @@
                                         </div>
                                     </div>
                                     <span class="small text-muted"
-                                          x-text="Math.round((captionStatus[ds.dataset_id]?.coverage_ratio || 0) * 100) + '%'"></span>
+                                          x-text="captionStatus[ds.dataset_id]?.coverage_ratio == null ? 'Unavailable' : Math.round(captionStatus[ds.dataset_id].coverage_ratio * 100) + '%'"></span>
                                 </div>
                                 <template x-for="warn in (captionStatus[ds.dataset_id]?.warnings || [])" :key="warn">
                                     <div class="text-warning small mt-1 viewer-text-xs" x-text="warn"></div>
@@ -349,7 +349,7 @@
                         <div x-show="conditioningPairs && expandedDataset === ds.dataset_id" class="px-3 py-2 viewer-section">
                             <div class="d-flex justify-content-between align-items-center mb-2">
                                 <span class="small text-muted">
-                                    <span x-text="conditioningPairs?.total_pairs || 0"></span> matched pairs
+                                    <span x-text="conditioningPairs?.scope === 'unavailable' ? 'Pairing index unavailable' : (conditioningPairs?.scope === 'source_page' ? conditioningPairs.pairs.length + ' matched pairs on this source page' : (conditioningPairs?.total_pairs ?? 0) + ' matched pairs')"></span>
                                     <span x-show="conditioningPairs?.source_orphan_count > 0"
                                           class="text-warning ms-2">
                                         <i class="fas fa-exclamation-triangle viewer-text-xxs"></i>
@@ -361,18 +361,18 @@
                                         <span x-text="conditioningPairs?.conditioning_orphan_count"></span> conditioning orphans
                                     </span>
                                 </span>
-                                <div class="d-flex gap-2 align-items-center" x-show="conditioningPairs?.total_pairs > pairsLimit">
+                                <div class="d-flex gap-2 align-items-center" x-show="(conditioningPairs?.source_total ?? conditioningPairs?.total_pairs) > pairsLimit">
                                     <button class="btn btn-outline-secondary btn-sm"
                                             :disabled="pairsOffset === 0"
-                                            @click="pairsPrevPage(ds.conditioning_data?.[0] || ds.source_dataset_id, ds.conditioning_data ? ds.conditioning_data[0] : ds.dataset_id)">
+                                            @click="pairsPrevPage(ds.conditioning_data ? ds.dataset_id : ds.source_dataset_id, ds.conditioning_data ? ds.conditioning_data[0] : ds.dataset_id)">
                                         <i class="fas fa-chevron-left"></i>
                                     </button>
                                     <span class="text-muted small"
-                                          x-text="(pairsOffset + 1) + '-' + Math.min(pairsOffset + pairsLimit, conditioningPairs?.total_pairs || 0)">
+                                          x-text="(pairsOffset + 1) + '-' + Math.min(pairsOffset + pairsLimit, conditioningPairs?.source_total ?? conditioningPairs?.total_pairs ?? 0)">
                                     </span>
                                     <button class="btn btn-outline-secondary btn-sm"
-                                            :disabled="pairsOffset + pairsLimit >= (conditioningPairs?.total_pairs || 0)"
-                                            @click="pairsNextPage(ds.conditioning_data?.[0] || ds.source_dataset_id, ds.conditioning_data ? ds.conditioning_data[0] : ds.dataset_id)">
+                                            :disabled="pairsOffset + pairsLimit >= (conditioningPairs?.source_total ?? conditioningPairs?.total_pairs ?? 0)"
+                                            @click="pairsNextPage(ds.conditioning_data ? ds.dataset_id : ds.source_dataset_id, ds.conditioning_data ? ds.conditioning_data[0] : ds.dataset_id)">
                                         <i class="fas fa-chevron-right"></i>
                                     </button>
                                 </div>
