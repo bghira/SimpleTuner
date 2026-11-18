@@ -1361,7 +1361,7 @@ class VAECache(WebhookMixin):
 
         for _ in range(0, qlen):
             if input_latents:
-                output_file, filepath, latent_vector = input_latents.pop()
+                output_file, filepath, latent_vector = input_latents.pop(0)
             else:
                 output_file, filepath, latent_vector = self.write_queue.get()
 
@@ -1433,8 +1433,8 @@ class VAECache(WebhookMixin):
             # First Loop: Preparation and Filtering
             for _ in range(qlen):
                 if image_paths:
-                    filepath = image_paths.pop()
-                    image = image_data.pop()
+                    filepath = image_paths.pop(0)
+                    image = image_data.pop(0)
                     aspect_bucket = None
                 else:
                     filepath, image, aspect_bucket = self.process_queue.get()
@@ -1800,7 +1800,7 @@ class VAECache(WebhookMixin):
                             filepath,
                             _aspect_bucket,
                             is_final_sample,
-                        ) = image_pixel_values.pop()
+                        ) = image_pixel_values.pop(0)
                     else:
                         (
                             pixel_values,

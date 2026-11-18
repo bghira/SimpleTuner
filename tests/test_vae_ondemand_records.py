@@ -73,8 +73,8 @@ class OnDemandLatentsFollowTheBatchRecords(unittest.TestCase):
         root = self.directory.name
         accelerator = SimpleNamespace(device=torch.device("cpu"), is_local_main_process=True, is_main_process=True)
         self.paths = []
-        pixels = np.random.default_rng(7).integers(0, 256, (2, 64, 96, 3), dtype=np.uint8)
-        for index in range(2):
+        pixels = np.random.default_rng(7).integers(0, 256, (3, 64, 96, 3), dtype=np.uint8)
+        for index in range(3):
             path = os.path.join(root, f"sample-{index}.png")
             Image.fromarray(pixels[index]).save(path)
             self.paths.append(path)
@@ -129,19 +129,29 @@ class OnDemandLatentsFollowTheBatchRecords(unittest.TestCase):
         # The metadata backend holds 96x64 for these samples; the batch says 48x32.
         records = {path: self._record((48, 32)) for path in self.paths}
         latents = self._encode(records)
-        self.assertEqual([tuple(latent.shape) for latent in latents], [(3, 4, 6), (3, 4, 6)])
+        self.assertEqual([tuple(latent.shape) for latent in latents], [(3, 4, 6)] * 3)
         self.assertEqual(self.geometry.lookups, [])
         encoded_with = {entry["filepath"]: entry["metadata"] for entry in self.model.encoded_with}
         self.assertEqual(encoded_with, records)
 
     def test_a_caller_with_only_paths_gets_the_geometry_the_metadata_backend_holds(self):
         from_lookup = self._encode()
-        self.assertEqual([tuple(latent.shape) for latent in from_lookup], [(3, 8, 12), (3, 8, 12)])
+        self.assertEqual([tuple(latent.shape) for latent in from_lookup], [(3, 8, 12)] * 3)
         self.assertEqual(sorted(set(self.geometry.lookups)), sorted(self.paths))
         from_records = self._encode(dict(self.geometry.geometry))
         self.assertFalse(torch.equal(from_lookup[0], from_lookup[1]))
         for looked_up, recorded in zip(from_lookup, from_records):
             torch.testing.assert_close(looked_up, recorded)
+
+    def test_latents_come_back_in_the_order_the_samples_were_asked_for(self):
+        alone = [self.cache.encode_images([None], [path])[0] for path in self.paths]
+        self.assertFalse(any(torch.equal(alone[0], other) for other in alone[1:]))
+        with patch.object(self.model, "encode_cache_batch", wraps=self.model.encode_cache_batch) as encode:
+            together = self._encode()
+        for latent, expected in zip(together, alone):
+            torch.testing.assert_close(latent, expected)
+        # The samples share a size, so they are encoded as one batch.
+        self.assertEqual([call.args[1].shape[0] for call in encode.call_args_list], [3])
 
 
 if __name__ == "__main__":
