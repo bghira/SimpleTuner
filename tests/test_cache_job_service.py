@@ -381,6 +381,7 @@ class TestStateTrackerSetup(unittest.TestCase):
 
 
 class _LegacyPreparationMetadata(SimpleNamespace):
+    _preparation_source = None
     close = MetadataBackend.close
     _open_accepted_groups = MetadataBackend._open_accepted_groups
     _preparation_ownership = MetadataBackend._preparation_ownership
