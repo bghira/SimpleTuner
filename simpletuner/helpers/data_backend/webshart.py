@@ -558,7 +558,7 @@ class WebshartDataBackend(BaseDataBackend):
                     handle.write(data.decode("utf-8") if isinstance(data, bytes) else str(data))
             return
 
-        with cache_path.open("wb") as handle:
+        with atomic_write(cache_path, mode="wb", encoding=None, overwrite=True) as handle:
             if isinstance(data, bytes):
                 handle.write(data)
             else:

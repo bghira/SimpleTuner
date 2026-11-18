@@ -100,6 +100,30 @@ class TestWebshartParquetBackend(unittest.TestCase):
             with self.assertRaisesRegex(ImportError, "pillow-jxl-plugin"):
                 self.backend.read_image(ref)
 
+    def test_cache_reader_sees_only_complete_latent_writes(self):
+        cache_ref = "latent.pt"
+        self.backend.write(cache_ref, b"previous")
+        write_started, release_write = Event(), Event()
+
+        def save(_data, handle):
+            handle.write(b"new ")
+            handle.flush()
+            write_started.set()
+            if not release_write.wait(10):
+                raise TimeoutError("test did not release latent writer")
+            handle.write(b"latent")
+
+        with patch("simpletuner.helpers.data_backend.webshart.torch.save", side_effect=save):
+            with ThreadPoolExecutor(max_workers=1) as worker:
+                write = worker.submit(self.backend.write, cache_ref, object())
+                try:
+                    self.assertTrue(write_started.wait(10))
+                    self.assertEqual(self.backend.read(cache_ref), b"previous")
+                finally:
+                    release_write.set()
+                write.result(timeout=10)
+        self.assertEqual(self.backend.read(cache_ref), b"new latent")
+
     def test_prepared_view_uses_factory_bound_settings_without_tracker_lookups(self):
         from simpletuner.helpers.data_backend.builders.base import create_metadata_provider
         from simpletuner.helpers.training.state_tracker import StateTracker
