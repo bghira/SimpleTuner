@@ -473,6 +473,30 @@ class TestWindowedLength(unittest.TestCase):
         self.assertEqual(lengths, [6, 6])
         self.assertEqual(len(even_units(8).cursor(batch_size=4, repeats=1)), 24)
 
+    def test_ranks_dealt_unequal_numbers_of_units_plan_for_the_fewest(self):
+        lengths, dealt = [], []
+        for rank in range(2):
+            units = even_units(7)
+            cursor = units.cursor(dp_size=2, dp_rank=rank, batch_size=4)
+            lengths.append(len(cursor))
+            drain(cursor)
+            dealt.append(len(units.opened))
+        self.assertEqual(dealt, [4, 3])
+        # The epoch ends for both ranks when the one with three units runs out: 3 x 6 samples.
+        self.assertEqual(lengths, [5, 5])
+
+    def test_the_window_being_read_can_be_named(self):
+        units = even_units(7)
+        cursor = units.cursor(window=3)
+        first = cursor.units_in_window()
+        self.assertEqual(len(first), 3)
+        cursor.next_batch()
+        self.assertEqual(sorted(units.open), sorted(first))
+        while sorted(units.open) == sorted(first):
+            cursor.next_batch()
+        self.assertEqual(sorted(cursor.units_in_window()), sorted(units.open))
+        self.assertEqual(set(cursor.units_in_window()) & set(first), set())
+
     def test_progress_never_reports_more_consumed_than_total(self):
         cursor = even_units(4).cursor()
         cursor.samples_per_unit = 1.0

@@ -331,6 +331,10 @@ class WindowedCursor:
                 self._close_group()
                 self._group += 1
 
+    def units_in_window(self) -> list[int]:
+        """The units of the window this rank is reading, or will read first."""
+        return list(self._groups[self._group])
+
     def measure_samples_per_unit(self) -> float:
         """The average over the window this rank reads first, which is opened to find out."""
         if self._inner is None:
@@ -340,7 +344,8 @@ class WindowedCursor:
     def _estimated_samples(self) -> int:
         if self.samples_per_unit is None:
             raise RuntimeError(f"Dataset '{self.dataset_id}' has no estimate of its samples per unit yet.")
-        units = sum(len(group) for group in self._groups)
+        # The epoch ends for every rank when the first one runs out, and that rank holds the fewest units.
+        units = self.unit_count // self.dp_size
         return ceil(units * self.samples_per_unit * (self.repeats + 1))
 
     def __len__(self) -> int:
