@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import sqlite3
+import zlib
 from collections import defaultdict
 from contextlib import ExitStack, closing, contextmanager
 from itertools import batched
@@ -24,7 +25,7 @@ class GeometryLookup:
 
     def get_metadata_by_filepath(self, filepath):
         row = self.connection.execute("SELECT record FROM geometry WHERE ref = ?", (str(filepath),)).fetchone()
-        return json.loads(row[0]) if row is not None else None
+        return self._decode_record(row[0]) if row is not None else None
 
     def get_metadata_batch(self, refs):
         keys = [str(ref) for ref in refs]
@@ -33,8 +34,12 @@ class GeometryLookup:
         for chunk in batched(dict.fromkeys(keys), limit):
             placeholders = ",".join("?" for _ in chunk)
             rows = self.connection.execute(f"SELECT ref, record FROM geometry WHERE ref IN ({placeholders})", chunk)
-            records.update((ref, json.loads(record)) for ref, record in rows)
+            records.update((ref, self._decode_record(record)) for ref, record in rows)
         return [records.get(ref) for ref in keys]
+
+    @staticmethod
+    def _decode_record(record):
+        return json.loads(zlib.decompress(record) if isinstance(record, bytes) else record)
 
     def locate_ref(self, ref):
         return self.connection.execute("SELECT bucket,ordinal FROM geometry WHERE ref=?", (ref,)).fetchone()
@@ -194,7 +199,7 @@ class PreparedGeometry:
     def __init__(self, db):
         self.db = db
         db.execute(
-            "CREATE TABLE geometry(ref TEXT NOT NULL UNIQUE, record TEXT NOT NULL, bucket TEXT NOT NULL, ordinal INTEGER NOT NULL)"
+            "CREATE TABLE geometry(ref TEXT NOT NULL UNIQUE, record BLOB NOT NULL, bucket TEXT NOT NULL, ordinal INTEGER NOT NULL)"
         )
         db.execute(
             "CREATE TABLE runs(shard INTEGER NOT NULL, bucket TEXT NOT NULL, start INTEGER NOT NULL, n INTEGER NOT NULL)"
@@ -211,7 +216,7 @@ class PreparedGeometry:
     def add(self, bucket, ref, metadata, *, shard=None):
         ordinal = self.counts.get(bucket, 0)
         record = json.dumps(metadata, separators=(",", ":"))
-        self.db.execute("INSERT INTO geometry VALUES (?,?,?,?)", (ref, record, bucket, ordinal))
+        self.db.execute("INSERT INTO geometry VALUES (?,?,?,?)", (ref, zlib.compress(record.encode(), 1), bucket, ordinal))
         self.digest.update(json.dumps([bucket, ref, record, shard], separators=(",", ":")).encode())
         self.counts[bucket] = ordinal + 1
         if shard is not None:

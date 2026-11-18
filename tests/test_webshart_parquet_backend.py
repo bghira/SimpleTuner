@@ -55,6 +55,27 @@ class TestWebshartParquetBackend(unittest.TestCase):
             None, "parquet", str(source), format="parquet", cache_dir=str(self.root / "cache")
         )
 
+    def test_prepared_geometry_reads_compact_and_existing_text_records(self):
+        from simpletuner.helpers.metadata.backends.webshart_geometry import GeometryLookup, PreparedGeometry
+
+        record = {
+            "original_size": [1024, 1536],
+            "crop_coordinates": [256, 512],
+            "target_size": [512, 512],
+            "webshart": {"shard_idx": 1, "sample_idx": 3, "filename": "data/0003.jpg"},
+        }
+        with closing(sqlite3.connect(":memory:")) as connection:
+            geometry = PreparedGeometry(connection)
+            geometry.add("512x512", "new", record)
+            connection.execute("INSERT INTO geometry VALUES (?,?,?,?)", ("original", json.dumps(record), "512x512", 1))
+            geometry.finish()
+            lookup = GeometryLookup(connection)
+            self.assertEqual(connection.execute("SELECT typeof(record) FROM geometry WHERE ref='new'").fetchone(), ("blob",))
+            self.assertEqual(lookup.get_metadata_by_filepath("new"), record)
+            self.assertEqual(
+                lookup.get_metadata_batch(["original", "new", "new", "missing"]), [record, record, record, None]
+            )
+
     def test_runtime_can_request_exact_source_count_without_null_image_rows(self):
         from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 
