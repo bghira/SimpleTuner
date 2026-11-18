@@ -89,6 +89,7 @@ def _checkpoint_worker(rank, port, output_dir):
     sampler.accelerator = accelerator
     sampler.id = "dataset"
     sampler.batch_size = 1
+    sampler.validation_cursor = Mock()
     sampler.buckets = ["1.0"]
     sampler.exhausted_buckets = []
     sampler.current_bucket = 0
@@ -107,7 +108,9 @@ def _checkpoint_worker(rank, port, output_dir):
         random.seed(100 + rank)
         np.random.seed(200 + rank)
         torch.manual_seed(300 + rank)
-        with patch.object(StateTracker, "get_data_backends", return_value={"dataset": {"sampler": sampler}}):
+        with patch.object(
+            StateTracker, "get_datasets", return_value={"dataset": SimpleNamespace(id="dataset", sampler=sampler)}
+        ):
             path = trainer._save_rolling_checkpoint() if rolling else trainer._run_standard_checkpoint(None, None, 0)
         expected = (random.random(), np.random.random(), torch.rand(4))
         manifest = trainer.checkpoint_manager.load_manifest(path)

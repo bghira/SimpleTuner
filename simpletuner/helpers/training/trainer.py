@@ -27,6 +27,7 @@ from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager
 from enum import Enum
+from functools import partial
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 from unittest import mock as unittest_mock
@@ -53,7 +54,13 @@ from simpletuner.helpers.data_backend.runtime.context_parallel_sync import (
     ContextParallelBatchSynchronizer,
     gather_sample_weighted_scalar,
 )
-from simpletuner.helpers.data_backend.runtime.schedule import normalize_start_epoch, normalize_start_step
+from simpletuner.helpers.data_backend.runtime.dataloader_iterator import DatasetMixer
+from simpletuner.helpers.data_backend.runtime.schedule import (
+    normalize_end_epoch,
+    normalize_end_step,
+    normalize_start_epoch,
+    normalize_start_step,
+)
 from simpletuner.helpers.distillation.composition import resolve_configured_distiller_requirement_profile
 from simpletuner.helpers.distillation.requirements import EMPTY_PROFILE, DistillerRequirementProfile
 from simpletuner.helpers.models.registry import ModelRegistry
@@ -3800,7 +3807,6 @@ class Trainer:
             self.config.overrode_max_train_steps = False
         total_num_batches = 0
         initial_num_batches = 0
-        initial_active_ids: list[str] = []
 
         caption_batches_supported = False
         distiller = getattr(self, "distiller", None)
@@ -3818,47 +3824,37 @@ class Trainer:
                 except Exception:
                     caption_batches_supported = False
 
-        training_dataset_types = {
-            DatasetType.IMAGE,
-            DatasetType.VIDEO,
-            DatasetType.AUDIO,
-            DatasetType.CONDITIONING,
-            DatasetType.GROUNDING,
-        }
-        if caption_batches_supported:
-            training_dataset_types.add(DatasetType.CAPTION)
-
-        for backend_id, backend in StateTracker.get_data_backends().items():
-            backend_type = ensure_dataset_type(backend.get("dataset_type"), default=DatasetType.IMAGE)
-            if backend_type is DatasetType.EVAL:
+        epoch_batches_map: dict[int, int] = {}
+        datasets = self._registered_training_datasets()
+        eval_ids = getattr(self.config, "eval_dataset_id", None) or ()
+        if isinstance(eval_ids, str):
+            eval_ids = (eval_ids,)
+        for dataset_id, dataset in datasets.items():
+            if dataset_id in eval_ids:
                 continue
-            if backend_type not in training_dataset_types:
+            config = dataset.config
+            if config["dataset_type"] == DatasetType.CAPTION and not caption_batches_supported:
                 continue
-            backend_config = backend.get("config", {}) if isinstance(backend, dict) else {}
-            probability = backend_config.get("probability", 1.0)
-            if probability is None:
-                probability_value = 1.0
-            else:
-                try:
-                    probability_value = float(probability)
-                except (TypeError, ValueError) as exc:
-                    raise ValueError(
-                        f"Dataset {backend_id} has invalid probability={probability!r}; must be a number."
-                    ) from exc
+            probability = config.get("probability", 1.0)
+            try:
+                probability_value = float(probability) if probability is not None else 1.0
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"Dataset {dataset_id} has invalid probability={probability!r}; must be a number.") from exc
             if probability_value <= 0:
                 continue
-            try:
-                dataset_batches = len(backend["metadata_backend"] if "metadata_backend" in backend else [])
-            except Exception:
-                dataset_batches = 0
+            start_epoch = normalize_start_epoch(config.get("start_epoch"))
+            start_step = normalize_start_step(config.get("start_step"))
+            end_epoch = normalize_end_epoch(config.get("end_epoch"))
+            end_step = normalize_end_step(config.get("end_step"))
+            if (end_epoch is not None and end_epoch < start_epoch) or (end_step is not None and end_step < start_step):
+                continue
+            dataset_batches = dataset.training_batch_count()
             total_num_batches += dataset_batches
-
-            schedule = StateTracker.get_dataset_schedule(backend_id) or {}
-            start_epoch = normalize_start_epoch(schedule.get("start_epoch", backend.get("config", {}).get("start_epoch", 1)))
-            start_step = normalize_start_step(schedule.get("start_step", backend.get("config", {}).get("start_step", 0)))
+            epoch_batches_map[start_epoch] = epoch_batches_map.get(start_epoch, 0) + dataset_batches
+            if end_epoch is not None:
+                epoch_batches_map[end_epoch + 1] = epoch_batches_map.get(end_epoch + 1, 0) - dataset_batches
             if start_epoch <= 1 and start_step <= 1:
                 initial_num_batches += dataset_batches
-                initial_active_ids.append(backend_id)
 
         if initial_num_batches <= 0:
             raise ValueError(
@@ -3869,34 +3865,6 @@ class Trainer:
         self.config.total_num_batches = total_num_batches
         self.config.initial_num_batches = initial_num_batches
 
-        # Build epoch schedule map: epoch -> cumulative batches added at that epoch
-        # This allows dynamic calculation of steps per epoch based on current epoch
-        epoch_batches_map: dict[int, int] = {}
-        for backend_id, backend in StateTracker.get_data_backends().items():
-            backend_type = ensure_dataset_type(backend.get("dataset_type"), default=DatasetType.IMAGE)
-            if backend_type is DatasetType.EVAL or backend_type not in training_dataset_types:
-                continue
-            backend_config = backend.get("config", {}) if isinstance(backend, dict) else {}
-            probability = backend_config.get("probability", 1.0)
-            if probability is None:
-                probability_value = 1.0
-            else:
-                try:
-                    probability_value = float(probability)
-                except (TypeError, ValueError):
-                    probability_value = 0.0
-            if probability_value <= 0:
-                continue
-            try:
-                dataset_batches = len(backend["metadata_backend"] if "metadata_backend" in backend else [])
-            except Exception:
-                dataset_batches = 0
-            schedule = StateTracker.get_dataset_schedule(backend_id) or {}
-            start_epoch = normalize_start_epoch(schedule.get("start_epoch", backend_config.get("start_epoch", 1)))
-            # Accumulate batches by start_epoch
-            epoch_batches_map[start_epoch] = epoch_batches_map.get(start_epoch, 0) + dataset_batches
-
-        # Store the schedule for dynamic steps_per_epoch calculation
         self.config.epoch_batches_schedule = epoch_batches_map
 
         if initial_num_batches < total_num_batches:
@@ -3950,19 +3918,11 @@ class Trainer:
 
         max_epochs = getattr(self.config, "num_train_epochs", None)
         max_steps = getattr(self.config, "max_train_steps", None)
-        for dataset_id, backend in StateTracker.get_data_backends().items():
-            backend_type = ensure_dataset_type(backend.get("dataset_type"), default=DatasetType.IMAGE)
-            if backend_type not in {
-                DatasetType.IMAGE,
-                DatasetType.VIDEO,
-                DatasetType.AUDIO,
-                DatasetType.CONDITIONING,
-                DatasetType.GROUNDING,
-            }:
+        for dataset_id, dataset in datasets.items():
+            if dataset_id in eval_ids or dataset.config["dataset_type"] == DatasetType.CAPTION:
                 continue
-            schedule = StateTracker.get_dataset_schedule(dataset_id) or {}
-            start_epoch = normalize_start_epoch(schedule.get("start_epoch", backend.get("config", {}).get("start_epoch", 1)))
-            start_step = normalize_start_step(schedule.get("start_step", backend.get("config", {}).get("start_step", 0)))
+            start_epoch = normalize_start_epoch(dataset.config.get("start_epoch"))
+            start_step = normalize_start_step(dataset.config.get("start_step"))
             if max_epochs not in (None, 0) and start_epoch > max_epochs:
                 logger.warning(
                     f"Dataset {dataset_id} is scheduled to start at epoch {start_epoch}, "
@@ -3983,8 +3943,8 @@ class Trainer:
         """
         Calculate the number of steps per epoch for a specific epoch.
 
-        When datasets have different start_epoch values, the number of steps
-        per epoch varies. This method computes the correct value for a given epoch.
+        The schedule records batch deltas at the start and end of each dataset's epoch window.
+        Progress calculations use at least one step as a divisor.
 
         Args:
             epoch: The epoch number (1-indexed) to calculate steps for.
@@ -3997,17 +3957,7 @@ class Trainer:
             # No schedule, use the cached value
             return getattr(self.config, "num_update_steps_per_epoch", 1) or 1
 
-        # Calculate total batches for this epoch by summing all datasets
-        # that have start_epoch <= epoch
-        active_batches = 0
-        for start_epoch, batches in epoch_batches_schedule.items():
-            if start_epoch <= epoch:
-                active_batches += batches
-
-        if active_batches <= 0:
-            # Fallback to cached value if no batches (shouldn't happen)
-            return getattr(self.config, "num_update_steps_per_epoch", 1) or 1
-
+        active_batches = sum(change for boundary, change in epoch_batches_schedule.items() if boundary <= epoch)
         grad_accum = max(self.config.gradient_accumulation_steps or 1, 1)
         return max(math.ceil(active_batches / grad_accum), 1)
 
@@ -4502,14 +4452,15 @@ class Trainer:
         # Prepare everything with our `accelerator`.
         logger.info("Preparing models..")
 
-        # TODO: Review if this is still required - added January 2024 as temporary solution.
-        self.train_dataloaders = []
-        for _, backend in StateTracker.get_data_backends().items():
-            if "train_dataloader" not in backend:
-                continue
-            self.train_dataloaders.append(backend["train_dataloader"])
-            break
-        if len(self.train_dataloaders) == 0:
+        train_dataloader = next(
+            (
+                dataset.training_dataloader
+                for dataset in self._registered_training_datasets().values()
+                if dataset.training_dataloader is not None
+            ),
+            None,
+        )
+        if train_dataloader is None:
             logger.error("For some reason, no dataloaders were configured.")
             sys.exit(0)
         if self.config.disable_accelerator:
@@ -4607,7 +4558,7 @@ class Trainer:
         if self.sidecar_lr_scheduler is not None:
             prepare_targets.append(self.sidecar_lr_scheduler)
             prepared_labels.append("sidecar_lr_scheduler")
-        prepare_targets.append(self.train_dataloaders[0])
+        prepare_targets.append(train_dataloader)
         prepared_labels.append("train_dataloader")
 
         # Determine if we should skip automatic device placement for the model.
@@ -4673,16 +4624,7 @@ class Trainer:
                 self.sidecar_optimizer = prepared
             elif label == "sidecar_lr_scheduler":
                 self.sidecar_lr_scheduler = prepared
-            elif label == "train_dataloader":
-                self.train_dataloaders = [prepared]
         self._report_cuda_usage_if_requested("after_accelerator_prepare")
-
-        idx_count = 0
-        for _, backend in StateTracker.get_data_backends().items():
-            if idx_count == 0 or "train_dataloader" not in backend:
-                continue
-            self.train_dataloaders.append(self.accelerator.prepare(backend["train_dataloader"]))
-        idx_count = 0
 
         if "lora" in self.config.model_type and self.config.train_text_encoder:
             logger.info("Preparing text encoders for training.")
@@ -5183,14 +5125,10 @@ class Trainer:
             job_id=self.job_id,
         )
         self._emit_event(event)
-        for _, backend in StateTracker.get_data_backends().items():
-            if "sampler" in backend:
-                backend["sampler"].load_states(
-                    state_path=os.path.join(
-                        self.config.output_dir,
-                        path,
-                        self.model_hooks.training_state_path,
-                    ),
+        for dataset in self._registered_training_datasets().values():
+            if dataset.sampler is not None:
+                dataset.sampler.load_states(
+                    state_path=os.path.join(self.config.output_dir, path, self.model_hooks.training_state_path)
                 )
         self.state["global_resume_step"] = self.state["global_step"] = StateTracker.get_global_step()
         StateTracker.set_global_resume_step(self.state["global_resume_step"])
@@ -5234,9 +5172,9 @@ class Trainer:
         logger.info(f"Resuming from global_step {self.state['global_resume_step']}.")
 
         # Log the current state of each data backend.
-        for _, backend in StateTracker.get_data_backends().items():
-            if "sampler" in backend:
-                backend["sampler"].log_state()
+        for dataset in self._registered_training_datasets().values():
+            if dataset.sampler is not None:
+                dataset.sampler.log_state()
         # We store the number of dataset resets that have occurred inside the checkpoint.
         self.state["first_epoch"] = StateTracker.get_epoch()
         if self.state["first_epoch"] > 1 or self.state["global_resume_step"] > 1:
@@ -6048,39 +5986,42 @@ class Trainer:
         logger.debug(
             f"Just completed epoch {self.state['current_epoch'] - 1}. Beginning epoch {epoch}. Starting epoch was {self.state['first_epoch']}. Final epoch will be {self.config.num_train_epochs}"
         )
-        for backend_id, backend in StateTracker.get_data_backends().items():
-            backend_config = StateTracker.get_data_backend_config(backend_id)
+        for dataset_id, dataset in self._registered_training_datasets().items():
+            metadata = dataset.metadata_backend
+            config = dataset.config
+            vae_cache = dataset.vae_cache
             if (
-                backend_config.get("crop")
-                and backend_config.get("crop_aspect") == "random"
-                and "metadata_backend" in backend
+                config.get("crop")
+                and config.get("crop_aspect") == "random"
+                and metadata is not None
                 and not self.config.aspect_bucket_disable_rebuild
-            ) or (backend_config.get("vae_cache_clear_each_epoch") and "vaecache" in backend):
+            ) or (config.get("vae_cache_clear_each_epoch") and vae_cache is not None):
                 # when the aspect ratio is random, we need to shuffle the dataset on each epoch.
                 if self.accelerator.is_main_process:
                     # we only compute the aspect ratio indices on the main process.
                     # we have to set read_only to False since we're generating a new, un-split list.
                     # otherwise, we can't actually save the new cache to disk.
-                    backend["metadata_backend"].read_only = False
+                    metadata.read_only = False
                     # this will generate+save the new cache to the storage backend.
-                    backend["metadata_backend"].compute_aspect_ratio_bucket_indices(ignore_existing_cache=True)
+                    metadata.compute_aspect_ratio_bucket_indices(ignore_existing_cache=True)
                 self.accelerator.wait_for_everyone()
-                logger.info(f"Reloading cache for backend {backend_id}")
-                backend["metadata_backend"].reload_cache(set_config=False)
+                logger.info(f"Reloading cache for backend {dataset_id}")
+                metadata.reload_cache(set_config=False)
                 logger.info("Waiting for other threads to finish..")
                 self.accelerator.wait_for_everyone()
                 # we'll have to split the buckets between GPUs again now, so that the VAE cache distributes properly.
                 logger.info("Splitting buckets across GPUs")
-                backend["metadata_backend"].split_buckets_between_processes(
+                metadata.split_buckets_between_processes(
                     gradient_accumulation_steps=self.config.gradient_accumulation_steps,
                     apply_padding=(self.config.overrode_max_train_steps or self.config.allow_dataset_oversubscription),
                 )
-                local_sample_count = sum(
-                    len(bucket) for bucket in backend["metadata_backend"].aspect_ratio_bucket_indices.values()
-                )
+                if dataset.uses_native_schedule:
+                    local_sample_count = len(metadata)
+                else:
+                    local_sample_count = sum(len(bucket) for bucket in metadata.aspect_ratio_bucket_indices.values())
                 if local_sample_count == 0:
                     raise ValueError(
-                        f"(id={backend_id}) Dataset produced no usable samples. The epoch rollover"
+                        f"(id={dataset_id}) Dataset produced no usable samples. The epoch rollover"
                         f" re-split left this rank with zero samples, so epoch {epoch} would train"
                         f" against an empty schedule here.\n"
                         f"This usually means per-epoch re-bucketing (e.g., crop_aspect=random) produced"
@@ -6090,9 +6031,17 @@ class Trainer:
                         f" ranks, use fewer GPUs, or add more samples to the dataset."
                     )
                 # we have to rebuild the VAE cache if it exists.
-                if "vaecache" in backend:
+                if vae_cache is not None:
                     logger.info("Rebuilding VAE cache..")
-                    backend["vaecache"].rebuild_cache()
+                    if dataset.uses_native_schedule:
+                        if not vae_cache.vae_cache_ondemand:
+                            vae_cache.prepare_dataset(
+                                dataset,
+                                worker=self.accelerator.process_index,
+                                workers=self.accelerator.num_processes,
+                            )
+                    else:
+                        vae_cache.rebuild_cache()
                 # no need to manually call metadata_backend.save_cache() here.
         if self.config.lr_scheduler == "cosine_with_restarts":
             self.extra_lr_scheduler_kwargs["epoch"] = epoch
@@ -6153,7 +6102,7 @@ class Trainer:
 
         try:
             if getattr(self, "bf", None) is not None:
-                self.bf.stop_fetching()
+                self.bf.close()
         except Exception as exc:
             logger.debug("Failed to stop batch fetcher during cleanup: %s", exc, exc_info=True)
 
@@ -6167,6 +6116,8 @@ class Trainer:
             reclaim_memory()
         except Exception as exc:
             logger.debug("Failed to reclaim accelerator memory during cleanup: %s", exc, exc_info=True)
+
+        StateTracker.clear_data_backends()
 
     def model_predict(
         self,
@@ -6761,15 +6712,10 @@ class Trainer:
             )
             self._emit_event(event)
         self.mark_optimizer_train()
-        for _, backend in StateTracker.get_data_backends().items():
-            if "sampler" in backend:
-                logger.debug(f"Backend: {backend}")
-                backend["sampler"].save_state(
-                    state_path=os.path.join(
-                        save_path_tmp,
-                        self.model_hooks.training_state_path,
-                    ),
-                )
+        for dataset in self._registered_training_datasets().values():
+            if dataset.sampler is not None:
+                logger.debug("Saving sampler for dataset %s", dataset.id)
+                dataset.sampler.save_state(state_path=os.path.join(save_path_tmp, self.model_hooks.training_state_path))
         if distributed_type != DistributedType.NO:
             self.accelerator.wait_for_everyone()
         if is_main_process:
@@ -6941,6 +6887,10 @@ class Trainer:
         )
         return profiler
 
+    @staticmethod
+    def _registered_training_datasets():
+        return StateTracker.get_datasets(DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.AUDIO, DatasetType.CAPTION)
+
     def train(self):
         self.init_trackers()
         self._train_initial_msg()
@@ -6971,7 +6921,7 @@ class Trainer:
         # Some values that are required to be initialised later.
         step = self.state["global_step"]
         current_epoch_step = None
-        self.bf, fetch_thread = None, None
+        self.bf = None
         iterator_fn = random_dataloader_iterator
         # Context-parallel batch synchronization: ensures all ranks in a CP group
         # receive the same batch data before it's split along the sequence dimension
@@ -6986,6 +6936,9 @@ class Trainer:
                     f"Training run is complete ({self.config.num_train_epochs}/{self.config.num_train_epochs} epochs, {self.state['global_step']}/{self.config.max_train_steps} steps)."
                 )
                 break
+            if self.bf is not None:
+                self.bf.close()
+                self.bf = None
             self._epoch_rollover(epoch)
             self.model.get_trained_component(unwrap_model=False).train()
             training_models = [self.model.get_trained_component(unwrap_model=False)]
@@ -7010,21 +6963,37 @@ class Trainer:
             else:
                 # If it's None, we need to calculate the current epoch step based on the current global step.
                 current_epoch_step = self.state["global_step"] % self.config.num_update_steps_per_epoch
-            train_backends = {}
-            for backend_id, backend in StateTracker.get_data_backends().items():
-                if StateTracker.backend_status(backend_id) or "train_dataloader" not in backend:
-                    # Exclude exhausted backends.
-                    logger.debug(
-                        f"Excluding backend: {backend_id}, as it is exhausted? {StateTracker.backend_status(backend_id)} or not found {('train_dataloader' not in backend)}"
-                    )
-                    continue
-                if self.config.eval_dataset_id is not None:
-                    # skip eval splits.
-                    if isinstance(self.config.eval_dataset_id, str) and backend_id == self.config.eval_dataset_id:
-                        continue
-                    elif isinstance(self.config.eval_dataset_id, list) and backend_id in self.config.eval_dataset_id:
-                        continue
-                train_backends[backend_id] = backend["train_dataloader"]
+            eval_ids = self.config.eval_dataset_id
+            if isinstance(eval_ids, str):
+                eval_ids = [eval_ids]
+            training_datasets = {
+                name: dataset
+                for name, dataset in self._registered_training_datasets().items()
+                if dataset.training_dataloader is not None and name not in (eval_ids or ())
+            }
+            train_backends = dict(training_datasets)
+            mixer = None
+            saved_mix = StateTracker.consumed_dataset_mixer
+            resumable = bool(train_backends) and all(
+                dataset.supports_consumed_checkpoint for dataset in train_backends.values()
+            )
+            if saved_mix and not resumable:
+                raise ValueError("A dataset mixer checkpoint requires the same resumable training datasets.")
+            if not resumable and any(dataset.tracks_consumed_batches for dataset in train_backends.values()):
+                raise ValueError("Caption prefetch requires each training dataset to support consumed checkpoints.")
+            for dataset in train_backends.values():
+                dataset.start_epoch(epoch)
+            if resumable:
+                saved = saved_mix if saved_mix and saved_mix["epoch"] == epoch else None
+                mixer = DatasetMixer(train_backends, epoch, step, saved)
+                step = mixer.step
+                StateTracker.consumed_dataset_mixer = mixer.state_dict(train_backends)
+                StateTracker.set_exhausted_backends(StateTracker.consumed_dataset_mixer["exhausted_backends"].copy())
+            else:
+                train_backends = {
+                    name: loader for name, loader in train_backends.items() if not StateTracker.backend_status(name)
+                }
+            iterator_fn = partial(random_dataloader_iterator, mixer=mixer) if mixer else random_dataloader_iterator
             # Begin dataloader prefetch, if enabled.
             # With CP enabled, only the CP-local leader prefetches; batches are broadcast via CP sync.
             iterator_args = [train_backends]
@@ -7038,18 +7007,15 @@ class Trainer:
                         "Set --dataloader_prefetch_device_threshold_mb=0 when context parallelism is enabled."
                     )
                 iterator_args = []
-                if self.bf is not None:
-                    self.bf.stop_fetching()
                 self.bf = BatchFetcher(
                     datasets=train_backends,
+                    mixer=mixer,
                     max_size=self.config.dataloader_prefetch_qlen,
                     step=step,
                     device=self.accelerator.device,
                     device_prefetch_threshold_bytes=int(device_prefetch_threshold_mb * 1024 * 1024),
                 )
-                if fetch_thread is not None:
-                    fetch_thread.join()
-                fetch_thread = self.bf.start_fetching()
+                self.bf.start_fetching()
                 iterator_fn = self.bf.next_response
 
             while True:
@@ -7063,6 +7029,9 @@ class Trainer:
                 # model's _cp_plan splits it along the sequence dimension.
                 self._write_train_stage_breadcrumb("fetch_batch:start", step)
                 raw_batch = cp_batch_synchronizer.fetch_batch(iterator_fn, step, *iterator_args)
+                mixer_state = raw_batch.pop("dataset_mixer_state", None) if isinstance(raw_batch, dict) else None
+                continuation = raw_batch.pop("dataset_continuation", None) if isinstance(raw_batch, dict) else None
+                continuation_dataset = training_datasets[raw_batch["data_backend_id"]] if continuation is not None else None
                 self._write_train_stage_breadcrumb("fetch_batch:done", step)
                 with cp_batch_synchronizer.synchronized_rng(getattr(self.config, "seed", None), step):
                     prepared_batch = self.prepare_batch(raw_batch)
@@ -7374,6 +7343,11 @@ class Trainer:
                                 for module, saved in slider_original_scaling.values():
                                     for key, val in saved.items():
                                         module.scaling[key] = val
+
+                if mixer_state is not None:
+                    StateTracker.consumed_dataset_mixer = mixer_state
+                if continuation_dataset is not None:
+                    continuation_dataset.acknowledge_batch(continuation)
 
                 # Checks if the accelerator has performed an optimization step behind the scenes
                 wandb_logs = {}
@@ -7712,6 +7686,9 @@ class Trainer:
                 )
                 # Note: training_complete event is emitted after final validation and model save
                 break
+
+        if self.bf is not None:
+            self.bf.close()
 
         # Create the pipeline using the trained modules and save it.
         self.accelerator.wait_for_everyone()

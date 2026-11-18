@@ -613,6 +613,12 @@ except ImportError:
 
 
 class TestTrainer(unittest.TestCase):
+
+    def setUp(self):
+        registry = patch.object(StateTracker, "datasets", {})
+        registry.start()
+        self.addCleanup(registry.stop)
+
     def test_final_export_materializes_schedulefree_eval_weights_on_every_rank(self):
         from simpletuner.helpers.training import save_hooks
         from simpletuner.helpers.training.optimizers.adamw_schedulefree import AdamWScheduleFreeKahan
@@ -2270,7 +2276,7 @@ class TestTrainer(unittest.TestCase):
         )
         trainer.extra_lr_scheduler_kwargs = {}
         with patch(
-            "simpletuner.helpers.training.state_tracker.StateTracker.get_data_backends",
+            "simpletuner.helpers.training.trainer.StateTracker.get_datasets",
             return_value={},
         ):
             trainer._epoch_rollover(2)
@@ -2302,21 +2308,20 @@ class TestTrainer(unittest.TestCase):
                 )
                 metadata_backend = MagicMock(read_only=True)
                 metadata_backend.aspect_ratio_bucket_indices = {"1.0": ["image-0.jpg"]}
-                backends = {"train": {"metadata_backend": metadata_backend}}
-                backend_config = {
-                    "crop": True,
-                    "crop_aspect": "random",
+                backends = {
+                    "train": SimpleNamespace(
+                        config={"crop": True, "crop_aspect": "random"},
+                        metadata_backend=metadata_backend,
+                        vae_cache=None,
+                        uses_native_schedule=False,
+                    )
                 }
 
                 with (
                     patch("simpletuner.helpers.training.trainer.StateTracker.set_epoch"),
                     patch(
-                        "simpletuner.helpers.training.trainer.StateTracker.get_data_backends",
+                        "simpletuner.helpers.training.trainer.StateTracker.get_datasets",
                         return_value=backends,
-                    ),
-                    patch(
-                        "simpletuner.helpers.training.trainer.StateTracker.get_data_backend_config",
-                        return_value=backend_config,
                     ),
                 ):
                     trainer._epoch_rollover(2)
@@ -2345,7 +2350,14 @@ class TestTrainer(unittest.TestCase):
         metadata_backend.aspect_ratio_bucket_indices = bucket_contents
         metadata_backend.__len__.return_value = usable_batches
         vaecache = MagicMock()
-        backends = {"train": {"metadata_backend": metadata_backend, "vaecache": vaecache}}
+        backends = {
+            "train": SimpleNamespace(
+                config={"crop": True, "crop_aspect": "random"},
+                metadata_backend=metadata_backend,
+                vae_cache=vaecache,
+                uses_native_schedule=False,
+            )
+        }
         return trainer, metadata_backend, vaecache, backends
 
     @contextmanager
@@ -2353,12 +2365,8 @@ class TestTrainer(unittest.TestCase):
         with (
             patch("simpletuner.helpers.training.trainer.StateTracker.set_epoch"),
             patch(
-                "simpletuner.helpers.training.trainer.StateTracker.get_data_backends",
+                "simpletuner.helpers.training.trainer.StateTracker.get_datasets",
                 return_value=backends,
-            ),
-            patch(
-                "simpletuner.helpers.training.trainer.StateTracker.get_data_backend_config",
-                return_value={"crop": True, "crop_aspect": "random"},
             ),
         ):
             yield
@@ -2415,11 +2423,8 @@ class TestTrainer(unittest.TestCase):
         trainer._epoch_rollover(1)
         self.assertEqual(trainer.state["current_epoch"], 1)
 
-    @patch("simpletuner.helpers.training.trainer.StateTracker.get_dataset_schedule", return_value=None)
-    @patch("simpletuner.helpers.training.trainer.StateTracker.get_data_backends")
-    def test_recalculate_training_steps_forces_strict_epoch_limit_for_epoch_runs(
-        self, mock_get_data_backends, mock_get_dataset_schedule
-    ):
+    @patch("simpletuner.helpers.training.trainer.StateTracker.get_datasets")
+    def test_recalculate_training_steps_forces_strict_epoch_limit_for_epoch_runs(self, mock_get_datasets):
         trainer = object.__new__(Trainer)
         trainer.distiller = None
         trainer.lr_scheduler = None
@@ -2433,11 +2438,8 @@ class TestTrainer(unittest.TestCase):
             strict_epoch_limit=False,
             train_batch_size=1,
         )
-        mock_get_data_backends.return_value = {
-            "train": {
-                "config": {},
-                "metadata_backend": [object()] * 10,
-            }
+        mock_get_datasets.return_value = {
+            "train": SimpleNamespace(config={"dataset_type": "image"}, training_batch_count=lambda: 10)
         }
 
         trainer._recalculate_training_steps()
@@ -2445,6 +2447,64 @@ class TestTrainer(unittest.TestCase):
         self.assertTrue(trainer.config.strict_epoch_limit)
         self.assertEqual(2, trainer.config.num_update_steps_per_epoch)
         self.assertEqual(4, trainer.config.max_train_steps)
+
+    @patch("simpletuner.helpers.training.trainer.StateTracker.get_datasets")
+    def test_recalculate_training_steps_uses_rank_local_caption_batches(self, mock_get_datasets):
+        from simpletuner.helpers.data_backend.caption_sampler import CaptionSampler
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+
+        trainer = object.__new__(Trainer)
+        trainer.distiller = SimpleNamespace(consumes_caption_batches=lambda: True)
+        trainer.lr_scheduler = None
+        trainer.accelerator = SimpleNamespace(num_processes=2, process_index=0)
+        trainer.config = SimpleNamespace(
+            gradient_accumulation_steps=1,
+            max_train_steps=0,
+            num_train_epochs=2,
+            strict_epoch_limit=True,
+            train_batch_size=2,
+        )
+        rows = list(range(12))
+        metadata = MagicMock(list_metadata_ids=lambda: rows)
+        metadata.__len__.return_value = len(rows)
+        caption = DatasetRuntime("captions", None, metadata, {"dataset_type": "caption"})
+        sampler = CaptionSampler("captions", metadata, trainer.accelerator, batch_size=2, shuffle=False)
+        caption.training_dataloader = torch.utils.data.DataLoader(rows, sampler=sampler, batch_size=1)
+        mock_get_datasets.return_value = {"captions": caption}
+
+        trainer._recalculate_training_steps()
+
+        self.assertEqual(trainer.config.total_num_batches, 3)
+        self.assertEqual(trainer.config.num_update_steps_per_epoch, 3)
+        self.assertEqual(trainer.config.max_train_steps, 6)
+        metadata.__len__.assert_called_once()
+
+    @patch("simpletuner.helpers.training.trainer.StateTracker.get_datasets")
+    def test_recalculate_training_steps_respects_inclusive_epoch_windows(self, mock_get_datasets):
+        trainer = object.__new__(Trainer)
+        trainer.distiller = trainer.lr_scheduler = None
+        trainer.accelerator = SimpleNamespace(num_processes=1)
+        trainer.config = SimpleNamespace(
+            gradient_accumulation_steps=2,
+            max_train_steps=100,
+            num_train_epochs=3,
+            train_batch_size=2,
+            eval_dataset_id="evaluation",
+        )
+
+        def dataset(batches, **window):
+            return SimpleNamespace(config={"dataset_type": "image", **window}, training_batch_count=lambda: batches)
+
+        mock_get_datasets.return_value = {
+            "baseline": dataset(4),
+            "first": dataset(6, end_epoch=1),
+            "second": dataset(3, start_epoch=2, end_epoch=2),
+            "impossible": dataset(40, start_step=4, end_step=3),
+            "evaluation": dataset(50),
+        }
+        trainer._recalculate_training_steps()
+        self.assertEqual(trainer.config.epoch_batches_schedule, {1: 10, 2: -3, 3: -3})
+        self.assertEqual([trainer.get_steps_per_epoch_for_epoch(epoch) for epoch in (1, 2, 3)], [5, 4, 2])
 
     @patch("simpletuner.helpers.training.trainer.Trainer._misc_init", return_value=Mock())
     @patch(
@@ -2536,7 +2596,7 @@ class TestTrainer(unittest.TestCase):
         lr_scheduler.state_dict.return_value = {"base_lrs": [0.1], "_last_lr": [0.1]}
 
         with patch(
-            "simpletuner.helpers.training.state_tracker.StateTracker.get_data_backends",
+            "simpletuner.helpers.training.trainer.StateTracker.get_datasets",
             return_value={},
         ):
             with patch(
@@ -3577,8 +3637,8 @@ class TestTrainer(unittest.TestCase):
         lr_scheduler.state_dict.return_value = {"base_lrs": [0.1], "_last_lr": [0.1]}
 
         with patch(
-            "simpletuner.helpers.training.trainer.StateTracker.get_data_backends",
-            return_value={"foo": {"sampler": sampler}},
+            "simpletuner.helpers.training.trainer.StateTracker.get_datasets",
+            return_value={"foo": SimpleNamespace(id="foo", sampler=sampler)},
         ):
             with patch("simpletuner.helpers.training.trainer.StateTracker.get_global_step", return_value=10):
                 with patch("simpletuner.helpers.training.trainer.StateTracker.set_global_resume_step"):
@@ -3766,11 +3826,8 @@ class TestTrainer(unittest.TestCase):
                 return {"latents": torch.zeros(1, 4, 4, 4), "timesteps": torch.zeros(1)}
             return False
 
-        mock_state_tracker.get_data_backends = Mock(
-            return_value={
-                "backend1": {"train_dataloader": [{"latents": torch.zeros(1, 4, 4, 4), "timesteps": torch.zeros(1)}]}
-            }
-        )
+        dataset = Mock(training_dataloader=[{}], uses_native_schedule=False)
+        mock_state_tracker.get_datasets = Mock(return_value={"backend1": dataset})
         mock_state_tracker.backend_status = Mock(return_value=False)
 
         with patch("simpletuner.helpers.training.trainer.random_dataloader_iterator", mock_iterator):
@@ -3873,7 +3930,8 @@ class TestTrainer(unittest.TestCase):
             patch("simpletuner.helpers.training.trainer.training_logger") as mock_training_logger,
             patch("simpletuner.helpers.training.trainer.random_dataloader_iterator", return_value=batch),
         ):
-            mock_state_tracker.get_data_backends = Mock(return_value={"backend1": {"train_dataloader": [batch]}})
+            dataset = Mock(training_dataloader=[batch], uses_native_schedule=False)
+            mock_state_tracker.get_datasets = Mock(return_value={"backend1": dataset})
             mock_state_tracker.backend_status = Mock(return_value=False)
             mock_training_logger.debug.side_effect = stop_at_optimizer_step
             with self.assertRaises(StopAfterClipping):
@@ -3963,7 +4021,7 @@ class TestTrainer(unittest.TestCase):
         trainer.model_hooks = Mock()
         trainer.model_hooks.validate_fsdp2_pipeline_export.side_effect = StopAfterRegistration
         with patch("simpletuner.helpers.training.trainer.StateTracker") as mock_state_tracker:
-            mock_state_tracker.get_data_backends.return_value = {"backend1": {"train_dataloader": Mock()}}
+            mock_state_tracker.get_datasets.return_value = {"backend1": SimpleNamespace(training_dataloader=Mock())}
             with self.assertRaises(StopAfterRegistration):
                 trainer.init_prepare_models(lr_scheduler=None)
 
@@ -4016,7 +4074,7 @@ class TestTrainer(unittest.TestCase):
                 trainer._recalculate_training_steps = Mock()
                 trainer.job_id = None
                 with patch("simpletuner.helpers.training.trainer.StateTracker") as tracker:
-                    tracker.get_data_backends.return_value = {"images": {"train_dataloader": Mock()}}
+                    tracker.get_datasets.return_value = {"images": SimpleNamespace(training_dataloader=Mock())}
                     if stage == "training":
                         trainer.init_prepare_models(lr_scheduler=None)
                     else:
