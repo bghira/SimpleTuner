@@ -658,21 +658,24 @@ class TestWebshartParquetBackend(unittest.TestCase):
             self.assertEqual(publication.stat().st_ino, inode)
             self.assertEqual(metadata.read_page(limit=10), (refs, total))
 
-    def test_caption_and_native_schedules_resume_one_prefetched_mixer(self):
+    def test_caption_native_and_local_schedules_resume_one_prefetched_mixer(self):
+        from accelerate import PartialState
         from torch.utils.data import DataLoader
 
         from simpletuner.helpers.data_backend.caption_dataset import CaptionDataset
         from simpletuner.helpers.data_backend.caption_sampler import CaptionSampler
         from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+        from simpletuner.helpers.data_backend.local import LocalDataBackend
         from simpletuner.helpers.data_backend.runtime.batch_fetcher import BatchFetcher
         from simpletuner.helpers.data_backend.runtime.dataloader_iterator import DatasetMixer
+        from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend
         from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBackend
         from simpletuner.helpers.multiaspect.sampler import MultiAspectSampler
         from simpletuner.helpers.training.caption_collate import collate_caption_batch
         from simpletuner.helpers.training.state_tracker import StateTracker
         from tests.helpers.data_backend.test_caption_pipeline import DummyCaptionMetadataBackend
 
-        accelerator = SimpleNamespace(num_processes=1, process_index=0, is_main_process=True)
+        accelerator = PartialState()
         config = {
             "webshart": {"sampling_policy": "shard_local"},
             "caption_strategy": "webshart",
@@ -686,6 +689,7 @@ class TestWebshartParquetBackend(unittest.TestCase):
             gradient_accumulation_steps=1,
             max_train_steps=0,
             seed=9,
+            print_sampler_statistics=False,
         )
 
         class SampleBatches:
@@ -694,7 +698,11 @@ class TestWebshartParquetBackend(unittest.TestCase):
 
             def __iter__(self):
                 for (record,) in self.sampler:
-                    yield {key: record[key] for key in ("data_backend_id", "image_path", "dataset_continuation")}
+                    yield {
+                        key: record[key]
+                        for key in ("data_backend_id", "image_path", "dataset_continuation", "caption_dropout_seed")
+                        if key in record
+                    }
 
         with (
             patch.object(StateTracker, "get_data_backend_config", return_value=config),
@@ -732,7 +740,29 @@ class TestWebshartParquetBackend(unittest.TestCase):
                     sampler=text.sampler,
                     collate_fn=collate_caption_batch,
                 )
-                return {images.id: images, text.id: text}
+
+                local_storage = LocalDataBackend(accelerator, "local")
+                local_metadata = DiscoveryMetadataBackend(
+                    id="local",
+                    instance_data_dir=str(self.root),
+                    cache_file=str(self.root / "local-buckets"),
+                    metadata_file=str(self.root / "local-geometry"),
+                    data_backend=local_storage,
+                    accelerator=accelerator,
+                    batch_size=1,
+                    resolution=8,
+                    resolution_type="pixel",
+                )
+                ref = str(self.root / "local.jpg")
+                local_metadata.aspect_ratio_bucket_indices = {"1.0": [ref]}
+                local_metadata.image_metadata = {ref: {"original_size": (8, 8), "crop_coordinates": (0, 0)}}
+                local = DatasetRuntime("local", local_storage, local_metadata, {"repeats": 1})
+                local.sampler = MultiAspectSampler(
+                    local, model=None, accelerator=accelerator, batch_size=1, track_consumed=True
+                )
+                self.addCleanup(local.sampler.close)
+                local.training_dataloader = SampleBatches(local.sampler)
+                return {dataset.id: dataset for dataset in (images, text, local)}
 
             def fetch(runtimes, saved=None):
                 backends = dict(runtimes)
@@ -746,21 +776,22 @@ class TestWebshartParquetBackend(unittest.TestCase):
 
             original = make_runtimes()
             fetcher = fetch(original)
-            first = fetcher.next_response(step=1)
-            self.assertEqual(first["data_backend_id"], "captions")
-            original["captions"].acknowledge_batch(first["dataset_continuation"])
+            consumed = [fetcher.next_response(step) for step in (1, 2, 3)]
+            self.assertEqual([batch["data_backend_id"] for batch in consumed], ["captions", self.backend.id, "local"])
+            for batch in consumed:
+                original[batch["data_backend_id"]].acknowledge_batch(batch["dataset_continuation"])
             checkpoint = str(self.root / "mixed-train-state.json")
             for dataset in original.values():
                 dataset.sampler.save_state(checkpoint)
-            expected = [fetcher.next_response(step) for step in (2, 3, 4)]
-            self.assertEqual([batch["data_backend_id"] for batch in expected[:-1]], [self.backend.id] * 2)
+            expected = [fetcher.next_response(step) for step in (4, 5, 6)]
+            self.assertCountEqual([batch["data_backend_id"] for batch in expected[:-1]], [self.backend.id, "local"])
             self.assertIs(expected[-1], False)
 
             resumed = make_runtimes()
             for dataset in resumed.values():
                 dataset.sampler.load_states(checkpoint)
-            replay = fetch(resumed, saved=first["dataset_mixer_state"])
-            self.assertEqual([replay.next_response(step) for step in (2, 3, 4)], expected)
+            replay = fetch(resumed, saved=consumed[-1]["dataset_mixer_state"])
+            self.assertEqual([replay.next_response(step) for step in (4, 5, 6)], expected)
 
     def test_native_scan_partition_sampler_and_consumed_checkpoint(self):
         from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
