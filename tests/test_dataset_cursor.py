@@ -277,7 +277,7 @@ class TestState(unittest.TestCase):
     def test_resume_at_every_position_yields_the_rest_of_the_epoch(self):
         # Without repeats the 13-sample bucket ends on a padded batch.
         for repeats in (0, 1):
-            expected = per_bucket(drain(make_cursor(self.buckets, repeats=repeats)))
+            expected = drain(make_cursor(self.buckets, repeats=repeats))
             total = len(make_cursor(self.buckets, repeats=repeats))
             for position in range(total + 1):
                 cursor = make_cursor(self.buckets, repeats=repeats)
@@ -285,7 +285,7 @@ class TestState(unittest.TestCase):
                 resumed = self._resumed(cursor.state(), repeats=repeats)
                 after = drain(resumed)
                 self.assertEqual(len(before) + len(after), total)
-                self.assertEqual(per_bucket(before + after), expected, f"repeats={repeats} position={position}")
+                self.assertEqual(before + after, expected, f"repeats={repeats} position={position}")
                 self.assertEqual(resumed.epoch, 2)
 
     def test_a_cursor_that_has_started_reading_resumes_from_the_state_it_is_given(self):
@@ -296,7 +296,7 @@ class TestState(unittest.TestCase):
         for _ in range(3):
             resumed.next_batch()
         resumed.load_state(saved.state(), allow_batch_size_change=False)
-        self.assertEqual(per_bucket(drain(resumed)), per_bucket(drain(saved)))
+        self.assertEqual(drain(resumed), drain(saved))
 
     def test_resume_keeps_the_epoch_and_the_saved_seed(self):
         cursor = make_cursor(self.buckets, repeats=1, dp_size=2, dp_rank=1)
@@ -305,7 +305,7 @@ class TestState(unittest.TestCase):
         resumed = self._resumed(cursor.state(), seed=99, dp_size=2, dp_rank=1)
         self.assertEqual(resumed.epoch, 2)
         self.assertEqual(resumed.rank_share(), cursor.rank_share())
-        self.assertEqual(per_bucket(drain(resumed)), per_bucket(drain(cursor)))
+        self.assertEqual(drain(resumed), drain(cursor))
 
     def test_old_format_state_is_refused(self):
         cursor = make_cursor(self.buckets)
@@ -519,10 +519,8 @@ class TestWindowedState(unittest.TestCase):
                 cursor.next_batch()
             units = even_units()
             resumed = self._resumed(cursor.state(), units)
-            # Each pool continues where it stopped; the pools of a window take turns in a new order.
             self.assertEqual(resumed.progress(), cursor.progress())
-            rest = drain(resumed)
-            self.assertEqual(per_bucket(rest), per_bucket(expected[position:]), f"position {position}")
+            self.assertEqual(drain(resumed), expected[position:], f"position {position}")
             self.assertEqual(units.open, set())
             self.assertEqual(resumed.epoch, 2)
 
@@ -550,7 +548,7 @@ class TestWindowedState(unittest.TestCase):
         cursor.next_batch()
         resumed = self._resumed(cursor.state(), seed=99)
         self.assertEqual((resumed.epoch, resumed.seed), (2, 1234))
-        self.assertEqual(per_bucket(drain(resumed)), per_bucket(drain(cursor)))
+        self.assertEqual(drain(resumed), drain(cursor))
 
     def test_a_window_whose_samples_changed_starts_over(self):
         cursor = even_units().cursor()

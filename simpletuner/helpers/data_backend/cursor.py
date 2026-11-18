@@ -151,10 +151,20 @@ class DatasetCursor:
                 random.Random(f"{self.seed}:{self.dataset_id}:{bucket}:{self.epoch}:{pass_index}").shuffle(one_pass)
                 order.extend(one_pass)
             self._orders[bucket] = order
-            remaining = self._lengths[bucket] - self._consumed[bucket]
-            schedule.extend([bucket] * ceil(remaining / self.batch_size))
+            schedule.extend([bucket] * ceil(self._lengths[bucket] / self.batch_size))
         random.Random(f"{self.seed}:{self.dataset_id}:{self.epoch}").shuffle(schedule)
-        self._schedule = schedule
+        # A resumed epoch drops each bucket's turns already taken, so it continues the uninterrupted schedule.
+        taken = {
+            bucket: ceil(self._lengths[bucket] / self.batch_size)
+            - ceil((self._lengths[bucket] - self._consumed[bucket]) / self.batch_size)
+            for bucket in self._share
+        }
+        self._schedule = []
+        for bucket in schedule:
+            if taken[bucket]:
+                taken[bucket] -= 1
+            else:
+                self._schedule.append(bucket)
         self._next = 0
 
     def next_batch(self) -> tuple[str, list[str]]:
