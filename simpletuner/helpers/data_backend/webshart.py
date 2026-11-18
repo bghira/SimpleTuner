@@ -4,12 +4,14 @@ import os
 import random
 import time
 from dataclasses import dataclass
+from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
 from typing import Any, List, Optional, Tuple, Union
 
 import requests
 import torch
+from atomicwrites import atomic_write
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.config.validators import validate_webshart_caption_key
@@ -36,6 +38,7 @@ class WebshartSampleRef:
 
 
 class WebshartDataBackend(BaseDataBackend):
+    prepared_partition_shards = 64
     format = "tar"
     SAMPLE_PREFIX = "webshart://"
     PATH_NORMALIZED_SAMPLE_PREFIX = "webshart:/"
@@ -261,6 +264,9 @@ class WebshartDataBackend(BaseDataBackend):
             raise ValueError(f"Invalid webshart sample id: {identifier}") from exc
         return WebshartSampleRef(shard_idx=shard_idx, sample_idx=sample_idx, filename=parts[2])
 
+    def shard_of(self, identifier):
+        return self.parse_sample_id(identifier).shard_idx
+
     def _resolve_sample_ref(self, identifier: Union[str, Path]) -> WebshartSampleRef:
         ref = self.parse_sample_id(identifier)
         if self.format == "parquet":
@@ -434,20 +440,53 @@ class WebshartDataBackend(BaseDataBackend):
                 sample_metadata["json_metadata"] = json.loads(payload)
         return sample_metadata
 
-    def get_caption(self, image_path: str) -> Optional[CaptionValue]:
-        if not self.is_sample_id(image_path):
-            return None
-        sample_metadata = self.get_sample_metadata(image_path)
-        if self.caption_key is not None:
-            return self._select_caption_keys(sample_metadata)
+    @property
+    def supports_caption_projection(self):
+        return self.format == "parquet" and hasattr(self.dataset, "read_metadata_rows")
 
-        caption = sample_metadata.get("captions")
+    def caption_fields(self):
+        fields = {"captions", "url_status", "stored_bytes", "stored_format"}
+        if self.caption_key is not None:
+            fields.add("json_metadata")
+            fields.update([self.caption_key] if isinstance(self.caption_key, str) else self.caption_key)
+        return fields
+
+    def read_caption_batch(self, paths):
+        """Read only the fields needed by the configured Parquet caption strategy."""
+        groups = {}
+        for position, path in enumerate(paths):
+            ref = self._resolve_sample_ref(path)
+            groups.setdefault(ref.shard_idx, []).append((position, ref))
+        result = [None] * len(paths)
+        fields = self.caption_fields()
+        for shard_idx, selected in groups.items():
+            rows = self.dataset.read_metadata_rows(shard_idx, [ref.sample_idx for _, ref in selected], fields=fields)
+            for (position, ref), row in zip(selected, rows, strict=True):
+                if row.get("url_status", "ok") != "ok" or ("stored_bytes" in row and not row["stored_bytes"]):
+                    continue
+                suffix = ".jxl" if row.get("stored_format") == "jxl" else ".jpg"
+                if self.filename_suffix(ref.filename) == suffix:
+                    row.update(sample_idx=ref.sample_idx, shard_idx=shard_idx, filename=ref.filename)
+                    result[position] = self._caption_from_metadata(row)
+        return result
+
+    def _caption_from_metadata(self, metadata):
+        if self.caption_key is not None:
+            return self._select_caption_keys(metadata)
+        caption = metadata.get("captions")
         if caption:
             values = PromptHandler._caption_payload_values(caption)
             return values if isinstance(caption, list) else values[0] if values else None
+        return None
 
-        if self.format == "parquet":
+    def get_caption(self, image_path: str) -> Optional[CaptionValue]:
+        if not self.is_sample_id(image_path):
             return None
+        if self.supports_caption_projection:
+            return self.read_caption_batch([image_path])[0]
+        caption = self._caption_from_metadata(self.get_sample_metadata(image_path))
+        if caption is not None or self.caption_key is not None or self.format == "parquet":
+            return caption
         sample_ref = self._resolve_sample_ref(image_path)
         caption_filename = self.caption_sidecar_filename(sample_ref.filename)
         if caption_filename not in self.get_shard_metadata(sample_ref.shard_idx):
@@ -490,13 +529,11 @@ class WebshartDataBackend(BaseDataBackend):
         cache_path = self._cache_path(identifier)
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         if cache_path.suffix.lower() == ".json":
-            if isinstance(data, (dict, list)):
-                payload = json.dumps(data)
-            elif isinstance(data, bytes):
-                payload = data.decode("utf-8")
-            else:
-                payload = str(data)
-            cache_path.write_text(payload, encoding="utf-8")
+            with atomic_write(cache_path, mode="w", encoding="utf-8", overwrite=True) as handle:
+                if isinstance(data, (dict, list)):
+                    json.dump(data, handle, default=os.fspath)
+                else:
+                    handle.write(data.decode("utf-8") if isinstance(data, bytes) else str(data))
             return
 
         with cache_path.open("wb") as handle:
@@ -504,6 +541,31 @@ class WebshartDataBackend(BaseDataBackend):
                 handle.write(data)
             else:
                 torch.save(data, handle)
+
+    def write_membership(self, identifier, buckets, properties, *, shard_of=None):
+        from simpletuner.helpers.metadata.backends.webshart_membership import write_membership
+
+        write_membership(self._cache_path(identifier), buckets, properties, shard_of=shard_of)
+
+    def write_geometry(self, identifier, records):
+        path = self._cache_path(identifier)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        digest = sha256()
+        with atomic_write(path, mode="wb", overwrite=True) as handle:
+
+            def write(data):
+                digest.update(data)
+                handle.write(data)
+
+            write(b"{")
+            for index, (ref, metadata) in enumerate(records.items()):
+                if index:
+                    write(b",")
+                write(json.dumps(str(ref)).encode())
+                write(b":")
+                write(json.dumps(metadata).encode())
+            write(b"}")
+        return digest.hexdigest()
 
     def delete(self, identifier: Union[str, Path]) -> None:
         if self.is_sample_id(identifier):
@@ -523,9 +585,11 @@ class WebshartDataBackend(BaseDataBackend):
         return self._cache_path(identifier).exists()
 
     def open_file(self, identifier: Union[str, Path], mode: str):
-        if "w" in mode or "a" in mode:
+        if mode not in {"r", "rt", "rb"}:
             raise NotImplementedError("Webshart data backend does not support open_file writes.")
-        return BytesIO(self.read(identifier))
+        if self.is_sample_id(identifier):
+            return BytesIO(self.read(identifier))
+        return self._cache_path(identifier).open(mode)
 
     def list_files(self, file_extensions: list = None, instance_data_dir: str = None) -> List[Tuple[str, List, List[str]]]:
         requested_extensions = self._normalise_file_extensions(file_extensions)
@@ -574,7 +638,9 @@ class WebshartDataBackend(BaseDataBackend):
         if self.format == "parquet" and all(self.is_sample_id(path) for path in filepaths):
             refs = [self._resolve_sample_ref(path) for path in filepaths]
             samples = self.loader.load_samples(
-                [(ref.shard_idx, ref.sample_idx) for ref in refs], parallel_reads=self.parallel_downloads
+                [(ref.shard_idx, ref.sample_idx) for ref in refs],
+                parallel_reads=self.parallel_downloads,
+                **({"metadata_fields": ()} if self.supports_caption_projection else {}),
             )
             available_keys, output_images = [], []
             for filepath, sample in zip(filepaths, samples):
@@ -679,6 +745,36 @@ class WebshartDataBackend(BaseDataBackend):
             raise ValueError("Parquet catalog changed since worker serialization; reopen the dataset with a fixed snapshot.")
         return backend
 
+    def count_source_rows(self, *, exclude_null_images=False):
+        if self.format != "parquet":
+            return super().count_source_rows(exclude_null_images=exclude_null_images)
+        if not exclude_null_images:
+            return len(self.dataset)
+        count_rows = getattr(self.dataset, "count_rows", None)
+        if count_rows is None:
+            raise NotImplementedError("The installed Webshart reader does not support counting non-null image rows.")
+        return count_rows(exclude_null_images=True)
+
+    def prepared_partition_identity(self, indices):
+        """Identify capture shards from the manifest without opening their objects."""
+        if self.format != "parquet" or getattr(self.dataset, "physical_row_count", None) is None:
+            return None
+        shards = []
+        for index in indices:
+            shard = self.dataset.get_shard_info(index)
+            if not shard.get("sha256"):
+                return None
+            shards.append((index, shard["path"], shard["sha256"], shard["size"], shard["num_rows"]))
+        endpoint = None
+        if self.source.startswith("s3://"):
+            endpoint = (
+                self.aws_endpoint_url
+                or os.environ.get("AWS_ENDPOINT_URL_S3")
+                or os.environ.get("AWS_ENDPOINT_URL")
+                or os.environ.get("AWS_ENDPOINT")
+            )
+        return (self.source, endpoint, self.columns, shards)
+
     def num_shards(self) -> int:
         value = getattr(self.dataset, "num_shards", None)
         if callable(value):
@@ -705,6 +801,7 @@ class WebshartDataBackend(BaseDataBackend):
         target_resolution_multiple: int = 64,
         round_to: Optional[int] = 2,
         dataset_filter: Optional[DatasetFilter] = None,
+        metadata_fields=None,
     ) -> list[dict]:
         if self.format == "parquet":
             results = self.loader.list_shard_sample_aspect_buckets(
@@ -713,6 +810,7 @@ class WebshartDataBackend(BaseDataBackend):
                 target_pixel_area=target_pixel_area,
                 target_resolution_multiple=target_resolution_multiple,
                 round_to=round_to,
+                **({"metadata_fields": metadata_fields} if metadata_fields is not None else {}),
             )
             if dataset_filter is not None and dataset_filter.path_active():
                 for result in results:
