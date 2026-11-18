@@ -616,5 +616,7 @@ class ImageBackendConfig(BaseBackendConfig):
 
         if self.video is not None:
             config["video"] = self.video
+        if self.parquet is not None:
+            config["parquet"] = self.parquet
 
         return result

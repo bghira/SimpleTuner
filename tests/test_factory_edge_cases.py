@@ -879,7 +879,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
         )
         with (
             patch(
-                "simpletuner.helpers.metadata.backends.discovery.DiscoveryMetadataBackend",
+                "simpletuner.helpers.data_backend.builders.base.JsonMetadataBackend",
                 side_effect=create_metadata_backend,
             ),
             patch(
@@ -1005,7 +1005,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
             model=self.model,
         )
 
-        with patch("simpletuner.helpers.metadata.backends.huggingface.HuggingfaceMetadataBackend") as mock_backend:
+        with patch("simpletuner.helpers.data_backend.builders.base.HuggingfaceMetadataBackend") as mock_backend:
             mock_backend_instance = MagicMock()
             mock_backend.return_value = mock_backend_instance
 
@@ -1148,7 +1148,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
             self._setup_comprehensive_mocks(mock_state_tracker)
 
             # Patch metadata backend to return non-zero length (avoid validation failure)
-            with patch("simpletuner.helpers.metadata.backends.discovery.DiscoveryMetadataBackend") as mock_metadata:
+            with patch("simpletuner.helpers.data_backend.builders.base.JsonMetadataBackend") as mock_metadata:
                 mock_metadata_instance = MagicMock()
                 mock_metadata_instance.refresh_buckets.return_value = None
                 mock_metadata_instance.split_buckets_between_processes.return_value = None
@@ -1416,7 +1416,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
         mock_vae_instance.set_webhook_handler.return_value = None
         mock_vae_cache.return_value = mock_vae_instance
 
-        metadata_backend_patcher = patch("simpletuner.helpers.metadata.backends.discovery.DiscoveryMetadataBackend")
+        metadata_backend_patcher = patch("simpletuner.helpers.data_backend.builders.base.JsonMetadataBackend")
         mock_metadata = metadata_backend_patcher.start()
         self.addCleanup(metadata_backend_patcher.stop)
         mock_metadata_instance = MagicMock()
@@ -2408,7 +2408,7 @@ class TestMetadataBackendEmptyStringHandling(unittest.TestCase):
             model=self.model,
         )
 
-        with patch("simpletuner.helpers.metadata.backends.discovery.DiscoveryMetadataBackend") as mock_backend:
+        with patch("simpletuner.helpers.data_backend.builders.base.JsonMetadataBackend") as mock_backend:
             mock_backend_instance = MagicMock()
             mock_backend.return_value = mock_backend_instance
 
@@ -2443,7 +2443,7 @@ class TestMetadataBackendEmptyStringHandling(unittest.TestCase):
             model=self.model,
         )
 
-        with patch("simpletuner.helpers.metadata.backends.discovery.DiscoveryMetadataBackend") as mock_backend:
+        with patch("simpletuner.helpers.data_backend.builders.base.JsonMetadataBackend") as mock_backend:
             mock_backend_instance = MagicMock()
             mock_backend.return_value = mock_backend_instance
 

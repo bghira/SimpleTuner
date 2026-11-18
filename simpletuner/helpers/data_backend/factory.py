@@ -124,6 +124,7 @@ from simpletuner.helpers.training.multi_process import rank_info, should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 from .builders import build_backend_from_config, create_backend_builder
+from .builders.base import create_metadata_provider
 from .config import ImageBackendConfig, ImageEmbedBackendConfig, TextEmbedBackendConfig, create_backend_config
 
 logger = logging.getLogger("DataBackendFactory")
@@ -2924,58 +2925,6 @@ class FactoryRegistry:
     def _configure_metadata_backend(self, backend: Dict[str, Any], init_backend: Dict[str, Any]) -> None:
         """Configure the metadata backend."""
         info_log(f"(id={init_backend['id']}) Loading bucket manager.")
-        metadata_backend_args = {}
-        metadata_backend = backend.get("metadata_backend") or "discovery"
-        if metadata_backend == "filesystem":
-            logger.warning(
-                "metadata_backend='filesystem' is deprecated; using metadata_backend='discovery' for local file discovery."
-            )
-            metadata_backend = "discovery"
-            backend["metadata_backend"] = metadata_backend
-        if metadata_backend == "json" or metadata_backend == "discovery":
-            from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend
-
-            MetadataBackendCls = DiscoveryMetadataBackend
-        elif metadata_backend == "parquet":
-            from simpletuner.helpers.metadata.backends.parquet import ParquetMetadataBackend
-
-            MetadataBackendCls = ParquetMetadataBackend
-            metadata_backend_args["parquet_config"] = backend.get("parquet", None)
-            if not metadata_backend_args["parquet_config"]:
-                raise ValueError(
-                    "Parquet metadata backend requires a 'parquet' field in the backend config containing required fields for configuration."
-                )
-        elif metadata_backend == "huggingface":
-            from simpletuner.helpers.data_backend.filters import resolve_filter_config
-            from simpletuner.helpers.metadata.backends.huggingface import HuggingfaceMetadataBackend
-
-            MetadataBackendCls = HuggingfaceMetadataBackend
-
-            hf_config = backend.get("huggingface", {})
-            metadata_backend_args["hf_config"] = hf_config
-            metadata_backend_args["dataset_type"] = backend.get("dataset_type", "image")
-
-            quality_filter = None
-            filter_config = resolve_filter_config(backend)
-            if filter_config and "quality_thresholds" in filter_config:
-                quality_filter = filter_config["quality_thresholds"]
-
-            metadata_backend_args["quality_filter"] = quality_filter
-            metadata_backend_args["split_composite_images"] = backend.get("split_composite_images", False)
-            metadata_backend_args["composite_image_column"] = backend.get("composite_image_column", "image")
-        elif metadata_backend == "webshart":
-            from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBackend
-
-            MetadataBackendCls = WebshartMetadataBackend
-        else:
-            raise ValueError(f"Unknown metadata backend type: {metadata_backend}")
-
-        video_config = init_backend["config"].get("video", {})
-        dataset_type_enum = ensure_dataset_type(backend.get("dataset_type"), default=DatasetType.IMAGE)
-        train_batch_size = init_backend["config"].get(
-            "train_batch_size",
-            resolve_dataset_train_batch_size(backend, self.args, dataset_type_enum),
-        )
         metadata_cache_root = backend.get(
             "instance_data_dir",
             backend.get("csv_cache_dir", backend.get("aws_data_prefix", "")),
@@ -2984,36 +2933,23 @@ class FactoryRegistry:
             metadata_cache_root = init_backend.get("instance_data_dir") or metadata_cache_root
         metadata_cache_root = metadata_cache_root or ""
 
-        init_backend["metadata_backend"] = MetadataBackendCls(
-            id=init_backend["id"],
+        resolved_config = {
+            **backend,
+            "train_batch_size": init_backend["config"].get("train_batch_size", backend.get("train_batch_size")),
+            "video": init_backend["config"].get("video", {}),
+            "repeats": init_backend["config"].get("repeats", 0),
+        }
+        init_backend["metadata_backend"] = create_metadata_provider(
+            init_backend["id"],
+            resolved_config,
+            init_backend["data_backend"],
+            self.accelerator,
+            self.args,
             instance_data_dir=init_backend["instance_data_dir"],
-            data_backend=init_backend["data_backend"],
-            accelerator=self.accelerator,
-            resolution=backend.get("resolution", self.args.resolution),
-            minimum_image_size=backend.get("minimum_image_size", self.args.minimum_image_size),
-            minimum_aspect_ratio=backend.get("minimum_aspect_ratio", None),
-            maximum_aspect_ratio=backend.get("maximum_aspect_ratio", None),
-            minimum_num_frames=video_config.get("min_frames", None),
-            maximum_num_frames=video_config.get("max_frames", None),
-            num_frames=video_config.get("num_frames", None),
-            resolution_type=backend.get("resolution_type", self.args.resolution_type),
-            batch_size=train_batch_size,
-            metadata_update_interval=backend.get("metadata_update_interval", self.args.metadata_update_interval),
-            cache_file=os.path.join(
-                metadata_cache_root,
-                "aspect_ratio_bucket_indices",
-            ),
-            metadata_file=os.path.join(
-                metadata_cache_root,
-                "aspect_ratio_bucket_metadata",
-            ),
-            delete_problematic_images=self.args.delete_problematic_images or False,
-            delete_unwanted_images=backend.get("delete_unwanted_images", self.args.delete_unwanted_images),
-            cache_file_suffix=backend.get("cache_file_suffix", init_backend["id"]),
-            repeats=init_backend["config"].get("repeats", 0),
-            max_num_samples=backend.get("max_num_samples", None),
-            **metadata_backend_args,
+            cache_root=metadata_cache_root,
         )
+        if backend.get("metadata_backend") == "filesystem":
+            backend["metadata_backend"] = "discovery"
 
         # Restore the live-authoritative runtime config after metadata cache loading.
         StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])

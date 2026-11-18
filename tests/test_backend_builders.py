@@ -180,7 +180,13 @@ class TestLocalBackendBuilder(unittest.TestCase):
         mock_parquet_backend.return_value = mock_parquet_instance
 
         config = ImageBackendConfig.from_dict(
-            {"id": "test_local", "type": "local", "metadata_backend": "parquet", "instance_data_dir": "/tmp/images"},
+            {
+                "id": "test_local",
+                "type": "local",
+                "metadata_backend": "parquet",
+                "instance_data_dir": "/tmp/images",
+                "parquet": {"path": "metadata.parquet", "filename_column": "id", "caption_column": "description"},
+            },
             self.args,
         )
 
