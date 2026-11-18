@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
 import math
 import random
@@ -66,12 +64,6 @@ class CaptionSampler(Sampler):
         self._consumed_state = continuation
 
     def _checkpoint_layout(self) -> dict:
-        captions_digest = hashlib.sha256(b"[")
-        for index, record in enumerate(self.metadata_backend.iter_records()):
-            if index:
-                captions_digest.update(b", ")
-            captions_digest.update(json.dumps([record.metadata_id, record.caption_text], ensure_ascii=False).encode("utf-8"))
-        captions_digest.update(b"]")
         parallelism = getattr(self.accelerator, "parallelism_config", None)
         return {
             "batch_size": self.batch_size,
@@ -85,7 +77,7 @@ class CaptionSampler(Sampler):
             "parallelism": {
                 key: getattr(parallelism, key, 1) for key in ("dp_replicate_size", "dp_shard_size", "cp_size", "tp_size")
             },
-            "captions_sha256": captions_digest.hexdigest(),
+            "captions_sha256": self.metadata_backend.caption_revision(),
         }
 
     def save_state(self, state_path: str) -> None:

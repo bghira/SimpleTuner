@@ -5,7 +5,7 @@ from simpletuner.helpers.data_backend.caption_dataset import CaptionDataset
 from simpletuner.helpers.data_backend.caption_sampler import CaptionSampler
 from simpletuner.helpers.data_backend.config.image import ImageBackendConfig
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
-from simpletuner.helpers.metadata.captions import CaptionRecord
+from simpletuner.helpers.metadata.captions import CaptionRecord, caption_records_revision
 from simpletuner.helpers.training.caption_collate import collate_caption_batch
 
 
@@ -30,6 +30,9 @@ class DummyCaptionMetadataBackend:
 
     def iter_records(self):
         return iter(self._records.values())
+
+    def caption_revision(self):
+        return caption_records_revision(self.iter_records())
 
     def __len__(self):
         return len(self._records)

@@ -12,7 +12,7 @@ import pandas as pd
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
-from simpletuner.helpers.metadata.captions import CaptionRecord, normalize_caption_text
+from simpletuner.helpers.metadata.captions import CaptionRecord, caption_records_revision, normalize_caption_text
 from simpletuner.helpers.training.multi_process import should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
 
@@ -21,6 +21,8 @@ if should_log():
     logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 else:
     logger.setLevel("ERROR")
+
+EMPTY_CAPTION_REVISION = caption_records_revision(())
 
 
 class CaptionMetadataBackend(MetadataBackend):
@@ -49,6 +51,7 @@ class CaptionMetadataBackend(MetadataBackend):
     ):
         self.caption_records: Dict[str, CaptionRecord] = {}
         self._ordered_ids: List[str] = []
+        self._caption_revision = None
         self.caption_extensions = tuple(
             sorted({ext.lstrip(".").lower() for ext in (caption_extensions or self.DEFAULT_EXTENSIONS)})
         )
@@ -113,6 +116,7 @@ class CaptionMetadataBackend(MetadataBackend):
         self.caption_records = {}
         self.image_metadata = {}
         self.image_metadata_loaded = False
+        self._caption_revision = EMPTY_CAPTION_REVISION
         try:
             if not self.data_backend.exists(self.metadata_file):
                 return
@@ -137,11 +141,13 @@ class CaptionMetadataBackend(MetadataBackend):
 
         self._ordered_ids = ordered_ids
         self.aspect_ratio_bucket_indices = {"captions": self._ordered_ids}
+        self._caption_revision = caption_records_revision(self.caption_records[mid] for mid in self._ordered_ids)
         self.image_metadata_loaded = True
 
     def save_image_metadata(self):
         serialized = [self.caption_records[mid].to_payload() for mid in self._ordered_ids]
         self.data_backend.write(self.metadata_file, json.dumps(serialized))
+        self._caption_revision = caption_records_revision(self.caption_records[mid] for mid in self._ordered_ids)
         self.image_metadata_loaded = True
 
     # ------------------------------------------------------------------
@@ -221,6 +227,7 @@ class CaptionMetadataBackend(MetadataBackend):
         self.caption_records = {}
         self.image_metadata = {}
         self._ordered_ids = []
+        self._caption_revision = EMPTY_CAPTION_REVISION
         self.aspect_ratio_bucket_indices = {"captions": []}
 
     def _store_record(
@@ -581,6 +588,11 @@ class CaptionMetadataBackend(MetadataBackend):
     # ------------------------------------------------------------------
     # Access helpers for datasets / samplers
     # ------------------------------------------------------------------
+    def caption_revision(self) -> str:
+        if self._caption_revision is None:
+            self.load_image_metadata()
+        return self._caption_revision
+
     def iter_records(self, *, worker=0, workers=1) -> Iterable[CaptionRecord]:
         if workers < 1 or not 0 <= worker < workers:
             raise ValueError("Preparation worker must be in the range [0, workers).")
