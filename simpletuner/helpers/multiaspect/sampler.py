@@ -913,6 +913,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             else:
                 relative = os.path.basename(relative)
         full_path = self.dataset_runtime.conditioning_ref(relative)
+        if full_path is None:
+            return None
         try:
             conditioning_sample_data = self.data_backend.read_image(full_path)
         except Exception as e:

@@ -355,24 +355,26 @@ def geometry_lookup(publication, header, db):
     return PartitionedGeometryLookup(db, metadata_file, shards_per_partition)
 
 
+def accepted_geometry_predicate(lookup, publication, header, stack):
+    from .webshart_exclusions import exclusion_path
+
+    revision = header.get("exclusion_revision")
+    excluded = stack.enter_context(closing(_read_index(exclusion_path(publication, revision)))) if revision else None
+    counts = header["bucket_counts"]
+
+    def contains(ref):
+        location = lookup.locate_ref(ref)
+        if location is None or not counts.get(location[0]):
+            return False
+        return excluded is None or excluded.execute("SELECT 1 FROM exclusions WHERE ref=?", (ref,)).fetchone() is None
+
+    return contains
+
+
 @contextmanager
 def accepted_ref_lookup(publication, pages):
     """Point membership in a pinned native geometry, including bucket pruning and durable exclusions."""
-    from .webshart_exclusions import exclusion_path
-
     with ExitStack() as stack:
         geometry = stack.enter_context(closing(_read_index(prepared_geometry_path(publication, pages.header))))
         lookup = geometry_lookup(publication, pages.header, geometry)
-        revision = pages.header.get("exclusion_revision")
-        excluded = stack.enter_context(closing(_read_index(exclusion_path(publication, revision)))) if revision else None
-
-        def contains(ref):
-            if isinstance(lookup, PartitionedGeometryLookup):
-                row = lookup.locate_ref(ref)
-            else:
-                row = geometry.execute("SELECT bucket FROM geometry WHERE ref=?", (ref,)).fetchone()
-            if row is None or not pages.count(row[0]):
-                return False
-            return excluded is None or excluded.execute("SELECT 1 FROM exclusions WHERE ref=?", (ref,)).fetchone() is None
-
-        yield contains
+        yield accepted_geometry_predicate(lookup, publication, pages.header, stack)

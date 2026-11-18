@@ -535,6 +535,67 @@ class TestWebshartParquetBackend(unittest.TestCase):
             )
         )
 
+    def test_conditioning_and_embedding_requests_share_native_target_membership(self):
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime, TextRequestBuilder
+        from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBackend
+        from simpletuner.helpers.metadata.backends.webshart_exclusions import Exclusions, _publish
+        from simpletuner.helpers.models.common import TextEmbedCacheKey
+        from simpletuner.helpers.multiaspect.sampler import MultiAspectSampler
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        config = {
+            "caption_strategy": "webshart",
+            "webshart": {"sampling_policy": "global"},
+            "resolution": 8,
+            "resolution_type": "pixel",
+        }
+        args = SimpleNamespace(model_family="sdxl", disable_bucket_pruning=False)
+        accelerator = SimpleNamespace(num_processes=1, process_index=0, is_main_process=True)
+        with (
+            patch.object(StateTracker, "get_data_backend_config", return_value=config),
+            patch.object(StateTracker, "get_args", return_value=args),
+            patch.object(StateTracker, "get_model", return_value=None),
+        ):
+            metadata = WebshartMetadataBackend(
+                id=self.backend.id,
+                instance_data_dir=self.backend.cache_dir,
+                cache_file=str(self.root / "conditioning-buckets"),
+                metadata_file=str(self.root / "conditioning-geometry"),
+                data_backend=self.backend,
+                accelerator=accelerator,
+                batch_size=1,
+                resolution=8,
+                resolution_type="pixel",
+            )
+            self.addCleanup(metadata.close)
+            metadata.compute_aspect_ratio_bucket_indices()
+            (accepted, excluded), count = metadata.read_page(limit=2)
+            self.assertEqual(count, 2)
+            runtime = DatasetRuntime(self.backend.id, self.backend, metadata, config)
+            self.assertEqual(runtime.conditioning_ref(excluded), excluded)
+
+            with closing(sqlite3.connect("")) as db:
+                changes = Exclusions(db)
+                changes.add(excluded, next(iter(metadata.published_bucket_counts())), "decode")
+                publication = self.backend._cache_path(metadata.cache_file)
+                _publish(publication, metadata.describe().view_revision, db)
+            metadata.reload_cache()
+            self.assertEqual(runtime.conditioning_ref(accepted), accepted)
+            self.assertIsNone(runtime.conditioning_ref(excluded))
+            self.assertTrue(self.backend.exists(excluded))
+
+            sampler = MultiAspectSampler.__new__(MultiAspectSampler)
+            sampler.dataset_runtime = runtime
+            sampler.metadata_backend = metadata
+            with patch.object(self.backend, "read_image", side_effect=AssertionError("excluded payload read")):
+                self.assertIsNone(sampler.get_conditioning_sample(excluded))
+
+            model = SimpleNamespace(text_embed_cache_key=lambda: TextEmbedCacheKey.CAPTION)
+            builder = TextRequestBuilder(model, "source", None, conditioning_datasets=[runtime])
+            records = list(builder.records([("kept", accepted), ("other", excluded)], {}))
+            self.assertEqual(records[0]["metadata"]["image_paths"], [accepted])
+            self.assertNotIn("image_paths", records[1]["metadata"])
+
     def test_capture_publication_reuses_only_unchanged_groups(self):
         from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBackend
         from simpletuner.helpers.metadata.backends.webshart_exclusions import Exclusions, _publish

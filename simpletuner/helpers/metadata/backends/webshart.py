@@ -33,6 +33,7 @@ from simpletuner.helpers.metadata.backends.webshart_epoch import EpochSpec, Webs
 from simpletuner.helpers.metadata.backends.webshart_exclusions import collect_exclusions, exclusion_path
 from simpletuner.helpers.metadata.backends.webshart_geometry import (
     _read_index,
+    accepted_geometry_predicate,
     geometry_lookup,
     link_snapshot,
     open_geometry,
@@ -152,6 +153,7 @@ class WebshartMetadataBackend(MetadataBackend):
         self.native_policy = (self.dataset_config.get("webshart") or {}).get("sampling_policy")
         self._artifact_models = {}
         self._snapshot = None
+        self._accepted_geometry = None
         self._published = None
         self._schedule_padding = None
         self._stored_geometry_digest = None
@@ -220,6 +222,7 @@ class WebshartMetadataBackend(MetadataBackend):
         self.load_image_metadata()
 
     def close(self):
+        self._accepted_geometry = None
         if self._snapshot is not None:
             if self._published.get("source_pins"):
                 self.data_backend.dataset.bind_source_revisions(None)
@@ -413,6 +416,20 @@ class WebshartMetadataBackend(MetadataBackend):
             raise ValueError("Published Webshart geometry is missing. Run a new scan.")
         source = stack.enter_context(self.data_backend.open_file(self.metadata_file, "rb"))
         return stack.enter_context(open_geometry(source, digest))
+
+    def admits_related_sample(self, ref):
+        """Check the target view's membership before a related sample can be read."""
+        if not self.native_policy:
+            return True
+        if self._published is None:
+            raise ValueError("Scan this Webshart dataset before resolving related samples.")
+        if self._published.get("geometry_format") != "sqlite-v1":
+            return True
+        lookup = self._geometry_lookup()
+        if self._accepted_geometry is None:
+            publication = self.data_backend._cache_path(self.cache_file)
+            self._accepted_geometry = accepted_geometry_predicate(lookup, publication, self._published, self._snapshot)
+        return self._accepted_geometry(self.data_backend.normalize_sample_id(ref))
 
     def get_metadata_by_filepath(self, filepath):
         if not self.native_policy or self._published is None:

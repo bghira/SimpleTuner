@@ -181,7 +181,8 @@ class DatasetRuntime:
 
         if isinstance(self.data_backend, WebshartDataBackend):
             self.data_backend._resolve_sample_ref(relative_ref)
-            return self.data_backend.normalize_sample_id(relative_ref)
+            sample_ref = self.data_backend.normalize_sample_id(relative_ref)
+            return sample_ref if self.metadata_backend.admits_related_sample(sample_ref) else None
         root = self.config.get("instance_data_dir") or self.metadata_backend.instance_data_dir
         return self.conditioning_file_path(relative_ref, root, self.config)
 
@@ -384,12 +385,11 @@ class TextRequestBuilder:
                 0.1 if probability is None else probability
             ) > 0 or "unconditional_text_embeddings" in needs
 
-    def _contexts(self, metadata, caption, image_path, init_backend):
+    def _contexts(self, metadata, caption, image_path, init_backend, related_samples):
         if self.sampling != "random" or len(self.conditioning_datasets) <= 1:
             yield metadata, caption
             return
-        for dataset in self.conditioning_datasets:
-            path = dataset.conditioning_ref(metadata["dataset_relative_path"])
+        for dataset, path in related_samples:
             context = dict(metadata)
             if dataset.id in self.references:
                 context.update(image_paths=[path], data_backend_ids=[dataset.id])
@@ -410,9 +410,22 @@ class TextRequestBuilder:
             metadata = dict(
                 image_path=image_path, data_backend_id=self.dataset_id, prompt=caption, dataset_relative_path=relative_path
             )
-            if self.references:
-                paths = [entry.conditioning_ref(relative_path) for entry in self.references.values()]
-                metadata.update(image_paths=paths, data_backend_ids=list(self.references))
+            relation_sources = (
+                self.conditioning_datasets
+                if self.sampling == "random" and len(self.conditioning_datasets) > 1
+                else self.references.values()
+            )
+            related_samples = [
+                (dataset, path)
+                for dataset in relation_sources
+                if (path := dataset.conditioning_ref(relative_path)) is not None
+            ]
+            references = [(entry.id, path) for entry, path in related_samples if entry.id in self.references]
+            if references:
+                metadata.update(
+                    image_paths=[path for _, path in references],
+                    data_backend_ids=[dataset_id for dataset_id, _ in references],
+                )
             metadata_builder = getattr(self.model, "text_embed_cache_metadata_for_filepath", None)
 
             def request(context, text):
@@ -429,7 +442,7 @@ class TextRequestBuilder:
                     )
                 return text_embed_request(self.model, key_type, text, details, self.dataset_id, image_path, relative_path)
 
-            for context, text in self._contexts(metadata, caption, image_path, init_backend):
+            for context, text in self._contexts(metadata, caption, image_path, init_backend, related_samples):
                 yield request(context, text)
                 if self.include_dropout and text:
                     yield request(context, "")
