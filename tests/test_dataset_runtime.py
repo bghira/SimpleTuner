@@ -72,6 +72,24 @@ class DatasetRuntimeTests(unittest.TestCase):
         self.assertEqual(records[0]["metadata"]["dataset_relative_path"], "sample.jpg")
         self.assertEqual(records[1], {"prompt": "cat", "key": "sample.jpg__bbox_0", "metadata": {"grounding_entity": True}})
 
+    def test_text_preparation_adds_the_dropout_record_a_model_keeps_image_context_in(self):
+        from simpletuner.helpers.models.common import TextEmbedCacheKey
+
+        model = SimpleNamespace(
+            text_embed_cache_key=lambda: TextEmbedCacheKey.CAPTION,
+            uses_image_context_dropout_caption_cache=lambda: True,
+            text_embed_cache_key_value=lambda prompt, default_key, metadata: f"{default_key}|{prompt}",
+        )
+        for probability, expected in ((0.1, True), (0.0, False)):
+            args = SimpleNamespace(caption_dropout_probability=probability)
+            with self.subTest(dropout=probability), patch.object(StateTracker, "get_args", return_value=args):
+                records = list(self.runtime.iter_text_embed_records(model, ["sample.jpg"], init_backend={}))
+                dropouts = [record for record in records if record["prompt"] == ""]
+                self.assertEqual(len(dropouts), 2 if expected else 0)
+                if expected:
+                    self.assertEqual(records[1]["key"], "first|first|")
+                    self.assertEqual(records[1]["metadata"]["image_path"], "sample.jpg")
+
     def test_reads_preserve_order_and_duplicates_with_independent_nested_metadata(self):
         refs = ["webshart://2/19/a.jpg", "webshart://0/3/b.jpg", "webshart://2/19/a.jpg"]
         records = self.runtime.read_samples(refs)
@@ -406,3 +424,150 @@ class DatasetRuntimeCursorTests(unittest.TestCase):
     def test_state_tracker_locates_the_runtime_by_dataset_id(self):
         with patch.object(StateTracker, "data_backends", {"images": {"dataset_runtime": self.runtime}}):
             self.assertIs(StateTracker.get_dataset("images"), self.runtime)
+
+
+class FactoryTextPreparationTests(unittest.TestCase):
+    """The factory caches, for each accepted sample, every caption training can draw for it."""
+
+    def test_accepted_samples_get_every_caption_variant_training_can_draw(self):
+        import os
+        import tempfile
+
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+        from simpletuner.helpers.data_backend.local import LocalDataBackend
+        from simpletuner.helpers.models.common import TextEmbedCacheKey
+        from simpletuner.helpers.prompts import PromptHandler
+
+        with tempfile.TemporaryDirectory() as root:
+            captions = {"kept.png": "red, blue, green", "multi.png": "one\ntwo", "rejected.png": "never read"}
+            for name, caption in captions.items():
+                with open(os.path.join(root, name[:-4] + ".txt"), "w") as handle:
+                    handle.write(caption)
+            accepted = [os.path.join(root, "kept.png"), os.path.join(root, "multi.png")]
+            metadata_backend = SimpleNamespace(
+                aspect_ratio_bucket_indices={"1.0": [accepted[0]], "1.5": [accepted[1]]},
+                get_metadata_by_filepath=lambda _path: {},
+                remove_images=Mock(),
+            )
+            data_backend = LocalDataBackend(accelerator=None, id="images")
+            runtime = DatasetRuntime(
+                "images",
+                data_backend,
+                metadata_backend,
+                {
+                    "dataset_type": "image",
+                    "caption_strategy": "textfile",
+                    "use_captions": True,
+                    "prepend_instance_prompt": True,
+                    "instance_prompt": "sks",
+                    "disable_multiline_split": False,
+                    "instance_data_dir": root,
+                    "caption_shuffle": {"enable": True, "count": 3, "split_on": "comma"},
+                },
+            )
+            factory = FactoryRegistry.__new__(FactoryRegistry)
+            factory._uses_text_embeddings_cache = lambda: True
+            factory.args = SimpleNamespace(skip_file_discovery="")
+            factory.accelerator = SimpleNamespace(device="cpu")
+            factory.text_encoders = []
+            factory.model = SimpleNamespace(text_embed_cache_key=lambda: TextEmbedCacheKey.CAPTION)
+            cache = Mock(text_cache_ondemand=False)
+            init_backend = {
+                "id": "images",
+                "config": {"caption_strategy": "textfile"},
+                "data_backend": data_backend,
+                "instance_data_dir": root,
+                "metadata_backend": metadata_backend,
+                "dataset_runtime": runtime,
+                "text_embed_cache": cache,
+            }
+            with (
+                patch("simpletuner.helpers.data_backend.factory.move_text_encoders"),
+                patch.object(StateTracker, "get_args", return_value=SimpleNamespace(output_dir=root)),
+                patch.object(StateTracker, "set_data_backend_config"),
+            ):
+                factory._process_text_embeddings({}, init_backend, None)
+
+            records = cache.compute_embeddings_for_prompts.call_args.args[0]
+            cached = {(record["prompt"], record["metadata"]["image_path"]) for record in records}
+            drawable = {
+                (caption, sample)
+                for sample in accepted
+                for caption in PromptHandler._normalize_caption_payload(runtime.resolve_caption(sample))
+            }
+            self.assertEqual(cached, drawable)
+            self.assertGreater(len(drawable), 3)
+            self.assertTrue(all(caption.startswith("sks ") for caption, _ in drawable))
+            metadata_backend.remove_images.assert_not_called()
+
+    def _factory(self, model):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        factory = FactoryRegistry.__new__(FactoryRegistry)
+        factory._uses_text_embeddings_cache = lambda: True
+        factory.args = SimpleNamespace(skip_file_discovery="", caption_dropout_probability=0.1)
+        factory.accelerator = SimpleNamespace(device="cpu")
+        factory.text_encoders = []
+        factory.model = model
+        return factory
+
+    def test_samples_without_a_caption_are_removed(self):
+        from simpletuner.helpers.models.common import TextEmbedCacheKey
+
+        def records(_model, sample_refs, *, init_backend, on_missing_caption):
+            for sample_ref in sample_refs:
+                if sample_ref == "missing.png":
+                    on_missing_caption(sample_ref)
+                else:
+                    yield {"prompt": "caption", "key": "caption", "metadata": {}}
+
+        factory = self._factory(SimpleNamespace(text_embed_cache_key=lambda: TextEmbedCacheKey.CAPTION))
+        metadata_backend = SimpleNamespace(
+            aspect_ratio_bucket_indices={"1.0": ["ok.png", "missing.png"]}, remove_images=Mock()
+        )
+        init_backend = {
+            "id": "images",
+            "config": {"caption_strategy": "textfile"},
+            "data_backend": object(),
+            "metadata_backend": metadata_backend,
+            "dataset_runtime": SimpleNamespace(iter_text_embed_records=records),
+            "text_embed_cache": Mock(text_cache_ondemand=False),
+        }
+        with (
+            patch("simpletuner.helpers.data_backend.factory.move_text_encoders"),
+            patch.object(StateTracker, "get_args", return_value=SimpleNamespace(output_dir="output")),
+            patch.object(StateTracker, "set_data_backend_config"),
+        ):
+            factory._process_text_embeddings({}, init_backend, None)
+        metadata_backend.remove_images.assert_called_once_with(["missing.png"])
+
+    def test_deferred_preparation_adds_the_dropout_record(self):
+        from simpletuner.helpers.models.common import TextEmbedCacheKey
+
+        factory = self._factory(
+            SimpleNamespace(
+                text_embed_cache_key=lambda: TextEmbedCacheKey.CAPTION,
+                uses_image_context_dropout_caption_cache=lambda: True,
+            )
+        )
+        cache = Mock(text_cache_ondemand=False)
+        init_backend = {
+            "id": "images",
+            "config": {"caption_strategy": "textfile"},
+            "data_backend": object(),
+            "instance_data_dir": "dataset",
+            "metadata_backend": SimpleNamespace(aspect_ratio_bucket_indices={"1.0": ["dataset/sample.png"]}),
+            "dataset_runtime": SimpleNamespace(
+                config={"caption_strategy": "textfile"},
+                iter_caption_records=lambda refs, **_kwargs: iter([("caption", ref) for ref in refs]),
+            ),
+            "text_embed_cache": cache,
+        }
+        factory._deferred_text_embed_backends = [({"caption_strategy": "textfile"}, init_backend)]
+        with (
+            patch.object(StateTracker, "get_conditioning_datasets", return_value=[]),
+            patch("simpletuner.helpers.data_backend.factory.move_text_encoders"),
+        ):
+            factory._process_deferred_text_embeddings()
+        prompts = [record["prompt"] for record in cache.compute_embeddings_for_prompts.call_args.args[0]]
+        self.assertEqual(prompts, ["caption", ""])

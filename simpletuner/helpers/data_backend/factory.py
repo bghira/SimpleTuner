@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from simpletuner.helpers.data_backend.dataset_runtime import (
     RUNTIME_MUTABLE_KEYS,
     DatasetRuntime,
+    image_context_dropout_record,
     recrops_each_epoch,
     shuffle_window,
 )
@@ -3707,103 +3708,27 @@ class FactoryRegistry:
                 return
 
             info_log(f"(id={init_backend['id']}) Collecting captions.")
-            prepend_instance_prompt = backend.get("prepend_instance_prompt", self.args.prepend_instance_prompt)
-            instance_prompt = backend.get("instance_prompt", self.args.instance_prompt)
-            use_captions = True
-            if backend.get("only_instance_prompt") or getattr(self.args, "only_instance_prompt", False):
-                use_captions = False
-            elif caption_strategy == "instanceprompt":
-                use_captions = False
-
-            try:
-                captions, images_missing_captions, caption_image_paths = PromptHandler.get_all_captions(
-                    data_backend=init_backend["data_backend"],
-                    instance_data_dir=init_backend["instance_data_dir"],
-                    prepend_instance_prompt=prepend_instance_prompt,
-                    instance_prompt=instance_prompt,
-                    use_captions=use_captions,
-                    caption_strategy=caption_strategy,
-                    return_image_paths=True,
-                    disable_multiline_split=backend.get("disable_multiline_split", False),
+            missing_captions = []
+            prompt_records = list(
+                init_backend["dataset_runtime"].iter_text_embed_records(
+                    self.model,
+                    self._accepted_samples(init_backend),
+                    init_backend=init_backend,
+                    on_missing_caption=missing_captions.append,
                 )
-            except AttributeError:
-                logger.debug("Skipping text embedding processing due to incomplete StateTracker configuration.")
-                return
-            logger.debug(f"Data missing captions: {images_missing_captions}")
-            if len(images_missing_captions) > 0 and hasattr(init_backend["metadata_backend"], "remove_images"):
-                # we'll tell the aspect bucket manager to remove these images.
-                init_backend["metadata_backend"].remove_images(images_missing_captions)
+            )
+            if missing_captions:
+                init_backend["metadata_backend"].remove_images(missing_captions)
             info_log(
-                f"(id={init_backend['id']}) Initialise text embed pre-computation using the {caption_strategy} caption strategy. We have {len(captions)} captions to process."
+                f"(id={init_backend['id']}) Initialise text embed pre-computation using the {caption_strategy} caption strategy. We have {len(prompt_records)} prompts to process."
             )
             move_text_encoders(self.args, self.text_encoders, self.accelerator.device)
-            prompt_records = []
-            key_type = self.model.text_embed_cache_key()
-            dataset_id = init_backend["id"]
-            dataset_root = init_backend.get("instance_data_dir")
-            for caption, image_path in zip(captions, caption_image_paths):
-                image_path_str = str(image_path)
-                normalized_identifier = normalize_data_path(image_path_str, dataset_root)
-                metadata = {
-                    "image_path": image_path_str,
-                    "data_backend_id": dataset_id,
-                    "prompt": caption,
-                    "dataset_relative_path": normalized_identifier,
-                }
-                metadata_builder = getattr(self.model, "text_embed_cache_metadata_for_filepath", None)
-                if callable(metadata_builder):
-                    metadata.update(
-                        metadata_builder(
-                            init_backend=init_backend,
-                            image_path=image_path_str,
-                            prompt=caption,
-                            data_backend_id=dataset_id,
-                            dataset_relative_path=normalized_identifier,
-                        )
-                    )
-                if key_type is TextEmbedCacheKey.DATASET_AND_FILENAME:
-                    key_value = f"{dataset_id}:{normalized_identifier}"
-                elif key_type is TextEmbedCacheKey.FILENAME:
-                    key_value = normalize_data_path(image_path_str, None)
-                else:
-                    key_value = caption
-                key_builder = getattr(self.model, "text_embed_cache_key_value", None)
-                if callable(key_builder):
-                    key_value = key_builder(prompt=caption, default_key=key_value, metadata=metadata)
-                prompt_records.append({"prompt": caption, "key": key_value, "metadata": metadata})
-                self._append_image_context_dropout_prompt_record(prompt_records, key_value, metadata)
-
-            # Add entity label records for images with grounding annotations
-            grounding_label_count = 0
-            metadata_backend = init_backend.get("metadata_backend")
-            if metadata_backend is not None:
-                for image_path in caption_image_paths:
-                    image_path_str = str(image_path)
-                    img_meta = metadata_backend.get_metadata_by_filepath(image_path_str)
-                    if not isinstance(img_meta, dict):
-                        continue
-                    bbox_entities = img_meta.get("bbox_entities")
-                    if not bbox_entities:
-                        continue
-                    normalized_identifier = normalize_data_path(image_path_str, dataset_root)
-                    for idx, entity in enumerate(bbox_entities):
-                        label = entity.get("label", "")
-                        if not label:
-                            continue
-                        entity_key = f"{normalized_identifier}__bbox_{idx}"
-                        prompt_records.append({"prompt": label, "key": entity_key, "metadata": {"grounding_entity": True}})
-                        grounding_label_count += 1
-            if grounding_label_count > 0:
-                info_log(
-                    f"(id={init_backend['id']}) Added {grounding_label_count} grounding entity labels for text embedding."
-                )
-
             init_backend["text_embed_cache"].compute_embeddings_for_prompts(
                 prompt_records,
                 return_concat=False,
                 load_from_cache=False,
             )
-            info_log(f"(id={init_backend['id']}) Completed processing {len(captions)} captions.")
+            info_log(f"(id={init_backend['id']}) Completed processing {len(prompt_records)} prompts.")
 
         # hash_filenames is always enabled
         init_backend["config"]["hash_filenames"] = True
@@ -3854,38 +3779,18 @@ class FactoryRegistry:
                         f"{[c[0] for c in conditioning_info]}"
                     )
 
-            # Collect captions (same logic as _process_text_embeddings)
-            caption_strategy = backend.get("caption_strategy", self.args.caption_strategy)
-            prepend_instance_prompt = backend.get("prepend_instance_prompt", self.args.prepend_instance_prompt)
-            instance_prompt = backend.get("instance_prompt", self.args.instance_prompt)
-            use_captions = True
-            if backend.get("only_instance_prompt") or getattr(self.args, "only_instance_prompt", False):
-                use_captions = False
-            elif caption_strategy == "instanceprompt":
-                use_captions = False
-
-            try:
-                captions, images_missing_captions, caption_image_paths = PromptHandler.get_all_captions(
-                    data_backend=init_backend["data_backend"],
-                    instance_data_dir=init_backend["instance_data_dir"],
-                    prepend_instance_prompt=prepend_instance_prompt,
-                    instance_prompt=instance_prompt,
-                    use_captions=use_captions,
-                    caption_strategy=caption_strategy,
-                    return_image_paths=True,
-                    disable_multiline_split=backend.get("disable_multiline_split", False),
+            missing_captions = []
+            caption_records = list(
+                init_backend["dataset_runtime"].iter_caption_records(
+                    self._accepted_samples(init_backend), on_missing_caption=missing_captions.append
                 )
-            except AttributeError:
-                logger.debug(
-                    f"(id={dataset_id}) Skipping deferred text embedding processing due to incomplete StateTracker configuration."
-                )
-                continue
-
-            if len(images_missing_captions) > 0 and hasattr(init_backend["metadata_backend"], "remove_images"):
-                init_backend["metadata_backend"].remove_images(images_missing_captions)
+            )
+            if missing_captions:
+                init_backend["metadata_backend"].remove_images(missing_captions)
+            caption_strategy = init_backend["dataset_runtime"].config["caption_strategy"]
 
             info_log(
-                f"(id={dataset_id}) Processing {len(captions)} captions with image context using {caption_strategy} strategy."
+                f"(id={dataset_id}) Processing {len(caption_records)} captions with image context using {caption_strategy} strategy."
             )
 
             move_text_encoders(self.args, self.text_encoders, self.accelerator.device)
@@ -3893,7 +3798,7 @@ class FactoryRegistry:
             key_type = self.model.text_embed_cache_key()
             dataset_root = init_backend.get("instance_data_dir")
 
-            for caption, image_path in zip(captions, caption_image_paths):
+            for caption, image_path in caption_records:
                 image_path_str = str(image_path)
                 normalized_identifier = normalize_data_path(image_path_str, dataset_root)
                 metadata = {
@@ -3977,41 +3882,27 @@ class FactoryRegistry:
                                 prompt=context_caption, default_key=key_value, metadata=caption_context
                             )
                         prompt_records.append({"prompt": context_caption, "key": context_key, "metadata": caption_context})
-                        self._append_image_context_dropout_prompt_record(prompt_records, context_key, caption_context)
+                        dropout_record = image_context_dropout_record(self.model, self.args, context_key, caption_context)
+                        if dropout_record is not None:
+                            prompt_records.append(dropout_record)
 
             init_backend["text_embed_cache"].compute_embeddings_for_prompts(
                 prompt_records,
                 return_concat=False,
                 load_from_cache=False,
             )
-            info_log(f"(id={dataset_id}) Completed processing {len(captions)} captions with image context.")
+            info_log(f"(id={dataset_id}) Completed processing {len(caption_records)} captions with image context.")
 
         # Clear the deferred queue
         self._deferred_text_embed_backends.clear()
 
-    def _append_image_context_dropout_prompt_record(
-        self,
-        prompt_records: List[Dict[str, Any]],
-        default_key: str,
-        metadata: Dict[str, Any],
-    ) -> None:
-        from simpletuner.helpers.distillation.factory import DistillerFactory
-
-        distillation_requirements = DistillerFactory.training_batch_requirements(
-            getattr(self.args, "distillation_method", None),
-            {"distillation_config": getattr(self.args, "distillation_config", {})},
-        )
-        needs_unconditional_embedding = "unconditional_text_embeddings" in distillation_requirements
-        if getattr(self.args, "caption_dropout_probability", 0.1) <= 0.0 and not needs_unconditional_embedding:
-            return
-        if not getattr(self.model, "uses_image_context_dropout_caption_cache", lambda: False)():
-            return
-        dropout_metadata = dict(metadata)
-        key_builder = getattr(self.model, "text_embed_cache_key_value", None)
-        key_value = default_key
-        if callable(key_builder):
-            key_value = key_builder(prompt="", default_key=default_key, metadata=dropout_metadata)
-        prompt_records.append({"prompt": "", "key": key_value, "metadata": dropout_metadata})
+    @staticmethod
+    def _accepted_samples(init_backend: Dict[str, Any]) -> List[str]:
+        return [
+            sample_ref
+            for bucket in init_backend["metadata_backend"].aspect_ratio_bucket_indices.values()
+            for sample_ref in bucket
+        ]
 
     def _handle_auto_generated_dataset(self, backend: Dict[str, Any], init_backend: Dict[str, Any]) -> None:
         """Handle auto-generated reference datasets."""

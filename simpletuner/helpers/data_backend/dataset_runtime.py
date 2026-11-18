@@ -23,6 +23,25 @@ def shuffle_window(config: Mapping[str, Any]) -> int | None:
     return (config.get("webshart") or {}).get("shuffle_window")
 
 
+def image_context_dropout_record(model, args, key: str, metadata: dict[str, Any]) -> dict[str, Any] | None:
+    """The empty-caption record a model that keeps image context in dropped captions caches beside a caption."""
+    from simpletuner.helpers.distillation.factory import DistillerFactory
+
+    if not getattr(model, "uses_image_context_dropout_caption_cache", lambda: False)():
+        return None
+    requirements = DistillerFactory.training_batch_requirements(
+        getattr(args, "distillation_method", None),
+        {"distillation_config": getattr(args, "distillation_config", {})},
+    )
+    if getattr(args, "caption_dropout_probability", 0.1) <= 0.0 and "unconditional_text_embeddings" not in requirements:
+        return None
+    dropout_metadata = dict(metadata)
+    key_builder = getattr(model, "text_embed_cache_key_value", None)
+    if callable(key_builder):
+        key = key_builder(prompt="", default_key=key, metadata=dropout_metadata)
+    return {"prompt": "", "key": key, "metadata": dropout_metadata}
+
+
 def recrops_each_epoch(config: Mapping[str, Any], args) -> bool:
     """Whether a dataset's samples are given a new aspect and crop when an epoch ends."""
     return bool(config.get("crop")) and config.get("crop_aspect") == "random" and not args.aspect_bucket_disable_rebuild
@@ -242,6 +261,9 @@ class DatasetRuntime:
             if callable(key_builder):
                 key = key_builder(prompt=caption, default_key=key, metadata=metadata)
             yield {"prompt": caption, "key": key, "metadata": metadata}
+            dropout_record = image_context_dropout_record(model, StateTracker.get_args(), key, metadata)
+            if dropout_record is not None:
+                yield dropout_record
 
             sample_metadata = self.describe(image_path)
             if sample_metadata is not None:

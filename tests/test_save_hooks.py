@@ -27,28 +27,34 @@ def _concurrent_writer(directory, barrier, iterations, errors):
 
 
 class SaveHookManagerTests(unittest.TestCase):
+    @staticmethod
+    def _caption_backend(caption_strategy, buckets, iter_caption_records):
+        return {
+            "data_backend": object(),
+            "config": {"caption_strategy": caption_strategy},
+            "metadata_backend": SimpleNamespace(aspect_ratio_bucket_indices=buckets),
+            "dataset_runtime": SimpleNamespace(iter_caption_records=iter_caption_records),
+        }
+
     def test_native_caption_run_does_not_scan_or_infer_partial_global_tag_statistics(self):
         manager = object.__new__(SaveHookManager)
-        native = {"data_backend": object(), "config": {"caption_strategy": "webshart"}}
-        local = {"data_backend": object(), "config": {"caption_strategy": "textfile"}}
-        with (
-            patch.object(StateTracker, "get_data_backends", return_value={"local": local, "native": native}),
-            patch("simpletuner.helpers.prompts.PromptHandler.get_all_captions", side_effect=AssertionError("caption scan")),
-        ):
+        scan = Mock(side_effect=AssertionError("caption scan"))
+        native = self._caption_backend("webshart", {}, scan)
+        local = self._caption_backend("textfile", {"1.0": ["a.png"]}, scan)
+        with patch.object(StateTracker, "get_data_backends", return_value={"local": local, "native": native}):
             self.assertEqual(manager._build_tag_frequency_from_captions(), {})
         self.assertEqual(manager._tag_frequency_cache, {})
+        scan.assert_not_called()
 
-    def test_local_caption_tag_statistics_are_preserved(self):
+    def test_local_caption_tag_statistics_count_the_accepted_samples(self):
         manager = object.__new__(SaveHookManager)
         manager.args = SimpleNamespace()
-        local = {"data_backend": object(), "config": {"caption_strategy": "textfile"}}
-        with (
-            patch.object(StateTracker, "get_data_backends", return_value={"local": local}),
-            patch(
-                "simpletuner.helpers.prompts.PromptHandler.get_all_captions", return_value=(["style, cat", "style, dog"], [])
-            ),
-        ):
+        captions = {"a.png": "style, cat", "b.png": "style, dog"}
+        read = Mock(side_effect=lambda refs, on_missing_caption: [(captions[ref], ref) for ref in refs])
+        local = self._caption_backend("textfile", {"1.0": ["a.png"], "1.5": ["b.png"]}, read)
+        with patch.object(StateTracker, "get_data_backends", return_value={"local": local}):
             self.assertEqual(manager._build_tag_frequency_from_captions(), {"local": {"style": 2}})
+        self.assertEqual(read.call_args.args[0], ["a.png", "b.png"])
 
     def _run_save_model_hook(self, is_local_main_process):
         output_dir = "/tmp/checkpoint"

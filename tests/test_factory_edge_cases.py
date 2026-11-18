@@ -380,7 +380,6 @@ class TestFactoryEdgeCases(unittest.TestCase):
 
         factory = FactoryRegistry.__new__(FactoryRegistry)
         factory._uses_text_embeddings_cache = lambda: True
-        factory._append_image_context_dropout_prompt_record = lambda *_args, **_kwargs: None
         factory.args = SimpleNamespace(
             prepend_instance_prompt=False,
             instance_prompt=None,
@@ -394,20 +393,18 @@ class TestFactoryEdgeCases(unittest.TestCase):
             text_embed_cache_key=lambda: TextEmbedCacheKey.CAPTION,
         )
         cache = MagicMock(text_cache_ondemand=False)
+        record = {"prompt": "caption", "key": "caption", "metadata": {}}
         init_backend = {
             "id": "image-dataset",
             "config": {"caption_strategy": "textfile"},
             "data_backend": object(),
             "instance_data_dir": "dataset",
-            "metadata_backend": MagicMock(),
+            "metadata_backend": SimpleNamespace(aspect_ratio_bucket_indices={"1.0": ["dataset/sample.png"]}),
+            "dataset_runtime": SimpleNamespace(iter_text_embed_records=lambda *_args, **_kwargs: iter([record])),
             "text_embed_cache": cache,
         }
 
         with (
-            patch(
-                "simpletuner.helpers.data_backend.factory.PromptHandler.get_all_captions",
-                return_value=(["caption"], [], ["dataset/sample.png"]),
-            ),
             patch("simpletuner.helpers.data_backend.factory.move_text_encoders"),
             patch(
                 "simpletuner.helpers.data_backend.factory.StateTracker.get_args",
@@ -422,6 +419,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
         self.assertNotIn("split_between_processes", cache.compute_embeddings_for_prompts.call_args.kwargs)
 
     def test_bounded_text_precompute_encodes_each_sample_on_one_rank(self):
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
         from simpletuner.helpers.models.common import TextEmbedCacheKey
 
@@ -431,7 +429,6 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 for rank in range(4):
                     factory = FactoryRegistry.__new__(FactoryRegistry)
                     factory._uses_text_embeddings_cache = lambda: True
-                    factory._append_image_context_dropout_prompt_record = lambda *_args, **_kwargs: None
                     factory.args = SimpleNamespace(
                         caption_strategy="instanceprompt",
                         prepend_instance_prompt=False,
@@ -460,12 +457,26 @@ class TestFactoryEdgeCases(unittest.TestCase):
 
                     cache.compute_embeddings_for_prompts = encode
                     backend = {"caption_strategy": "instanceprompt", "max_num_samples": 16}
+                    data_backend = SimpleNamespace(id="image-dataset")
                     init_backend = {
                         "id": "image-dataset",
                         "config": {"caption_strategy": "instanceprompt"},
-                        "data_backend": SimpleNamespace(id="image-dataset"),
+                        "data_backend": data_backend,
                         "instance_data_dir": "dataset",
                         "metadata_backend": metadata,
+                        "dataset_runtime": DatasetRuntime(
+                            "image-dataset",
+                            data_backend,
+                            metadata,
+                            {
+                                "caption_strategy": "instanceprompt",
+                                "use_captions": False,
+                                "prepend_instance_prompt": False,
+                                "instance_prompt": "caption",
+                                "disable_multiline_split": False,
+                                "instance_data_dir": "dataset",
+                            },
+                        ),
                         "text_embed_cache": cache,
                     }
                     factory._deferred_text_embed_backends = [(backend, init_backend)]
@@ -501,7 +512,6 @@ class TestFactoryEdgeCases(unittest.TestCase):
 
         factory = FactoryRegistry.__new__(FactoryRegistry)
         factory._uses_text_embeddings_cache = lambda: True
-        factory._append_image_context_dropout_prompt_record = lambda *_args, **_kwargs: None
         factory.args = SimpleNamespace(
             caption_strategy="textfile",
             prepend_instance_prompt=False,
@@ -518,17 +528,17 @@ class TestFactoryEdgeCases(unittest.TestCase):
             "config": {"caption_strategy": "textfile"},
             "data_backend": object(),
             "instance_data_dir": "dataset",
-            "metadata_backend": MagicMock(),
+            "metadata_backend": SimpleNamespace(aspect_ratio_bucket_indices={"1.0": ["dataset/sample.png"]}),
+            "dataset_runtime": SimpleNamespace(
+                config={"caption_strategy": "textfile"},
+                iter_caption_records=lambda *_args, **_kwargs: iter([("caption", "dataset/sample.png")]),
+            ),
             "text_embed_cache": cache,
         }
         factory._deferred_text_embed_backends = [(backend, init_backend)]
 
         with (
             patch("simpletuner.helpers.data_backend.factory.StateTracker.get_conditioning_datasets", return_value=[]),
-            patch(
-                "simpletuner.helpers.data_backend.factory.PromptHandler.get_all_captions",
-                return_value=(["caption"], [], ["dataset/sample.png"]),
-            ),
             patch("simpletuner.helpers.data_backend.factory.move_text_encoders"),
         ):
             factory._process_deferred_text_embeddings()

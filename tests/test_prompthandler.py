@@ -157,10 +157,9 @@ class TestPromptHandler(unittest.TestCase):
         self.assertEqual(result_caption, "a photo of a cat")
         self.assertEqual([result_caption], PromptHandler._normalize_caption_payload(result_caption))
 
-    @patch("simpletuner.helpers.prompts.StateTracker.get_image_files", return_value=["image.png"])
     @patch("simpletuner.helpers.prompts.StateTracker.get_data_backend", return_value={})
     @patch("simpletuner.helpers.prompts.StateTracker.get_data_backend_config", return_value={})
-    def test_textfile_training_captions_match_precache(self, *_):
+    def test_textfile_captions(self, *_):
         cases = (
             (" woven into a rug, the symbol 囍 appears. ", False, False, "woven into a rug, the symbol 囍 appears."),
             (b"  caption \r\n", False, False, ["caption"]),
@@ -180,11 +179,7 @@ class TestPromptHandler(unittest.TestCase):
                     instance_prompt="style",
                     disable_multiline_split=disable_split,
                 )
-                training = PromptHandler.magic_prompt(image_path="image.png", **kwargs)
-                precache, missing = PromptHandler.get_all_captions(instance_data_dir="images", **kwargs)
-                self.assertEqual(training, expected)
-                self.assertEqual([training] if isinstance(training, str) else training, precache)
-                self.assertEqual(missing, [])
+                self.assertEqual(PromptHandler.magic_prompt(image_path="image.png", **kwargs), expected)
 
     @patch("simpletuner.helpers.prompts.StateTracker.get_data_backend")
     def test_webshart_caption_strategy_uses_metadata_caption_cache(self, mock_get_data_backend):

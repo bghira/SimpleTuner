@@ -269,20 +269,24 @@ class CollateFunctionTests(unittest.TestCase):
         registry.args.instance_prompt = ""
         registry.text_encoders = []
         registry.accelerator = SimpleNamespace(device="cpu")
+        training_caption = ["caption"]
         init_backend = dict(
             data_backend,
             id="backend-1",
             instance_data_dir="/train",
             text_embed_cache=precache,
-            metadata_backend=SimpleNamespace(get_metadata_by_filepath=lambda _: {"target_size": (32, 32)}),
+            metadata_backend=SimpleNamespace(
+                get_metadata_by_filepath=lambda _: {"target_size": (32, 32)},
+                aspect_ratio_bucket_indices={"1.0": ["/train/sample.png"]},
+            ),
+            dataset_runtime=SimpleNamespace(
+                config={"caption_strategy": "textfile"},
+                iter_caption_records=lambda refs, **_kwargs: iter([(training_caption[0], ref) for ref in refs]),
+            ),
         )
         registry._deferred_text_embed_backends = [({"caption_strategy": "textfile"}, init_backend)]
         with (
             patch.object(StateTracker, "get_conditioning_datasets", return_value=references),
-            patch(
-                "simpletuner.helpers.data_backend.factory.PromptHandler.get_all_captions",
-                return_value=(["caption"], [], ["/train/sample.png"]),
-            ),
             patch("simpletuner.helpers.data_backend.factory.move_text_encoders"),
         ):
             registry._process_deferred_text_embeddings()
@@ -292,12 +296,9 @@ class CollateFunctionTests(unittest.TestCase):
         self.base_args.conditioning_multidataset_sampling = "random"
         reference_captions = {"first": ["first edit", "alternate first edit"], "second": ["second edit"]}
         registry._deferred_text_embed_backends = [({"caption_strategy": "textfile"}, init_backend)]
+        training_caption[0] = ""
         with (
             patch.object(StateTracker, "get_conditioning_datasets", return_value=references),
-            patch(
-                "simpletuner.helpers.data_backend.factory.PromptHandler.get_all_captions",
-                return_value=([""], [], ["/train/sample.png"]),
-            ),
             patch("simpletuner.helpers.data_backend.factory.move_text_encoders"),
             patch(
                 "simpletuner.helpers.data_backend.factory.PromptHandler.caption_for_sampler",

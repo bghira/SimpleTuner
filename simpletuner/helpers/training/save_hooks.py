@@ -570,8 +570,6 @@ class SaveHookManager:
 
         import re
 
-        from simpletuner.helpers.prompts import PromptHandler
-
         backends = StateTracker.get_data_backends()
         if any(
             backend.get("data_backend") is not None and backend.get("config", {}).get("caption_strategy") == "webshart"
@@ -589,31 +587,20 @@ class SaveHookManager:
             if backend.get("data_backend") is None:
                 continue
 
-            config = backend.get("config", {})
-            caption_strategy = config.get("caption_strategy")
-            if not caption_strategy:
+            if not backend.get("config", {}).get("caption_strategy"):
                 continue
-            prepend_instance_prompt = config.get(
-                "prepend_instance_prompt", getattr(self.args, "prepend_instance_prompt", False)
-            )
-            instance_prompt = config.get("instance_prompt", getattr(self.args, "instance_prompt", None))
-            use_captions = True
-            if config.get("only_instance_prompt") or getattr(self.args, "only_instance_prompt", False):
-                use_captions = False
-            elif caption_strategy == "instanceprompt":
-                use_captions = False
-
+            sample_refs = [
+                sample_ref
+                for bucket in backend["metadata_backend"].aspect_ratio_bucket_indices.values()
+                for sample_ref in bucket
+            ]
             try:
-                captions, _ = PromptHandler.get_all_captions(
-                    data_backend=backend["data_backend"],
-                    instance_data_dir=backend.get("instance_data_dir", ""),
-                    prepend_instance_prompt=prepend_instance_prompt,
-                    instance_prompt=instance_prompt,
-                    use_captions=use_captions,
-                    caption_strategy=caption_strategy,
-                    return_image_paths=False,
-                    disable_multiline_split=config.get("disable_multiline_split", False),
-                )
+                captions = [
+                    caption
+                    for caption, _ in backend["dataset_runtime"].iter_caption_records(
+                        sample_refs, on_missing_caption=lambda sample_ref: None
+                    )
+                ]
             except Exception as e:
                 logger.debug(f"Could not get captions for backend {backend_id}: {e}")
                 continue
