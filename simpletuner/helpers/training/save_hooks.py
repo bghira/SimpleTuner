@@ -547,9 +547,8 @@ class SaveHookManager:
         """
         trigger_words = []
         seen = set()
-        for backend_id, backend in StateTracker.get_data_backends().items():
-            config = backend.get("config", {})
-            instance_prompt = config.get("instance_prompt")
+        for dataset in StateTracker.get_datasets("image", "video", "audio", "caption").values():
+            instance_prompt = dataset.config.get("instance_prompt")
             if instance_prompt and instance_prompt not in seen:
                 trigger_words.append(instance_prompt)
                 seen.add(instance_prompt)
@@ -569,98 +568,46 @@ class SaveHookManager:
             return cached
 
         import re
+        from collections import Counter
 
-        from simpletuner.helpers.prompts import PromptHandler
-
-        backends = StateTracker.get_data_backends()
+        datasets = StateTracker.get_datasets("image", "video", "audio", "caption")
         if any(
-            backend.get("data_backend") is not None and backend.get("config", {}).get("caption_strategy") == "webshart"
-            for backend in backends.values()
+            dataset.uses_native_schedule or dataset.config.get("caption_strategy") == "webshart"
+            for dataset in datasets.values()
         ):
-            # Global tag frequencies require complete caption statistics from every dataset.
             self._tag_frequency_cache = {}
             return {}
 
-        # First pass: collect all captions and count tag presence across all backends
-        all_captions = []
-        backend_captions = {}
-
-        for backend_id, backend in backends.items():
-            if backend.get("data_backend") is None:
-                continue
-
-            config = backend.get("config", {})
-            caption_strategy = config.get("caption_strategy")
-            if not caption_strategy:
-                continue
-            prepend_instance_prompt = config.get(
-                "prepend_instance_prompt", getattr(self.args, "prepend_instance_prompt", False)
-            )
-            instance_prompt = config.get("instance_prompt", getattr(self.args, "instance_prompt", None))
-            use_captions = True
-            if config.get("only_instance_prompt") or getattr(self.args, "only_instance_prompt", False):
-                use_captions = False
-            elif caption_strategy == "instanceprompt":
-                use_captions = False
-
+        caption_count = 0
+        caption_presence = Counter()
+        dataset_tags = {}
+        for dataset_id, dataset in datasets.items():
+            presence = Counter()
+            counts = Counter()
+            seen_captions = 0
             try:
-                captions, _ = PromptHandler.get_all_captions(
-                    data_backend=backend["data_backend"],
-                    instance_data_dir=backend.get("instance_data_dir", ""),
-                    prepend_instance_prompt=prepend_instance_prompt,
-                    instance_prompt=instance_prompt,
-                    use_captions=use_captions,
-                    caption_strategy=caption_strategy,
-                    return_image_paths=False,
-                    disable_multiline_split=config.get("disable_multiline_split", False),
-                )
-            except Exception as e:
-                logger.debug(f"Could not get captions for backend {backend_id}: {e}")
+                for caption in dataset.iter_accepted_captions():
+                    if not caption or caption == "__caption_dropout__":
+                        continue
+                    tags = [tag.strip() for tag in re.split(r"[,\n]+", str(caption)) if tag.strip()]
+                    presence.update(set(tags))
+                    counts.update(tags)
+                    seen_captions += 1
+            except Exception as exc:
+                logger.debug("Could not count captions for dataset %s: %s", dataset_id, exc)
                 continue
+            caption_count += seen_captions
+            caption_presence.update(presence)
+            dataset_tags[dataset_id] = counts
 
-            valid_captions = [c for c in captions if c and c != "__caption_dropout__"]
-            backend_captions[backend_id] = valid_captions
-            all_captions.extend(valid_captions)
-
-        if not all_captions:
-            self._tag_frequency_cache = {}
-            return {}
-
-        # Count how many captions each tag appears in (presence-based)
-        tag_caption_count = {}
-        for caption in all_captions:
-            tags = re.split(r"[,\n]+", str(caption))
-            seen_in_caption = set()
-            for tag in tags:
-                tag = tag.strip()
-                if tag and tag not in seen_in_caption:
-                    seen_in_caption.add(tag)
-                    tag_caption_count[tag] = tag_caption_count.get(tag, 0) + 1
-
-        # Filter to tags appearing in more than 50% of all captions
-        threshold = len(all_captions) / 2
-        frequent_tags = {tag for tag, count in tag_caption_count.items() if count > threshold}
-
-        if not frequent_tags:
-            self._tag_frequency_cache = {}
-            return {}
-
-        # Build per-backend frequency dict with only frequent tags
-        ss_tag_frequency = {}
-        for backend_id, captions in backend_captions.items():
-            tag_counts = {}
-            for caption in captions:
-                tags = re.split(r"[,\n]+", str(caption))
-                for tag in tags:
-                    tag = tag.strip()
-                    if tag and tag in frequent_tags:
-                        tag_counts[tag] = tag_counts.get(tag, 0) + 1
-
-            if tag_counts:
-                ss_tag_frequency[backend_id] = tag_counts
-
-        self._tag_frequency_cache = ss_tag_frequency
-        return ss_tag_frequency
+        frequent = {tag for tag, count in caption_presence.items() if count * 2 > caption_count}
+        stats = {}
+        for dataset_id, tags in dataset_tags.items():
+            filtered = {tag: count for tag, count in tags.items() if tag in frequent}
+            if filtered:
+                stats[dataset_id] = filtered
+        self._tag_frequency_cache = stats
+        return stats
 
     def _build_trigger_words_metadata(self) -> dict[str, str]:
         """

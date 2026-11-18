@@ -27,28 +27,26 @@ def _concurrent_writer(directory, barrier, iterations, errors):
 
 
 class SaveHookManagerTests(unittest.TestCase):
+
     def test_native_caption_run_does_not_scan_or_infer_partial_global_tag_statistics(self):
         manager = object.__new__(SaveHookManager)
-        native = {"data_backend": object(), "config": {"caption_strategy": "webshart"}}
-        local = {"data_backend": object(), "config": {"caption_strategy": "textfile"}}
-        with (
-            patch.object(StateTracker, "get_data_backends", return_value={"local": local, "native": native}),
-            patch("simpletuner.helpers.prompts.PromptHandler.get_all_captions", side_effect=AssertionError("caption scan")),
-        ):
+        native = SimpleNamespace(config={"caption_strategy": "webshart"}, uses_native_schedule=True)
+        local = SimpleNamespace(config={"caption_strategy": "textfile"}, uses_native_schedule=False)
+        local.iter_accepted_captions = Mock(side_effect=AssertionError("caption scan"))
+        with patch.object(StateTracker, "get_datasets", return_value={"local": local, "native": native}):
             self.assertEqual(manager._build_tag_frequency_from_captions(), {})
+        local.iter_accepted_captions.assert_not_called()
         self.assertEqual(manager._tag_frequency_cache, {})
 
     def test_local_caption_tag_statistics_are_preserved(self):
         manager = object.__new__(SaveHookManager)
-        manager.args = SimpleNamespace()
-        local = {"data_backend": object(), "config": {"caption_strategy": "textfile"}}
-        with (
-            patch.object(StateTracker, "get_data_backends", return_value={"local": local}),
-            patch(
-                "simpletuner.helpers.prompts.PromptHandler.get_all_captions", return_value=(["style, cat", "style, dog"], [])
-            ),
-        ):
-            self.assertEqual(manager._build_tag_frequency_from_captions(), {"local": {"style": 2}})
+        local = SimpleNamespace(
+            config={"caption_strategy": "textfile"},
+            uses_native_schedule=False,
+            iter_accepted_captions=lambda: iter(["style, cat, style", "style, dog"]),
+        )
+        with patch.object(StateTracker, "get_datasets", return_value={"local": local}):
+            self.assertEqual(manager._build_tag_frequency_from_captions(), {"local": {"style": 3}})
 
     def _run_save_model_hook(self, is_local_main_process):
         output_dir = "/tmp/checkpoint"
