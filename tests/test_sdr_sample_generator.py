@@ -1,14 +1,17 @@
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import numpy as np
 from PIL import Image
 
+from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+from simpletuner.helpers.data_backend.local import LocalDataBackend
 from simpletuner.helpers.data_generation.conditioning import DataGenerator
 from simpletuner.helpers.data_generation.sample_generator import (
     GENERATOR_REGISTRY,
-    I2VFirstFrameSampleGenerator,
     SampleGenerator,
     SDRDownsampleSampleGenerator,
 )
@@ -83,34 +86,50 @@ class TestSDRDownsampleSampleGenerator(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "expects image samples"):
                 generator.transform_batch([video], ["sample.mp4"], [{}], None)
 
-    def test_i2v_first_frame_targets_png_paths(self):
-        generator = DataGenerator.__new__(DataGenerator)
-        generator.source_instance_dir = ""
-        generator.target_instance_dir = "/tmp/conditioning"
-        generator.sample_generator = I2VFirstFrameSampleGenerator({"type": "i2v_first_frame"})
+    def test_generated_first_frames_use_the_conditioning_pairing_path(self):
+        target = DatasetRuntime(
+            "frames",
+            Mock(),
+            None,
+            {"instance_data_dir": "/conditioning", "conditioning_config": {"type": "i2v_first_frame"}},
+        )
+        self.assertEqual(target.conditioning_ref("nested/clip.mp4"), "/conditioning/nested/clip.png")
 
-        full_path, filename = generator.generate_target_filename("clip.mp4")
+    def test_generate_reads_only_missing_accepted_samples_for_this_worker(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            source_root, target_root = root / "source", root / "conditioning"
+            paths = [
+                source_root / "nested" / "already.png",
+                source_root / "nested" / "missing.png",
+            ]
+            accelerator = SimpleNamespace(process_index=1, num_processes=2, device="cpu", wait_for_everyone=Mock())
+            data = Mock()
+            data.read_image_batch.return_value = ([str(paths[1])], [Image.new("RGB", (8, 8), (23, 24, 25))])
+            provider = SimpleNamespace(
+                instance_data_dir=str(source_root),
+                iter_preparation_batches=Mock(return_value=iter([("1.0", tuple(map(str, paths)))])),
+                get_metadata_batch=lambda refs: ({"original_size": (8, 8)} for ref in refs),
+            )
+            source = DatasetRuntime("source", data, provider, {})
+            target_store = LocalDataBackend(accelerator, "conditioning")
+            target = DatasetRuntime(
+                "conditioning",
+                target_store,
+                None,
+                {"instance_data_dir": str(target_root), "conditioning_config": {"type": "sdr"}},
+            )
+            existing = target_root / "nested" / "already.png"
+            target_store.write(str(existing), b"preserve existing artifact")
+            generator = DataGenerator(source, target, accelerator, num_workers=1)
+            generator.generate_dataset()
 
-        self.assertEqual(filename, "clip.png")
-        self.assertEqual(full_path, "/tmp/conditioning/clip.png")
-
-    def test_generated_target_relativizes_absolute_source_against_relative_root(self):
-        with TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            source_root = root / "datasets" / "videos"
-            target_root = root / "cache" / "conditioning"
-            source_path = source_root / "nested" / "clip.mp4"
-
-            generator = DataGenerator.__new__(DataGenerator)
-            generator.source_instance_dir = str(source_root.relative_to(root))
-            generator.target_instance_dir = str(target_root)
-            generator.sample_generator = I2VFirstFrameSampleGenerator({"type": "i2v_first_frame"})
-
-            with unittest.mock.patch("simpletuner.helpers.data_generation.conditioning.os.getcwd", return_value=str(root)):
-                full_path, filename = generator.generate_target_filename(str(source_path))
-
-            self.assertEqual(filename, "clip.png")
-            self.assertEqual(full_path, str(target_root / "nested" / "clip.png"))
+            provider.iter_preparation_batches.assert_called_once_with(1, 2, 24)
+            data.read_image_batch.assert_called_once_with([str(paths[1])])
+            self.assertEqual(existing.read_bytes(), b"preserve existing artifact")
+            with Image.open(target_root / "nested" / "missing.png") as output:
+                self.assertEqual(output.getpixel((0, 0)), (23, 24, 25))
+            accelerator.wait_for_everyone.assert_called_once_with()
 
 
 if __name__ == "__main__":

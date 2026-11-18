@@ -3564,18 +3564,10 @@ class FactoryRegistry:
 
     def _handle_auto_generated_dataset(self, backend: Dict[str, Any], init_backend: Dict[str, Any]) -> None:
         """Handle auto-generated reference datasets."""
-        # we have to auto-generate the data for the reference images.
-        info_log(f"(id={init_backend['id']}) Auto-generating reference images for conditioning.")
-        from simpletuner.helpers.data_generation import DataGenerator, SampleGenerator
+        from simpletuner.helpers.data_generation import DataGenerator
 
-        sample_generator = SampleGenerator.from_backend(backend)
-        generator = DataGenerator(
-            id=backend.get("id"),
-            source_backend=StateTracker.get_data_backend(backend.get("source_dataset_id", "unknown_source_dataset_id")),
-            target_backend=init_backend,
-            accelerator=self.accelerator,
-            conditioning_type=backend.get("conditioning_type"),
-        )
+        source = StateTracker.get_dataset(backend["source_dataset_id"])
+        generator = DataGenerator(source, init_backend["dataset_runtime"], self.accelerator)
         generator.generate_dataset()
 
     def _configure_conditioning_image_embed_cache(
