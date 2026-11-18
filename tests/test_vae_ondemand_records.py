@@ -153,6 +153,80 @@ class OnDemandLatentsFollowTheBatchRecords(unittest.TestCase):
         # The samples share a size, so they are encoded as one batch.
         self.assertEqual([call.args[1].shape[0] for call in encode.call_args_list], [3])
 
+    def test_a_sample_that_cannot_be_decoded_is_named(self):
+        with open(self.paths[1], "wb") as handle:
+            handle.write(b"not an image")
+        with self.assertRaisesRegex(ValueError, "could not be read or decoded.*sample-1.png"):
+            self._encode()
+
+    def test_a_sample_read_as_nothing_is_named(self):
+        def read(paths, hide_errors=False):
+            for path in paths:
+                yield path, None if path == self.paths[2] else Image.open(path).convert("RGB")
+
+        with patch.object(self.cache, "_read_from_storage_concurrently", side_effect=read):
+            with self.assertRaisesRegex(ValueError, "could not be read or decoded.*sample-2.png"):
+                self._encode()
+
+    def test_latents_follow_their_paths_when_reads_finish_out_of_order(self):
+        in_order = self._encode()
+        original = self.cache._read_from_storage_concurrently
+
+        def read(paths, hide_errors=False):
+            return reversed(list(original(paths, hide_errors=hide_errors)))
+
+        with patch.object(self.cache, "_read_from_storage_concurrently", side_effect=read):
+            out_of_order = self._encode()
+        for latent, expected in zip(out_of_order, in_order):
+            torch.testing.assert_close(latent, expected)
+
+    def test_a_sample_that_cannot_be_prepared_is_named_and_lends_no_one_its_latent(self):
+        from simpletuner.helpers.caching import vae as vae_module
+
+        original = vae_module.prepare_sample
+
+        def prepare(**kwargs):
+            if kwargs["filepath"] == self.paths[1]:
+                raise RuntimeError("cannot prepare")
+            return original(**kwargs)
+
+        with patch.object(vae_module, "prepare_sample", side_effect=prepare):
+            with self.assertRaisesRegex(ValueError, "could not be prepared.*sample-1.png"):
+                self._encode()
+
+    def test_queued_samples_of_different_buckets_keep_their_own_pixels(self):
+        sizes = {self.paths[0]: (48, 32), self.paths[1]: (24, 16), self.paths[2]: (48, 32)}
+        self.geometry.geometry = {path: self._record(size) for path, size in sizes.items()}
+        for path, bucket in zip(self.paths, ("1.5", "small", "1.5")):
+            self.cache.process_queue.put((path, Image.open(path).convert("RGB"), bucket))
+        output = self.cache._process_images_in_batch(disable_queue=True)
+        self.assertEqual(sorted(path for _, path, _, _ in output), sorted(self.paths))
+        for pixel_values, path, bucket, _ in output:
+            width, height = sizes[path]
+            self.assertEqual(tuple(pixel_values.shape[-2:]), (height, width), path)
+            self.assertEqual(bucket, {self.paths[1]: "small"}.get(path, "1.5"))
+
+    def test_a_queued_sample_that_cannot_be_prepared_leaves_the_rest_on_their_own_paths(self):
+        from simpletuner.helpers.caching import vae as vae_module
+
+        sizes = {self.paths[0]: (48, 32), self.paths[1]: (24, 16), self.paths[2]: (96, 64)}
+        self.geometry.geometry = {path: self._record(size) for path, size in sizes.items()}
+        for path in self.paths:
+            self.cache.process_queue.put((path, Image.open(path).convert("RGB"), "1.5"))
+        original = vae_module.prepare_sample
+
+        def prepare(**kwargs):
+            if kwargs["filepath"] == self.paths[0]:
+                raise RuntimeError("cannot prepare")
+            return original(**kwargs)
+
+        with patch.object(vae_module, "prepare_sample", side_effect=prepare):
+            output = self.cache._process_images_in_batch(disable_queue=True)
+        self.assertEqual([path for _, path, _, _ in output], self.paths[1:])
+        for pixel_values, path, _, _ in output:
+            width, height = sizes[path]
+            self.assertEqual(tuple(pixel_values.shape[-2:]), (height, width), path)
+
 
 if __name__ == "__main__":
     unittest.main()

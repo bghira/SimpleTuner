@@ -1208,12 +1208,22 @@ class VAECache(WebhookMixin):
         written_latents = []
         if len(missing_images) > 0 and self.vae_cache_ondemand:
             missing_image_paths = [filepaths[i] for i in missing_images]
-            missing_image_data_generator = self._read_from_storage_concurrently(missing_image_paths, hide_errors=True)
-            missing_image_data = [retrieved_image_data[1] for retrieved_image_data in missing_image_data_generator]
+            read = dict(self._read_from_storage_concurrently(missing_image_paths, hide_errors=True))
+            unreadable = [path for path in missing_image_paths if read.get(path) is None]
+            if unreadable:
+                raise ValueError(
+                    f"(id={self.id}) {len(unreadable)} sample(s) selected for training could not be read or decoded: {unreadable}"
+                )
+            missing_image_data = [read[path] for path in missing_image_paths]
             missing_image_records = self._records_for(missing_image_paths, records)
             missing_image_pixel_values = self._process_images_in_batch(
-                missing_image_paths, missing_image_data, disable_queue=True, records=missing_image_records
+                list(missing_image_paths), missing_image_data, disable_queue=True, records=missing_image_records
             )
+            unprepared = sorted(set(missing_image_paths) - {path for _, path, _, _ in missing_image_pixel_values})
+            if unprepared:
+                raise ValueError(
+                    f"(id={self.id}) {len(unprepared)} sample(s) selected for training could not be prepared: {unprepared}"
+                )
             missing_image_vae_outputs = self._encode_images_in_batch(
                 image_pixel_values=missing_image_pixel_values, disable_queue=True, records=missing_image_records
             )
@@ -1483,7 +1493,7 @@ class VAECache(WebhookMixin):
                             metadata=records.get(filepath),
                         )
                         if result:
-                            processed_images.append(result)
+                            processed_images.append((filepath, result))
                     except Exception as e:
                         logger.error(f"Error processing batch result {filepath}: {e}, traceback: {traceback.format_exc()}")
 
@@ -1500,14 +1510,15 @@ class VAECache(WebhookMixin):
                             metadata=records.get(filepath),
                         )
                         if result:
-                            processed_images.append(result)
+                            processed_images.append((filepath, result))
                     except Exception as e:
                         logger.error(f"Error processing individual image {filepath}: {e}")
 
             # Final Processing - simplified without complex threading
             output_values = []
             first_aspect_ratio = None
-            for idx, (image, _crop_coordinates, new_aspect_ratio) in enumerate(processed_images):
+            buckets = {filepath: aspect_bucket for filepath, _, aspect_bucket in initial_data}
+            for idx, (filepath, (image, _crop_coordinates, new_aspect_ratio)) in enumerate(processed_images):
                 is_final_sample = idx == len(processed_images) - 1
                 if first_aspect_ratio is None:
                     first_aspect_ratio = new_aspect_ratio
@@ -1515,7 +1526,7 @@ class VAECache(WebhookMixin):
                     is_final_sample = True
                     first_aspect_ratio = new_aspect_ratio
 
-                filepath, _, aspect_bucket = initial_data[idx]
+                aspect_bucket = buckets[filepath]
                 filepaths.append(filepath)
 
                 if (

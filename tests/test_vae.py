@@ -407,7 +407,11 @@ class TestVaeCacheRecords(unittest.TestCase):
         cache.generate_vae_cache_filename = lambda filepath: (f"{filepath}.pt", f"{filepath}.pt")
         cache._read_from_storage_concurrently = lambda paths, hide_errors=False: [(path, "pixels") for path in paths]
         cache._read_from_storage = MagicMock(side_effect=lambda filename, hide_errors=False: f"cached:{filename}")
-        cache._process_images_in_batch = MagicMock(return_value=["prepared"])
+        cache._process_images_in_batch = MagicMock(
+            side_effect=lambda paths, data, disable_queue=False, records=None: [
+                ("pixels", path, None, index == len(paths) - 1) for index, path in enumerate(paths)
+            ]
+        )
         cache._encode_images_in_batch = MagicMock(return_value=["encoded"])
         cache._write_latents_in_batch = MagicMock(side_effect=lambda outputs: ["latent-a", "latent-b"])
         return cache
