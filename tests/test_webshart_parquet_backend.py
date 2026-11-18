@@ -753,9 +753,27 @@ class TestWebshartParquetBackend(unittest.TestCase):
             self.assertEqual(metadata.aspect_ratio_bucket_indices, {})
             self.assertEqual(provider.image_metadata, {})
 
+            bucket = next(iter(metadata.published_bucket_counts()))
+            with provider.collect_exclusions() as changes:
+                changes.add(targets[0], bucket, "nsfw")
+            self.addCleanup(provider.close)
+            self.assertEqual(target.read_page(limit=2), ([targets[1]], 1))
+            self.assertEqual(list(target.iter_preparation_batches(batch_size=2)), [(bucket, (targets[1],))])
+            self.assertIsNone(target.conditioning_ref(refs[0]))
+            self.assertEqual(source.read_page(limit=2), (refs, 2))
+            self.assertTrue(Path(targets[0]).exists())
+            provider.reload_cache()
+            self.assertEqual(target.describe().accepted_samples, 1)
+            with (
+                patch.object(self.backend, "read_image_batch", side_effect=AssertionError("excluded source read")),
+                patch.object(store, "exists", wraps=store.exists) as exists,
+            ):
+                DataGenerator(source, target, accelerator, num_workers=0).generate_dataset()
+            exists.assert_called_once_with(targets[1])
+
             with closing(sqlite3.connect("")) as db:
                 changes = Exclusions(db)
-                changes.add(refs[0], next(iter(metadata.published_bucket_counts())), "decode")
+                changes.add(refs[0], bucket, "decode")
                 _publish(self.backend._cache_path(metadata.cache_file), source.describe().view_revision, db)
             metadata.reload_cache()
             with self.assertRaisesRegex(ValueError, "Source membership changed"):

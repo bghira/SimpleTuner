@@ -238,6 +238,10 @@ class WebshartMetadataBackend(MetadataBackend):
             raise ValueError("No accepted samples in dataset metadata; scan the dataset before preparing text embeddings.")
         return self.data_backend.open_file(self.cache_file, "rb")
 
+    @property
+    def membership_path(self):
+        return self.data_backend._cache_path(self.cache_file)
+
     def describe(self, spec=None):
         if self.data_backend.exists(self.cache_file):
             with self._open_membership() as source:

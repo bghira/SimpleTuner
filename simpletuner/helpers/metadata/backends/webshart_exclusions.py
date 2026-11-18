@@ -150,9 +150,10 @@ def _gather(value, distributed):
 
 
 @contextmanager
-def collect_exclusions(backend):
+def collect_exclusions(backend, *, publication=None, shard_of=None):
     expected = backend.describe().view_revision
-    path = backend.data_backend._cache_path(backend.cache_file)
+    path = backend.data_backend._cache_path(backend.cache_file) if publication is None else publication
+    shard_of = backend.data_backend.shard_of if shard_of is None else shard_of
     distributed = dist.is_available() and dist.is_initialized()
     publish = not distributed or backend.accelerator.is_local_main_process
     with closing(sqlite3.connect("")) as local, closing(sqlite3.connect("")) as merged:
@@ -177,7 +178,7 @@ def collect_exclusions(backend):
         error = None
         if publish:
             try:
-                _publish(path, expected, merged, shard_of=backend.data_backend.shard_of)
+                _publish(path, expected, merged, shard_of=shard_of)
             except Exception as exc:
                 error = exc
         if any(_gather(type(error).__name__ if error else None, distributed)):

@@ -58,9 +58,13 @@ class DataGenerator:
             workers=self.accelerator.num_processes,
             batch_size=self.read_batch_size,
         ):
-            paths = [self.target.conditioning_ref(self.source.pairing_key(ref)) for ref in refs]
-            present = self.target.data_backend.bulk_exists(paths)
-            pending = [(ref, path) for ref, path, exists in zip(refs, paths, present, strict=True) if not exists]
+            pairs = [
+                (ref, path)
+                for ref in refs
+                if (path := self.target.conditioning_ref(self.source.pairing_key(ref))) is not None
+            ]
+            present = self.target.data_backend.bulk_exists(path for _, path in pairs)
+            pending = [pair for pair, exists in zip(pairs, present, strict=True) if not exists]
             if pending:
                 records = self.source.read_samples([ref for ref, _ in pending], fields=("image", "metadata"))
                 for batch in batched(zip(pending, records, strict=True), self.transform_batch_size):
