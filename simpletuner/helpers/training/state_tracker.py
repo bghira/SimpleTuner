@@ -48,7 +48,6 @@ class StateTracker:
     ## Caches
     all_image_files = {}
     all_vae_cache_files = {}
-    all_distillation_cache_files = {}
 
     ## Backend entities for retrieval
     default_text_embed_cache = None
@@ -651,32 +650,6 @@ class StateTracker:
         if data_backend_id not in cls.all_vae_cache_files or cls.all_vae_cache_files.get(data_backend_id) is None:
             cls.all_vae_cache_files[data_backend_id] = cls._load_from_disk("all_vae_cache_files_{}".format(data_backend_id))
         return cls.all_vae_cache_files[data_backend_id] or {}
-
-    @classmethod
-    def set_distillation_cache_files(cls, raw_file_list: list, data_backend_id: str):
-        if cls.all_distillation_cache_files.get(data_backend_id) is not None:
-            cls.all_distillation_cache_files[data_backend_id].clear()
-        else:
-            cls.all_distillation_cache_files[data_backend_id] = {}
-        for subdirectory_list in raw_file_list:
-            _, _, files = subdirectory_list
-            for artifact_path in files:
-                cls.all_distillation_cache_files[data_backend_id][artifact_path] = False
-        cls._save_to_disk(
-            f"all_distillation_cache_files_{data_backend_id}",
-            cls.all_distillation_cache_files[data_backend_id],
-        )
-
-    @classmethod
-    def get_distillation_cache_files(cls, data_backend_id: str, retry_limit: int = 0):
-        if (
-            data_backend_id not in cls.all_distillation_cache_files
-            or cls.all_distillation_cache_files.get(data_backend_id) is None
-        ):
-            cls.all_distillation_cache_files[data_backend_id] = cls._load_from_disk(
-                f"all_distillation_cache_files_{data_backend_id}", retry_limit=retry_limit
-            )
-        return cls.all_distillation_cache_files.get(data_backend_id) or {}
 
     @classmethod
     def get_validation_sample_images(cls):

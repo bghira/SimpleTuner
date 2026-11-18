@@ -1,19 +1,10 @@
 import logging
 import os
-from collections import deque
-from typing import Deque, List, Optional, Tuple
+from bisect import bisect_left
+from typing import List, Optional, Tuple
 
 from simpletuner.helpers.training.multi_process import rank_info, should_log
-from simpletuner.helpers.training.state_tracker import StateTracker
-
-try:
-    from simpletuner.helpers.webhooks.mixin import WebhookMixin
-except Exception:  # pragma: no cover
-
-    class WebhookMixin:  # type: ignore
-        def set_webhook_handler(self, webhook_handler):
-            self.webhook_handler = webhook_handler
-
+from simpletuner.helpers.webhooks.mixin import WebhookMixin
 
 logger = logging.getLogger("DistillationCache")
 if should_log():
@@ -35,9 +26,8 @@ class DistillationCache(WebhookMixin):
 
         if self.data_backend and self.cache_dir:
             self.data_backend.create_directory(self.cache_dir)
-        self._artifact_paths: List[str] = []
+        self._artifact_paths: Optional[List[str]] = None
         self._artifact_cursor: int = 0
-        self._artifact_queue: Deque[str] = deque()
 
     def debug(self, message: str) -> None:
         logger.debug(f"{self.rank_info}(distillation_cache id={self.id}) {message}")
@@ -46,59 +36,47 @@ class DistillationCache(WebhookMixin):
         self.webhook_handler = webhook_handler
 
     def discover_all_files(self) -> List[str]:
-        """Refresh StateTracker with the current set of cached artifacts."""
-        listing = self.data_backend.list_files(
-            file_extensions=["pt"],
-            instance_data_dir=self.cache_dir,
-        )
-        StateTracker.set_distillation_cache_files(listing, data_backend_id=self.id)
-        flattened = self._flatten_listing(listing)
-        self.debug(f"discovered {len(flattened)} distillation cache entries.")
-        if flattened:
-            existing = set(self._artifact_paths)
-            for path in flattened:
-                if path not in existing:
-                    self._artifact_paths.append(path)
-                    self._artifact_queue.append(path)
-            if not self._artifact_paths:
-                self._artifact_paths = list(flattened)
-            self._artifact_paths.sort()
-        return flattened
+        """Reopen artifact traversal against the store's current membership."""
+        self._artifact_paths = sorted(set(self.data_backend.iter_file_keys(["pt"], self.cache_dir)))
+        self._artifact_cursor = 0
+        self.debug(f"discovered {len(self._artifact_paths)} distillation cache entries.")
+        return self._artifact_paths
 
-    def _refresh_queue_if_stale(self) -> None:
-        if self._artifact_queue:
-            return
-        discovered = self.discover_all_files()
-        if not discovered:
-            self._artifact_paths = []
-            self._artifact_cursor = 0
-            self._artifact_queue = deque()
-        return discovered
-
-    def _flatten_listing(self, listing) -> List[str]:
-        paths: List[str] = []
-        for _, _, files in listing or []:
-            paths.extend(files)
-        return paths
+    def _paths(self) -> List[str]:
+        return self.discover_all_files() if self._artifact_paths is None else self._artifact_paths
 
     def list_cached_pairs(self) -> List[str]:
-        return list(StateTracker.get_distillation_cache_files(self.id).keys())
+        return self._paths().copy()
 
     def has_cached_pairs(self) -> bool:
-        return bool(self.list_cached_pairs())
+        return bool(self._paths())
 
     def next_artifact_name(self, prefix: str = "pair") -> str:
-        existing = self.list_cached_pairs()
-        suffix = len(existing)
-        return f"{prefix}_{suffix:05d}.pt"
+        paths = self._paths()
+        suffix = len(paths)
+        while True:
+            filename = f"{prefix}_{suffix:05d}.pt"
+            path = self._artifact_path(filename)
+            position = bisect_left(paths, path)
+            if position == len(paths) or paths[position] != path:
+                return filename
+            suffix += 1
+
+    def _artifact_path(self, filename):
+        path = os.path.join(self.cache_dir, filename)
+        return os.path.abspath(path) if self.data_backend.type == "local" else path
 
     def write_tensor(self, filename: str, payload) -> str:
         if not filename.endswith(".pt"):
             filename = f"{filename}.pt"
-        target = os.path.join(self.cache_dir, filename)
+        paths = self._paths()
+        target = self._artifact_path(filename)
         self.data_backend.torch_save(payload, target)
-        # Update StateTracker with the new listing so downstream consumers see the fresh entry.
-        self.discover_all_files()
+        position = bisect_left(paths, target)
+        if position == len(paths) or paths[position] != target:
+            paths.insert(position, target)
+            if position < self._artifact_cursor:
+                self._artifact_cursor += 1
         return target
 
     def load_next_pair(self) -> Tuple[Optional[object], Optional[str]]:
@@ -108,20 +86,12 @@ class DistillationCache(WebhookMixin):
         Returns the payload loaded via torch along with the source path. If no entries
         are available, (None, None) is returned.
         """
-        self._refresh_queue_if_stale()
-        if not self._artifact_paths:
+        paths = self._paths()
+        if not paths:
             return None, None
 
-        if not self._artifact_queue:
-            # Replenish queue using round-robin traversal through stored paths.
-            if self._artifact_cursor >= len(self._artifact_paths):
-                self._artifact_cursor = 0
-            path = self._artifact_paths[self._artifact_cursor]
-            self._artifact_cursor = (self._artifact_cursor + 1) % len(self._artifact_paths)
-        else:
-            path = self._artifact_queue.popleft()
-            if path not in self._artifact_paths:
-                self._artifact_paths.append(path)
+        path = paths[self._artifact_cursor]
+        self._artifact_cursor = (self._artifact_cursor + 1) % len(paths)
 
         try:
             payload = self.data_backend.torch_load(path)

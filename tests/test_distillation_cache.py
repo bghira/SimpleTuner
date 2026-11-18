@@ -244,6 +244,30 @@ class TestDistillationCacheFactory(unittest.TestCase):
             self.assertTrue(hasattr(backend_entry["distillation_cache"], "write_tensor"))
 
 
+class TestDistillationArtifactTraversal(unittest.TestCase):
+    def test_one_store_inventory_serves_writes_and_round_robin_reads(self):
+        from simpletuner.helpers.caching.distillation import DistillationCache
+
+        store = MagicMock(type="aws")
+        first = "artifacts/pair_00000.pt"
+        third = "artifacts/pair_00002.pt"
+        last = "artifacts/pair_00003.pt"
+        store.iter_file_keys.return_value = iter([third, first, first])
+        store.torch_load.side_effect = lambda key: key
+        cache = DistillationCache("pairs", store, "artifacts")
+
+        self.assertEqual(cache.next_artifact_name(), "pair_00003.pt")
+        self.assertEqual(cache.write_tensor("pair_00003", "data"), last)
+        store.torch_save.assert_called_once_with("data", last)
+        self.assertEqual(cache.list_cached_pairs(), [first, third, last])
+        self.assertEqual([cache.load_next_pair()[1] for _ in range(4)], [first, third, last, first])
+        store.iter_file_keys.assert_called_once_with(["pt"], "artifacts")
+
+        store.iter_file_keys.return_value = iter([third])
+        cache.discover_all_files()
+        self.assertEqual(cache.load_next_pair(), (third, third))
+
+
 class TestRunDistillationCacheGeneration(unittest.TestCase):
     def test_runs_provider_for_matching_cache(self):
         distiller = MagicMock(spec=DistillationBase)
