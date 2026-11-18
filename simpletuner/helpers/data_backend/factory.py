@@ -4083,7 +4083,7 @@ class FactoryRegistry:
             caption_backend = self._build_caption_backend(backend)
             try:
                 generator = CaptionImageGenerator(
-                    self.model, config.data_generator, caption_backend["metadata_backend"].iter_records(), output_dir
+                    self.model, config.data_generator, caption_backend["metadata_backend"].iter_records, output_dir
                 )
                 generator.generate()
                 bucket_directories = generator.bucket_directories()

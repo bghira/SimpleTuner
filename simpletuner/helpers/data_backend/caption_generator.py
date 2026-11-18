@@ -5,7 +5,8 @@ import inspect
 import json
 import logging
 import os
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
+from itertools import chain, islice
 from pathlib import Path
 
 import torch
@@ -20,11 +21,13 @@ logger = logging.getLogger("CaptionImageGenerator")
 
 
 class CaptionImageGenerator:
-    def __init__(self, model, config, records, output_dir):
+    def __init__(self, model, config, iter_records, output_dir):
         self.model = model
         self.config = validate_caption_data_generator(config)
-        self.records = list(records)
-        if not self.records:
+        self.iter_records = iter_records
+        records = iter(iter_records())
+        first = next(records, None)
+        if first is None:
             raise ValueError("data_generator requires at least one caption.")
         recipe = {key: value for key, value in self.config.items() if key not in {"batch_size", "output_dir"}}
         model_config = model.config
@@ -42,7 +45,6 @@ class CaptionImageGenerator:
         identity = {
             "recipe": recipe,
             "sources": source_identities,
-            "captions": [record.caption_text for record in self.records],
             "model": {
                 key: getattr(model_config, key, None)
                 for key in (
@@ -56,7 +58,17 @@ class CaptionImageGenerator:
                 )
             },
         }
-        fingerprint = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+        # Preserve the existing cache key while streaming the first field of the sorted JSON.
+        digest = hashlib.sha256(b'{"captions": [')
+        self.record_count = 0
+        for record in chain((first,), records):
+            if self.record_count:
+                digest.update(b", ")
+            digest.update(json.dumps(record.caption_text).encode())
+            self.record_count += 1
+        digest.update(b"], ")
+        digest.update(json.dumps(identity, sort_keys=True)[1:].encode())
+        fingerprint = digest.hexdigest()
         self.output_dir = Path(output_dir) / fingerprint[:24]
         self.manifest_path = self.output_dir / "generation.json"
         self.manifest = {"version": 1, "fingerprint": fingerprint, "recipe": recipe, "batch_sizes": {}}
@@ -109,11 +121,12 @@ class CaptionImageGenerator:
         temporary.write_text(json.dumps(self.manifest, indent=2) + "\n", encoding="utf-8")
         os.replace(temporary, self.manifest_path)
 
-    def _sample(self, bucket_index, record_index):
-        resolution = self.config["resolutions"][bucket_index]
-        stem = self.output_dir / resolution / f"{record_index:08d}"
-        seed = (self.config["seed"] + bucket_index * len(self.records) + record_index) % (2**63)
-        return self.records[record_index], stem, seed
+    def _pending_samples(self, bucket_index, resolution):
+        for record_index, record in enumerate(self.iter_records()):
+            stem = self.output_dir / resolution / f"{record_index:08d}"
+            if not self._is_complete(stem):
+                seed = (self.config["seed"] + bucket_index * self.record_count + record_index) % (2**63)
+                yield record, stem, seed
 
     @staticmethod
     def _is_complete(stem):
@@ -145,26 +158,23 @@ class CaptionImageGenerator:
 
     def generate(self):
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        pending = {}
-        for bucket_index, resolution in enumerate(self.config["resolutions"]):
-            (self.output_dir / resolution).mkdir(exist_ok=True)
-            pending[bucket_index] = [
-                index for index in range(len(self.records)) if not self._is_complete(self._sample(bucket_index, index)[1])
-            ]
-        if not any(pending.values()):
-            return self.bucket_directories()
-
-        with self._pipeline() as pipeline:
-            for bucket_index, record_indices in pending.items():
-                resolution = self.config["resolutions"][bucket_index]
+        pipeline = None
+        with ExitStack() as scope:
+            for bucket_index, resolution in enumerate(self.config["resolutions"]):
+                (self.output_dir / resolution).mkdir(exist_ok=True)
                 width, height = map(int, resolution.split("x"))
                 batch_size = min(
                     self.config["batch_size"], self.manifest["batch_sizes"].get(resolution, self.config["batch_size"])
                 )
-                cursor = 0
-                while cursor < len(record_indices):
-                    indices = record_indices[cursor : cursor + batch_size]
-                    samples = [self._sample(bucket_index, index) for index in indices]
+                pending = self._pending_samples(bucket_index, resolution)
+                uncommitted = []
+                while True:
+                    uncommitted.extend(islice(pending, max(0, batch_size - len(uncommitted))))
+                    if not uncommitted:
+                        break
+                    if pipeline is None:
+                        pipeline = scope.enter_context(self._pipeline())
+                    samples = uncommitted[:batch_size]
                     oom = False
                     try:
                         images = self._generate_batch(pipeline, samples, width, height)
@@ -197,7 +207,7 @@ class CaptionImageGenerator:
                         os.replace(caption_tmp, stem.with_suffix(".txt"))
                     self.manifest["batch_sizes"][resolution] = batch_size
                     self._save_manifest()
-                    cursor += len(samples)
+                    del uncommitted[: len(samples)]
         return self.bucket_directories()
 
     def bucket_directories(self):

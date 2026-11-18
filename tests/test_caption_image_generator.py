@@ -89,7 +89,8 @@ class CaptionImageGeneratorTests(unittest.TestCase):
 
     def generator(self, pipeline=None, config=None, records=None):
         model = _Model(pipeline or _Pipeline())
-        return CaptionImageGenerator(model, config or self.config, records or self.records, self.temp.name)
+        selected = self.records if records is None else records
+        return CaptionImageGenerator(model, config or self.config, lambda: iter(selected), self.temp.name)
 
     def test_oom_retries_same_seeds_and_remembers_each_bucket(self):
         pipeline = _Pipeline({(64, 64): 2, (128, 64): 1})
@@ -117,6 +118,30 @@ class CaptionImageGeneratorTests(unittest.TestCase):
         resumed = self.generator(resumed_pipeline)
         resumed.generate()
         self.assertEqual(resumed_pipeline.calls, [(128, 64, ["caption 0"], [36])])
+
+    def test_generation_keeps_pending_caption_reads_bounded(self):
+        stream_progress = []
+
+        def records():
+            progress = []
+            stream_progress.append(progress)
+            for record in self.records:
+                progress.append(record.metadata_id)
+                yield record
+
+        pipeline = _Pipeline()
+        generator = CaptionImageGenerator(_Model(pipeline), {**self.config, "batch_size": 2}, records, self.temp.name)
+        self.assertEqual([len(progress) for progress in stream_progress], [5])
+        original = generator._generate_batch
+
+        def generate_batch(pipeline, samples, width, height):
+            if len(pipeline.calls) % 3 == 0:
+                self.assertEqual(len(stream_progress[-1]), 2)
+            return original(pipeline, samples, width, height)
+
+        with patch.object(generator, "_generate_batch", side_effect=generate_batch):
+            generator.generate()
+        self.assertEqual([len(progress) for progress in stream_progress], [5, 5, 5])
 
     def test_complete_cache_skips_model_loading(self):
         generator = self.generator()
