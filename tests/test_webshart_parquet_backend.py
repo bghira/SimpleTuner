@@ -400,6 +400,7 @@ class TestWebshartParquetBackend(unittest.TestCase):
             "resolution": 1.0,
             "resolution_type": "area",
             "crop": False,
+            "crop_style": None,
         }
         accelerator = SimpleNamespace(num_processes=1, process_index=0, is_main_process=True)
         args = SimpleNamespace(model_family="sdxl", aspect_bucket_alignment=8, aspect_bucket_rounding=2, seed=21)

@@ -1211,6 +1211,8 @@ class WebshartMetadataBackend(MetadataBackend):
         )
         if self.dataset_filter is not None:
             rules["filter_func"] = make_public_config_serializable(self.dataset_filter.config)
+        if not config.get("crop"):
+            rules["alignment_crop"] = "center-v1"
         rules_revision = sha256(json.dumps(rules, sort_keys=True).encode()).hexdigest()
         if not refresh and self._published and self._published.get("rules_revision") == rules_revision:
             return

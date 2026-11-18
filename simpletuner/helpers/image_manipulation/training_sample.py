@@ -100,7 +100,7 @@ class TrainingSample:
             StateTracker.get_data_backend_config(data_backend_id) if data_backend_config is None else data_backend_config
         )
         self.crop_enabled = self.data_backend_config.get("crop", False)
-        self.crop_style = self.data_backend_config.get("crop_style", "random")
+        self.crop_style = self.data_backend_config.get("crop_style", "random") if self.crop_enabled else "center"
         self.crop_aspect = self.data_backend_config.get("crop_aspect", "square")
         self.crop_aspect_buckets = self.data_backend_config.get("crop_aspect_buckets", [])
         self.crop_coordinates = (0, 0)
@@ -704,6 +704,20 @@ class TrainingSample:
             self.image = exif_transpose(self.image)
         return self
 
+    def _apply_prepared_crop(self):
+        top, left = self.crop_coordinates
+        width, height = self.target_size
+        right, bottom = left + width, top + height
+        if min(top, left) < 0 or right > self.current_size[0] or bottom > self.current_size[1]:
+            raise ValueError(f"Prepared crop for {self._image_path} exceeds decoded image dimensions.")
+        if isinstance(self.image, Image.Image):
+            self.image = self.image.crop((left, top, right, bottom))
+        else:
+            self.image = self.image[..., top:bottom, left:right, :]
+        self.current_size = (width, height)
+        self.crop_coordinates = (top, left)
+        return self
+
     def crop(self):
         """
         Crop the image using trainingsample batch operations when possible, or crop handler as fallback.
@@ -721,18 +735,7 @@ class TrainingSample:
         self.save_debug_image(f"images/{time.time()}-0.5-downsampled.png")
 
         if prepared and self.image is not None and self.crop_style != "face":
-            top, left = self.crop_coordinates
-            width, height = self.target_size
-            right, bottom = left + width, top + height
-            if min(top, left) < 0 or right > self.current_size[0] or bottom > self.current_size[1]:
-                raise ValueError(f"Prepared crop for {self._image_path} exceeds decoded image dimensions.")
-            if isinstance(self.image, Image.Image):
-                self.image = self.image.crop((left, top, right, bottom))
-            else:
-                self.image = self.image[..., top:bottom, left:right, :]
-            self.current_size = (width, height)
-            self.crop_coordinates = (top, left)
-            return self
+            return self._apply_prepared_crop()
 
         # Try to use trainingsample for efficient cropping when possible
         if self.image is not None and isinstance(self.image, Image.Image) and self.crop_style in ["center", "random"]:
@@ -845,6 +848,8 @@ class TrainingSample:
                         )  # shape (F, H, W, C)
                         self.current_size = (width, height)
                         logger.debug(f"Post resize: {self.current_size} / {self.image.shape}")
+                if self.image is not None and self.valid_metadata and self.image_metadata.get("prepared_geometry"):
+                    return self._apply_prepared_crop()
                 if self.image is not None and self.cropper:
                     self.cropper.set_image(self.image)
                 self.cropper.set_intermediary_size(self.intermediary_size[0], self.intermediary_size[1])

@@ -130,6 +130,23 @@ class TestTrainingSample(unittest.TestCase):
         sample = TrainingSample(self.image, self.data_backend_id, self.image_metadata)
         self.assertEqual(sample.original_size, (1024, 768))
 
+    def test_resize_reuses_the_prepared_alignment_crop_with_cropping_disabled(self):
+        pixels = np.arange(128 * 96 * 3, dtype=np.uint8).reshape(96, 128, 3)
+        metadata = {
+            "original_size": [128, 96],
+            "intermediary_size": [128, 96],
+            "target_size": [64, 64],
+            "crop_coordinates": [11, 27],
+            "aspect_ratio": 1.0,
+            "prepared_geometry": True,
+        }
+        self.default_config.update(crop=False, crop_style=None)
+        sample = TrainingSample(Image.fromarray(pixels), self.data_backend_id, metadata, image_path="sample.png")
+        with patch.object(sample.cropper, "crop", side_effect=AssertionError("selected a new crop")):
+            prepared = sample.prepare()
+        np.testing.assert_array_equal(np.asarray(prepared.image), pixels[11:75, 27:91, :])
+        self.assertEqual(prepared.crop_coordinates, (11, 27))
+
     def _bind_pair(self, source, source_root, conditioning_root):
         datasets = {
             "source": DatasetRuntime("source", source, None, {"instance_data_dir": source_root}),
