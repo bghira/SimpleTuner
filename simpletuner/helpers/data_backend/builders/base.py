@@ -54,6 +54,7 @@ def create_metadata_provider(
     if aligned_source is not None:
         MetadataBackendCls = AlignedConditioningMetadata
         metadata_backend_args["source"] = aligned_source
+        metadata_backend_args["generated"] = backend_dict.get("auto_generated", False)
     elif metadata_backend_type in {"json", "discovery"}:
         if is_caption_dataset:
             MetadataBackendCls = CaptionMetadataBackend

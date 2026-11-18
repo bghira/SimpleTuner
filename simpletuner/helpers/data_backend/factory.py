@@ -111,6 +111,7 @@ from simpletuner.helpers.distillation.requirements import (
     evaluate_requirement_profile,
 )
 from simpletuner.helpers.image_manipulation.nsfw_classifier import DEFAULT_NSFW_CHECK_MODELS_CSV
+from simpletuner.helpers.metadata.backends.aligned_conditioning import AlignedConditioningMetadata
 from simpletuner.helpers.metadata.backends.caption import CaptionMetadataBackend
 from simpletuner.helpers.metadata.utils import DatasetDuplicator
 from simpletuner.helpers.models.common import ModelFoundation
@@ -2963,6 +2964,24 @@ class FactoryRegistry:
             source = StateTracker.get_dataset(backend["metadata_clone_source_id"])
             if source is not None and source.uses_native_schedule is True:
                 aligned_source = source
+        elif backend.get("type") == "local" and backend.get("conditioning_type") in ("mask", "reference_strict"):
+            sources = StateTracker.get_datasets(DatasetType.IMAGE, DatasetType.VIDEO)
+            if source_id := backend.get("source_dataset_id"):
+                source = sources.get(source_id)
+            else:
+                target = backend["id"]
+                source = next(
+                    (
+                        dataset
+                        for dataset in sources.values()
+                        if (links := dataset.config.get("conditioning_data")) == target
+                        or isinstance(links, list)
+                        and target in links
+                    ),
+                    None,
+                )
+            if source is not None and source.uses_native_schedule is True and source.data_backend.format == "parquet":
+                aligned_source = source
         init_backend["metadata_backend"] = create_metadata_provider(
             init_backend["id"],
             resolved_config,
@@ -3007,6 +3026,9 @@ class FactoryRegistry:
             skip_bucket_split: If True, skip split_buckets_between_processes (used for audio-only datasets).
         """
         metadata = init_backend["metadata_backend"]
+        if isinstance(metadata, AlignedConditioningMetadata):
+            self._handle_config_versioning(backend, init_backend)
+            return
         metadata_clone_source_id = backend.get("metadata_clone_source_id")
         has_metadata_clone_source = metadata_clone_source_id is not None
         has_prepared_catalogue = getattr(metadata, "requires_complete_preparation", False) is True
@@ -3080,15 +3102,12 @@ class FactoryRegistry:
         apply_padding = not self.args.max_train_steps or self.args.allow_dataset_oversubscription
 
         if has_metadata_clone_source:
-            from simpletuner.helpers.metadata.backends.aligned_conditioning import AlignedConditioningMetadata
-
-            if not isinstance(init_backend["metadata_backend"], AlignedConditioningMetadata):
-                info_log(f"Duplicating metadata for generated dataset from {metadata_clone_source_id}")
-                DatasetDuplicator.copy_metadata(
-                    source_backend=StateTracker.get_data_backend(metadata_clone_source_id),
-                    target_backend=init_backend,
-                    generated=backend.get("auto_generated", False),
-                )
+            info_log(f"Duplicating metadata for generated dataset from {metadata_clone_source_id}")
+            DatasetDuplicator.copy_metadata(
+                source_backend=StateTracker.get_data_backend(metadata_clone_source_id),
+                target_backend=init_backend,
+                generated=backend.get("auto_generated", False),
+            )
         elif clone_conditioning:
             # special case where strict/mask conditioning alignment allows us to duplicate metadata from the source dataset.
             # we'll search for the source dataset by id and copy metadata from it:

@@ -21,12 +21,12 @@ from simpletuner.helpers.utils.pathing import canonicalize_data_uri
 
 
 class AlignedConditioningMetadata(MetadataBackend):
-    """Map generated conditioning artifacts onto a pinned source preparation view."""
+    """Map conditioning files onto a pinned source preparation view."""
 
     requires_complete_preparation = True
     stable_prepared_geometry = True
 
-    def __init__(self, *, source, **kwargs):
+    def __init__(self, *, source, generated, **kwargs):
         super().__init__(load_cache_on_init=False, **kwargs)
         self.source = source
         self.source_metadata = source.metadata_backend
@@ -34,9 +34,14 @@ class AlignedConditioningMetadata(MetadataBackend):
         self.source_view_revision = description.view_revision
         conditioning = self.dataset_config.get("conditioning_config") or {}
         inputs = [self.source_view_revision, conditioning]
+        if not generated:
+            inputs.append("configured")
         revision = hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
         self.description = replace(description, view_revision=revision, physical_rows=None)
-        self.artifact_root = os.path.abspath(os.path.join(self.instance_data_dir, revision))
+        self.generated = generated
+        self.artifact_root = os.path.abspath(
+            os.path.join(self.instance_data_dir, revision) if generated else self.instance_data_dir
+        )
         self.first_frame = conditioning.get("type") == "i2v_first_frame"
         source_path = self.source_metadata.membership_path
         artifact_scope = hashlib.sha256(os.path.abspath(self.cache_file).encode()).hexdigest()[:20]
@@ -50,9 +55,9 @@ class AlignedConditioningMetadata(MetadataBackend):
 
     def describe(self, spec=None):
         if spec is not None:
-            raise ValueError("Generated conditioning uses the source schedule.")
+            raise ValueError("Aligned conditioning uses the source schedule.")
         if self.source_metadata.view_revision != self.source_view_revision:
-            raise ValueError("Source membership changed. Reload the generated conditioning view.")
+            raise ValueError("Source membership changed. Reload the aligned conditioning view.")
         if self._filtered is None:
             return self.description
         return replace(
@@ -77,7 +82,7 @@ class AlignedConditioningMetadata(MetadataBackend):
         with self._publication.open("rb") as stream:
             pages = MembershipPages.open(stream)
             if pages.header["view_revision"] != self._filtered["view_revision"]:
-                raise ValueError("Conditioning membership changed. Reload the generated conditioning view.")
+                raise ValueError("Conditioning membership changed. Reload the aligned conditioning view.")
             yield pages
 
     def _publish_initial_membership(self):
@@ -88,7 +93,7 @@ class AlignedConditioningMetadata(MetadataBackend):
                 pages = MembershipPages.open(stream)
                 self.source_metadata._check_publication(pages)
                 if not isinstance(pages, IndexedMembership):
-                    raise ValueError("Publish indexed Webshart geometry before filtering generated conditioning.")
+                    raise ValueError("Publish indexed Webshart geometry before filtering aligned conditioning.")
                 header = {**pages.header, "view_revision": self.description.view_revision}
                 if revision := header.get("exclusion_revision"):
                     link_snapshot(
@@ -109,6 +114,8 @@ class AlignedConditioningMetadata(MetadataBackend):
         return self.describe().accepted_samples
 
     def _target_ref(self, source_ref):
+        if not self.generated:
+            return self.source.conditioning_file_path(source_ref, self.artifact_root, self.dataset_config)
         relative_path = canonicalize_data_uri(source_ref).removeprefix("webshart://")
         if os.path.isabs(relative_path) or ".." in relative_path.split("/"):
             raise ValueError("Generated Webshart conditioning requires a source reference with a safe relative path.")
@@ -118,7 +125,10 @@ class AlignedConditioningMetadata(MetadataBackend):
         relative = os.path.relpath(target_ref, self.artifact_root)
         if relative == ".." or relative.startswith(f"..{os.sep}"):
             raise ValueError("Conditioning artifact does not belong to the prepared source revision.")
-        return "webshart://" + (relative.removesuffix(".png") if self.first_frame else relative)
+        if self.generated:
+            return "webshart://" + (relative.removesuffix(".png") if self.first_frame else relative)
+        candidates = self.source.data_backend.parquet_sample_refs_for_filename(relative, first_frame=self.first_frame)
+        return next((ref for ref in candidates if self.source_metadata.admits_related_sample(ref)), None)
 
     def conditioning_ref(self, pairing_key):
         self.describe()
@@ -172,7 +182,7 @@ class AlignedConditioningMetadata(MetadataBackend):
         if dataset.vae_cache is None:
             return
         if cache_behavior != "recreate":
-            raise ValueError("Generated native conditioning cache scans require vae_cache_scan_behaviour='recreate'.")
+            raise ValueError("Aligned native conditioning cache scans require vae_cache_scan_behaviour='recreate'.")
         dataset.vae_cache.remove_inconsistent_prepared_latents(dataset)
 
     def get_metadata_by_filepath(self, filepath):
@@ -184,7 +194,7 @@ class AlignedConditioningMetadata(MetadataBackend):
         source_refs = [self._source_ref(ref) for ref in refs]
         geometry = self.source_metadata.get_metadata_batch(source_refs)
         for ref, source_ref, metadata in zip(refs, source_refs, geometry, strict=True):
-            if metadata is None:
+            if source_ref is None or metadata is None:
                 yield None
             else:
                 yield {**metadata, "training_sample_path": source_ref, "image_path": ref}

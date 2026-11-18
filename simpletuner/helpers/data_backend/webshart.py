@@ -272,6 +272,18 @@ class WebshartDataBackend(BaseDataBackend):
     def shard_of(self, identifier):
         return self.parse_sample_id(identifier).shard_idx
 
+    def parquet_sample_refs_for_filename(self, filename, *, first_frame=False):
+        """Resolve the Parquet source identities represented by a paired filename."""
+        shard, separator, basename = filename.rpartition("/")
+        row, dot, extension = basename.partition(".")
+        if not separator or not dot or len(row) != 12 or not row.isascii() or not row.isdigit():
+            return ()
+        position = self.dataset.get_shard_position(shard)
+        if position is None:
+            return ()
+        extensions = ("jpg", "jxl") if first_frame and extension == "png" else (extension,)
+        return tuple(self.sample_id(position, int(row), f"{shard}/{row}.{suffix}") for suffix in extensions)
+
     def _resolve_sample_ref(self, identifier: Union[str, Path]) -> WebshartSampleRef:
         ref = self.parse_sample_id(identifier)
         if self.format == "parquet":
