@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import itertools
 import logging
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -14,7 +13,6 @@ from simpletuner.helpers.distillation.perflow.generator import PerFlowODEGenerat
 from simpletuner.helpers.distillation.registry import DistillationRegistry
 from simpletuner.helpers.training.custom_schedule import PeRFlowScheduler
 from simpletuner.helpers.training.multi_process import rank_info
-from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger(__name__)
 
@@ -68,8 +66,6 @@ class PerFlowDistiller(DistillationBase):
             config=ode_config,
         )
 
-        self._distillation_caches: List[Any] = []
-        self._cache_cycle = None
         self._scheduler_metadata = self._describe_scheduler(self._distillation_scheduler)
 
     def _build_scheduler_config(self, noise_scheduler) -> Dict[str, Any]:
@@ -105,50 +101,12 @@ class PerFlowDistiller(DistillationBase):
     def get_scheduler(self, *_):
         return self._build_scheduler()
 
-    def _ensure_cache_cycle(self) -> None:
-        if self._cache_cycle is not None and self._distillation_caches:
-            return
-
-        try:
-            backend_map = StateTracker.get_data_backends(
-                _type=DatasetType.DISTILLATION_CACHE,
-                _types=[DatasetType.DISTILLATION_CACHE],
-            )
-        except Exception:
-            backend_map = {}
-
-        caches = []
-        for backend in backend_map.values():
-            cache = backend.get("distillation_cache")
-            if cache is not None:
-                caches.append(cache)
-
-        if not caches:
-            raise ValueError("PerFlow distillation requires at least one distillation_cache backend.")
-
-        self._distillation_caches = caches
-        self._cache_cycle = itertools.cycle(self._distillation_caches)
-
     def _next_cache_payload(self) -> Dict[str, Any]:
-        self._ensure_cache_cycle()
-        if not self._distillation_caches:
-            raise ValueError("No distillation caches were configured for PerFlow distillation.")
-
-        for _ in range(len(self._distillation_caches)):
-            cache = next(self._cache_cycle)
-            payload, artifact_path = cache.load_next_pair()
-            if payload is None:
-                continue
-
-            entry = payload if isinstance(payload, dict) else {"value": payload}
-            metadata = entry.get("metadata") or {}
-            metadata.setdefault("artifact_path", artifact_path)
-            metadata.setdefault("distillation_type", cache.distillation_type)
-            self._validate_cache_metadata(metadata)
-            entry["metadata"] = metadata
-            return entry
-
-        raise ValueError("Distillation caches did not yield any artifacts for training.")
+        if self.artifact_cycle is None:
+            raise ValueError("PerFlow distillation requires at least one distillation_cache backend.")
+        entry = self.artifact_cycle.next_entry()
+        self._validate_cache_metadata(entry["metadata"])
+        return entry
 
     def _validate_cache_metadata(self, metadata: Dict[str, Any]) -> None:
         cache_type = metadata.get("distillation_type")

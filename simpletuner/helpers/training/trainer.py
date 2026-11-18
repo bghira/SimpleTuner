@@ -3674,6 +3674,7 @@ class Trainer:
         from simpletuner.helpers.distillation.factory import DistillerFactory
 
         self.distiller = None
+        self.distillation_artifacts = None
 
         if self.config.distillation_method is None:
             return
@@ -3698,7 +3699,7 @@ class Trainer:
 
             if self.distiller:
                 logger.info(f"Successfully initialized {self.config.distillation_method.upper()} distiller")
-                run_distillation_cache_generation(self.distiller)
+                self.distillation_artifacts = run_distillation_cache_generation(self.distiller)
         except Exception as e:
             logger.error(f"Failed to initialize distillation: {e}")
             raise
@@ -5117,6 +5118,10 @@ class Trainer:
         if getattr(self, "distiller", None) is not None:
             logger.info(f"Loading DCM checkpoint states..")
             self.distiller.on_load_checkpoint(checkpoint_dir)
+        if getattr(self, "distillation_artifacts", None) is not None:
+            self.distillation_artifacts.load_checkpoint(
+                checkpoint_dir, self.accelerator.process_index, self.accelerator.num_processes
+            )
         event = lifecycle_stage_event(
             key="init_resume_checkpoint",
             label="Resume Checkpoint",
@@ -6711,6 +6716,10 @@ class Trainer:
                 job_id=self.job_id,
             )
             self._emit_event(event)
+        if getattr(self, "distillation_artifacts", None) is not None:
+            self.distillation_artifacts.save_checkpoint(
+                save_path_tmp, self.accelerator.process_index, self.accelerator.num_processes
+            )
         self.mark_optimizer_train()
         for dataset in self._registered_training_datasets().values():
             if dataset.sampler is not None:

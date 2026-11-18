@@ -161,6 +161,9 @@ class H3DriftDistiller(DistillationBase):
             return None
         return self.inner_distiller.get_required_distillation_cache_type()
 
+    def bind_artifact_cycle(self, cycle):
+        self.inner_distiller.bind_artifact_cycle(cycle)
+
     def get_ode_generator_provider(self):
         if self.inner_distiller is None:
             return None

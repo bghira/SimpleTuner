@@ -72,7 +72,7 @@ import torch
 from tqdm import tqdm
 
 # Note: load_audio is imported lazily where needed to avoid requiring torchaudio at import time
-from simpletuner.helpers.caching.distillation import DistillationCache
+from simpletuner.helpers.caching.distillation import DistillationArtifactCycle, DistillationCache
 from simpletuner.helpers.caching.image_embed import ImageEmbedCache
 from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
 from simpletuner.helpers.caching.vae import VAECache
@@ -4559,8 +4559,8 @@ def get_huggingface_backend(
     )
 
 
-def run_distillation_cache_generation(distiller: Optional[DistillationBase]) -> None:
-    """Trigger ODE generation for registered distillation cache backends if required."""
+def run_distillation_cache_generation(distiller: Optional[DistillationBase]) -> DistillationArtifactCycle | None:
+    """Prepare and bind the matching artifact stores for distillation."""
     if distiller is None or not hasattr(distiller, "requires_distillation_cache"):
         return
 
@@ -4573,9 +4573,7 @@ def run_distillation_cache_generation(distiller: Optional[DistillationBase]) -> 
         return
 
     provider = distiller.get_ode_generator_provider() if hasattr(distiller, "get_ode_generator_provider") else None
-    if provider is None or not hasattr(provider, "generate") or not callable(provider.generate):
-        logger.debug("Distiller requested a cache but did not supply a valid ODE generator provider.")
-        return
+    generate = getattr(provider, "generate", None)
 
     required_type = None
     if hasattr(distiller, "get_required_distillation_cache_type"):
@@ -4603,11 +4601,18 @@ def run_distillation_cache_generation(distiller: Optional[DistillationBase]) -> 
 
     targets = selected_backends if selected_backends else distillation_backends
 
+    caches = []
     for backend_id, backend in targets.items():
         cache = backend.get("distillation_cache")
         if cache is None:
             raise ValueError(f"Distillation cache backend '{backend_id}' is missing its cache instance.")
-        provider.generate(cache, backend_config=backend.get("config", {}))
+        if callable(generate):
+            generate(cache, backend_config=backend.get("config", {}))
+        caches.append(cache)
+
+    cycle = DistillationArtifactCycle(caches)
+    distiller.bind_artifact_cycle(cycle)
+    return cycle
 
 
 def configure_multi_databackend(

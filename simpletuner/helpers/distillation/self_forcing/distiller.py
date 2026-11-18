@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import itertools
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 import torch
 
@@ -9,7 +8,6 @@ from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.distillation.common import DistillationBase
 from simpletuner.helpers.distillation.dmd.distiller import DMDDistiller
 from simpletuner.helpers.distillation.registry import DistillationRegistry
-from simpletuner.helpers.training.state_tracker import StateTracker
 
 from .generator import SelfForcingODEGenerator
 
@@ -65,9 +63,6 @@ class SelfForcingDistillation(DistillationBase):
 
         self.noise_scheduler = noise_scheduler
         self._ode_generator = SelfForcingODEGenerator(config=merged_config.get("ode_generator", {}))
-        self._distillation_caches: List[Any] = []
-        self._cache_cycle: Optional[Iterable[Any]] = None
-
         # Delegate DMD-specific optimisation to the existing distiller implementation.
         self._dmd = DMDDistiller(
             teacher_model=teacher_model,
@@ -175,50 +170,10 @@ class SelfForcingDistillation(DistillationBase):
         captions = caption_batch.get("captions") or []
         return [str(caption) for caption in captions if caption is not None]
 
-    def _ensure_cache_cycle(self) -> None:
-        if self._cache_cycle is not None and self._distillation_caches:
-            return
-
-        try:
-            backend_map = StateTracker.get_data_backends(
-                _type=DatasetType.DISTILLATION_CACHE,
-                _types=[DatasetType.DISTILLATION_CACHE],
-            )
-        except Exception:
-            backend_map = {}
-
-        caches = []
-        for backend in backend_map.values():
-            cache = backend.get("distillation_cache")
-            if cache is not None:
-                caches.append(cache)
-
-        if not caches:
-            raise ValueError("Self-forcing distillation requires at least one distillation_cache backend.")
-
-        self._distillation_caches = caches
-        self._cache_cycle = itertools.cycle(self._distillation_caches)
-
     def _next_cache_payload(self) -> Dict[str, Any]:
-        self._ensure_cache_cycle()
-        if not self._distillation_caches:
-            raise ValueError("No distillation caches were configured for self-forcing distillation.")
-
-        for _ in range(len(self._distillation_caches)):
-            cache = next(self._cache_cycle)
-            payload, artifact_path = cache.load_next_pair()
-            if payload is None:
-                continue
-
-            entry = payload if isinstance(payload, dict) else {"value": payload}
-            metadata = entry.get("metadata") or {}
-            if artifact_path:
-                metadata.setdefault("artifact_path", artifact_path)
-            metadata.setdefault("distillation_type", cache.distillation_type)
-            entry["metadata"] = metadata
-            return entry
-
-        raise ValueError("Distillation caches did not yield any artifacts for caption batch preparation.")
+        if self.artifact_cycle is None:
+            raise ValueError("Self-forcing distillation requires at least one distillation_cache backend.")
+        return self.artifact_cycle.next_entry()
 
     def _build_latent_batch(self, cache_entries: Sequence[Dict[str, Any]]) -> torch.Tensor:
         latents: List[torch.Tensor] = []
