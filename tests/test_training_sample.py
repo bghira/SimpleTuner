@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 from PIL import Image
 
+from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 from simpletuner.helpers.image_manipulation.batched_training_samples import BatchedTrainingSamples
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.metadata.utils.duplicator import DatasetDuplicator
@@ -20,7 +21,6 @@ class TestTrainingSample(unittest.TestCase):
             name: StateTracker.__dict__[name]
             for name in (
                 "get_args",
-                "get_data_backend",
                 "get_data_backend_config",
                 "get_resolution_by_aspect",
                 "set_resolution_by_aspect",
@@ -130,6 +130,13 @@ class TestTrainingSample(unittest.TestCase):
         sample = TrainingSample(self.image, self.data_backend_id, self.image_metadata)
         self.assertEqual(sample.original_size, (1024, 768))
 
+    def _bind_pair(self, source, source_root, conditioning_root):
+        datasets = {
+            "source": DatasetRuntime("source", source, None, {"instance_data_dir": source_root}),
+            "conditioning": DatasetRuntime("conditioning", None, None, {"instance_data_dir": conditioning_root}),
+        }
+        self.enterContext(patch.object(StateTracker, "datasets", datasets))
+
     def test_training_sample_path_preserves_relative_source_key_for_empty_source_root(self):
         class SourceBackend:
             def get_abs_path(self, sample_path):
@@ -138,20 +145,7 @@ class TestTrainingSample(unittest.TestCase):
         source_backend_id = "source"
         conditioning_backend_id = "conditioning"
         conditioning_root = "/tmp/simpletuner-conditioning"
-        original_get_data_backend = StateTracker.get_data_backend
-        StateTracker.get_data_backend = MagicMock(
-            side_effect=lambda backend_id: {
-                source_backend_id: {
-                    "config": {"instance_data_dir": ""},
-                    "data_backend": SourceBackend(),
-                },
-                conditioning_backend_id: {
-                    "config": {"instance_data_dir": conditioning_root},
-                    "data_backend": MagicMock(),
-                },
-            }[backend_id]
-        )
-        self.addCleanup(setattr, StateTracker, "get_data_backend", original_get_data_backend)
+        self._bind_pair(SourceBackend(), "", conditioning_root)
 
         sample = TrainingSample(
             self.image,
@@ -169,20 +163,7 @@ class TestTrainingSample(unittest.TestCase):
 
         source_backend_id = "source"
         conditioning_backend_id = "conditioning"
-        original_get_data_backend = StateTracker.get_data_backend
-        StateTracker.get_data_backend = MagicMock(
-            side_effect=lambda backend_id: {
-                source_backend_id: {
-                    "config": {"instance_data_dir": ""},
-                    "data_backend": SourceBackend(),
-                },
-                conditioning_backend_id: {
-                    "config": {"instance_data_dir": "/tmp/simpletuner-conditioning"},
-                    "data_backend": MagicMock(),
-                },
-            }[backend_id]
-        )
-        self.addCleanup(setattr, StateTracker, "get_data_backend", original_get_data_backend)
+        self._bind_pair(SourceBackend(), "", "/tmp/simpletuner-conditioning")
 
         sample = TrainingSample(
             self.image,
@@ -203,20 +184,7 @@ class TestTrainingSample(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             source_root = os.path.join(tmpdir, "source")
             conditioning_root = os.path.join(tmpdir, "conditioning")
-            original_get_data_backend = StateTracker.get_data_backend
-            StateTracker.get_data_backend = MagicMock(
-                side_effect=lambda backend_id: {
-                    source_backend_id: {
-                        "config": {"instance_data_dir": source_root},
-                        "data_backend": SourceBackend(),
-                    },
-                    conditioning_backend_id: {
-                        "config": {"instance_data_dir": conditioning_root},
-                        "data_backend": MagicMock(),
-                    },
-                }[backend_id]
-            )
-            self.addCleanup(setattr, StateTracker, "get_data_backend", original_get_data_backend)
+            self._bind_pair(SourceBackend(), source_root, conditioning_root)
 
             sample = TrainingSample(
                 self.image,
@@ -237,20 +205,7 @@ class TestTrainingSample(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             source_root = os.path.join(tmpdir, "source")
             conditioning_root = os.path.join(tmpdir, "conditioning")
-            original_get_data_backend = StateTracker.get_data_backend
-            StateTracker.get_data_backend = MagicMock(
-                side_effect=lambda backend_id: {
-                    source_backend_id: {
-                        "config": {"instance_data_dir": source_root},
-                        "data_backend": SourceBackend(),
-                    },
-                    conditioning_backend_id: {
-                        "config": {"instance_data_dir": conditioning_root},
-                        "data_backend": MagicMock(),
-                    },
-                }[backend_id]
-            )
-            self.addCleanup(setattr, StateTracker, "get_data_backend", original_get_data_backend)
+            self._bind_pair(SourceBackend(), source_root, conditioning_root)
 
             sample = TrainingSample(
                 self.image,
@@ -268,18 +223,7 @@ class TestTrainingSample(unittest.TestCase):
             source_root = os.path.join(tmpdir, "source")
             conditioning_root = os.path.join(tmpdir, "conditioning")
             sibling_path = os.path.join(tmpdir, "conditioning-other", "17.png")
-            StateTracker.get_data_backend = MagicMock(
-                side_effect=lambda backend_id: {
-                    source_backend_id: {
-                        "config": {"instance_data_dir": source_root},
-                        "data_backend": MagicMock(get_abs_path=lambda path: os.path.abspath(path)),
-                    },
-                    conditioning_backend_id: {
-                        "config": {"instance_data_dir": conditioning_root},
-                        "data_backend": MagicMock(),
-                    },
-                }[backend_id]
-            )
+            self._bind_pair(MagicMock(get_abs_path=os.path.abspath), source_root, conditioning_root)
 
             sample = TrainingSample(
                 self.image,
@@ -295,18 +239,7 @@ class TestTrainingSample(unittest.TestCase):
         conditioning_backend_id = "conditioning"
         with tempfile.TemporaryDirectory() as tmpdir:
             source_root = os.path.join(tmpdir, "source")
-            StateTracker.get_data_backend = MagicMock(
-                side_effect=lambda backend_id: {
-                    source_backend_id: {
-                        "config": {"instance_data_dir": source_root},
-                        "data_backend": MagicMock(get_abs_path=lambda path: os.path.abspath(path)),
-                    },
-                    conditioning_backend_id: {
-                        "config": {"instance_data_dir": "conditioning"},
-                        "data_backend": MagicMock(),
-                    },
-                }[backend_id]
-            )
+            self._bind_pair(MagicMock(get_abs_path=os.path.abspath), source_root, "conditioning")
 
             sample = TrainingSample(
                 self.image,
