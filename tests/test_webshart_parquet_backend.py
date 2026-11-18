@@ -368,6 +368,58 @@ class TestWebshartParquetBackend(unittest.TestCase):
             with patch.object(sample, "calculate_target_size", side_effect=AssertionError("recomputed prepared geometry")):
                 self.assertEqual(sample.prepare().image.size, record["target_size"])
 
+    def test_instance_prompt_eligibility_does_not_require_source_captions(self):
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+        from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBackend
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        self.rows[-1]["captions"] = None
+        pq.write_table(pa.Table.from_pylist(self.rows), self.source / "part.parquet", row_group_size=2)
+        accelerator = SimpleNamespace(num_processes=1, process_index=0, is_main_process=True)
+        source = WebshartDataBackend(
+            accelerator, "instance-only", str(self.source), format="parquet", cache_dir=str(self.root / "instance-view")
+        )
+        args = SimpleNamespace(seed=12, disable_bucket_pruning=True)
+        config = {
+            "caption_strategy": "webshart",
+            "resolution": 8,
+            "resolution_type": "pixel",
+            "webshart": {"sampling_policy": "global"},
+            "instance_prompt": "shared prompt",
+        }
+        with (
+            patch.object(StateTracker, "get_data_backend_config", return_value=config),
+            patch.object(StateTracker, "get_args", return_value=args),
+            patch.object(StateTracker, "get_model", return_value=None),
+        ):
+            metadata = WebshartMetadataBackend(
+                id=source.id,
+                instance_data_dir=source.cache_dir,
+                cache_file=str(self.root / "instance-buckets"),
+                metadata_file=str(self.root / "instance-geometry"),
+                data_backend=source,
+                accelerator=accelerator,
+                batch_size=1,
+                resolution=8,
+                resolution_type="pixel",
+            )
+            self.addCleanup(metadata.close)
+            metadata.compute_aspect_ratio_bucket_indices()
+            with_captions = metadata.describe()
+            self.assertEqual(with_captions.accepted_samples, 1)
+
+            config["only_instance_prompt"] = True
+            with patch.object(source, "caption_fields", side_effect=AssertionError("projected source captions")):
+                metadata.compute_aspect_ratio_bucket_indices()
+            instance_only = metadata.describe()
+            self.assertEqual(instance_only.accepted_samples, 2)
+            self.assertNotEqual(instance_only.view_revision, with_captions.view_revision)
+            dataset = DatasetRuntime(source.id, source, metadata, {**config, **DatasetRuntime.caption_config(config, args)})
+            refs, count = dataset.read_page(limit=2)
+            self.assertEqual(count, 2)
+            with patch.object(source, "read_caption_batch", side_effect=AssertionError("read source captions")):
+                self.assertEqual(dataset.resolve_captions(refs), ["shared prompt", "shared prompt"])
+
     def test_native_publication_scans_each_canonical_group_separately(self):
         from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBackend
         from simpletuner.helpers.training.state_tracker import StateTracker

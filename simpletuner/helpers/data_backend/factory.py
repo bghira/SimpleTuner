@@ -579,6 +579,8 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         output["config"]["resolution_type"] = None
 
     user_supplied_caption_strategy = "caption_strategy" in backend
+    if "only_instance_prompt" in backend:
+        output["config"]["only_instance_prompt"] = backend["only_instance_prompt"]
     if "parquet" in backend:
         output["config"]["parquet"] = backend["parquet"]
     if "caption_strategy" in backend:

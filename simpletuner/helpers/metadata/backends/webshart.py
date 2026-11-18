@@ -24,6 +24,7 @@ from filelock import FileLock
 from tqdm import tqdm
 
 from simpletuner.helpers.configuration.sanitization import make_public_config_serializable
+from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.data_backend.webshart import CaptionValue, WebshartDataBackend
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
@@ -807,7 +808,8 @@ class WebshartMetadataBackend(MetadataBackend):
         logger.info("Building aspect ratio buckets from webshart metadata...")
         statistics = _empty_filtering_statistics()
         backend_config = StateTracker.get_data_backend_config(self.id) or {}
-        require_captions = str(backend_config.get("caption_strategy", "")).lower() == "webshart"
+        captions = DatasetRuntime.caption_config(backend_config, StateTracker.get_args())
+        require_captions = captions["caption_strategy"] == "webshart" and captions["use_captions"]
 
         if getattr(self, "native_policy", None):
             self._publish_native_view(backend_config, statistics, require_captions, ignore_existing_cache, progress_callback)

@@ -131,6 +131,9 @@ class ImageBackendConfig(BaseBackendConfig):
 
         config.metadata_backend = backend_dict.get("metadata_backend")
         config.caption_strategy = backend_dict.get("caption_strategy")
+        for key in ("only_instance_prompt", "instance_prompt", "prepend_instance_prompt", "disable_multiline_split"):
+            if key in backend_dict:
+                config.config[key] = backend_dict[key]
 
         config.minimum_image_size = backend_dict.get("minimum_image_size", _get_arg("minimum_image_size"))
         config.maximum_image_size = backend_dict.get("maximum_image_size", _get_arg("maximum_image_size"))
