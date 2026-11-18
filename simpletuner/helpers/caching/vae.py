@@ -2098,13 +2098,15 @@ class VAECache(WebhookMixin):
         )
 
     def prepare_dataset(self, dataset, *, worker=0, workers=1, progress_callback=None):
-        if not self.nsfw_check_enabled:
+        exclude_unreadable = dataset.requires_complete_preparation and self.delete_problematic_images
+        if not self.nsfw_check_enabled and not exclude_unreadable:
             return self._prepare_dataset_batches(dataset, worker, workers, progress_callback, None)
         try:
             with dataset.metadata_backend.collect_exclusions() as exclusions:
                 count = self._prepare_dataset_batches(dataset, worker, workers, progress_callback, exclusions)
         finally:
-            self._close_nsfw_classifier_store()
+            if self.nsfw_check_enabled:
+                self._close_nsfw_classifier_store()
         self._write_nsfw_scan_report()
         return count
 
@@ -2117,11 +2119,18 @@ class VAECache(WebhookMixin):
             keys = (self.cache_path_for_image(ref) for ref in refs)
             cached = self.cache_data_backend.bulk_exists(keys)
             pending = [ref for ref, present in zip(refs, cached, strict=True) if not present]
-            requested = refs if exclusions is not None else pending
+            requested = refs if self.nsfw_check_enabled else pending
             if requested:
                 if requires_complete:
-                    records = dataset.read_samples(requested, fields={"image"})
-                    images = {ref: record["image"] for ref, record in zip(requested, records, strict=True)}
+                    allow_missing = exclusions is not None and self.delete_problematic_images
+                    payloads = dataset.read_sample_images(requested, allow_missing=allow_missing)
+                    images = {}
+                    for ref, image in zip(requested, payloads, strict=True):
+                        if image is None:
+                            exclusions.add(ref, bucket, "decode")
+                        else:
+                            images[ref] = image
+                    pending = [ref for ref in pending if ref in images]
                 else:
                     images = {
                         ref: payload
@@ -2129,9 +2138,11 @@ class VAECache(WebhookMixin):
                         if payload is not None
                     }
                     pending = [ref for ref in pending if ref in images]
-                if exclusions is not None:
+                if self.nsfw_check_enabled:
                     rejected = {
-                        ref for ref in refs if self._scan_sample_for_nsfw(ref, images[ref], bucket, exclusions=exclusions)
+                        ref
+                        for ref, image in images.items()
+                        if self._scan_sample_for_nsfw(ref, image, bucket, exclusions=exclusions)
                     }
                     pending = [ref for ref in pending if ref not in rejected]
             if pending:

@@ -3,6 +3,7 @@ import json
 import os
 import threading
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
 from queue import Queue
 from tempfile import TemporaryDirectory
@@ -223,7 +224,7 @@ class TestVaeCacheTraversal(unittest.TestCase):
         dataset = Mock(requires_complete_preparation=True, uses_native_schedule=False)
         dataset.describe.return_value.accepted_samples = 3
         dataset.iter_preparation_batches.return_value = [("wide", ("a", "b")), ("square", ("c",))]
-        dataset.read_samples.side_effect = lambda refs, fields: [{"image": ref} for ref in refs]
+        dataset.read_sample_images.side_effect = lambda refs, **_: list(refs)
         stored = {"b"}
         cache = VAECache.__new__(VAECache)
         cache.vae_batch_size = 2
@@ -234,6 +235,7 @@ class TestVaeCacheTraversal(unittest.TestCase):
         ]
         cache.init_vae = Mock()
         cache.nsfw_check_enabled = False
+        cache.delete_problematic_images = False
         cache._process_images_in_batch = lambda refs, images, disable_queue: [
             (image, ref) for ref, image in zip(refs, images)
         ]
@@ -244,7 +246,18 @@ class TestVaeCacheTraversal(unittest.TestCase):
         dataset.iter_preparation_batches.assert_called_with(worker=1, workers=2, batch_size=2)
         cache.prepare_dataset(dataset, worker=1, workers=2)
         cache.init_vae.assert_called_once()
-        self.assertEqual(dataset.read_samples.call_count, 2)
+        self.assertEqual(dataset.read_sample_images.call_count, 2)
+
+        stored.remove("a")
+        cache.delete_problematic_images = True
+        ledger = Mock()
+        dataset.metadata_backend.collect_exclusions.return_value = nullcontext(ledger)
+        dataset.read_sample_images.side_effect = lambda refs, *, allow_missing: [None] if allow_missing else list(refs)
+        source = dataset.data_backend
+        cache.prepare_dataset(dataset, worker=1, workers=2)
+        ledger.add.assert_called_once_with("a", "wide", "decode")
+        self.assertEqual(stored, {"b", "c"})
+        source.delete.assert_not_called()
 
     def test_vae_inventory_is_only_needed_for_legacy_filtering_and_maintenance(self):
         cache = VAECache.__new__(VAECache)
@@ -282,7 +295,7 @@ class TestVaeCacheTraversal(unittest.TestCase):
         self.assertEqual(cache.prepare_dataset(dataset), 2)
         cache._process_images_in_batch.assert_called_once_with(["available.wav"], ["waveform"], disable_queue=True)
         cache._write_latents_in_batch.assert_called_once_with([("artifact", "available.wav", "latent")])
-        dataset.read_samples.assert_not_called()
+        dataset.read_sample_images.assert_not_called()
 
     def _run_pipeline(self, webshart):
         wide0, wide1 = "webshart://0/0/wide.jpg", "webshart://1/0/wide.jpg"
