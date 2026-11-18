@@ -2,7 +2,10 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from threading import Event
 from unittest.mock import patch
+
+from PIL import Image
 
 from simpletuner.simpletuner_sdk.server.services.dataset_scan_service import DatasetScanService
 
@@ -89,6 +92,68 @@ class TestDatasetScanServiceOutputDir(unittest.TestCase):
             resolved = DatasetScanService._resolve_scan_output_dir("/var/tmp/simpletuner-scan")
 
         self.assertEqual(resolved, "/var/tmp/simpletuner-scan")
+
+
+def wait_for_scan_cancel(connection, cancelled, dataset_config, global_config, force_rescan):
+    with connection:
+        connection.send({"current": 1, "total": 2})
+        if not cancelled.wait(timeout=20):
+            raise RuntimeError("The scan did not receive cancellation.")
+
+
+class TestDatasetScanProcess(unittest.TestCase):
+    def test_scan_preserves_live_registration_of_same_id(self):
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        service = DatasetScanService()
+        runtime = object()
+        registered_config = {"config": {"resolution": 512}}
+        training_args = StateTracker.get_args()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            Image.new("RGB", (128, 128)).save(root / "image.png")
+            config = {
+                "id": "example",
+                "type": "local",
+                "instance_data_dir": str(root),
+                "crop": False,
+                "resolution": 128,
+                "resolution_type": "pixel",
+            }
+            with (
+                patch.object(StateTracker, "datasets", {"example": runtime}),
+                patch.object(StateTracker, "data_backends", {"example": registered_config}),
+            ):
+                job_id = service.scan_dataset("example", config, {"output_dir": str(root / "output")}, force_rescan=True)
+                service._scan_thread.join(timeout=45)
+                self.assertFalse(service._scan_thread.is_alive())
+                result = service.get_scan_status(job_id)
+                self.assertEqual(result["status"], "completed", result)
+                self.assertEqual(result["current"], 1)
+                self.assertIs(StateTracker.get_dataset("example"), runtime)
+                self.assertIs(StateTracker.get_data_backend("example"), registered_config)
+                self.assertIs(StateTracker.get_args(), training_args)
+                self.assertTrue((root / "output" / "all_image_files_example.json").is_file())
+
+    def test_cancellation_reaches_the_running_process(self):
+        progress = Event()
+
+        def broadcast(*, event_type, data):
+            if data.get("current") == 1:
+                progress.set()
+
+        service = DatasetScanService(broadcast_fn=broadcast)
+        with patch(
+            "simpletuner.simpletuner_sdk.server.services.dataset_scan_service._execute_scan_process", wait_for_scan_cancel
+        ):
+            job_id = service.scan_dataset("scan", {"id": "scan"})
+            try:
+                self.assertTrue(progress.wait(timeout=20))
+                self.assertTrue(service.cancel_scan())
+            finally:
+                service._scan_thread.join(timeout=25)
+            self.assertFalse(service._scan_thread.is_alive())
+        self.assertEqual(service.get_scan_status(job_id)["status"], "cancelled")
 
 
 if __name__ == "__main__":

@@ -673,6 +673,7 @@ class MetadataBackend:
             worker.start()
         last_write_time = time.time()
         written_files = set()
+        processed_files = 0
         with tqdm(
             desc="Generating aspect bucket cache",
             total=len(new_files),
@@ -693,9 +694,11 @@ class MetadataBackend:
             ):
                 current_time = time.time()
                 while not tqdm_queue.empty():
-                    pbar.update(tqdm_queue.get())
+                    completed = tqdm_queue.get()
+                    processed_files += completed
+                    pbar.update(completed)
                     if progress_callback is not None:
-                        progress_callback(pbar.n, pbar.total)
+                        progress_callback(processed_files, len(new_files))
                 while not aspect_ratio_bucket_indices_queue.empty():
                     aspect_ratio_bucket_indices_update = aspect_ratio_bucket_indices_queue.get()
                     for key, value in aspect_ratio_bucket_indices_update.items():
