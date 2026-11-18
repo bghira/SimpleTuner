@@ -68,6 +68,21 @@ class TestMetadataBackend(unittest.TestCase):
         }
         self.assertEqual(len(self.metadata_backend), 3)
 
+    def test_prepared_metadata_batch_updates_existing_dict_and_persists_on_flush(self):
+        self.data_backend.write.reset_mock()
+        self.data_backend.get_abs_path = lambda path: path
+        self.metadata_backend.enqueue_prepared_metadata({"one.jpg": {"target_size": [64, 32]}})
+        self.metadata_backend.enqueue_prepared_metadata(
+            {"one.jpg": {"target_size": [128, 64]}, "two.jpg": {"target_size": [64, 64]}}
+        )
+        self.data_backend.write.assert_not_called()
+        self.metadata_backend.flush_prepared_metadata()
+        filename, content = self.data_backend.write.call_args.args
+        self.assertEqual(filename, self.metadata_backend.metadata_file)
+        self.assertEqual(json.loads(content), self.metadata_backend.image_metadata)
+        records = list(self.metadata_backend.get_metadata_batch(["two.jpg", "missing.jpg", "one.jpg", "two.jpg"]))
+        self.assertEqual(records, [{"target_size": [64, 64]}, None, {"target_size": [128, 64]}, {"target_size": [64, 64]}])
+
     def test_probe_image_dimensions_applies_exif_orientation(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             image_path = Path(tmpdir) / "oriented.jpg"

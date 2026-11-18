@@ -439,13 +439,13 @@ class ParquetMetadataBackend(MetadataBackend):
                 continue
 
             # If we have metadata updates, store them
-            if metadata_updates and file in metadata_updates:
-                self.set_metadata_by_filepath(filepath=file, metadata=metadata_updates[file], update_json=False)
+            if metadata_updates:
+                self.enqueue_prepared_metadata(metadata_updates)
 
             # periodic save to avoid losing progress
             if (current_time - last_write_time) >= self.metadata_update_interval:
+                self.flush_prepared_metadata()
                 self.save_cache(enforce_constraints=False)
-                self.save_image_metadata()
                 last_write_time = current_time
 
         # Extend final results
@@ -454,7 +454,7 @@ class ParquetMetadataBackend(MetadataBackend):
 
         logger.info(f"Sample processing statistics: {statistics}")
         self.filtering_statistics = statistics
-        self.save_image_metadata()
+        self.flush_prepared_metadata()
         self.save_cache(enforce_constraints=True)
         if self.bucket_report:
             self.bucket_report.update_statistics(statistics)

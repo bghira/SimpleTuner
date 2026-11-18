@@ -618,11 +618,10 @@ class MetadataBackend:
                     )
                     statistics["total_processed"] += 1
                 # Update metadata with processed audio files
-                for filepath, meta in metadata_updates.items():
-                    self.set_metadata_by_filepath(filepath=filepath, metadata=meta, update_json=False)
+                self.enqueue_prepared_metadata(metadata_updates)
                 logger.info(f"Processed {statistics['total_processed']} audio files. Statistics: {statistics}")
                 self.filtering_statistics = statistics
-                self.save_image_metadata()
+                self.flush_prepared_metadata()
 
             # Rebuild buckets from all metadata (existing + new)
             self.aspect_ratio_bucket_indices = {}
@@ -760,8 +759,7 @@ class MetadataBackend:
                             aggregated_statistics["skipped"][reason] += skip_count
                         aggregated_statistics["total_processed"] += metadata_update[1]["total_processed"]
                         continue
-                    for filepath, meta in metadata_update.items():
-                        self.set_metadata_by_filepath(filepath=filepath, metadata=meta, update_json=False)
+                    self.enqueue_prepared_metadata(metadata_update)
                 while not written_files_queue.empty():
                     written_files_batch = written_files_queue.get()
                     written_files.update(written_files_batch)  # Use update for sets
@@ -772,8 +770,8 @@ class MetadataBackend:
                     logger.debug(
                         f"In-flight metadata update after {processing_duration} seconds. Saving {len(self.image_metadata)} metadata entries and {len(self.aspect_ratio_bucket_indices)} aspect bucket lists."
                     )
+                    self.flush_prepared_metadata()
                     self.save_cache(enforce_constraints=False)
-                    self.save_image_metadata()
                     last_write_time = current_time
 
                 time.sleep(0.001)
@@ -783,7 +781,7 @@ class MetadataBackend:
         self._drain_filtered_files_queue(filtered_files_queue)
         logger.info(f"Sample processing statistics: {aggregated_statistics}")
         self.filtering_statistics = aggregated_statistics
-        self.save_image_metadata()
+        self.flush_prepared_metadata()
         self.save_cache(enforce_constraints=True)
         logger.info("Completed aspect bucket update.")
         if self.bucket_report:
@@ -1524,6 +1522,15 @@ class MetadataBackend:
             if update_json:
                 self.save_image_metadata()
 
+    def enqueue_prepared_metadata(self, records):
+        """Submit a batch of prepared records keyed by sample reference."""
+        with self.metadata_semaphor:
+            self.image_metadata.update(records)
+
+    def flush_prepared_metadata(self):
+        """Wait for submitted writes and make them visible to a reopened provider."""
+        self.save_image_metadata()
+
     def get_metadata_batch(self, refs):
         """Read metadata in request order, preserving duplicates and missing entries."""
         return (self.get_metadata_by_filepath(ref) for ref in refs)
@@ -1600,13 +1607,12 @@ class MetadataBackend:
                     metadata_update = metadata_updates_queue.get()
                     logger.debug(f"Received type of metadata update: {type(metadata_update)}, contents: {metadata_update}")
                     if type(metadata_update) == dict:
-                        for filepath, meta in metadata_update.items():
-                            self.set_metadata_by_filepath(filepath=filepath, metadata=meta, update_json=False)
+                        self.enqueue_prepared_metadata(metadata_update)
 
         for worker in workers:
             worker.join()
 
-        self.save_image_metadata()
+        self.flush_prepared_metadata()
         self.save_cache(enforce_constraints=True)
         logger.info("Completed metadata update.")
 
