@@ -26,6 +26,7 @@ def _checkpoint_worker(rank, port, output_dir):
     )
     from accelerate import Accelerator
 
+    from simpletuner.helpers.data_backend.cursor import DatasetCursor
     from simpletuner.helpers.multiaspect.sampler import MultiAspectSampler
     from simpletuner.helpers.multiaspect.state import BucketStateManager
     from simpletuner.helpers.training.save_hooks import SaveHookManager
@@ -89,16 +90,28 @@ def _checkpoint_worker(rank, port, output_dir):
     sampler.accelerator = accelerator
     sampler.id = "dataset"
     sampler.batch_size = 1
-    sampler.buckets = ["1.0"]
-    sampler.exhausted_buckets = []
-    sampler.current_bucket = 0
-    sampler.current_epoch = 3
     sampler.sample_type_strs = "images"
     sampler.logger = logging.getLogger("checkpoint-test")
     sampler.state_manager = BucketStateManager(sampler.id)
-    sampler.metadata_backend = SimpleNamespace(
-        aspect_ratio_bucket_indices={"1.0": [f"rank{rank}-a", f"rank{rank}-b"]}, seen_images={f"rank{rank}-a": 1}
-    )
+
+    def new_cursor():
+        return DatasetCursor(
+            sampler.id,
+            {"1.0": [f"rank{rank}-a", f"rank{rank}-b"]},
+            batch_size=1,
+            repeats=0,
+            seed=5,
+            dp_size=1,
+            dp_rank=0,
+            gradient_accumulation_steps=1,
+            allow_oversubscription=False,
+            is_eval=False,
+        )
+
+    sampler._cursor = new_cursor()
+    sampler.cursor.finish_epoch()
+    sampler.cursor.finish_epoch()
+    sampler.cursor.next_batch()
     StateTracker.set_args(trainer.config)
     original_parameters = [p.detach().clone() for p in model.parameters()]
     for tempdir, rolling in [(True, False), (False, True)]:
@@ -117,10 +130,8 @@ def _checkpoint_worker(rank, port, output_dir):
             assert f"{stem}-dataset.json" in manifest["files"]
         assert (Path(path) / ".guard").exists()
         saved_sampler = sampler.state_manager.load_state(str(Path(path) / hooks.training_state_path))
-        sampler.metadata_backend.aspect_ratio_bucket_indices = {"wrong": []}
-        sampler.metadata_backend.seen_images.clear()
-        sampler.current_epoch = 0
-        sampler.current_bucket = 99
+        assert saved_sampler["epoch"] == 3 and sum(saved_sampler["consumed"].values()) == 1
+        sampler._cursor = new_cursor()
         with torch.no_grad():
             for parameter in model.parameters():
                 parameter.add_(10)
@@ -133,10 +144,7 @@ def _checkpoint_worker(rank, port, output_dir):
         assert torch.equal(expected[2], actual[2])
         assert all(torch.equal(p, old) for p, old in zip(model.parameters(), original_parameters))
         sampler.load_states(str(Path(path) / hooks.training_state_path))
-        assert sampler.metadata_backend.aspect_ratio_bucket_indices == saved_sampler["aspect_ratio_bucket_indices"]
-        assert sampler.metadata_backend.seen_images == saved_sampler["seen_images"]
-        assert sampler.current_epoch == saved_sampler["current_epoch"]
-        assert sampler.current_bucket == saved_sampler["current_bucket"]
+        assert sampler.cursor.state() == saved_sampler
         accelerator.wait_for_everyone()
     accelerator.end_training()
 

@@ -135,7 +135,6 @@ class MetadataBackend:
         self.metadata_file = Path(f"{metadata_file}.json")
         self._aspect_ratio_bucket_indices = {}
         self.image_metadata = {}  # Store image metadata
-        self.seen_images = {}
         self.config = {}
         self.dataset_config = StateTracker.get_data_backend_config(self.id) or {}
         self.dataset_filter = build_dataset_filter(self.dataset_config)
@@ -961,32 +960,6 @@ class MetadataBackend:
                 )
 
         logger.debug(f"Count of items after split: {post_total}")
-
-    def seen_occurrence_count(self, image_path) -> int:
-        """Return consumed occurrences, accepting boolean values from older checkpoints."""
-        value = self.seen_images.get(image_path, 0)
-        if isinstance(value, bool):
-            return int(value)
-        if not isinstance(value, int):
-            raise TypeError(f"Invalid seen occurrence count for {image_path!r}: {value!r}")
-        if value < 0:
-            raise ValueError(f"Seen occurrence count cannot be negative for {image_path!r}: {value}")
-        return int(value)
-
-    def mark_as_seen(self, image_path):
-        self.seen_images[image_path] = self.seen_occurrence_count(image_path) + 1
-
-    def mark_batch_as_seen(self, image_paths):
-        for image_path in image_paths:
-            self.mark_as_seen(image_path)
-
-    def is_seen(self, image_path, occurrence_index: int = 0):
-        if isinstance(self.seen_images.get(image_path, 0), bool):
-            return self.seen_images[image_path]
-        return self.seen_occurrence_count(image_path) > occurrence_index
-
-    def reset_seen_images(self):
-        self.seen_images.clear()
 
     def remove_image(self, image_path, bucket: str = None):
         """remove image from bucket(s)"""

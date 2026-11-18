@@ -174,6 +174,10 @@ class DatasetCursor:
     def __len__(self) -> int:
         return sum(ceil(length / self.batch_size) for length in self._lengths.values())
 
+    def progress(self) -> tuple[int, int]:
+        """Samples consumed in this epoch, and samples in an epoch."""
+        return sum(self._consumed.values()), sum(self._lengths.values())
+
     def rank_share(self) -> Iterator[tuple[str, str]]:
         """The distinct samples this rank trains on. It does not change between epochs."""
         for bucket, share in self._share.items():

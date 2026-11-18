@@ -13,7 +13,7 @@ The synchronization addresses two key issues:
 1. Data sharding: The dataset is split by replicated DP rank only, not by FSDP
    shard rank or CP rank.
 2. Batch sampling: Only the model-replica leader samples batches; other ranks
-   receive via broadcast. This keeps seen_images tracking consistent across the
+   receive via broadcast. This keeps the sampler position consistent across the
    model-parallel ranks.
 """
 
@@ -458,7 +458,7 @@ class ContextParallelBatchSynchronizer:
         When CP is enabled:
         - The model-replica leader calls the iterator to sample a batch
         - Other ranks skip sampling and receive the batch via broadcast
-        - This ensures seen_images tracking is consistent across model-parallel ranks
+        - This ensures the sampler position is consistent across model-parallel ranks
 
         When CP is disabled:
         - All ranks call the iterator normally

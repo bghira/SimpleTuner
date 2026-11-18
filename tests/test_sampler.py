@@ -1,8 +1,6 @@
-import copy
 import json
 import logging
 import os
-import random
 import tempfile
 import unittest
 from math import ceil
@@ -26,20 +24,14 @@ from unittest.mock import MagicMock, Mock, patch
 from accelerate import PartialState
 from PIL import Image
 
-from simpletuner.helpers.caching.vae import VAECache
 from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
-from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.data_backend.local import LocalDataBackend
-from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend
-from simpletuner.helpers.multiaspect.sampler import MultiAspectSampler, _UnseenOccurrenceIndex
+from simpletuner.helpers.multiaspect.sampler import MultiAspectSampler
 from simpletuner.helpers.multiaspect.state import BucketStateManager
 from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
 from simpletuner.helpers.training.state_tracker import StateTracker
 from tests.helpers.data import MockDataBackend
-
-# Captured at import: a TestMultiAspectSampler case replaces MultiAspectSampler.__iter__ on the class.
-_SAMPLER_ITER = MultiAspectSampler.__iter__
 
 
 class SamplerURIPathTests(unittest.TestCase):
@@ -69,22 +61,13 @@ class TestMultiAspectSampler(unittest.TestCase):
         self.metadata_backend.aspect_ratio_bucket_indices = {
             "1.0": ["image1", "image2", "image3", "image4"],
         }
-        self.metadata_backend.seen_images = {}
+        self.metadata_backend.instance_data_dir = "/fake/dir"
         self.data_backend = MockDataBackend()
         self.data_backend.id = "foo"
         self.batch_size = 2
-        self.seen_images_path = "/some/fake/seen_images.json"
         self.state_path = "/some/fake/state.json"
 
-        self.sampler = MultiAspectSampler(
-            dataset_runtime=DatasetRuntime("foo", self.data_backend, self.metadata_backend, {}),
-            accelerator=self.accelerator,
-            batch_size=self.batch_size,
-            minimum_image_size=0,
-            model=MagicMock(),
-        )
-
-        self.sampler.state_manager = Mock(spec=BucketStateManager)
+        self.sampler = self._new_sampler()
         self.sampler.state_manager.load_state.return_value = {}
 
     def test_len(self):
@@ -93,15 +76,13 @@ class TestMultiAspectSampler(unittest.TestCase):
     def test_model_card_video_overview_honors_sample_cap_and_nested_video_config(self):
         sampler = object.__new__(MultiAspectSampler)
         sampler.id = "video-dataset"
-        sampler.metadata_backend = SimpleNamespace(seen_images={str(i): True for i in range(1000)})
-        sampler._get_unseen_images = MagicMock(return_value=[None] * 3997)
+        sampler.metadata_backend = SimpleNamespace()
         sampler.metadata_backend.aspect_ratio_bucket_indices = {"1.0": [None] * 600}
         sampler.metadata_backend.max_num_samples = 4096
         sampler.metadata_backend.bucket_report = None
         sampler.accelerator = SimpleNamespace(num_processes=8, process_index=0)
         sampler.logger = MagicMock()
         sampler.sample_type_strs = "videos"
-        sampler.buckets = ["0.75", "1.0", "1.25", "1.5", "1.75"]
         sampler.is_regularisation_data = False
         sampler.conditioning_type = None
 
@@ -128,13 +109,10 @@ class TestMultiAspectSampler(unittest.TestCase):
             aspect_ratio_bucket_indices={"1.0": [None] * 65536},
             bucket_report=None,
             max_num_samples=None,
-            seen_images={str(i): True for i in range(5740)},
         )
-        sampler._get_unseen_images = MagicMock(return_value=[None] * 65536)
         sampler.accelerator = SimpleNamespace(num_processes=4, process_index=0)
         sampler.logger = MagicMock()
         sampler.sample_type_strs = "videos"
-        sampler.buckets = ["1.0"]
         sampler.is_regularisation_data = False
         sampler.conditioning_type = None
 
@@ -156,13 +134,10 @@ class TestMultiAspectSampler(unittest.TestCase):
             aspect_ratio_bucket_indices={"1.0": [None] * 8192},
             bucket_report=None,
             max_num_samples=None,
-            seen_images={str(i): True for i in range(250)},
         )
-        sampler._get_unseen_images = MagicMock(return_value=[None] * 7942)
         sampler.accelerator = SimpleNamespace(num_processes=8, process_index=0)
         sampler.logger = MagicMock()
         sampler.sample_type_strs = "videos"
-        sampler.buckets = ["1.0"]
         sampler.is_regularisation_data = False
         sampler.conditioning_type = None
 
@@ -183,13 +158,10 @@ class TestMultiAspectSampler(unittest.TestCase):
             aspect_ratio_bucket_indices={"1.0": [None] * 16},
             bucket_report=SimpleNamespace(bucket_summaries={"post_refresh": {"total_samples": 123}}),
             max_num_samples=None,
-            seen_images={str(i): True for i in range(7)},
         )
-        sampler._get_unseen_images = MagicMock(return_value=[None] * 16)
         sampler.accelerator = SimpleNamespace(num_processes=8, process_index=0)
         sampler.logger = MagicMock()
         sampler.sample_type_strs = "images"
-        sampler.buckets = ["1.0"]
         sampler.is_regularisation_data = False
         sampler.conditioning_type = None
         sampler.resolution = 512
@@ -209,40 +181,6 @@ class TestMultiAspectSampler(unittest.TestCase):
         with patch.object(self.sampler.state_manager, "save_state") as mock_save_state:
             self.sampler.save_state(self.state_path)
         mock_save_state.assert_called_once()
-
-    def test_load_buckets(self):
-        buckets = self.sampler.load_buckets()
-        self.assertEqual(buckets, ["1.0"])
-
-    def test_padded_occurrences_are_consumed_individually(self):
-        """A repeated filepath represents multiple scheduled samples, not one boolean item."""
-        metadata_backend = object.__new__(DiscoveryMetadataBackend)
-        metadata_backend.instance_data_dir = ""
-        metadata_backend.aspect_ratio_bucket_indices = {"1.0": ["same.jpg", "same.jpg"]}
-        metadata_backend.seen_images = {}
-
-        sampler = object.__new__(MultiAspectSampler)
-        sampler.metadata_backend = metadata_backend
-        sampler.logger = MagicMock()
-        sampler.debug_log = MagicMock()
-
-        self.assertEqual(sampler._get_unseen_images("1.0"), ["same.jpg", "same.jpg"])
-        metadata_backend.mark_as_seen("same.jpg")
-        self.assertEqual(sampler._get_unseen_images("1.0"), ["same.jpg"])
-
-        # Old checkpoints stored booleans. True means the filepath was
-        # exhausted, including every scheduled duplicate.
-        metadata_backend.seen_images = {"same.jpg": True}
-        self.assertEqual(sampler._get_unseen_images("1.0"), [])
-
-        metadata_backend.seen_images = {}
-        metadata_backend.mark_batch_as_seen(["same.jpg", "same.jpg"])
-        self.assertEqual(metadata_backend.seen_occurrence_count("same.jpg"), 2)
-        self.assertEqual(sampler._get_unseen_images("1.0"), [])
-
-        metadata_backend.seen_images = {"same.jpg": "corrupt"}
-        with self.assertRaisesRegex(TypeError, "Invalid seen occurrence count"):
-            metadata_backend.seen_occurrence_count("same.jpg")
 
     def test_i2v_first_frame_conditioning_sample_maps_video_to_png(self):
         sampler = object.__new__(MultiAspectSampler)
@@ -370,168 +308,149 @@ class TestMultiAspectSampler(unittest.TestCase):
                             self.assertEqual(mask.conditioning_type, "mask")
                         self.sampler.logger.warning.assert_not_called()
 
-    def test_load_states_with_matching_batch_size_restores_schedule_before_normalizing_legacy_seen_flags(self):
-        self.sampler.state_manager.load_state.return_value = {
-            "aspect_ratio_bucket_indices": {"1.0": ["same.jpg", "same.jpg", "other.jpg"]},
-            "buckets": ["1.0"],
-            "batch_size": self.batch_size,
-            "current_bucket": 0,
-            "exhausted_buckets": ["old"],
-            "seen_images": {"same.jpg": True, "other.jpg": False, "legacy.jpg": True},
-            "dp_size": 1,
-            "dp_rank": 0,
+    def _iterate(self, sampler, count):
+        """Take batches one iterator at a time, as the dataloader does."""
+        args = SimpleNamespace(model_family="sdxl", print_sampler_statistics=False, i_know_what_i_am_doing=False)
+        self.metadata_backend.get_metadata_by_filepath.return_value = {
+            "crop_coordinates": (0, 0),
+            "target_size": (512, 512),
         }
+        batches = []
+        with (
+            patch.object(StateTracker, "get_args", return_value=args),
+            patch.object(StateTracker, "get_conditioning_datasets", return_value=[]),
+            patch.object(StateTracker, "get_s2v_datasets", return_value=[]),
+            patch.object(DatasetRuntime, "resolve_caption", return_value="a caption"),
+        ):
+            for _ in range(count):
+                batches.append([record["image_path"] for record in next(iter(sampler))])
+        return batches
 
-        self.metadata_backend.aspect_ratio_bucket_indices = {"1.0": ["stale.jpg"]}
-        self.metadata_backend.seen_images = {}
+    def _new_sampler(self, batch_size=None):
+        # An unseeded run: each sampler draws its own shuffle seed.
+        with patch.object(StateTracker, "get_args", return_value=SimpleNamespace(seed=None)):
+            sampler = MultiAspectSampler(
+                dataset_runtime=DatasetRuntime("foo", self.data_backend, self.metadata_backend, {}),
+                accelerator=self.accelerator,
+                batch_size=batch_size or self.batch_size,
+                minimum_image_size=0,
+                model=MagicMock(),
+            )
+        sampler.state_manager = Mock(spec=BucketStateManager)
+        return sampler
+
+    def test_iter_yields_every_sample_once_per_epoch(self):
+        images = [f"/fake/dir/image{index}" for index in range(1, 5)]
+        first_epoch = self._iterate(self.sampler, 2)
+        self.assertEqual([len(batch) for batch in first_epoch], [2, 2])
+        self.assertEqual(sorted(path for batch in first_epoch for path in batch), images)
+        self.assertEqual(self.sampler.current_epoch, 1)
+        with self.assertRaises(MultiDatasetExhausted):
+            self._iterate(self.sampler, 1)
+        self.assertEqual(self.sampler.current_epoch, 2)
+        second_epoch = self._iterate(self.sampler, 2)
+        self.assertEqual(sorted(path for batch in second_epoch for path in batch), images)
+
+    def test_iter_repeats_are_part_of_the_epoch(self):
+        with patch.object(StateTracker, "get_data_backend_config", return_value={"repeats": 2}):
+            self.assertEqual(len(self.sampler), 6)
+            batches = self._iterate(self.sampler, 6)
+            with self.assertRaises(MultiDatasetExhausted):
+                self._iterate(self.sampler, 1)
+        counts = {}
+        for path in (path for batch in batches for path in batch):
+            counts[path] = counts.get(path, 0) + 1
+        self.assertEqual(set(counts.values()), {3})
+
+    def test_iter_reports_an_empty_dataset(self):
+        self.metadata_backend.aspect_ratio_bucket_indices = {}
+        self.metadata_backend.bucket_report = None
+        self.metadata_backend.empty_dataset_report = "nothing matched the filters"
+        with self.assertRaisesRegex(Exception, "nothing matched the filters"):
+            self._iterate(self._new_sampler(), 1)
+
+    def test_drop_unfinished_epoch_only_moves_a_started_epoch(self):
+        self.sampler.drop_unfinished_epoch()
+        self.assertEqual(self.sampler.current_epoch, 1)
+        self._iterate(self.sampler, 1)
+        self.sampler.drop_unfinished_epoch()
+        self.assertEqual(self.sampler.current_epoch, 2)
+        self.assertEqual(len(self._iterate(self.sampler, 2)), 2)
+
+    def test_rebuild_cursor_reads_the_new_bucket_lists_and_keeps_the_epoch(self):
+        self.sampler.finish_epoch()
+        self.metadata_backend.aspect_ratio_bucket_indices = {"1.5": ["wide1", "wide2"]}
+        self.sampler.rebuild_cursor()
+        self.assertEqual(self.sampler.current_epoch, 2)
+        self.assertEqual(sorted(self._iterate(self.sampler, 1)[0]), ["/fake/dir/wide1", "/fake/dir/wide2"])
+
+    def _saved_state(self, consumed_batches=1):
+        self._iterate(self.sampler, consumed_batches)
+        self.sampler.save_state(self.state_path)
+        (state, path), _ = self.sampler.state_manager.save_state.call_args
+        self.assertEqual(path, self.state_path)
+        return json.loads(json.dumps(state)), self._iterate(self.sampler, 2 - consumed_batches)
+
+    def test_load_states_continues_the_saved_epoch(self):
+        state, remaining = self._saved_state()
+        resumed = self._new_sampler()
+        resumed.state_manager.load_state.return_value = state
+        resumed.load_states(self.state_path)
+        self.assertEqual(self._iterate(resumed, 1), remaining)
+        with self.assertRaises(MultiDatasetExhausted):
+            self._iterate(resumed, 1)
+
+    def test_load_states_without_a_saved_state_starts_a_new_epoch(self):
         self.sampler.load_states(self.state_path)
+        self.assertEqual(len(self._iterate(self.sampler, 2)), 2)
 
-        self.assertEqual(
-            self.metadata_backend.aspect_ratio_bucket_indices,
-            {"1.0": ["same.jpg", "same.jpg", "other.jpg"]},
-        )
-        self.assertEqual(self.sampler.buckets, ["1.0"])
-        self.assertEqual(self.sampler.current_bucket, 0)
-        self.assertEqual(self.sampler.exhausted_buckets, ["old"])
-        self.assertEqual(self.metadata_backend.seen_images["same.jpg"], 2)
-        self.assertEqual(self.metadata_backend.seen_images["other.jpg"], 0)
-        self.assertTrue(self.metadata_backend.seen_images["legacy.jpg"])
-
-    def test_load_states_rejects_batch_size_mismatch_before_mutation(self):
+    def test_load_states_refuses_a_state_from_an_older_release(self):
         self.sampler.state_manager.load_state.return_value = {
-            "aspect_ratio_bucket_indices": {"saved": ["saved.jpg"]},
-            "buckets": ["saved"],
-            "batch_size": 3,
-            "current_bucket": "saved",
-            "exhausted_buckets": ["saved-exhausted"],
-            "seen_images": {"saved.jpg": 1},
-            "current_epoch": 9,
-            "dp_size": 1,
-            "dp_rank": 0,
+            "aspect_ratio_bucket_indices": {"1.0": ["image1"]},
+            "seen_images": {"image1": 1},
+            "batch_size": self.batch_size,
+            "current_epoch": 4,
         }
+        with self.assertRaisesRegex(ValueError, "older release"):
+            self.sampler.load_states(self.state_path)
 
-        self.metadata_backend.aspect_ratio_bucket_indices = {"fresh": ["fresh.jpg"]}
-        self.metadata_backend.seen_images = {"fresh.jpg": 1}
-        self.sampler._val_master_list = ["fresh.jpg"]
-        self.sampler.buckets = ["fresh"]
-        self.sampler.current_bucket = "fresh"
-        self.sampler.exhausted_buckets = ["fresh-exhausted"]
-        self.sampler.current_epoch = 7
-
+    def test_load_states_rejects_batch_size_mismatch(self):
+        state, _ = self._saved_state()
+        resumed = self._new_sampler(batch_size=1)
+        resumed.state_manager.load_state.return_value = state
         with (
             patch.dict(os.environ, {"SIMPLETUNER_ALLOW_MODIFYING_BSZ": ""}),
             patch.object(StateTracker, "get_args", return_value=SimpleNamespace(i_know_what_i_am_doing=False)),
             self.assertRaises(ValueError) as error,
         ):
-            self.sampler.load_states(self.state_path)
-
+            resumed.load_states(self.state_path)
         self.assertEqual(
             str(error.exception),
-            "Dataset 'foo' checkpoint batch_size=3 does not match current batch_size=2. "
+            "Dataset 'foo' checkpoint batch_size=2 does not match current batch_size=1. "
             "Resume with the same per-dataset train_batch_size, "
             "or set --i_know_what_i_am_doing / SIMPLETUNER_ALLOW_MODIFYING_BSZ=1 to bypass.",
         )
-        self.assertEqual(self.metadata_backend.aspect_ratio_bucket_indices, {"fresh": ["fresh.jpg"]})
-        self.assertEqual(self.metadata_backend.seen_images, {"fresh.jpg": 1})
-        self.assertEqual(self.sampler._val_master_list, ["fresh.jpg"])
-        self.assertEqual(self.sampler.buckets, ["fresh"])
-        self.assertEqual(self.sampler.current_bucket, "fresh")
-        self.assertEqual(self.sampler.exhausted_buckets, ["fresh-exhausted"])
-        self.assertEqual(self.sampler.current_epoch, 7)
+        self.assertEqual(len(self._iterate(resumed, 4)), 4)
+
+    def _assert_batch_size_override_resumes(self, environment, args):
+        state, remaining = self._saved_state()
+        resumed = self._new_sampler(batch_size=1)
+        resumed.state_manager.load_state.return_value = state
+        with patch.dict(os.environ, environment), patch.object(StateTracker, "get_args", return_value=args):
+            resumed.load_states(self.state_path)
+        self.assertEqual(sorted(path for batch in self._iterate(resumed, 2) for path in batch), sorted(remaining[0]))
+        with self.assertRaises(MultiDatasetExhausted):
+            self._iterate(resumed, 1)
 
     def test_load_states_batch_size_mismatch_allowed_via_env_var(self):
-        self.sampler.state_manager.load_state.return_value = {
-            "aspect_ratio_bucket_indices": {"saved": ["saved.jpg"]},
-            "buckets": ["saved"],
-            "batch_size": 3,
-        }
-        self.metadata_backend.aspect_ratio_bucket_indices = {"fresh": ["fresh.jpg"]}
-
-        with patch.dict(os.environ, {"SIMPLETUNER_ALLOW_MODIFYING_BSZ": "1"}):
-            with patch.object(StateTracker, "get_args", return_value=SimpleNamespace(i_know_what_i_am_doing=False)):
-                self.sampler.load_states(self.state_path)
+        self._assert_batch_size_override_resumes(
+            {"SIMPLETUNER_ALLOW_MODIFYING_BSZ": "1"}, SimpleNamespace(i_know_what_i_am_doing=False)
+        )
 
     def test_load_states_batch_size_mismatch_allowed_via_i_know_flag(self):
-        self.sampler.state_manager.load_state.return_value = {
-            "aspect_ratio_bucket_indices": {"saved": ["saved.jpg"]},
-            "buckets": ["saved"],
-            "batch_size": 3,
-        }
-        self.metadata_backend.aspect_ratio_bucket_indices = {"fresh": ["fresh.jpg"]}
-        with patch.object(StateTracker, "get_args", return_value=SimpleNamespace(i_know_what_i_am_doing=True)):
-            self.sampler.load_states(self.state_path)
-
-    def test_load_states_legacy_state_without_batch_size_keeps_fresh_split_when_no_layout(self):
-        # Checkpoints written before the layout was recorded cannot be attributed to a rank, so
-        # the schedule is left alone. Seen state still loads.
-        self.sampler.state_manager.load_state.return_value = {
-            "aspect_ratio_bucket_indices": {"1.0": ["same.jpg", "same.jpg", "other.jpg"]},
-            "seen_images": {"same.jpg": True},
-        }
-
-        self.metadata_backend.aspect_ratio_bucket_indices = {"1.0": ["fresh.jpg"]}
-        self.metadata_backend.seen_images = {}
-        self.sampler.load_states(self.state_path)
-
-        self.assertEqual(self.metadata_backend.aspect_ratio_bucket_indices, {"1.0": ["fresh.jpg"]})
-        self.assertTrue(self.metadata_backend.seen_images["same.jpg"])
-
-    def test_change_bucket(self):
-        self.sampler.buckets = ["1.5"]
-        self.sampler.exhausted_buckets = ["1.0"]
-        self.sampler.change_bucket()
-        self.assertEqual(self.sampler.current_bucket, 0)  # Should now point to '1.5'
-
-    def test_move_to_exhausted(self):
-        self.sampler.current_bucket = 0  # Pointing to '1.0'
-        self.sampler.buckets = ["1.0"]
-        self.sampler.change_bucket()
-        self.sampler.move_to_exhausted()
-        self.assertEqual(self.sampler.exhausted_buckets, ["1.0"])
-        self.assertEqual(self.sampler.buckets, [])
-
-    def test_iter_yields_correct_batches(self):
-        # Test basic iteration functionality by mocking the __iter__ method entirely
-        # This avoids the complex internal state management and focuses on the interface
-
-        test_batches = [
-            [
-                {"image_path": "/fake/dir/image1", "target_size": (512, 512)},
-                {"image_path": "/fake/dir/image2", "target_size": (512, 512)},
-            ],
-            [
-                {"image_path": "/fake/dir/image3", "target_size": (512, 512)},
-                {"image_path": "/fake/dir/image4", "target_size": (512, 512)},
-            ],
-        ]
-
-        # Mock the iterator to return our test batches
-        def mock_iter():
-            for batch in test_batches:
-                yield tuple(batch)
-
-        # Completely replace the iterator method
-        iterator_patch = patch.object(type(self.sampler), "__iter__", lambda self: mock_iter())
-        iterator_patch.start()
-        self.addCleanup(iterator_patch.stop)
-
-        # Test that we can iterate and get the expected batches
-        collected_batches = []
-        for batch in self.sampler:
-            collected_batches.append(batch)
-            # Break after a reasonable number to prevent infinite loops
-            if len(collected_batches) >= len(test_batches):
-                break
-
-        # Verify we got the expected number of batches
-        self.assertEqual(len(collected_batches), len(test_batches))
-
-        # Verify batch structure
-        for batch in collected_batches:
-            self.assertIsInstance(batch, tuple)
-            for item in batch:
-                self.assertIn("image_path", item)
-                self.assertIn("target_size", item)
+        self._assert_batch_size_override_resumes(
+            {"SIMPLETUNER_ALLOW_MODIFYING_BSZ": ""}, SimpleNamespace(i_know_what_i_am_doing=True)
+        )
 
     def test_iter_handles_small_images(self):
         # Test that the validation method properly filters out small images
@@ -589,315 +508,6 @@ class TestMultiAspectSampler(unittest.TestCase):
         self.assertIn("/fake/dir/image1.jpg", result_paths)
         self.assertIn("/fake/dir/image2.jpg", result_paths)
         self.assertIn("/fake/dir/image4.jpg", result_paths)
-
-
-class TestSamplerResumeSchedule(unittest.TestCase):
-    """A checkpointed schedule is one rank's shard; restoring it must keep the ranks partitioned."""
-
-    @staticmethod
-    def _split(world_size, rank, shuffle_seed, images):
-        backend = MagicMock(spec=MetadataBackend)
-        backend.id = "resume"
-        backend.batch_size = 1
-        backend.repeats = 0
-        backend.bucket_report = None
-        backend.dataset_type = DatasetType.IMAGE
-        backend.aspect_ratio_bucket_indices = {"1.0": list(images)}
-        backend.read_only = False
-        backend.seen_images = {}
-        backend.accelerator = SimpleNamespace(
-            num_processes=world_size,
-            process_index=rank,
-            is_main_process=rank == 0,
-        )
-        with (
-            patch.object(
-                StateTracker,
-                "get_args",
-                return_value=SimpleNamespace(allow_dataset_oversubscription=False, seed=shuffle_seed),
-            ),
-            patch.object(StateTracker, "get_data_backend_config", return_value={}),
-            patch(
-                "simpletuner.helpers.metadata.backends.base.broadcast_object_from_main",
-                side_effect=lambda value: shuffle_seed,
-            ),
-        ):
-            MetadataBackend.split_buckets_between_processes(
-                backend,
-                gradient_accumulation_steps=1,
-                apply_padding=False,
-            )
-        return backend
-
-    @staticmethod
-    def _sampler(backend):
-        sampler = object.__new__(MultiAspectSampler)
-        sampler.id = backend.id
-        sampler.metadata_backend = backend
-        sampler.accelerator = backend.accelerator
-        sampler.batch_size = 1
-        sampler.buckets = list(backend.aspect_ratio_bucket_indices)
-        sampler.exhausted_buckets = []
-        sampler.current_bucket = None
-        sampler.current_epoch = 1
-        sampler.sample_type_strs = "images"
-        sampler.logger = MagicMock()
-        sampler._val_master_list = []
-        sampler.state_manager = BucketStateManager(backend.id)
-        return sampler
-
-    @staticmethod
-    def _state_path(directory, rank):
-        filename = "training_state.json" if rank == 0 else f"training_state-rank{rank}.json"
-        return os.path.join(directory, filename)
-
-    def test_resume_normalizes_numeric_bucket_names_and_preserves_remaining_occurrences(self):
-        backend = DiscoveryMetadataBackend.__new__(DiscoveryMetadataBackend)
-        backend.id = "resume"
-        backend.instance_data_dir = ""
-        backend.accelerator = SimpleNamespace(num_processes=1, process_index=0)
-        backend.aspect_ratio_bucket_indices = {"1.0": ["fresh.jpg"]}
-        backend.seen_images = {}
-        sampler = self._sampler(backend)
-        sampler.rank_info = "[RANK 0]"
-        saved_schedule = {
-            "1.0": ["repeat.jpg", "repeat.jpg", "other.jpg"],
-            "1.5": ["wide.jpg"],
-            "1920x1080@125": ["video.mp4"],
-        }
-        with tempfile.TemporaryDirectory() as checkpoint_dir:
-            state_path = self._state_path(checkpoint_dir, 0)
-            sampler.state_manager.save_state(
-                {
-                    "aspect_ratio_bucket_indices": saved_schedule,
-                    "buckets": [1.0, "1920x1080@125"],
-                    "exhausted_buckets": [1.5],
-                    "current_bucket": 0,
-                    "batch_size": 1,
-                    "seen_images": {"repeat.jpg": 1, "wide.jpg": 1},
-                    "dp_size": 1,
-                    "dp_rank": 0,
-                },
-                state_path,
-            )
-            sampler.load_states(state_path)
-            self.assertEqual(sampler.buckets, ["1.0", "1920x1080@125"])
-            self.assertEqual(sampler.exhausted_buckets, ["1.5"])
-            self.assertEqual(sampler.current_bucket, 0)
-            self.assertEqual(backend.aspect_ratio_bucket_indices, saved_schedule)
-            self.assertEqual(sampler._get_unseen_images("1.0"), ["repeat.jpg", "other.jpg"])
-            backend.mark_batch_as_seen(["repeat.jpg", "other.jpg"])
-            self.assertEqual(sampler._get_unseen_images("1.0"), [])
-
-            sampler.save_state(state_path)
-            sampler.load_states(state_path)
-            self.assertEqual(backend.aspect_ratio_bucket_indices, saved_schedule)
-            self.assertEqual(sampler._get_unseen_images("1.0"), [])
-            self.assertEqual(sampler._get_unseen_images("1920x1080@125"), ["video.mp4"])
-        sampler.logger.warning.assert_not_called()
-
-    def _resume_shards(self, *, images, save_world_size, saving_ranks, resume_world_size):
-        with tempfile.TemporaryDirectory() as checkpoint_dir:
-            for rank in range(save_world_size):
-                backend = self._split(save_world_size, rank, shuffle_seed=1, images=images)
-                if rank in saving_ranks:
-                    self._sampler(backend).save_state(self._state_path(checkpoint_dir, rank))
-
-            shards = []
-            for rank in range(resume_world_size):
-                # A relaunch without --seed draws a new shuffle seed, so the fresh split differs
-                # from the one the checkpoint was written against.
-                backend = self._split(resume_world_size, rank, shuffle_seed=2, images=images)
-                self._sampler(backend).load_states(self._state_path(checkpoint_dir, rank))
-                shards.append(list(backend.aspect_ratio_bucket_indices["1.0"]))
-            return shards
-
-    def _assert_partitions(self, shards, images):
-        scheduled = [path for shard in shards for path in shard]
-        self.assertEqual(
-            sorted(scheduled),
-            sorted(images),
-            msg=f"ranks no longer partition the dataset: {shards}",
-        )
-
-    def test_resume_after_a_rank_zero_only_save_keeps_the_ranks_partitioned(self):
-        images = [f"image-{index:02d}.jpg" for index in range(12)]
-        shards = self._resume_shards(images=images, save_world_size=4, saving_ranks={0}, resume_world_size=4)
-        self._assert_partitions(shards, images)
-
-    def test_resume_when_every_rank_saved_keeps_the_ranks_partitioned(self):
-        # Control: a complete checkpoint is restorable and stays a partition.
-        images = [f"image-{index:02d}.jpg" for index in range(12)]
-        shards = self._resume_shards(images=images, save_world_size=4, saving_ranks=set(range(4)), resume_world_size=4)
-        self._assert_partitions(shards, images)
-
-    def test_resume_when_no_rank_saved_keeps_the_ranks_partitioned(self):
-        # Control: with nothing to restore the fresh split is already a partition. Together with
-        # the previous control this isolates the mixed state as the cause.
-        images = [f"image-{index:02d}.jpg" for index in range(12)]
-        shards = self._resume_shards(images=images, save_world_size=4, saving_ranks=set(), resume_world_size=4)
-        self._assert_partitions(shards, images)
-
-    def test_resume_when_rank_zero_alone_did_not_save_keeps_the_ranks_partitioned(self):
-        # The completeness check has to cover rank 0 as well: its state file is the one that is
-        # named differently, so scanning only the -rank{N} siblings would miss it.
-        images = [f"image-{index:02d}.jpg" for index in range(12)]
-        shards = self._resume_shards(images=images, save_world_size=4, saving_ranks={1, 2, 3}, resume_world_size=4)
-        self._assert_partitions(shards, images)
-
-    def test_resume_onto_a_smaller_world_size_keeps_the_ranks_partitioned(self):
-        images = [f"image-{index:02d}.jpg" for index in range(16)]
-        shards = self._resume_shards(images=images, save_world_size=8, saving_ranks={0}, resume_world_size=4)
-        self._assert_partitions(shards, images)
-
-    def test_resume_onto_a_larger_world_size_keeps_the_ranks_partitioned(self):
-        images = [f"image-{index:02d}.jpg" for index in range(16)]
-        shards = self._resume_shards(images=images, save_world_size=4, saving_ranks=set(range(4)), resume_world_size=8)
-        self._assert_partitions(shards, images)
-
-
-class TestIterationUnseenIndex(unittest.TestCase):
-    """The iterator's unseen index must yield exactly what recomputing `_get_unseen_images` yields."""
-
-    # Bucket sizes are batch multiples, so every scheduled occurrence (including the padded
-    # duplicates in "1.0" and "2.0") is consumed within an epoch.
-    FULL_BUCKETS = {
-        "0.5": [f"/d/s{i}.jpg" for i in range(8)],
-        "1.0": [f"/d/a{i}.jpg" for i in range(45)] + ["/d/a3.jpg", "/d/a44.jpg", "/d/a44.jpg"],
-        "1.5": [f"/d/b{i}.jpg" for i in range(24)],
-        "2.0": [f"/d/c{i}.jpg" for i in range(7)] + ["/d/c6.jpg"],
-    }
-    # A bucket smaller than the batch drives the partial-fill path, which re-marks already consumed
-    # filepaths; legacy boolean flags exercise the filter's boolean semantics when an index is built.
-    PARTIAL_BUCKETS = {
-        "0.5": ["/d/s0.jpg", "/d/s1.jpg", "/d/s2.jpg"],
-        "1.0": [f"/d/a{i}.jpg" for i in range(47)] + ["/d/a3.jpg", "/d/a46.jpg", "/d/a46.jpg"],
-        "1.5": [f"/d/b{i}.jpg" for i in range(23)],
-        "2.0": [f"/d/c{i}.jpg" for i in range(8)] + ["/d/c7.jpg"],
-    }
-    PARTIAL_SEEN = {"/d/a5.jpg": 1, "/d/s1.jpg": True, "/d/c2.jpg": False, "/d/outside.jpg": True}
-
-    def setUp(self):
-        PartialState()
-        self.get_args = patch.object(StateTracker, "get_args", return_value=SimpleNamespace(print_sampler_statistics=False))
-        self.get_args.start()
-
-    def tearDown(self):
-        self.get_args.stop()
-
-    def _sampler(self, buckets, seen, use_index):
-        metadata_backend = object.__new__(DiscoveryMetadataBackend)
-        metadata_backend.id = "unseen"
-        metadata_backend.instance_data_dir = ""
-        metadata_backend.aspect_ratio_bucket_indices = copy.deepcopy(buckets)
-        metadata_backend.seen_images = dict(seen)
-        metadata_backend.read_only = True
-        metadata_backend.filtering_statistics = None
-        metadata_backend.bucket_report = None
-        data_backend = MockDataBackend()
-        data_backend.id = "unseen"
-        sampler = MultiAspectSampler(
-            dataset_runtime=DatasetRuntime("unseen", data_backend, metadata_backend, {}),
-            accelerator=MagicMock(num_processes=1, process_index=0),
-            batch_size=4,
-            minimum_image_size=0,
-            model=MagicMock(),
-        )
-        sampler._validate_and_yield_images_from_samples = lambda samples, bucket: [{"image_path": p} for p in samples]
-        sampler.connect_conditioning_samples = lambda samples: samples
-        sampler.connect_s2v_samples = lambda samples: samples
-        stored = {}
-        sampler.state_manager = SimpleNamespace(
-            save_state=lambda state, path: stored.update(state=json.loads(json.dumps(state))),
-            load_state=lambda path: copy.deepcopy(stored["state"]),
-        )
-        if not use_index:
-            sampler._iteration_unseen_images = sampler._get_unseen_images
-        return sampler
-
-    def _run(self, sampler, epochs, restore_schedule, per_step):
-        """Drain `epochs` epochs, disturbing the schedule and seen state the way training can.
-
-        `per_step` takes one batch from a fresh iterator each step, as `random_dataloader_iterator` does.
-        """
-        random.seed(1234)
-        yielded = []
-        epoch = 0
-        iterator = _SAMPLER_ITER(sampler)
-        while epoch < epochs:
-            if per_step:
-                iterator = _SAMPLER_ITER(sampler)
-            try:
-                batch = next(iterator)
-            except MultiDatasetExhausted:
-                epoch += 1
-                yielded.append("epoch")
-                iterator = _SAMPLER_ITER(sampler)
-                continue
-            yielded.append([item["image_path"] for item in batch])
-            step = len(yielded)
-            self.assertLess(step, 1000, "the schedule never reached the requested epoch count")
-            backend = sampler.metadata_backend
-            if step == 28:
-                # A problematic sample dropped from a split shard is refilled in place to the same length.
-                vae_cache = object.__new__(VAECache)
-                vae_cache.id = "unseen"
-                vae_cache.metadata_backend = backend
-                vae_cache._handle_metadata_filtered_sample(filepath="/d/a3.jpg", reason="problematic")
-            elif step == 30:
-                backend.remove_image("/d/b20.jpg", "1.5")
-            elif step == 45:
-                # A re-split hands the rank new bucket lists in a new order.
-                backend.aspect_ratio_bucket_indices = {
-                    key: list(reversed(images)) for key, images in backend.aspect_ratio_bucket_indices.items()
-                }
-            elif step == 50:
-                sampler.save_state("/unused/state.json")
-            elif step == 60:
-                # Resume from the step-50 checkpoint: seen counts rewind under an existing index.
-                if not restore_schedule:
-                    # An unrestorable schedule keeps the bucket lists and replaces only the seen counts.
-                    sampler.state_manager.load_state = lambda path, state=sampler.state_manager.load_state: {
-                        key: value for key, value in state(path).items() if key != "aspect_ratio_bucket_indices"
-                    }
-                sampler.load_states("/unused/state.json")
-                iterator = _SAMPLER_ITER(sampler)
-        return yielded
-
-    def _assert_same_schedule(self, buckets, seen, epochs, restore_schedule, per_step=False):
-        reference = self._run(self._sampler(buckets, seen, use_index=False), epochs, restore_schedule, per_step)
-        sampler = self._sampler(buckets, seen, use_index=True)
-        with patch.object(sampler, "_unseen_occurrence_positions", wraps=sampler._unseen_occurrence_positions) as scans:
-            indexed = self._run(sampler, epochs, restore_schedule, per_step)
-        self.assertEqual(indexed, reference)
-        return reference, scans.call_count
-
-    def test_iterator_yields_the_recomputed_schedule(self):
-        reference, scans = self._assert_same_schedule(self.FULL_BUCKETS, {}, epochs=4, restore_schedule=False)
-        # One scan per bucket per epoch plus the filter, removal, re-split and resume rebuilds, not one per batch.
-        batches = sum(1 for entry in reference if entry != "epoch")
-        self.assertLessEqual(scans, len(self.FULL_BUCKETS) * (4 + 3))
-        self.assertGreater(batches, 2 * len(self.FULL_BUCKETS) * (4 + 3))
-        first_epoch = [path for entry in reference[: reference.index("epoch")] for path in entry]
-        self.assertEqual(sorted(first_epoch), sorted(path for images in self.FULL_BUCKETS.values() for path in images))
-
-    def test_one_batch_per_iterator_yields_the_recomputed_schedule(self):
-        for buckets, seen in ((self.FULL_BUCKETS, {}), (self.PARTIAL_BUCKETS, self.PARTIAL_SEEN)):
-            with self.subTest(buckets=len(buckets[next(iter(buckets))])):
-                reference, _ = self._assert_same_schedule(buckets, seen, epochs=4, restore_schedule=False, per_step=True)
-                self.assertGreater(sum(1 for entry in reference if entry != "epoch"), 60)
-
-    def test_iterator_yields_the_recomputed_schedule_through_partial_batches(self):
-        self._assert_same_schedule(self.PARTIAL_BUCKETS, self.PARTIAL_SEEN, epochs=12, restore_schedule=True)
-
-    def test_marking_retires_the_earliest_unseen_duplicate(self):
-        source = ["a", "b", "a"]
-        index = _UnseenOccurrenceIndex(source, {}, [0, 1, 2], list(source))
-        index.consume("a")
-        self.assertEqual((index.positions, index.sample_paths), ([1, 2], ["b", "a"]))
-        index.consume("a")
-        index.consume("a")
-        self.assertEqual((index.positions, index.sample_paths), ([1], ["b"]))
 
 
 if __name__ == "__main__":

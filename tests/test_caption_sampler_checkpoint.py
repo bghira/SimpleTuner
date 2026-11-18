@@ -27,7 +27,6 @@ class CaptionSamplerCheckpointTests(unittest.TestCase):
             ("args", self.args),
             ("data_backends", {}),
             ("exhausted_backends", []),
-            ("repeats", {}),
             ("epoch", 1),
             ("global_step", 0),
         ]:

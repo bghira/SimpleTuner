@@ -21,17 +21,6 @@ class BucketStateManager:
         filename, ext = os.path.splitext(state_path)
         return f"{filename}-{self.id}{ext}"
 
-    def load_seen_images(self, state_path: str):
-        if os.path.exists(state_path):
-            with open(state_path, "r") as f:
-                return json.load(f)
-        else:
-            return {}
-
-    def save_seen_images(self, seen_images, state_path: str):
-        with open(state_path, "w") as f:
-            json.dump(seen_images, f)
-
     def deep_convert_dict(self, d):
         if isinstance(d, dict):
             return {key: self.deep_convert_dict(value) for key, value in d.items()}

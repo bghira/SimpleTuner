@@ -14,7 +14,6 @@ from torch.utils.data import Sampler
 from simpletuner.helpers.metadata.backends.caption import CaptionMetadataBackend
 from simpletuner.helpers.multiaspect.state import BucketStateManager
 from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
-from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +50,11 @@ class CaptionSampler(Sampler):
             self.epoch = int(epoch)
             self._cursor = 0
             self._epoch_entries = None
+
+    def drop_unfinished_epoch(self) -> None:
+        """Start the next epoch if this one was left part-way, as when another rank ended it."""
+        if self._cursor > 0:
+            self.set_epoch(self.epoch + 1)
 
     def _checkpoint_layout(self) -> dict:
         records = [
@@ -123,7 +127,6 @@ class CaptionSampler(Sampler):
         epoch_entries = self._epoch_entries
         if self._cursor >= len(epoch_entries):
             self.set_epoch(self.epoch + 1)
-            StateTracker.set_repeats(data_backend_id=self.id, repeats=self.repeats)
             raise MultiDatasetExhausted()
         while self._cursor < len(epoch_entries):
             start = self._cursor

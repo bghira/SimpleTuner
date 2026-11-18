@@ -174,10 +174,7 @@ def reset_eval_datasets():
     for dataset_name, dataset in eval_datasets.items():
         if "train_dataset" not in dataset:
             logger.debug(f"Skipping eval set {dataset_name} because it lacks a dataloader.")
-        try:
-            dataset["sampler"]._reset_buckets(raise_exhaustion_signal=False)
-        except MultiDatasetExhausted as e:
-            pass
+        dataset["sampler"].finish_epoch()
 
 
 def retrieve_eval_images(dataset_name=None):
@@ -219,8 +216,7 @@ def retrieve_eval_images(dataset_name=None):
                 break
 
             except MultiDatasetExhausted as e:
-                logger.debug(f"Ran out of evaluation samples for dataset {ds_name}. Resetting buckets.")
-                dataset["sampler"]._reset_buckets(raise_exhaustion_signal=False)
+                logger.debug(f"Ran out of evaluation samples for dataset {ds_name}.")
                 # We re-raise if we've exhausted this dataset. If `dataset_name` is set,
                 # we effectively stop; if it's None, we move to the next dataset.
                 if dataset_name is not None:

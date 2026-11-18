@@ -328,19 +328,9 @@ def random_dataloader_iterator(
             data_iterator = iter(backend)
             return next(data_iterator)
         except MultiDatasetExhausted:
-            repeats = StateTracker.get_data_backend_config(chosen_backend_id).get("repeats", False)
-            if repeats and repeats > 0 and StateTracker.get_repeats(chosen_backend_id) < repeats:
-                StateTracker.increment_repeats(chosen_backend_id)
-                logger.debug(
-                    f"Dataset (name={chosen_backend_id}) is now sampling its {StateTracker.get_repeats(chosen_backend_id)} repeat out of {repeats} total allowed."
-                )
-                continue
-            logger.debug(
-                f"Dataset (name={chosen_backend_id}) is now exhausted after {StateTracker.get_repeats(chosen_backend_id)} repeat(s). Removing from list."
-            )
+            logger.debug(f"Dataset (name={chosen_backend_id}) is now exhausted. Removing from list.")
             del backends[chosen_backend_id]
             StateTracker.backend_exhausted(chosen_backend_id)
-            StateTracker.set_repeats(data_backend_id=chosen_backend_id, repeats=0)
             if sampler:
                 sampler.remove_backend(chosen_backend_id)
         finally:

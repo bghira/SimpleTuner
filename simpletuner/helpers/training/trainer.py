@@ -6045,6 +6045,9 @@ class Trainer:
 
         if self.state["first_epoch"] == epoch:
             return
+        for backend in StateTracker.get_data_backends().values():
+            if "sampler" in backend:
+                backend["sampler"].drop_unfinished_epoch()
         logger.debug(
             f"Just completed epoch {self.state['current_epoch'] - 1}. Beginning epoch {epoch}. Starting epoch was {self.state['first_epoch']}. Final epoch will be {self.config.num_train_epochs}"
         )
@@ -6089,6 +6092,8 @@ class Trainer:
                         f"Enable --allow_dataset_oversubscription so short buckets are padded across"
                         f" ranks, use fewer GPUs, or add more samples to the dataset."
                     )
+                if "sampler" in backend:
+                    backend["sampler"].rebuild_cursor()
                 # we have to rebuild the VAE cache if it exists.
                 if "vaecache" in backend:
                     logger.info("Rebuilding VAE cache..")
@@ -6986,6 +6991,12 @@ class Trainer:
                     f"Training run is complete ({self.config.num_train_epochs}/{self.config.num_train_epochs} epochs, {self.state['global_step']}/{self.config.max_train_steps} steps)."
                 )
                 break
+            # The previous epoch's prefetch thread must be gone before the samplers move on.
+            if self.bf is not None:
+                self.bf.stop_fetching()
+            if fetch_thread is not None:
+                fetch_thread.join()
+                fetch_thread = None
             self._epoch_rollover(epoch)
             self.model.get_trained_component(unwrap_model=False).train()
             training_models = [self.model.get_trained_component(unwrap_model=False)]
@@ -7038,8 +7049,6 @@ class Trainer:
                         "Set --dataloader_prefetch_device_threshold_mb=0 when context parallelism is enabled."
                     )
                 iterator_args = []
-                if self.bf is not None:
-                    self.bf.stop_fetching()
                 self.bf = BatchFetcher(
                     datasets=train_backends,
                     max_size=self.config.dataloader_prefetch_qlen,
@@ -7047,8 +7056,6 @@ class Trainer:
                     device=self.accelerator.device,
                     device_prefetch_threshold_bytes=int(device_prefetch_threshold_mb * 1024 * 1024),
                 )
-                if fetch_thread is not None:
-                    fetch_thread.join()
                 fetch_thread = self.bf.start_fetching()
                 iterator_fn = self.bf.next_response
 

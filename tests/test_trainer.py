@@ -2392,6 +2392,24 @@ class TestTrainer(unittest.TestCase):
         metadata_backend.split_buckets_between_processes.assert_called_once()
         vaecache.rebuild_cache.assert_called_once()
 
+    def test_epoch_rollover_drops_what_is_left_of_the_previous_epoch(self):
+        # A rank stopped by another rank's epoch end must not carry its unread batches forward.
+        trainer, _metadata_backend, _vaecache, backends = self._rollover_fixture(
+            bucket_contents={"1.0": ["image-0.jpg"]}, usable_batches=1
+        )
+        sampler = backends["train"]["sampler"] = MagicMock()
+
+        with self._rollover_patches(backends):
+            trainer._epoch_rollover(1)
+            sampler.drop_unfinished_epoch.assert_not_called()
+            trainer._epoch_rollover(2)
+
+        sampler.drop_unfinished_epoch.assert_called_once()
+        # The buckets were recomputed for the new epoch, so the sampler has to read them again.
+        self.assertEqual(
+            [name for name, _args, _kwargs in sampler.method_calls], ["drop_unfinished_epoch", "rebuild_cursor"]
+        )
+
     @patch(
         "simpletuner.helpers.training.trainer.Trainer.parse_arguments",
         return_value=Mock(),

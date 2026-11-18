@@ -58,7 +58,6 @@ class StateTracker:
     # A list of backend IDs to exhaust.
     exhausted_backends = []
     # A dict of backend IDs to the number of times they have been repeated.
-    repeats = {}
     # The images we'll use for upscaling at validation time. Stored at startup.
     validation_sample_images = []
     vae = None
@@ -294,10 +293,6 @@ class StateTracker:
         cls.epoch_step = epoch_step
 
     @classmethod
-    def set_repeats(cls, repeats: dict):
-        cls.repeats = repeats
-
-    @classmethod
     def load_training_state(cls, state_path: str):
         try:
             with open(state_path, "r") as f:
@@ -312,7 +307,6 @@ class StateTracker:
         cls.set_epoch_step(training_state.get("epoch_step", 0))
         cls.set_epoch(training_state.get("epoch", 1))
         cls.set_exhausted_backends(training_state.get("exhausted_backends", []))
-        cls.init_repeats(training_state.get("repeats", {}))
         logging.debug(f"Training state loaded: {cls.get_training_state()}")
 
     @classmethod
@@ -322,7 +316,6 @@ class StateTracker:
             "epoch_step": cls.epoch_step,
             "epoch": cls.epoch,
             "exhausted_backends": cls.exhausted_backends,
-            "repeats": cls.repeats,
         }
         logger.debug(f"Saving training state: {training_state}")
         with open(state_path, "w") as f:
@@ -335,7 +328,6 @@ class StateTracker:
             "epoch_step": cls.epoch_step,
             "epoch": cls.epoch,
             "exhausted_backends": cls.exhausted_backends,
-            "repeats": cls.repeats,
         }
 
     @classmethod
@@ -515,32 +507,6 @@ class StateTracker:
             changed = old_successor != best_key or old_disabled is not None
 
         return changed
-
-    @classmethod
-    def set_repeats(cls, repeats: int, data_backend_id: str = None):
-        if data_backend_id is None:
-            # set every entry in repeats to zero
-            for key in cls.repeats.keys():
-                cls.repeats[key] = repeats
-        else:
-            cls.repeats[data_backend_id] = repeats
-
-    @classmethod
-    def init_repeats(cls, repeats: int):
-        cls.repeats = repeats
-
-    @classmethod
-    def get_repeats(cls, data_backend_id: str):
-        if data_backend_id not in cls.repeats:
-            return 0
-        return cls.repeats[data_backend_id]
-
-    @classmethod
-    def increment_repeats(cls, data_backend_id: str):
-        cls.set_repeats(
-            data_backend_id=data_backend_id,
-            repeats=cls.get_repeats(data_backend_id) + 1,
-        )
 
     @classmethod
     def backend_status(cls, data_backend_id: str):
