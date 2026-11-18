@@ -1480,6 +1480,7 @@ Webshart datasets load WebDataset-style tar shards through the `webshart` packag
 - `webshart.cache_dir` stores SimpleTuner metadata plus Webshart metadata and shard caches. `shard_cache_gb` and `parallel_downloads` are passed to Webshart's shard cache; set `shard_cache_gb` to `0` to disable whole-shard caching and retain indexed range reads.
 - `webshart.caption_key` optionally selects caption fields: use `"long_caption"` for one key or `["long_caption", "short_caption"]` to collect multiple keys in order. Keys are literal names, checked in the sample’s JSON metadata, then its indexed metadata, then named entries inside their `captions` dictionaries; the first location containing a key wins. String and list values become caption variants, rather than being joined into one prompt. Missing or empty values are ignored; with `caption_strategy: "webshart"`, samples with no selected captions are skipped, even if they have default captions or a `.txt` sidecar. Omitting the option keeps the default caption lookup. JSON sidecars are read when their contents are absent from the index. Caption and bucket caches are separated by the configured selector. In the WebUI’s Webshart settings, enter one key per line. JSON sidecar reads use the configured Webshart shard cache; caption lookup does not decode or materialize image payloads.
 - `webshart_optimize_captions` (alt spelling `webshart_optimise_captions`; also accepted as `optimize_captions`/`optimise_captions` inside the `webshart` block) probes the caption layout at startup and, when captions live in `.txt`/`.json` sidecar tar members rather than the metadata index, folds them into the local Webshart metadata cache once. Without it, sidecar-caption datasets (for example `laion/conceptual-captions-12m-webdataset`) pay one range read per sample every time captions are enumerated — startup, checkpointing, and model card generation. Datasets whose metadata already embeds captions skip the coalescing automatically.
+- `webshart.shuffle_window` reads the dataset a window of shards at a time while training, instead of indexing all of it before training. See [Reading a window of shards](#reading-a-window-of-shards).
 
 #### Parquet image bytes on S3
 
@@ -1514,6 +1515,48 @@ Rust performs signing, range requests, streamed cache downloads, and parallel ro
 For a bounded loader benchmark, run `PYTHONPATH=. .venv/bin/python scripts/benchmark_webshart.py dataset.json --samples 256 --batch-size 32 --repeats 2`. It reports discovery, metadata preparation, decode throughput, failures, and resident memory. This measures loader performance, not a full training step.
 
 Parquet bucket caches are scoped to the catalog fingerprint. Serialized workers reject catalog changes, and sample reads verify that shard indices still match their part paths. Reopen the dataset when switching snapshots.
+
+#### Reading a window of shards
+
+Without this option, a Webshart dataset is indexed before training: the metadata of every shard is read, every sample is given an aspect bucket, and each epoch shuffles the whole dataset. `webshart.shuffle_window` is for datasets too large for that. It sets how many shards each training process (rank) has open at once:
+
+```json
+"webshart": {
+  "format": "parquet",
+  "shuffle_window": 16
+}
+```
+
+Each epoch shuffles the list of shards and deals them to the ranks, so no two ranks read the same shard. A rank opens `shuffle_window` shards, indexes and buckets their samples, shuffles them together, trains through them, and then opens the next window. Nothing is indexed before training, and no bucket cache is written for the dataset. Tar and Parquet sources both work. Leave the option unset to keep the whole-dataset index and shuffle.
+
+What it changes:
+
+- Samples are shuffled within a window, not across the dataset. A larger window mixes more shards into each batch.
+- Samples in a window are batched by target size. A size whose sample count is not a multiple of the batch size is filled by repeating samples of that size, so no sample is dropped. The share of repeated samples grows with the batch size and with the number of distinct sizes, and shrinks as the window grows. Measured on a dataset with about 750 usable images per shard, for a batch size of 16 / 64:
+
+  | Dataset settings | Window 1 | Window 4 | Window 8 | Window 24 |
+  |---|---|---|---|---|
+  | `crop: false`, sizes aligned to 64 px | 14% / 46% | 5% / 18% | 3% / 11% | 1% / 4% |
+  | `crop_aspect: "closest"`, five `crop_aspect_buckets` | 5% / 20% | 2% / 5% | 1% / 3% | <1% / 1% |
+  | `crop_aspect: "square"` | 1% / 4% | <1% / 1% | <1% / <1% | <1% / <1% |
+
+  For a large batch, use a window of tens of shards or a short `crop_aspect_buckets` list.
+- The length of an epoch is an estimate, taken from the samples found in the first window, so the run must set `--max_train_steps`.
+- Training pauses while a window is opened; indexing a remote shard takes a few seconds.
+
+What it requires. Configuration stops with a message naming the setting when one of these is not met:
+
+- `--max_train_steps` is set.
+- `dataset_type` is `image`, the dataset has no `conditioning_data` or `conditioning`, and it is not the `--eval_dataset_id` dataset.
+- `vae_cache_ondemand` or `vae_cache_disable` is set on the dataset, and `text_cache_ondemand` on its text embed backend. Latents and text embeds cannot be encoded before training.
+- `max_num_samples`, `scan_for_errors` and `vae_cache_clear_each_epoch` are not set.
+- The model does not need conditioning image embeds.
+- The dataset has at least as many shards as there are ranks.
+- For a remote source with a shard cache, `shard_cache_gb` holds every open shard: ranks × `shuffle_window` × the largest shard of the first window. The message gives a window that fits or the size needed.
+
+A dataset read this way cannot supply images to `--validation_using_datasets`.
+
+A checkpoint records the epoch, the window and the position inside it, and a resumed run reopens that window. Resume with the same `shuffle_window`, `repeats`, number of ranks and number of shards; a checkpoint written with different values is refused.
 
 #### Optimizing captions ahead of time
 

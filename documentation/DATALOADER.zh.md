@@ -1422,6 +1422,7 @@ Webshart 数据集通过 `webshart` 包加载 WebDataset 风格的 tar shards。
 - `webshart.cache_dir` 存储 SimpleTuner metadata 与 Webshart caches。`shard_cache_gb` 和 `parallel_downloads` 会传给 Webshart 的 shard cache；将 `shard_cache_gb` 设为 `0` 可禁用整 shard cache，并保留基于索引的 range reads。
 - `webshart.caption_key` 可用于选择字幕字段：单个键使用 `"long_caption"`，多个键使用 `["long_caption", "short_caption"]`，按列表顺序收集。键按字面名称匹配，依次检查样本的 JSON 元数据、索引元数据及两者 `captions` 字典中的命名条目；采用第一个包含该键的位置。字符串和列表值作为字幕候选，不会拼接成一个提示词。缺失或空值会被忽略；使用 `caption_strategy: "webshart"` 时，没有选中字幕的样本将被跳过，即使它有默认字幕或 `.txt` 伴随文件。省略此选项将保留默认查找方式。如果索引未包含 JSON 内容，则读取 JSON 伴随文件。字幕和分桶缓存按配置的键分别保存。在 WebUI 的 Webshart 设置中，每行输入一个键。 JSON 边车读取使用配置的 Webshart 分片缓存；字幕查询不会解码或实例化图像数据。
 - `webshart_optimize_captions`（另一拼写 `webshart_optimise_captions`；在 `webshart` 块内也接受 `optimize_captions`/`optimise_captions`）会在启动时探测 caption 布局，当 captions 位于 `.txt`/`.json` sidecar tar 成员中而不是 metadata 索引中时，将它们一次性合并进本地 Webshart metadata cache。若不启用，sidecar caption 数据集（例如 `laion/conceptual-captions-12m-webdataset`）在每次枚举 captions 时——启动、checkpoint、生成 model card——都要为每个样本付出一次 range read。metadata 中已内嵌 captions 的数据集会自动跳过合并。
+- `webshart.shuffle_window` 在训练过程中按分片窗口读取数据集，而不是在训练前为整个数据集建立索引。请参阅下文“按窗口读取分片”。
 
 #### S3 上的 Parquet 图像字节
 
@@ -1456,6 +1457,48 @@ Rust 在 GIL 之外执行签名、范围请求、流式缓存下载和并行行�
 有限读取基准：`PYTHONPATH=. .venv/bin/python scripts/benchmark_webshart.py dataset.json --samples 256 --batch-size 32 --repeats 2`。报告发现、元数据准备、解码吞吐量、失败数和常驻内存，不代表完整训练步骤。
 
 Parquet 分桶缓存按目录指纹隔离。序列化工作进程会拒绝目录变更，读取时也会核对分片索引与文件路径。切换快照时请重新打开数据集。
+
+#### 按窗口读取分片
+
+不设置此选项时，Webshart 数据集会在训练前建立索引：读取每个分片的元数据，为每个样本分配宽高比分桶，并在每个 epoch 对整个数据集进行打乱。`webshart.shuffle_window` 适用于规模过大、无法这样处理的数据集。它设置每个训练进程（rank）同时打开的分片数量：
+
+```json
+"webshart": {
+  "format": "parquet",
+  "shuffle_window": 16
+}
+```
+
+每个 epoch 会打乱分片列表并分发给各个 rank，因此不会有两个 rank 读取同一个分片。一个 rank 打开 `shuffle_window` 个分片，为其中的样本建立索引并分桶，将它们一起打乱并完成训练，然后打开下一个窗口。训练前不会建立任何索引，也不会为该数据集写入分桶缓存。tar 和 Parquet 数据源均可使用。不设置此选项即可保留对整个数据集的索引和打乱。
+
+带来的变化：
+
+- 样本在窗口内打乱，而不是在整个数据集内打乱。窗口越大，每个批次中混合的分片越多。
+- 窗口内的样本按目标尺寸组成批次。如果某个尺寸的样本数不是批次大小的整数倍，则通过重复该尺寸的样本来补齐，因此不会丢弃任何样本。重复样本的比例随批次大小和不同尺寸的数量增加而上升，随窗口增大而下降。以下数据在每个分片约有 750 张可用图像的数据集上测得，批次大小为 16 / 64：
+
+  | 数据集设置 | 窗口 1 | 窗口 4 | 窗口 8 | 窗口 24 |
+  |---|---|---|---|---|
+  | `crop: false`，尺寸对齐到 64 px | 14% / 46% | 5% / 18% | 3% / 11% | 1% / 4% |
+  | `crop_aspect: "closest"`，五个 `crop_aspect_buckets` | 5% / 20% | 2% / 5% | 1% / 3% | <1% / 1% |
+  | `crop_aspect: "square"` | 1% / 4% | <1% / 1% | <1% / <1% | <1% / <1% |
+
+  批次较大时，请使用数十个分片的窗口，或缩短 `crop_aspect_buckets` 列表。
+- epoch 的长度是根据第一个窗口中找到的样本估算的，因此必须设置 `--max_train_steps`。
+- 打开窗口期间训练会暂停；为一个远程分片建立索引需要几秒钟。
+
+要求。未满足以下任一条件时，配置会停止并给出指明相关设置的消息：
+
+- 已设置 `--max_train_steps`。
+- `dataset_type` 为 `image`，数据集没有 `conditioning_data` 或 `conditioning`，并且不是 `--eval_dataset_id` 指定的数据集。
+- 数据集已设置 `vae_cache_ondemand` 或 `vae_cache_disable`，其 text embed 后端已设置 `text_cache_ondemand`。潜变量和 text embed 无法在训练前编码。
+- 未设置 `max_num_samples`、`scan_for_errors` 和 `vae_cache_clear_each_epoch`。
+- 模型不需要条件图像 embed。
+- 数据集的分片数不少于 rank 数。
+- 对于使用分片缓存的远程数据源，`shard_cache_gb` 能容纳所有打开的分片：rank 数 × `shuffle_window` × 第一个窗口中最大的分片。消息会给出可容纳的窗口或所需的大小。
+
+以这种方式读取的数据集无法为 `--validation_using_datasets` 提供图像。
+
+检查点会记录 epoch、窗口以及窗口内的位置，恢复训练时会重新打开该窗口。请使用相同的 `shuffle_window`、`repeats`、rank 数和分片数恢复；使用不同的值写入的检查点会被拒绝。
 
 #### 提前优化 captions
 

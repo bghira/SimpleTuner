@@ -1424,6 +1424,7 @@ Webshart datasets `webshart` package के जरिए WebDataset-style tar sh
 - `webshart.cache_dir` SimpleTuner metadata और Webshart caches store करता है। `shard_cache_gb` और `parallel_downloads` Webshart shard cache को pass किए जाते हैं; whole-shard caching disable करने और indexed range reads बनाए रखने के लिए `shard_cache_gb` को `0` सेट करें।
 - `webshart.caption_key` से caption फ़ील्ड चुन सकते हैं: एक कुंजी के लिए `"long_caption"` या कई कुंजियों को क्रम से लेने के लिए `["long_caption", "short_caption"]` दें। कुंजियाँ सीधे नाम के रूप में मिलाई जाती हैं: पहले sample के JSON metadata में, फिर indexed metadata में, और अंत में उनके `captions` dictionaries की नामित entries में। कुंजी जिस पहले स्थान पर मिलती है, वही उपयोग होता है। String और list के मान अलग caption विकल्प बनते हैं, एक prompt में जोड़े नहीं जाते। अनुपस्थित या खाली मान छोड़ दिए जाते हैं; `caption_strategy: "webshart"` के साथ चुने हुए captions न होने पर sample छोड़ दिया जाता है, भले ही उसमें default caption या `.txt` sidecar हो। यह विकल्प न देने पर default lookup बना रहता है। JSON सामग्री index में न होने पर JSON sidecar पढ़ा जाता है। Caption और bucket caches चुनी गई कुंजियों के अनुसार अलग रखे जाते हैं। WebUI की Webshart settings में हर पंक्ति पर एक कुंजी लिखें। JSON sidecar पढ़ने के लिए configured Webshart shard cache इस्तेमाल होता है; caption lookup image payload को decode या materialize नहीं करता।
 - `webshart_optimize_captions` (alternate spelling `webshart_optimise_captions`; `webshart` block के अंदर `optimize_captions`/`optimise_captions` भी accepted हैं) startup पर caption layout probe करता है और, जब captions metadata index की बजाय `.txt`/`.json` sidecar tar members में हों, उन्हें एक बार local Webshart metadata cache में fold कर देता है। इसके बिना, sidecar-caption datasets (जैसे `laion/conceptual-captions-12m-webdataset`) को हर बार captions enumerate होने पर — startup, checkpointing और model card generation में — प्रति sample एक range read की कीमत चुकानी पड़ती है। जिन datasets की metadata में captions पहले से embedded हैं, वे coalescing अपने आप skip कर देते हैं।
+- `webshart.shuffle_window` प्रशिक्षण से पहले पूरे डेटासेट को इंडेक्स करने के बजाय, प्रशिक्षण के दौरान डेटासेट को शार्ड की एक विंडो के हिसाब से पढ़ता है। नीचे “शार्ड की विंडो पढ़ना” अनुभाग देखें।
 
 #### S3 पर Parquet इमेज बाइट्स
 
@@ -1438,6 +1439,48 @@ Rust GIL के बाहर हस्ताक्षर, range अनुरो�
 सीमित बेंचमार्क: `PYTHONPATH=. .venv/bin/python scripts/benchmark_webshart.py dataset.json --samples 256 --batch-size 32 --repeats 2`। discovery, metadata, decode गति, विफलताएँ और resident memory मापी जाती हैं, पूरा training step नहीं।
 
 Parquet bucket cache कैटलॉग fingerprint के अनुसार अलग रहता है। Serialized workers कैटलॉग बदलाव अस्वीकार करते हैं और पढ़ते समय shard सूचकांक तथा part path मिलाए जाते हैं। Snapshot बदलने पर dataset दोबारा खोलें।
+
+#### शार्ड की विंडो पढ़ना
+
+इस विकल्प के बिना, Webshart डेटासेट प्रशिक्षण से पहले इंडेक्स किया जाता है: हर शार्ड का मेटाडेटा पढ़ा जाता है, हर सैंपल को एक आस्पेक्ट बकेट दिया जाता है, और हर एपोक में पूरा डेटासेट शफ़ल होता है। `webshart.shuffle_window` उन डेटासेट के लिए है जो इसके लिए बहुत बड़े हैं। यह तय करता है कि हर प्रशिक्षण प्रक्रिया (रैंक) एक साथ कितने शार्ड खुले रखती है:
+
+```json
+"webshart": {
+  "format": "parquet",
+  "shuffle_window": 16
+}
+```
+
+हर एपोक में शार्ड की सूची शफ़ल होकर रैंकों में बाँटी जाती है, इसलिए दो रैंक कभी एक ही शार्ड नहीं पढ़ते। एक रैंक `shuffle_window` शार्ड खोलता है, उनके सैंपल इंडेक्स करके बकेट में रखता है, उन्हें एक साथ शफ़ल करता है, उन पर प्रशिक्षण करता है, और फिर अगली विंडो खोलता है। प्रशिक्षण से पहले कुछ भी इंडेक्स नहीं होता, और डेटासेट के लिए कोई बकेट कैश नहीं लिखा जाता। tar और Parquet दोनों स्रोत काम करते हैं। पूरे डेटासेट का इंडेक्स और शफ़ल बनाए रखने के लिए इस विकल्प को सेट न करें।
+
+क्या बदलता है:
+
+- सैंपल पूरे डेटासेट में नहीं, बल्कि एक विंडो के भीतर शफ़ल होते हैं। बड़ी विंडो हर बैच में ज़्यादा शार्ड मिलाती है।
+- विंडो के सैंपल टार्गेट साइज़ के अनुसार बैच में रखे जाते हैं। जिस साइज़ के सैंपलों की संख्या बैच साइज़ का गुणज नहीं होती, उसे उसी साइज़ के सैंपल दोहराकर पूरा किया जाता है, इसलिए कोई सैंपल छोड़ा नहीं जाता। दोहराए गए सैंपलों का हिस्सा बैच साइज़ और अलग-अलग साइज़ों की संख्या के साथ बढ़ता है, और विंडो बड़ी होने पर घटता है। ये आँकड़े ऐसे डेटासेट पर मापे गए हैं जिसमें प्रति शार्ड लगभग 750 उपयोग योग्य इमेज हैं, बैच साइज़ 16 / 64 के लिए:
+
+  | डेटासेट सेटिंग | विंडो 1 | विंडो 4 | विंडो 8 | विंडो 24 |
+  |---|---|---|---|---|
+  | `crop: false`, साइज़ 64 px पर अलाइन | 14% / 46% | 5% / 18% | 3% / 11% | 1% / 4% |
+  | `crop_aspect: "closest"`, पाँच `crop_aspect_buckets` | 5% / 20% | 2% / 5% | 1% / 3% | <1% / 1% |
+  | `crop_aspect: "square"` | 1% / 4% | <1% / 1% | <1% / <1% | <1% / <1% |
+
+  बड़े बैच के लिए दर्जनों शार्ड की विंडो या `crop_aspect_buckets` की छोटी सूची इस्तेमाल करें।
+- एपोक की लंबाई एक अनुमान है, जो पहली विंडो में मिले सैंपलों से लिया जाता है, इसलिए रन में `--max_train_steps` सेट होना ज़रूरी है।
+- विंडो खुलते समय प्रशिक्षण रुकता है; एक रिमोट शार्ड को इंडेक्स करने में कुछ सेकंड लगते हैं।
+
+क्या ज़रूरी है। इनमें से कोई शर्त पूरी न होने पर कॉन्फ़िगरेशन उस सेटिंग का नाम बताने वाले संदेश के साथ रुक जाता है:
+
+- `--max_train_steps` सेट है।
+- `dataset_type` `image` है, डेटासेट में `conditioning_data` या `conditioning` नहीं है, और यह `--eval_dataset_id` वाला डेटासेट नहीं है।
+- डेटासेट पर `vae_cache_ondemand` या `vae_cache_disable` सेट है, और उसके text embed बैकएंड पर `text_cache_ondemand` सेट है। लेटेंट और text embed प्रशिक्षण से पहले एन्कोड नहीं किए जा सकते।
+- `max_num_samples`, `scan_for_errors` और `vae_cache_clear_each_epoch` सेट नहीं हैं।
+- मॉडल को कंडीशनिंग इमेज embed की ज़रूरत नहीं है।
+- डेटासेट में कम से कम उतने शार्ड हैं जितने रैंक हैं।
+- शार्ड कैश वाले रिमोट स्रोत के लिए, `shard_cache_gb` में सभी खुले शार्ड समाते हैं: रैंक × `shuffle_window` × पहली विंडो का सबसे बड़ा शार्ड। संदेश में ऐसी विंडो जो समा सके या ज़रूरी साइज़ बताया जाता है।
+
+इस तरह पढ़ा गया डेटासेट `--validation_using_datasets` को इमेज नहीं दे सकता।
+
+चेकपॉइंट में एपोक, विंडो और उसके भीतर की स्थिति दर्ज होती है, और रिज़्यूम करने पर वही विंडो फिर से खोली जाती है। उसी `shuffle_window`, `repeats`, रैंकों की संख्या और शार्डों की संख्या के साथ रिज़्यूम करें; अलग मानों के साथ लिखा गया चेकपॉइंट अस्वीकार कर दिया जाता है।
 
 #### Captions को पहले से optimize करना
 

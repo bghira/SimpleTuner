@@ -3119,6 +3119,8 @@ function trainerComponent() {
                     setWebshart('cache_dir', cacheDir, Boolean(cacheDir));
                     setWebshart('shard_cache_gb', shardCacheGb, Number.isFinite(shardCacheGb));
                     setWebshart('parallel_downloads', parallelDownloads, Number.isFinite(parallelDownloads));
+                    const shuffleWindow = this._coerceInt(dataset.webshart?.shuffle_window);
+                    setWebshart('shuffle_window', shuffleWindow, Number.isFinite(shuffleWindow));
                     if (Object.keys(webshart).length > 0) {
                         cleaned.webshart = webshart;
                     } else {

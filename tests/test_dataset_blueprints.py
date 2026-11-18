@@ -44,6 +44,16 @@ class TestTrainBatchSizeBlueprints(unittest.TestCase):
         self.assertIn("train_batch_size", {field.id for field in blueprint.fields})
 
 
+class TestWebshartDatasetBlueprints(unittest.TestCase):
+    def test_webshart_blueprint_exposes_the_shuffle_window(self):
+        fields = {field.id: field for field in find_blueprint("webshart", "image").fields}
+
+        window = fields["webshart.shuffle_window"]
+        self.assertEqual(window.type, "number")
+        self.assertEqual(window.min, 1)
+        self.assertIsNone(window.defaultValue)
+
+
 class TestAudioDatasetBlueprints(unittest.TestCase):
     def test_local_audio_blueprint_exposes_data_transforms(self):
         blueprint = find_blueprint("local", "audio")

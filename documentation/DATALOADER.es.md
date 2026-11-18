@@ -1425,6 +1425,7 @@ Los datasets Webshart cargan shards tar estilo WebDataset mediante el paquete `w
 - `webshart.cache_dir` almacena la metadata de SimpleTuner y las caches de Webshart. `shard_cache_gb` y `parallel_downloads` se pasan a la cache de shards de Webshart; define `shard_cache_gb` como `0` para desactivar la cache de shards completos y mantener lecturas por rango indexadas.
 - `webshart.caption_key` permite seleccionar campos de caption: usa `"long_caption"` para una clave o `["long_caption", "short_caption"]` para recopilar varias en el orden indicado. Las claves son nombres literales que se buscan en los metadatos JSON de la muestra, después en los metadatos del índice y, finalmente, en las entradas con nombre de sus respectivos diccionarios `captions`; se usa la primera ubicación que contiene la clave. Los valores de texto y listas se convierten en variantes de caption, sin concatenarse en un único prompt. Se ignoran los valores ausentes o vacíos; con `caption_strategy: "webshart"`, se omiten las muestras sin captions seleccionadas aunque tengan captions predeterminadas o un sidecar `.txt`. Omitir la opción conserva la búsqueda predeterminada. Se leen los sidecars JSON cuando su contenido no está en el índice. Las cachés de captions y buckets se separan según el selector configurado. En los ajustes Webshart de la WebUI, introduce una clave por línea. Las lecturas de sidecars JSON usan la caché de shards configurada en Webshart; la consulta de captions no decodifica ni materializa los datos de imagen.
 - `webshart_optimize_captions` (grafía alternativa `webshart_optimise_captions`; también se acepta como `optimize_captions`/`optimise_captions` dentro del bloque `webshart`) sondea el layout de captions al arrancar y, cuando los captions residen en miembros tar sidecar `.txt`/`.json` en lugar del índice de metadata, los consolida una sola vez en la cache local de metadata de Webshart. Sin esta opción, los datasets con captions en sidecars (por ejemplo `laion/conceptual-captions-12m-webdataset`) pagan una lectura por rango por muestra cada vez que se enumeran los captions — al arrancar, al guardar checkpoints y al generar la model card. Los datasets cuya metadata ya incluye los captions omiten la consolidación automáticamente.
+- `webshart.shuffle_window` lee el dataset de a una ventana de shards durante el entrenamiento, en lugar de indexarlo entero antes de entrenar. Consulta la sección «Leer una ventana de shards» más abajo.
 
 #### Bytes de imágenes Parquet en S3
 
@@ -1439,6 +1440,48 @@ Rust ejecuta la firma, las solicitudes por rangos, las descargas por streaming y
 Prueba acotada: `PYTHONPATH=. .venv/bin/python scripts/benchmark_webshart.py dataset.json --samples 256 --batch-size 32 --repeats 2`. Mide descubrimiento, metadatos, decodificación, fallos y memoria residente, no un paso de entrenamiento completo.
 
 Las cachés de buckets Parquet se separan por la huella del catálogo. Los trabajadores serializados rechazan cambios del catálogo y las lecturas comprueban que los índices coincidan con las rutas de los fragmentos. Vuelve a abrir el dataset al cambiar de instantánea.
+
+#### Leer una ventana de shards
+
+Sin esta opción, un dataset Webshart se indexa antes de entrenar: se lee la metadata de cada shard, se asigna un bucket de aspecto a cada muestra y cada época mezcla el dataset completo. `webshart.shuffle_window` es para datasets demasiado grandes para eso. Define cuántos shards mantiene abiertos a la vez cada proceso de entrenamiento (rank):
+
+```json
+"webshart": {
+  "format": "parquet",
+  "shuffle_window": 16
+}
+```
+
+Cada época mezcla la lista de shards y los reparte entre los ranks, de modo que dos ranks nunca leen el mismo shard. Un rank abre `shuffle_window` shards, indexa sus muestras y las asigna a buckets, las mezcla entre sí, entrena con ellas y luego abre la siguiente ventana. No se indexa nada antes de entrenar ni se escribe una caché de buckets para el dataset. Funciona con fuentes tar y Parquet. Deja la opción sin definir para conservar el índice y la mezcla de todo el dataset.
+
+Qué cambia:
+
+- Las muestras se mezclan dentro de una ventana, no en todo el dataset. Una ventana más grande mezcla más shards en cada lote.
+- Las muestras de una ventana se agrupan en lotes por tamaño de destino. Un tamaño cuya cantidad de muestras no es múltiplo del tamaño de lote se completa repitiendo muestras de ese tamaño, así que no se descarta ninguna. La proporción de muestras repetidas crece con el tamaño de lote y con la cantidad de tamaños distintos, y disminuye al agrandar la ventana. Medido en un dataset con unas 750 imágenes utilizables por shard, para un tamaño de lote de 16 / 64:
+
+  | Ajustes del dataset | Ventana 1 | Ventana 4 | Ventana 8 | Ventana 24 |
+  |---|---|---|---|---|
+  | `crop: false`, tamaños alineados a 64 px | 14% / 46% | 5% / 18% | 3% / 11% | 1% / 4% |
+  | `crop_aspect: "closest"`, cinco `crop_aspect_buckets` | 5% / 20% | 2% / 5% | 1% / 3% | <1% / 1% |
+  | `crop_aspect: "square"` | 1% / 4% | <1% / 1% | <1% / <1% | <1% / <1% |
+
+  Para un lote grande, usa una ventana de decenas de shards o una lista corta de `crop_aspect_buckets`.
+- La duración de una época es una estimación, tomada de las muestras encontradas en la primera ventana, por lo que el entrenamiento debe definir `--max_train_steps`.
+- El entrenamiento se detiene mientras se abre una ventana; indexar un shard remoto lleva unos segundos.
+
+Qué requiere. La configuración se detiene con un mensaje que nombra el ajuste cuando no se cumple alguna de estas condiciones:
+
+- `--max_train_steps` está definido.
+- `dataset_type` es `image`, el dataset no tiene `conditioning_data` ni `conditioning`, y no es el dataset de `--eval_dataset_id`.
+- `vae_cache_ondemand` o `vae_cache_disable` está definido en el dataset, y `text_cache_ondemand` en su backend de text embeds. Los latentes y los text embeds no se pueden codificar antes de entrenar.
+- `max_num_samples`, `scan_for_errors` y `vae_cache_clear_each_epoch` no están definidos.
+- El modelo no necesita embeds de imágenes de condicionamiento.
+- El dataset tiene al menos tantos shards como ranks.
+- Para una fuente remota con caché de shards, `shard_cache_gb` contiene todos los shards abiertos: ranks × `shuffle_window` × el shard más grande de la primera ventana. El mensaje indica una ventana que cabe o el tamaño necesario.
+
+Un dataset leído de esta forma no puede aportar imágenes a `--validation_using_datasets`.
+
+Un checkpoint registra la época, la ventana y la posición dentro de ella, y al reanudar se vuelve a abrir esa ventana. Reanuda con los mismos `shuffle_window`, `repeats`, número de ranks y número de shards; un checkpoint escrito con valores distintos se rechaza.
 
 #### Optimizar captions por adelantado
 

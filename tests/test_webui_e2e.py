@@ -2494,6 +2494,47 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
             lambda d: d.execute_script("return Alpine.store('trainer').hasUnsavedChanges === arguments[0];", expected)
         )
 
+    def test_webshart_shuffle_window_edit_and_save(self) -> None:
+        config_path = self._seed_webshart_dataset("webshart-window", {"format": "parquet", "shuffle_window": 4})
+
+        def persisted():
+            dataset = next(d for d in json.loads(config_path.read_text(encoding="utf-8")) if d["id"] == "webshart-window")
+            return dataset.get("webshart", {})
+
+        def scenario(driver, _browser):
+            datasets_tab = DatasetsTab(driver, base_url=self.base_url)
+            select_tab = self._open_dataset_storage_tab(driver, "webshart-window")
+            field = self._visible(driver, ".webshart-shuffle-window")
+            self.assertEqual(field.get_attribute("value"), "4")
+            self._wait_for_unsaved_changes(driver, False)
+
+            for value, expected in [
+                ("16", {"format": "parquet", "shuffle_window": 16}),
+                ("", {"format": "parquet"}),
+                ("2", {"format": "parquet", "shuffle_window": 2}),
+            ]:
+                with self.subTest(value=value):
+                    field.send_keys(Keys.BACKSPACE * len(field.get_attribute("value")), value, Keys.TAB)
+                    self._wait_for_unsaved_changes(driver, True)
+                    datasets_tab.save_datasets()
+                    self.assertEqual(persisted(), expected)
+                    self._wait_for_unsaved_changes(driver, False)
+                    select_tab("Basic")
+                    select_tab("Storage")
+                    field = self._visible(driver, ".webshart-shuffle-window")
+                    self.assertEqual(field.get_attribute("value"), value)
+
+            Select(self._visible(driver, ".webshart-format")).select_by_value("tar")
+            self._wait_for_unsaved_changes(driver, True)
+            datasets_tab.save_datasets()
+            self.assertEqual(persisted(), {"format": "tar", "shuffle_window": 2})
+
+            self._open_dataset_storage_tab(driver, "webshart-window")
+            self.assertEqual(self._visible(driver, ".webshart-shuffle-window").get_attribute("value"), "2")
+            self._wait_for_unsaved_changes(driver, False)
+
+        self.for_each_browser("test_webshart_shuffle_window_edit_and_save", scenario)
+
     def test_webshart_settings_written_by_hand_survive_a_save(self) -> None:
         written_by_hand = {
             "cache_dir": "cache/webshart/by-hand",

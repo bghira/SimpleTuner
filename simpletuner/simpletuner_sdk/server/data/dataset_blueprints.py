@@ -917,6 +917,15 @@ _BLUEPRINTS: List[BackendBlueprint] = [
                     "options": [{"value": "tar", "label": "Tar"}, {"value": "parquet", "label": "Parquet"}],
                 },
                 {
+                    "id": "webshart.shuffle_window",
+                    "label": "shuffle window",
+                    "description": "shards each training process keeps open and shuffles together; leave empty to index and shuffle the whole dataset before training",
+                    "type": "number",
+                    "min": 1,
+                    "step": 1,
+                    "advanced": True,
+                },
+                {
                     "id": "webshart.manifest",
                     "label": "capture manifest",
                     "description": "optional source-relative image capture descriptor, such as combined/dataset.json",
