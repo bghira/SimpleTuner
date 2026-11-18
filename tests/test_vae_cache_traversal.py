@@ -54,6 +54,26 @@ class TestVaeCacheTraversal(unittest.TestCase):
     def test_default_traversal_retains_bucket_order(self):
         self._run_pipeline(webshart=False)
 
+    def test_ondemand_cache_reads_keep_duplicate_payloads_and_report_missing_refs(self):
+        cache = VAECache.__new__(VAECache)
+        cache.id = "ondemand"
+        cache.vae_cache_ondemand = True
+        cache.cache_data_backend = Mock()
+        cache.cache_data_backend.exists.return_value = False
+        cache.generate_vae_cache_filename = lambda ref: (f"vae/{ref}.pt", "unused")
+        cache._read_from_storage_concurrently = Mock(
+            side_effect=[iter([("b", 2), ("a", 1), ("a", 3)]), iter([("b", 2), ("a", 1)])]
+        )
+        cache._process_images_in_batch = Mock()
+        cache._encode_images_in_batch = Mock()
+        cache._write_latents_in_batch = Mock(return_value=[10, 20, 30])
+
+        self.assertEqual(cache.encode_images([None, None, None], ["a", "b", "a"]), [10, 20, 30])
+        cache._process_images_in_batch.assert_called_once_with(["a", "b", "a"], [1, 2, 3], disable_queue=True)
+        with self.assertRaisesRegex(OSError, "Dataset ondemand could not read the requested image a"):
+            cache.encode_images([None, None, None], ["a", "b", "a"])
+        self.assertEqual(cache._process_images_in_batch.call_count, 1)
+
     def test_cache_scan_streams_keys_from_the_bound_artifact_store(self):
         cache = VAECache.__new__(VAECache)
         cache.cache_dir = "latents/"

@@ -3,13 +3,12 @@
 import hashlib
 import json
 import os
-from collections import defaultdict, deque
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from copy import deepcopy
 from itertools import batched, islice
 from typing import Any
 
-from simpletuner.helpers.data_backend.base import BaseDataBackend
+from simpletuner.helpers.data_backend.base import BaseDataBackend, ordered_sample_payloads
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.helpers.prompts import CaptionNotFoundError, PromptHandler
 from simpletuner.helpers.utils.pathing import normalize_data_path
@@ -147,11 +146,10 @@ class DatasetRuntime:
         unknown = fields.difference({"metadata", "image", "caption"})
         if unknown:
             raise ValueError(f"Unknown sample fields: {sorted(unknown)}")
-        payloads = defaultdict(deque)
+        payloads = None
         if sample_refs and "image" in fields:
             paths, images = self.data_backend.read_image_batch(list(sample_refs))
-            for path, image in zip(paths, images, strict=True):
-                payloads[path].append(image)
+            payloads = ordered_sample_payloads(self.id, sample_refs, zip(paths, images, strict=True))
         captions = iter(self.resolve_captions(sample_refs)) if "caption" in fields else None
         records = []
         if "metadata" not in fields:
@@ -165,10 +163,8 @@ class DatasetRuntime:
             record["image_path"] = sample_ref
             if captions is not None:
                 record["caption"] = next(captions)
-            if "image" in fields:
-                if not payloads[sample_ref]:
-                    raise OSError(f"Dataset {self.id} could not read the requested image {sample_ref}")
-                record["image"] = payloads[sample_ref].popleft()
+            if payloads is not None:
+                record["image"] = next(payloads)
             records.append(record)
         return records
 

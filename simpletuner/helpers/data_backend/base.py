@@ -1,9 +1,22 @@
 import gzip
 from abc import ABC, abstractmethod
+from collections import defaultdict, deque
 from contextlib import closing
 from io import BytesIO
 
 import torch
+
+
+def ordered_sample_payloads(dataset_id, refs, returned):
+    """Associate bounded provider results with the requested occurrences."""
+    payloads = defaultdict(deque)
+    for ref, payload in returned:
+        payloads[ref].append(payload)
+    for ref in refs:
+        payload = payloads[ref].popleft() if payloads[ref] else None
+        if payload is None:
+            raise OSError(f"Dataset {dataset_id} could not read the requested image {ref}")
+        yield payload
 
 
 class BaseDataBackend(ABC):

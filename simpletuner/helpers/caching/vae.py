@@ -21,7 +21,7 @@ from numpy import str_ as numpy_str
 from PIL import Image
 from tqdm import tqdm
 
-from simpletuner.helpers.data_backend.base import BaseDataBackend
+from simpletuner.helpers.data_backend.base import BaseDataBackend, ordered_sample_payloads
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.image_manipulation.batched_training_samples import BatchedTrainingSamples
 from simpletuner.helpers.image_manipulation.nsfw_classifier import (
@@ -1261,8 +1261,8 @@ class VAECache(WebhookMixin):
         written_latents = []
         if len(missing_images) > 0 and self.vae_cache_ondemand:
             missing_image_paths = [filepaths[i] for i in missing_images]
-            missing_image_data_generator = self._read_from_storage_concurrently(missing_image_paths, hide_errors=True)
-            missing_image_data = [retrieved_image_data[1] for retrieved_image_data in missing_image_data_generator]
+            returned = self._read_from_storage_concurrently(missing_image_paths, hide_errors=True)
+            missing_image_data = list(ordered_sample_payloads(self.id, missing_image_paths, returned))
             missing_image_pixel_values = self._process_images_in_batch(
                 missing_image_paths, missing_image_data, disable_queue=True
             )
