@@ -220,6 +220,17 @@ class DatasetRuntime:
         if isinstance(self.metadata_backend, AlignedConditioningMetadata):
             return self.metadata_backend.conditioning_ref(relative_ref)
         if isinstance(self.data_backend, WebshartDataBackend):
+            if self.data_backend.format == "parquet":
+                if self.data_backend.is_sample_id(relative_ref):
+                    relative_ref = self.data_backend.parse_sample_id(relative_ref).filename
+                return next(
+                    (
+                        ref
+                        for ref in self.data_backend.parquet_sample_refs_for_filename(relative_ref)
+                        if self.metadata_backend.admits_related_sample(ref)
+                    ),
+                    None,
+                )
             self.data_backend._resolve_sample_ref(relative_ref)
             sample_ref = self.data_backend.normalize_sample_id(relative_ref)
             return sample_ref if self.metadata_backend.admits_related_sample(sample_ref) else None

@@ -659,6 +659,10 @@ class TestWebshartParquetBackend(unittest.TestCase):
             self.assertEqual(count, 2)
             runtime = DatasetRuntime(self.backend.id, self.backend, metadata, config)
             self.assertEqual(runtime.conditioning_ref(excluded), excluded)
+            ref_from_reordered_source = self.backend.parse_sample_id(excluded)
+            reordered = self.backend.sample_id(12, ref_from_reordered_source.sample_idx, ref_from_reordered_source.filename)
+            self.assertEqual(runtime.conditioning_ref(reordered), excluded)
+            self.assertIsNone(runtime.conditioning_ref(self.backend.sample_id(12, 0, "absent.parquet/000000000000.jpg")))
 
             with closing(sqlite3.connect("")) as db:
                 changes = Exclusions(db)
