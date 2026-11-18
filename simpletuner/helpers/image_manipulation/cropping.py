@@ -134,15 +134,19 @@ class CenterCropping(BaseCropping):
 
 
 class RandomCropping(BaseCropping):
+    rng = None
+
     def crop(self, target_width, target_height):
         import random
+
+        rng = random if self.rng is None else self.rng
 
         # Calculate maximum possible crop coordinates
         max_left = max(0, self.intermediary_width - target_width)
         max_top = max(0, self.intermediary_height - target_height)
 
-        left = random.randint(0, max_left) if max_left > 0 else 0
-        top = random.randint(0, max_top) if max_top > 0 else 0
+        left = rng.randint(0, max_left) if max_left > 0 else 0
+        top = rng.randint(0, max_top) if max_top > 0 else 0
         right = left + min(target_width, self.intermediary_width - left)
         bottom = top + min(target_height, self.intermediary_height - top)
 
