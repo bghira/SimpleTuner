@@ -106,6 +106,7 @@ class MetadataBackend:
     # Providers with a reconstructible schedule expose epoch_spec, open_epoch,
     # scheduled_batches and open_validation here.
     epoch_provider = None
+    caption_projection_strategy = None
     requires_complete_preparation = False
 
     def __init__(

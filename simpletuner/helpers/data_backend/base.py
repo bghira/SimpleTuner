@@ -26,6 +26,7 @@ def ordered_sample_payloads(dataset_id, refs, returned):
 class BaseDataBackend(ABC):
     # A sharded provider can choose a canonical number of source shards per prepared partition.
     prepared_partition_shards = None
+    caption_projection_strategy = None
 
     @cached_property
     def source_files(self):

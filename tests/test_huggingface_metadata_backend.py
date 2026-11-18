@@ -71,6 +71,27 @@ class HuggingfaceMetadataBackendTests(unittest.TestCase):
         self.assertEqual(backend.caption_cache_entry("1.jpg"), ["first", "second"])
         self.assertIsNone(backend.caption_cache_entry("2.jpg"))
         self.assertIsNone(backend.caption_cache_entry("3.jpg"))
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+
+        runtime = DatasetRuntime(
+            source.id,
+            source,
+            backend,
+            {"caption_strategy": "huggingface", "prepend_instance_prompt": True, "instance_prompt": "style"},
+        )
+        with patch.object(backend, "caption_cache_entry", side_effect=AssertionError("unbatched caption read")):
+            self.assertEqual(
+                runtime.resolve_captions(["1.jpg", "0.jpg", "1.jpg"]),
+                [["style first", "style second"], "style last", ["style first", "style second"]],
+            )
+            self.assertEqual(
+                list(
+                    runtime.iter_caption_records(
+                        ["2.jpg", "0.jpg", "3.jpg"], batch_size=3, on_missing_caption=lambda ref: None
+                    )
+                ),
+                [("style last", "0.jpg")],
+            )
         with self.assertRaises(CaptionNotFoundError):
             PromptHandler.prepare_instance_prompt_from_huggingface("2.jpg", True, False, source, metadata_backend=backend)
 

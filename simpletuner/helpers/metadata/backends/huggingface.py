@@ -38,6 +38,8 @@ else:
 
 
 class HuggingfaceMetadataBackend(MetadataBackend):
+    caption_projection_strategy = "huggingface"
+
     def __init__(
         self,
         id: str,
@@ -390,23 +392,36 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                 return False
         return True
 
-    def caption_cache_entry(self, index: str) -> Optional[Union[str, List[str]]]:
+    def _caption_position(self, ref):
         if self._caption_rows is None:
             return None
         try:
-            position = self.data_backend._get_index_from_path(index)
+            position = self.data_backend._get_index_from_path(ref)
         except ValueError:
             return None
-        if position is None or not 0 <= position < len(self._caption_rows):
-            return None
-        item = self._caption_rows[position]
-        if (
-            self.quality_filter
-            and self.quality_column in item
-            and not self._passes_quality_filter(item[self.quality_column])
-        ):
+        return position if position is not None and 0 <= position < len(self._caption_rows) else None
+
+    def _caption_at_row(self, item):
+        if self.quality_filter and not self._passes_quality_filter(item.get(self.quality_column)):
             return None
         return self._extract_caption_from_item(item)
+
+    def caption_cache_entry(self, index: str) -> Optional[Union[str, List[str]]]:
+        position = self._caption_position(index)
+        return self._caption_at_row(self._caption_rows[position]) if position is not None else None
+
+    def read_caption_batch(self, refs):
+        positions = [self._caption_position(ref) for ref in refs]
+        selected = list(dict.fromkeys(position for position in positions if position is not None))
+        if not selected:
+            return [None] * len(positions)
+
+        columns = self._caption_rows[selected]
+        captions = {
+            position: self._caption_at_row(dict(zip(columns, values, strict=True)))
+            for position, values in zip(selected, zip(*columns.values(), strict=True), strict=True)
+        }
+        return [captions.get(position) for position in positions]
 
     def _preparation_ownership(self, worker, workers):
         shards = self.data_backend.preparation_shards

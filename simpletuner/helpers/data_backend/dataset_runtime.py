@@ -244,12 +244,11 @@ class DatasetRuntime:
                     yield value, sample_ref
 
     def _caption_lookup(self, refs):
-        if (
-            self.config["caption_strategy"] == "webshart"
-            and self.config["use_captions"]
-            and getattr(self.data_backend, "supports_caption_projection", False) is True
-        ):
-            return dict(zip(refs, self.data_backend.read_caption_batch(refs), strict=True)).__getitem__
+        strategy = self.config["caption_strategy"]
+        if strategy and self.config["use_captions"]:
+            for provider in (self.metadata_backend, self.data_backend):
+                if strategy == getattr(provider, "caption_projection_strategy", None):
+                    return dict(zip(refs, provider.read_caption_batch(refs), strict=True)).__getitem__
         return None
 
     @property

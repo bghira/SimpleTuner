@@ -384,8 +384,8 @@ class DatasetRuntimeTests(unittest.TestCase):
         sampler.metadata_backend = self.metadata_backend
         sampler.dataset_runtime = self.runtime
         sampler.debug_log = Mock()
-        self.data_backend.supports_caption_projection = True
-        self.data_backend.read_caption_batch.return_value = [self.metadata["captions"], self.metadata["captions"]]
+        self.metadata_backend.caption_projection_strategy = "webshart"
+        self.metadata_backend.read_caption_batch.return_value = [self.metadata["captions"], self.metadata["captions"]]
         self.metadata["conditioning"] = {"references": ["base.png"]}
         self.metadata["crop_coordinates"] = [0, 0]
         with (
@@ -394,7 +394,7 @@ class DatasetRuntimeTests(unittest.TestCase):
         ):
             records = sampler._validate_and_yield_images_from_samples(["sample.jpg", "sample.jpg"], "1.0")
         self.assertEqual([record["instance_prompt_text"] for record in records], ["first", "second"])
-        self.data_backend.read_caption_batch.assert_called_once_with(["sample.jpg", "sample.jpg"])
+        self.metadata_backend.read_caption_batch.assert_called_once_with(["sample.jpg", "sample.jpg"])
         records[0]["crop_coordinates"][0] = 8
         records[1]["conditioning"]["references"].append("alternative.png")
         self.assertEqual(records[1]["crop_coordinates"], [0, 0])

@@ -449,6 +449,10 @@ class WebshartDataBackend(BaseDataBackend):
     def supports_caption_projection(self):
         return self.format == "parquet" and hasattr(self.dataset, "read_metadata_rows")
 
+    @property
+    def caption_projection_strategy(self):
+        return "webshart" if self.supports_caption_projection else None
+
     def caption_fields(self):
         fields = {"captions", "url_status", "stored_bytes", "stored_format"}
         if self.caption_key is not None:

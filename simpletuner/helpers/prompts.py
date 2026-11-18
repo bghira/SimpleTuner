@@ -413,6 +413,7 @@ class PromptHandler:
         instance_prompt: str = None,
         sampler_backend_id: str = None,
         metadata_backend=None,
+        caption_lookup=None,
     ) -> str:
         """
         Prepare prompt from HuggingFace dataset metadata.
@@ -436,15 +437,14 @@ class PromptHandler:
         if sampler_backend_id is None:
             sampler_backend_id = data_backend.id
 
-        # Get the metadata backend
-        if metadata_backend is None:
-            backend_info = StateTracker.get_data_backend(sampler_backend_id)
-            if not backend_info or "metadata_backend" not in backend_info:
-                raise ValueError(f"Could not find metadata backend for {sampler_backend_id}")
-            metadata_backend = backend_info["metadata_backend"]
-
-        # For HuggingFace, the image_path is already the virtual path like "0.jpg"
-        caption = metadata_backend.caption_cache_entry(image_path)
+        if caption_lookup is None:
+            if metadata_backend is None:
+                backend_info = StateTracker.get_data_backend(sampler_backend_id)
+                if not backend_info or "metadata_backend" not in backend_info:
+                    raise ValueError(f"Could not find metadata backend for {sampler_backend_id}")
+                metadata_backend = backend_info["metadata_backend"]
+            caption_lookup = metadata_backend.caption_cache_entry
+        caption = caption_lookup(image_path)
 
         if caption is None:
             raise CaptionNotFoundError(f"Could not find caption for {image_path} in HuggingFace dataset")
@@ -571,6 +571,7 @@ class PromptHandler:
                 data_backend=data_backend,
                 sampler_backend_id=sampler_backend_id,
                 metadata_backend=metadata_backend,
+                caption_lookup=caption_lookup,
             )
         elif caption_strategy == "webshart":
             instance_prompt = PromptHandler.prepare_instance_prompt_from_webshart(
