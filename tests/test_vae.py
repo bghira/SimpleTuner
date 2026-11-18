@@ -459,6 +459,8 @@ class TestMetadataFilterOnSplitShard(unittest.TestCase):
             ),
             patch.object(StateTracker, "get_data_backend_config", return_value={}),
         ):
+            backend.runtime_args = StateTracker.get_args()
+            backend.active_dataset_config = StateTracker.get_data_backend_config(backend.id)
             MetadataBackend.split_buckets_between_processes(
                 backend,
                 gradient_accumulation_steps=1,

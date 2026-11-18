@@ -1584,6 +1584,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 # batch_size=4 × 8 GPUs × 1 grad_accum = 32 effective batch size
                 # 4 samples < 32 effective batch size → should fail
                 with self.assertRaises(ValueError) as context:
+                    mock_backend.runtime_args = StateTracker.get_args()
+                    mock_backend.active_dataset_config = StateTracker.get_data_backend_config(mock_backend.id)
                     MetadataBackend.split_buckets_between_processes(mock_backend, gradient_accumulation_steps=1)
 
         error_msg = str(context.exception)
@@ -1630,6 +1632,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 # batch_size=1 × 2 GPUs × 1 grad_accum = 2 effective batch size
                 # 8 samples >= 2 effective batch size → should succeed (not raise during validation)
                 try:
+                    mock_backend.runtime_args = StateTracker.get_args()
+                    mock_backend.active_dataset_config = StateTracker.get_data_backend_config(mock_backend.id)
                     MetadataBackend.split_buckets_between_processes(mock_backend, gradient_accumulation_steps=1)
                 except ValueError as e:
                     if "Dataset configuration will produce zero usable batches" in str(e):
@@ -1662,6 +1666,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
             mock_get_args.return_value = mock_args
 
             try:
+                mock_backend.runtime_args = StateTracker.get_args()
+                mock_backend.active_dataset_config = StateTracker.get_data_backend_config(mock_backend.id)
                 MetadataBackend.split_buckets_between_processes(mock_backend, gradient_accumulation_steps=4)
             except ValueError as e:
                 if "Dataset configuration will produce zero usable batches" in str(e):
@@ -1698,6 +1704,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
 
                 # Should NOT raise, should auto-adjust repeats
                 try:
+                    mock_backend.runtime_args = StateTracker.get_args()
+                    mock_backend.active_dataset_config = StateTracker.get_data_backend_config(mock_backend.id)
                     MetadataBackend.split_buckets_between_processes(mock_backend, gradient_accumulation_steps=1)
                     self.assertEqual(mock_backend.repeats, 0)
                     self.assertEqual(len(mock_backend.aspect_ratio_bucket_indices["1.0"]), 4)
@@ -1734,6 +1742,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
 
                 # Should raise because manual repeats are insufficient
                 with self.assertRaises(ValueError) as context:
+                    mock_backend.runtime_args = StateTracker.get_args()
+                    mock_backend.active_dataset_config = StateTracker.get_data_backend_config(mock_backend.id)
                     MetadataBackend.split_buckets_between_processes(mock_backend, gradient_accumulation_steps=1)
 
                 error_msg = str(context.exception)
@@ -1769,6 +1779,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
 
                 # Should raise error with suggestion to enable flag
                 with self.assertRaises(ValueError) as context:
+                    mock_backend.runtime_args = StateTracker.get_args()
+                    mock_backend.active_dataset_config = StateTracker.get_data_backend_config(mock_backend.id)
                     MetadataBackend.split_buckets_between_processes(mock_backend, gradient_accumulation_steps=1)
 
                 error_msg = str(context.exception)

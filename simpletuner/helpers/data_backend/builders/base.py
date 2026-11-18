@@ -3,6 +3,7 @@
 import logging
 import os
 from abc import ABC, abstractmethod
+from types import SimpleNamespace
 from typing import Any, Dict, Optional
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
@@ -39,6 +40,7 @@ def create_metadata_provider(
     preparation_only=False,
     bucket_report=None,
     aligned_source=None,
+    dataset_config=None,
 ):
     """Construct the resolved metadata provider for a trainer or standalone dataset job."""
     metadata_backend_args = {}
@@ -113,6 +115,8 @@ def create_metadata_provider(
         instance_data_dir=instance_data_dir,
         data_backend=data_backend,
         accelerator=accelerator,
+        dataset_config=backend_dict if dataset_config is None else dataset_config,
+        runtime_args=SimpleNamespace(**args) if isinstance(args, dict) else args,
         resolution=backend_dict.get("resolution", get_arg_value(args, "resolution")),
         minimum_image_size=backend_dict.get("minimum_image_size", get_arg_value(args, "minimum_image_size")),
         minimum_aspect_ratio=backend_dict.get("minimum_aspect_ratio", None),

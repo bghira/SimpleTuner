@@ -108,6 +108,8 @@ class WebshartMetadataBackend(MetadataBackend):
         maximum_num_frames: int = None,
         cache_file_suffix: str = None,
         repeats: int = 0,
+        dataset_config: dict | None = None,
+        runtime_args=None,
         max_num_samples: int = None,
         preparation_only: bool = False,
     ):
@@ -140,6 +142,8 @@ class WebshartMetadataBackend(MetadataBackend):
             maximum_num_frames=maximum_num_frames,
             minimum_num_frames=minimum_num_frames,
             num_frames=num_frames,
+            dataset_config=dataset_config,
+            runtime_args=runtime_args,
             cache_file_suffix=cache_file_suffix,
             repeats=repeats,
             max_num_samples=max_num_samples,
@@ -266,7 +270,7 @@ class WebshartMetadataBackend(MetadataBackend):
         return self.native_policy is not None
 
     def epoch_spec(self, epoch, batch_size, *, occurrence_revision=None):
-        args = StateTracker.get_args()
+        args = self.runtime_args
         dp_size, dp_rank, cp_size = get_cp_aware_dp_info(self.accelerator)
         parallel = getattr(self.accelerator, "parallelism_config", None)
         topology = (
@@ -403,9 +407,7 @@ class WebshartMetadataBackend(MetadataBackend):
             "scan_in_progress": scan_in_progress,
             **self._source_description(),
             "geometry_sha256": self._geometry_digest,
-            "config": make_public_config_serializable(
-                StateTracker.get_data_backend_config(data_backend_id=self.data_backend.id)
-            ),
+            "config": make_public_config_serializable(self.active_dataset_config),
         }
         if self.filtering_statistics is not None:
             cache_data["filtering_statistics"] = self.filtering_statistics
@@ -844,8 +846,8 @@ class WebshartMetadataBackend(MetadataBackend):
     def compute_aspect_ratio_bucket_indices(self, ignore_existing_cache: bool = False, progress_callback=None):
         logger.info("Building aspect ratio buckets from webshart metadata...")
         statistics = _empty_filtering_statistics()
-        backend_config = StateTracker.get_data_backend_config(self.id) or {}
-        captions = DatasetRuntime.caption_config(backend_config, StateTracker.get_args())
+        backend_config = self.active_dataset_config or {}
+        captions = DatasetRuntime.caption_config(backend_config, self.runtime_args)
         require_captions = captions["caption_strategy"] == "webshart" and captions["use_captions"]
 
         if getattr(self, "native_policy", None):
@@ -881,8 +883,11 @@ class WebshartMetadataBackend(MetadataBackend):
             self.bucket_report.record_bucket_snapshot("post_refresh", self.aspect_ratio_bucket_indices)
 
     def _geometry_recipe(self, config):
-        sizing = ImageGeometry(MultiaspectImage._get_alignment(), MultiaspectImage._get_rounding(2))
-        seed = getattr(StateTracker.get_args(), "seed", None) or 0
+        sizing = ImageGeometry(
+            MultiaspectImage._get_alignment(args=self.runtime_args),
+            MultiaspectImage._get_rounding(2, args=self.runtime_args),
+        )
+        seed = getattr(self.runtime_args, "seed", None) or 0
         return PreparationGeometry(deepcopy(config), sizing, seed, StateTracker.get_model())
 
     def _scan_rows(
@@ -1172,7 +1177,7 @@ class WebshartMetadataBackend(MetadataBackend):
         recipe = self._geometry_recipe(config)
         rules = {key: public_config.get(key) for key in geometry_keys}
         rules.update(require_captions=require_captions, caption_key=self.data_backend.caption_key)
-        args = StateTracker.get_args()
+        args = self.runtime_args
         rules.update(
             preparation_version=6,
             crop_seed=recipe.seed,

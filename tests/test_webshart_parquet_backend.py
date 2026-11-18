@@ -89,6 +89,37 @@ class TestWebshartParquetBackend(unittest.TestCase):
         self.assertEqual(runtime.count_source_rows(exclude_null_images=True), 2)
         self.assertEqual([row["sample_idx"] for row in self.backend.list_samples_in_shard(0)], [0, 2])
 
+    def test_prepared_view_uses_factory_bound_settings_without_tracker_lookups(self):
+        from simpletuner.helpers.data_backend.builders.base import create_metadata_provider
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        config = {
+            "metadata_backend": "webshart",
+            "caption_strategy": "webshart",
+            "webshart": {"sampling_policy": "global"},
+            "resolution": 8,
+            "resolution_type": "pixel",
+        }
+        args = {"train_batch_size": 1, "disable_bucket_pruning": False, "aspect_bucket_alignment": 8, "seed": 123}
+        accelerator = SimpleNamespace(num_processes=1, process_index=0, is_main_process=True)
+        with (
+            patch.object(StateTracker, "get_data_backend_config", side_effect=AssertionError("dataset settings lookup")),
+            patch.object(StateTracker, "get_args", side_effect=AssertionError("run settings lookup")),
+            patch.object(StateTracker, "get_model", return_value=None),
+        ):
+            metadata = create_metadata_provider(
+                self.backend.id,
+                config,
+                self.backend,
+                accelerator,
+                args,
+                instance_data_dir=self.backend.cache_dir,
+                cache_root=self.backend.cache_dir,
+            )
+            self.addCleanup(metadata.close)
+            metadata.compute_aspect_ratio_bucket_indices()
+            self.assertEqual(metadata.describe().accepted_samples, 2)
+
     def test_capture_catalogue_uses_the_configured_metadata_cache(self):
         if not getattr(type(self.backend.dataset), "supports_catalogue_cache", False):
             self.skipTest("installed Webshart has no shared capture catalogue")

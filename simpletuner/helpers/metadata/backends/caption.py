@@ -14,7 +14,6 @@ from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.helpers.metadata.captions import CaptionRecord, caption_records_revision, normalize_caption_text
 from simpletuner.helpers.training.multi_process import should_log
-from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger("CaptionMetadataBackend")
 if should_log():
@@ -47,6 +46,8 @@ class CaptionMetadataBackend(MetadataBackend):
         parquet_config: Optional[Dict[str, Any]] = None,
         hf_config: Optional[Dict[str, Any]] = None,
         quality_filter: Optional[Dict[str, Any]] = None,
+        dataset_config: dict | None = None,
+        runtime_args=None,
         **_: object,
     ):
         self.caption_records: Dict[str, CaptionRecord] = {}
@@ -70,6 +71,8 @@ class CaptionMetadataBackend(MetadataBackend):
             resolution=1,
             resolution_type="pixel",
             metadata_update_interval=metadata_update_interval,
+            dataset_config=dataset_config,
+            runtime_args=runtime_args,
             cache_file_suffix=cache_file_suffix,
             repeats=repeats,
         )
@@ -104,7 +107,7 @@ class CaptionMetadataBackend(MetadataBackend):
             logger.debug(f"(id={self.id}) Skipping caption cache write in read-only mode.")
             return
         payload = {
-            "config": StateTracker.get_data_backend_config(self.id),
+            "config": self.active_dataset_config,
             "ordered_ids": self._ordered_ids,
         }
         try:

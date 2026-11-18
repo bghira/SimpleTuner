@@ -69,6 +69,8 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         composite_image_column: str = "image",
         quality_filter: Optional[Dict[str, Any]] = None,
         dataset_type: str = "image",
+        dataset_config: dict | None = None,
+        runtime_args=None,
         max_num_samples: int = None,
     ):
         self.hf_config = hf_config
@@ -134,12 +136,14 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             minimum_num_frames=minimum_num_frames,
             maximum_num_frames=maximum_num_frames,
             num_frames=num_frames,
+            dataset_config=dataset_config,
+            runtime_args=runtime_args,
             cache_file_suffix=cache_file_suffix,
             repeats=repeats,
             max_num_samples=max_num_samples,
             load_cache_on_init=False,
         )
-        if not (StateTracker.get_data_backend_config(id) or {}).get("dataset_type"):
+        if not self.dataset_config.get("dataset_type"):
             self.dataset_type = ensure_dataset_type(dataset_type)
 
         with accelerator.main_process_first():
@@ -341,7 +345,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             key: [str(path) for path in value] for key, value in self.aspect_ratio_bucket_indices.items()
         }
         cache_data = {
-            "config": StateTracker.get_data_backend_config(data_backend_id=self.data_backend.id),
+            "config": self.active_dataset_config,
             "aspect_ratio_bucket_indices": aspect_ratio_bucket_indices_str,
         }
         # Include filtering statistics if available

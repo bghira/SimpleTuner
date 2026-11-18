@@ -421,6 +421,7 @@ class TestPruneSmallBucketsEvalDataset(unittest.TestCase):
             mock_args.disable_bucket_pruning = False
             mock_get_args.return_value = mock_args
 
+            mock_backend.runtime_args = StateTracker.get_args()
             MetadataBackend._prune_small_buckets(mock_backend, "1.0")
 
         self.assertIn("1.0", mock_backend.aspect_ratio_bucket_indices)
@@ -441,6 +442,7 @@ class TestPruneSmallBucketsEvalDataset(unittest.TestCase):
             mock_args.disable_bucket_pruning = False
             mock_get_args.return_value = mock_args
 
+            mock_backend.runtime_args = StateTracker.get_args()
             MetadataBackend._prune_small_buckets(mock_backend, "1.0")
 
         self.assertNotIn("1.0", mock_backend.aspect_ratio_bucket_indices)
@@ -460,6 +462,7 @@ class TestPruneSmallBucketsEvalDataset(unittest.TestCase):
             mock_args.disable_bucket_pruning = False
             mock_get_args.return_value = mock_args
 
+            mock_backend.runtime_args = StateTracker.get_args()
             MetadataBackend._prune_small_buckets(mock_backend, "1.0")
 
         self.assertNotIn("1.0", mock_backend.aspect_ratio_bucket_indices)
@@ -479,6 +482,7 @@ class TestPruneSmallBucketsEvalDataset(unittest.TestCase):
             mock_args.disable_bucket_pruning = False
             mock_get_args.return_value = mock_args
 
+            mock_backend.runtime_args = StateTracker.get_args()
             MetadataBackend._prune_small_buckets(mock_backend, "1.0")
 
         self.assertIn("1.0", mock_backend.aspect_ratio_bucket_indices)
@@ -516,6 +520,8 @@ class TestSplitBucketsEvalDataset(unittest.TestCase):
             mock_get_args.return_value = mock_args
 
             # Should NOT raise ValueError
+            mock_backend.runtime_args = StateTracker.get_args()
+            mock_backend.active_dataset_config = StateTracker.get_data_backend_config(mock_backend.id)
             MetadataBackend.split_buckets_between_processes(mock_backend, gradient_accumulation_steps=4, apply_padding=False)
 
         # Bucket should still exist after splitting
@@ -549,6 +555,8 @@ class TestSplitBucketsEvalDataset(unittest.TestCase):
 
             # Should raise ValueError for training dataset
             with self.assertRaises(ValueError) as context:
+                mock_backend.runtime_args = StateTracker.get_args()
+                mock_backend.active_dataset_config = StateTracker.get_data_backend_config(mock_backend.id)
                 MetadataBackend.split_buckets_between_processes(
                     mock_backend, gradient_accumulation_steps=1, apply_padding=False
                 )
@@ -585,6 +593,8 @@ class TestSplitBucketsEvalDataset(unittest.TestCase):
 
             # With grad_accum=8, training would need 16 samples (2*1*8)
             # But eval should still work with 1 sample
+            mock_backend.runtime_args = StateTracker.get_args()
+            mock_backend.active_dataset_config = StateTracker.get_data_backend_config(mock_backend.id)
             MetadataBackend.split_buckets_between_processes(mock_backend, gradient_accumulation_steps=8, apply_padding=False)
 
         self.assertIn("1.0", mock_backend.aspect_ratio_bucket_indices)
@@ -630,6 +640,8 @@ class TestDistributedBucketPadding(unittest.TestCase):
                 return_value=(8, rank, cp_size),
             ),
         ):
+            backend.runtime_args = StateTracker.get_args()
+            backend.active_dataset_config = StateTracker.get_data_backend_config(backend.id)
             MetadataBackend.split_buckets_between_processes(
                 backend,
                 gradient_accumulation_steps=1,
@@ -685,6 +697,8 @@ class TestDistributedBucketPadding(unittest.TestCase):
                     return_value=(8, rank, 1),
                 ),
             ):
+                backend.runtime_args = StateTracker.get_args()
+                backend.active_dataset_config = StateTracker.get_data_backend_config(backend.id)
                 MetadataBackend.split_buckets_between_processes(backend)
             shards.append(backend.aspect_ratio_bucket_indices["1.0"])
 
@@ -850,6 +864,8 @@ class TestEmptyBucketRepeatValidation(unittest.TestCase):
                 return_value=(num_processes, dp_rank, 1),
             ),
         ):
+            backend.runtime_args = StateTracker.get_args()
+            backend.active_dataset_config = StateTracker.get_data_backend_config(backend.id)
             MetadataBackend.split_buckets_between_processes(
                 backend,
                 gradient_accumulation_steps=1,

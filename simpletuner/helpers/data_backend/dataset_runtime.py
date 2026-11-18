@@ -45,6 +45,16 @@ class DatasetRuntime:
         }
 
     @property
+    def config(self):
+        return self._config
+
+    @config.setter
+    def config(self, config):
+        self._config = config
+        if isinstance(self.metadata_backend, MetadataBackend):
+            self.metadata_backend.bind_dataset_config(config)
+
+    @property
     def epoch_provider(self):
         return self.metadata_backend.epoch_provider
 

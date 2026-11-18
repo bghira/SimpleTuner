@@ -133,6 +133,8 @@ class MetadataBackend:
         repeats: int = 0,
         max_num_samples: int = None,
         load_cache_on_init: bool = True,
+        dataset_config: dict | None = None,
+        runtime_args=None,
     ):
         self.id = id
         if self.id != data_backend.id:
@@ -152,7 +154,9 @@ class MetadataBackend:
         self.image_metadata = {}  # Store image metadata
         self.seen_images = {}
         self.config = {}
-        self.dataset_config = StateTracker.get_data_backend_config(self.id) or {}
+        self._bound_config = dataset_config
+        self._runtime_args = runtime_args
+        self.dataset_config = self.active_dataset_config
         self.dataset_filter = build_dataset_filter(self.dataset_config)
         dataset_type_value = self.dataset_config.get("dataset_type")
         try:
@@ -191,6 +195,20 @@ class MetadataBackend:
         self.max_num_samples = int(max_num_samples) if max_num_samples else None
         # Filtering statistics from dataset processing (too_small, too_long, etc.)
         self.filtering_statistics = None
+
+    @property
+    def runtime_args(self):
+        args = getattr(self, "_runtime_args", None)
+        return StateTracker.get_args() if args is None else args
+
+    @property
+    def active_dataset_config(self):
+        config = getattr(self, "_bound_config", None)
+        return (StateTracker.get_data_backend_config(self.id) or {}) if config is None else config
+
+    def bind_dataset_config(self, config):
+        self._bound_config = config
+        self.dataset_config = config
 
     def _apply_max_num_samples_limit(self, file_list: list) -> list:
         """
@@ -637,10 +655,10 @@ class MetadataBackend:
                 self.bucket_report.record_bucket_snapshot("post_refresh", self.aspect_ratio_bucket_indices)
             self._ensure_metadata_for_cached_buckets()
             return
-        num_cpus = StateTracker.get_args().aspect_bucket_worker_count
+        num_cpus = self.runtime_args.aspect_bucket_worker_count
         files_split = np.array_split(new_files, num_cpus)
 
-        use_multiprocessing = StateTracker.get_args().enable_multiprocessing
+        use_multiprocessing = self.runtime_args.enable_multiprocessing
         worker_cls = Process if use_multiprocessing else Thread
         queue_cls = Queue if use_multiprocessing else ThreadQueue
         metadata_updates_queue = queue_cls()
@@ -805,7 +823,7 @@ class MetadataBackend:
         if self.bucket_report:
             self.bucket_report.set_constraints(effective_batch_size=effective_batch_size)
 
-        backend_config = StateTracker.get_data_backend_config(self.id) or {}
+        backend_config = self.active_dataset_config
         configured_repeats = int(backend_config.get("repeats") or 0)
         user_set_repeats = configured_repeats > 0
         auto_repeat_counts = {}
@@ -834,7 +852,7 @@ class MetadataBackend:
                 min_repeats_needed[bucket_info["bucket"]] = needed_repeats
 
             max_needed_repeats = max(min_repeats_needed.values())
-            allow_oversubscription = StateTracker.get_args().allow_dataset_oversubscription
+            allow_oversubscription = self.runtime_args.allow_dataset_oversubscription
 
             # Check if dataset oversubscription is allowed
             if allow_oversubscription and not user_set_repeats:
@@ -896,7 +914,7 @@ class MetadataBackend:
         should_shuffle_contents = os.environ.get("SIMPLETUNER_SHUFFLE_BUCKETS", "1") == "1"
         if should_shuffle_contents:
             # Process-specific RNG seeding must not change the split input across ranks.
-            shuffle_seed = getattr(StateTracker.get_args(), "seed", None)
+            shuffle_seed = getattr(self.runtime_args, "seed", None)
             if shuffle_seed is None:
                 if self.accelerator.is_main_process:
                     shuffle_seed = random.SystemRandom().getrandbits(64)
@@ -1044,7 +1062,7 @@ class MetadataBackend:
         logger.debug(f"Refreshing buckets for rank {rank} via data_backend id {self.id}.")
         existing_files = self.data_backend.source_files.read()
 
-        if not StateTracker.get_args().ignore_missing_files:
+        if not self.runtime_args.ignore_missing_files:
             self.update_buckets_with_existing_files(existing_files)
         return
 
@@ -1109,7 +1127,7 @@ class MetadataBackend:
 
     def _prune_small_buckets(self, bucket):
         """remove buckets smaller than batch size"""
-        if StateTracker.get_args().disable_bucket_pruning:
+        if self.runtime_args.disable_bucket_pruning:
             logger.warning("Not pruning small buckets, as --disable_bucket_pruning is provided.")
             return
         dataset_type = getattr(self, "dataset_type", None)
@@ -1295,7 +1313,7 @@ class MetadataBackend:
                     f"--minimum_image_size was given with a value of {self.minimum_image_size} but resolution_type is area, which means this value is most likely too large. Please use a value less than 5."
                 )
             minimum_image_size = self.minimum_image_size * 1_000_000
-            crop_config = StateTracker.get_data_backend_config(self.id) if dataset_config is None else dataset_config
+            crop_config = self.active_dataset_config if dataset_config is None else dataset_config
             if crop_config.get("crop", False) and crop_config.get("crop_aspect", "square") == "square":
                 # square crop needs minimum edge length check
                 pixel_edge_len = floor(np.sqrt(minimum_image_size))
@@ -1481,7 +1499,7 @@ class MetadataBackend:
 
         metadata_updates_queue = Queue()
         tqdm_queue = Queue()
-        worker_cls = Process if StateTracker.get_args().enable_multiprocessing else Thread
+        worker_cls = Process if self.runtime_args.enable_multiprocessing else Thread
         workers = [
             worker_cls(
                 target=self._bucket_worker,
@@ -1531,7 +1549,7 @@ class MetadataBackend:
 
     def handle_vae_cache_inconsistencies(self, vae_cache, vae_cache_behavior: str):
         """handle vae cache inconsistencies with bucket indices"""
-        if "deepfloyd" in StateTracker.get_args().model_type:
+        if "deepfloyd" in self.runtime_args.model_type:
             return
         if vae_cache_behavior not in ["sync", "recreate"]:
             raise ValueError("Invalid VAE cache behavior specified.")
@@ -1553,8 +1571,8 @@ class MetadataBackend:
 
     def _recalculate_target_resolution(self, original_aspect_ratio: float) -> tuple:
         """recalculate target resolution based on backend config"""
-        resolution_type = StateTracker.get_data_backend_config(self.id)["resolution_type"]
-        resolution = StateTracker.get_data_backend_config(self.id)["resolution"]
+        resolution_type = self.active_dataset_config["resolution_type"]
+        resolution = self.active_dataset_config["resolution"]
         if resolution_type == "pixel":
             return MultiaspectImage.calculate_new_size_by_pixel_edge(original_aspect_ratio, int(resolution))
         elif resolution_type == "area":

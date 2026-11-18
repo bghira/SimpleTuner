@@ -34,14 +34,14 @@ class MultiaspectImage:
         return result if result > 0 else default
 
     @staticmethod
-    def _get_alignment(default: int = 1) -> int:
-        args = StateTracker.get_args()
+    def _get_alignment(default: int = 1, *, args=None) -> int:
+        args = StateTracker.get_args() if args is None else args
         align = getattr(args, "aspect_bucket_alignment", None) if args is not None else None
         return MultiaspectImage._coerce_positive_int(align, default)
 
     @staticmethod
-    def _get_rounding(default: int) -> int:
-        args = StateTracker.get_args()
+    def _get_rounding(default: int, *, args=None) -> int:
+        args = StateTracker.get_args() if args is None else args
         rounding = getattr(args, "aspect_bucket_rounding", None) if args is not None else None
         if isinstance(rounding, Real):
             rounding = int(rounding)

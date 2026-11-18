@@ -58,6 +58,8 @@ class DiscoveryMetadataBackend(MetadataBackend):
         maximum_num_frames: int = None,
         cache_file_suffix: str = None,
         repeats: int = 0,
+        dataset_config: dict | None = None,
+        runtime_args=None,
         max_num_samples: int = None,
     ):
         super().__init__(
@@ -79,6 +81,8 @@ class DiscoveryMetadataBackend(MetadataBackend):
             maximum_num_frames=maximum_num_frames,
             minimum_num_frames=minimum_num_frames,
             num_frames=num_frames,
+            dataset_config=dataset_config,
+            runtime_args=runtime_args,
             cache_file_suffix=cache_file_suffix,
             repeats=repeats,
             max_num_samples=max_num_samples,
@@ -355,7 +359,7 @@ class DiscoveryMetadataBackend(MetadataBackend):
         }
         # Encode the cache as JSON.
         cache_data = {
-            "config": StateTracker.get_data_backend_config(data_backend_id=self.data_backend.id),
+            "config": self.active_dataset_config,
             "aspect_ratio_bucket_indices": aspect_ratio_bucket_indices_str,
         }
         # Include filtering statistics if available
@@ -685,7 +689,7 @@ class DiscoveryMetadataBackend(MetadataBackend):
                     source_config = StateTracker.get_data_backend_config(data_backend_id=source_dataset_id) or {}
                     video_config = source_config.get("video") or {}
                     target_num_frames = video_config.get("num_frames")
-                    fps = getattr(StateTracker.get_args(), "framerate", None)
+                    fps = getattr(self.runtime_args, "framerate", None)
                     if target_num_frames and fps:
                         bucket_duration = float(target_num_frames) / float(fps)
 
