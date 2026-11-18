@@ -195,11 +195,29 @@ class CaptionSamplerCheckpointTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "older release"):
                 sampler.load_states(state_path)
 
-    def test_caption_prefetch_is_rejected_before_loader_creation(self):
+    def test_a_prefetched_caption_dataset_saves_the_batch_training_consumed(self):
+        from simpletuner.helpers.data_backend.runtime import BatchFetcher
+
+        self.addCleanup(StateTracker.set_consumed_position, None)
+        reference = self.sampler()
+        random_dataloader_iterator(0, {"caption": self.loader(reference)})
+
         factory = FactoryRegistry.__new__(FactoryRegistry)
-        factory.args = SimpleNamespace(dataloader_prefetch=True)
-        with self.assertRaisesRegex(ValueError, "dataloader_prefetch=false"):
-            factory._create_caption_dataloader({}, {})
+        factory.args = SimpleNamespace(**vars(self.args), dataloader_prefetch=True, train_batch_size=2)
+        factory.accelerator = self.accelerator
+        init_backend = {"id": "caption", "config": {}, "metadata_backend": self.metadata, "data_backend": None}
+        factory._create_caption_dataloader({}, init_backend)
+        fetcher = BatchFetcher(step=0, max_size=3, datasets={"caption": init_backend["train_dataloader"]})
+        fetcher.fetch_responses()
+        fetcher.next_response(1)
+        self.assertNotEqual(init_backend["sampler"].cursor.state(), reference.cursor.state())
+
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = str(Path(directory, "training_state.json"))
+            init_backend["sampler"].save_state(state_path)
+            resumed = self.sampler()
+            resumed.load_states(state_path)
+        self.assertEqual(resumed.cursor.state(), reference.cursor.state())
 
     def test_an_unshuffled_caption_dataset_is_rejected(self):
         factory = FactoryRegistry.__new__(FactoryRegistry)

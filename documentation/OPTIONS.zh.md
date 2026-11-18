@@ -3198,7 +3198,7 @@ options:
 
 选择 `--distillation_method=assistant_lora`，使用字幕数据集和禁用适配器后新生成的基础模型输出训练正向辅助适配器。目前支持 Qwen Image 2.1。`distillation_config.assistant_lora` 接受 `num_inference_steps`（40）、`resolutions`（`[[1024, 1024]]`，宽在前、高在后，均为 32 的倍数）和 `seed`（42）。需要预缓存文本嵌入，不缓存终态潜变量。参见 [Qwen 指南](quickstart/QWEN_IMAGE_2-1.zh.md)。
 
-字幕数据集要求 `dataloader_prefetch: false`，确保检查点游标对应已消费的字幕。恢复时若字幕标识或内容、批量、重复次数、打乱设置、种子、梯度累积或分布式布局发生变化，将报错。 辅助 LoRA 检查点同样拒绝更改生成种子、分辨率列表或教师推理步数。
+恢复时若字幕标识或内容、批量、重复次数、打乱设置、种子、梯度累积或分布式布局发生变化，将报错。 辅助 LoRA 检查点同样拒绝更改生成种子、分辨率列表或教师推理步数。
 
 Assistant LoRA 和 AnyFlow 会临时将 Dynamo 每段代码的编译缓存上限提高到至少 32，以容纳教师、训练和验证变体。用户设置的更高上限会保留；退出时（包括发生错误时）恢复原来的上限。
 

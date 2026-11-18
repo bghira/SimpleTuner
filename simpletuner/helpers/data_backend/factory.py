@@ -3619,8 +3619,6 @@ class FactoryRegistry:
 
     def _create_caption_dataloader(self, backend: Dict[str, Any], init_backend: Dict[str, Any]) -> None:
         """Attach CaptionDataset + CaptionSampler + caption collate to the backend."""
-        if getattr(self.args, "dataloader_prefetch", False):
-            raise ValueError("Caption datasets require dataloader_prefetch=false to preserve sampler checkpoint position.")
         if backend.get("shuffle") is False:
             raise ValueError(
                 f"(id={init_backend['id']}) Caption datasets are always read in a seeded shuffle; remove shuffle=false."

@@ -221,7 +221,7 @@ Qwen Image 2.1 LoRA training now loads [training assistant v3](https://huggingfa
 
 Use this as the sole distillation method; composition with other distillers is not supported.
 
-Caption datasets require `dataloader_prefetch: false` so checkpoint cursors represent consumed captions. Resume rejects changes to caption identities/text, batch size, repeats, shuffle, seed, accumulation or distributed layout. Assistant checkpoints also reject changes to the generation seed, resolution list or teacher inference-step count.
+Resume rejects changes to caption identities/text, batch size, repeats, shuffle, seed, accumulation or distributed layout. Assistant checkpoints also reject changes to the generation seed, resolution list or teacher inference-step count.
 
 <a id="assistant-lora-multires"></a>
 

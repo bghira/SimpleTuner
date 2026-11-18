@@ -73,7 +73,7 @@
 - `num_inference_steps`（默认 `40`）、`guidance_scale`（默认 `1.0`）、`seed`（默认 `0`）：推理设置。Qwen Image 将引导映射至 `true_cfg_scale`；大于一时使用空负面提示词，验证引导设置不会覆盖此值。
 - `output_dir`（可选）：默认 `cache_dir/generated-captions/<id>`。输出按配置指纹存储，重启时复用。指纹包含描述、推理设置、解析后的 Hub 修订版本及本地权重文件大小和修改时间。生成期间不要修改模型文件。描述、模型或推理设置变化会创建独立缓存，批量大小变化不会。
 
-生成时禁用适配器并使用基础模型，仅释放为预处理加载的变换器，不修改原始描述。生成需要单进程准备运行；多进程运行中的 `data_generator` 会在读取描述前被拒绝。分布式训练时，请将生成目录配置为普通 `image` 数据集，每个分辨率一个数据集，设置 `caption_strategy: "textfile"`、`crop: false`、`resolution_type: "pixel"`，并将 `resolution` 设为该桶的短边像素数。未使用生成器的描述数据集必须设置 `dataloader_prefetch=false`，以保存检查点中的采样器位置。修改描述列表、分辨率或数据集拓扑需要开始新的训练；复用生成缓存并不意味着此类检查点恢复兼容。
+生成时禁用适配器并使用基础模型，仅释放为预处理加载的变换器，不修改原始描述。生成需要单进程准备运行；多进程运行中的 `data_generator` 会在读取描述前被拒绝。分布式训练时，请将生成目录配置为普通 `image` 数据集，每个分辨率一个数据集，设置 `caption_strategy: "textfile"`、`crop: false`、`resolution_type: "pixel"`，并将 `resolution` 设为该桶的短边像素数。修改描述列表、分辨率或数据集拓扑需要开始新的训练；复用生成缓存并不意味着此类检查点恢复兼容。
 
 本地描述发现要求生成输出目录位于源 `instance_data_dir` 之外；目录重叠会在扫描前被拒绝。
 
