@@ -1498,7 +1498,7 @@ Webshart datasets load WebDataset-style tar shards through the `webshart` packag
 
 #### Parquet image bytes on S3
 
-Set `webshart.format` to `parquet` to read embedded image bytes from local, Hub, or S3-compatible Parquet shards. S3 sources use `s3://bucket` or `s3://bucket/prefix`; `webshart.manifest` optionally selects a capture descriptor relative to that source. Requires webshart 0.8.0 or later for native S3 and capture-manifest support.
+Set `webshart.format` to `parquet` to read embedded image bytes from local, Hub, or S3-compatible Parquet shards. S3 sources use `s3://bucket` or `s3://bucket/prefix`; `webshart.manifest` optionally selects a capture descriptor relative to that source. SimpleTuner requires Webshart 0.9.0 or later.
 
 `webshart.columns` maps `image`, `captions`, `width`, and `height` to source column names; omitted names use those defaults. Images can be binary columns or structs containing `bytes`. Captured `url_status != "ok"` and empty `stored_bytes` rows are excluded without changing physical row IDs. Missing dimensions are excluded from bucketing. Original URLs are not fetched. A successful capture status does not guarantee that the full image will decode; batch reads skip corrupt images.
 
