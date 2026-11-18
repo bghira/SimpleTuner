@@ -2097,7 +2097,7 @@ class VAECache(WebhookMixin):
         return [f for f in futures if f not in completed_futures]
 
     def needs_legacy_cache_inventory(self, config):
-        if getattr(self.metadata_backend, "native_policy", None) in ("global", "shard_local"):
+        if self.metadata_backend.requires_complete_preparation is True:
             return False
         maintenance = (
             config.get("scan_for_errors")
@@ -2123,13 +2123,14 @@ class VAECache(WebhookMixin):
         current = 0
         total = dataset.describe().accepted_samples
         ready = False
+        requires_complete = dataset.requires_complete_preparation
         for bucket, refs in dataset.iter_preparation_batches(worker=worker, workers=workers, batch_size=self.vae_batch_size):
             keys = (self.cache_path_for_image(ref) for ref in refs)
             cached = self.cache_data_backend.bulk_exists(keys)
             pending = [ref for ref, present in zip(refs, cached, strict=True) if not present]
             requested = refs if exclusions is not None else pending
             if requested:
-                if dataset.uses_native_schedule:
+                if requires_complete:
                     records = dataset.read_samples(requested, fields={"image"})
                     images = {ref: record["image"] for ref, record in zip(requested, records, strict=True)}
                 else:
@@ -2150,12 +2151,12 @@ class VAECache(WebhookMixin):
                     ready = True
                 images = [images[ref] for ref in pending]
                 pixels = self._process_images_in_batch(pending.copy(), images, disable_queue=True)
-                if dataset.uses_native_schedule and {entry[1] for entry in pixels} != set(pending):
-                    raise ValueError("Some requested Webshart samples could not be prepared for VAE encoding.")
+                if requires_complete and {entry[1] for entry in pixels} != set(pending):
+                    raise ValueError("Some requested dataset samples could not be prepared for VAE encoding.")
                 if pixels:
                     latents = self._encode_images_in_batch(pixels, disable_queue=True)
-                    if dataset.uses_native_schedule and {entry[1] for entry in latents} != set(pending):
-                        raise ValueError("The VAE did not return every requested Webshart latent.")
+                    if requires_complete and {entry[1] for entry in latents} != set(pending):
+                        raise ValueError("The VAE did not return every requested dataset latent.")
                     self._write_latents_in_batch(latents)
             current += len(refs)
             if progress_callback:

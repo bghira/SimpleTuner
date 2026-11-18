@@ -204,7 +204,7 @@ class TestVaeCacheTraversal(unittest.TestCase):
         source.delete.assert_not_called()
 
     def test_accepted_partition_drives_cold_mixed_and_warm_latents(self):
-        dataset = Mock()
+        dataset = Mock(requires_complete_preparation=True, uses_native_schedule=False)
         dataset.describe.return_value.accepted_samples = 3
         dataset.iter_preparation_batches.return_value = [("wide", ("a", "b")), ("square", ("c",))]
         dataset.read_samples.side_effect = lambda refs, fields: [{"image": ref} for ref in refs]
@@ -232,7 +232,7 @@ class TestVaeCacheTraversal(unittest.TestCase):
 
     def test_vae_inventory_is_only_needed_for_legacy_filtering_and_maintenance(self):
         cache = VAECache.__new__(VAECache)
-        cache.metadata_backend = SimpleNamespace(native_policy=None)
+        cache.metadata_backend = SimpleNamespace(requires_complete_preparation=False)
         cache.vae_cache_ondemand = False
         cache.nsfw_check_enabled = False
         cache.delete_problematic_images = False
@@ -244,11 +244,11 @@ class TestVaeCacheTraversal(unittest.TestCase):
         cache.vae_cache_ondemand = False
         cache.nsfw_check_enabled = True
         self.assertTrue(cache.needs_legacy_cache_inventory({}))
-        cache.metadata_backend.native_policy = "global"
+        cache.metadata_backend.requires_complete_preparation = True
         self.assertFalse(cache.needs_legacy_cache_inventory({"scan_for_errors": True}))
 
     def test_legacy_preparation_preserves_partial_reads_and_accepts_audio_payloads(self):
-        dataset = Mock(uses_native_schedule=False)
+        dataset = Mock(requires_complete_preparation=False)
         dataset.describe.return_value.accepted_samples = 2
         dataset.iter_preparation_batches.return_value = [("audio", ("available.wav", "missing.wav"))]
         cache = VAECache.__new__(VAECache)

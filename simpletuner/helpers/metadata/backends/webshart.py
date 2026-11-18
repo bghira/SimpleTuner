@@ -254,6 +254,10 @@ class WebshartMetadataBackend(MetadataBackend):
     def epoch_provider(self):
         return self if self.native_policy else None
 
+    @property
+    def requires_complete_preparation(self):
+        return self.native_policy is not None
+
     def epoch_spec(self, epoch, batch_size, *, occurrence_revision=None):
         args = StateTracker.get_args()
         dp_size, dp_rank, cp_size = get_cp_aware_dp_info(self.accelerator)

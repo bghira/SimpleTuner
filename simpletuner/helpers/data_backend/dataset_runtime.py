@@ -248,6 +248,10 @@ class DatasetRuntime:
             return dict(zip(refs, self.data_backend.read_caption_batch(refs), strict=True)).__getitem__
         return None
 
+    @property
+    def requires_complete_preparation(self) -> bool:
+        return self.metadata_backend.requires_complete_preparation
+
     def iter_preparation_batches(self, *, worker=0, workers=1, batch_size):
         """Yield shape-compatible batches from a partition of accepted source samples."""
         if workers < 1 or not 0 <= worker < workers:
