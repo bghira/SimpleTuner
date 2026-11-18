@@ -78,8 +78,6 @@ class TestTrainingSample(unittest.TestCase):
             "crop_coordinates": (8, 0),
             "aspect_ratio": 0.8,
         }
-        backend = MagicMock()
-        backend.get_metadata_by_filepath.side_effect = lambda _: dict(metadata)
         for crop_style in ("center", "random"):
             self.default_config["crop_style"] = crop_style
             for count in (1, 2):
@@ -87,11 +85,11 @@ class TestTrainingSample(unittest.TestCase):
                     with self.subTest(crop_style=crop_style, count=count, as_array=as_array):
                         grouped = {
                             "0.8": [
-                                (f"{i}.png", pixels.copy() if as_array else Image.fromarray(pixels), "0.8")
+                                (f"{i}.png", pixels.copy() if as_array else Image.fromarray(pixels), metadata)
                                 for i in range(count)
                             ]
                         }
-                        results = BatchedTrainingSamples().process_aspect_grouped_images(grouped, backend)
+                        results = BatchedTrainingSamples().process_aspect_grouped_images(grouped)
                         self.assertEqual(len(results), count)
                         for filepath, array, result_metadata in results:
                             # Fix the random offset so both paths select the same crop.

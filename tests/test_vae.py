@@ -47,6 +47,43 @@ from simpletuner.helpers.training.state_tracker import StateTracker
 
 
 class TestVaeCache(unittest.TestCase):
+    def test_image_preparation_gets_geometry_once_from_the_bound_provider(self):
+        geometry = {
+            "original_size": [16, 8],
+            "intermediary_size": [16, 8],
+            "target_size": [16, 8],
+            "crop_coordinates": [0, 0],
+            "aspect_ratio": 2.0,
+            "aspect_bucket": "2.0",
+        }
+        metadata = MagicMock(image_metadata_loaded=True)
+        metadata.get_metadata_batch.return_value = (geometry, geometry)
+        model = MagicMock()
+        model.get_transforms.return_value = lambda image: torch.from_numpy(np.array(image).copy())
+        cache = VAECache(
+            id="images",
+            model=model,
+            vae=SimpleNamespace(dtype=torch.float32),
+            accelerator=SimpleNamespace(device="cpu"),
+            metadata_backend=metadata,
+            image_data_backend=None,
+            instance_data_dir="images",
+            dataset_config={"dataset_type": "image", "resolution": 16, "resolution_type": "pixel"},
+        )
+        with (
+            patch.object(StateTracker, "get_args", return_value=SimpleNamespace(aspect_bucket_alignment=8)),
+            patch.object(StateTracker, "get_data_backend", side_effect=AssertionError("registry lookup")),
+            patch.object(StateTracker, "get_metadata_by_filepath", side_effect=AssertionError("registry metadata lookup")),
+        ):
+            pixels = cache._process_images_in_batch(
+                ["first.png", "second.png"], [Image.new("RGB", (16, 8)), Image.new("RGB", (16, 8))], disable_queue=True
+            )
+
+        self.assertEqual([result[1] for result in pixels], ["second.png", "first.png"])
+        metadata.get_metadata_batch.assert_called_once_with(["second.png", "first.png"])
+        metadata.get_metadata_by_filepath.assert_not_called()
+        self.assertEqual(geometry["target_size"], [16, 8])
+
     def test_filename_mapping(self):
         # Test cases - hash_filenames is always True in production
         test_cases = [

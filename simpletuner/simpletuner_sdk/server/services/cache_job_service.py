@@ -663,6 +663,7 @@ class CacheJobService:
                 process_queue_size=int(global_config.get("process_queue_size", 16) or 16),
                 hash_filenames=True,
                 cache_inventory_dir=args.output_dir,
+                dataset_config=config.to_dict()["config"],
             )
 
             self._check_cancelled(job)

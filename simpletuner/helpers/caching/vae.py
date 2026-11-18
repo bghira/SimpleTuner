@@ -54,69 +54,39 @@ else:
 WAN_STYLE_LATENT_MODEL_FAMILIES = ("wan", "wan_s2v", "infinitetalk", "sanavideo", "anima")
 
 
-def prepare_sample(
-    image: Image.Image = None,
-    data_backend_id: str = None,
-    filepath: str = None,
-    model=None,
-):
-    data_backend = StateTracker.get_data_backend(data_backend_id)
-    dataset_type = data_backend.get("dataset_type", "image")
-    search_types = ["image", "video", "conditioning"]
-    if dataset_type not in search_types:
-        search_types.append(dataset_type)
-    metadata = StateTracker.get_metadata_by_filepath(
-        filepath, data_backend_id=data_backend_id, search_dataset_types=search_types
-    )
-    data_sampler = data_backend.get("sampler")
-    image_data = image
-    if image_data is None:
-        image_data = data_sampler.yield_single_image(filepath)
-    training_sample = TrainingSample(
-        image=image_data,
+def prepare_sample(image, data_backend_id, filepath, model, *, metadata, config):
+    sample = TrainingSample(
+        image=image,
         data_backend_id=data_backend_id,
         image_metadata=metadata,
         image_path=filepath,
         model=model,
+        data_backend_config=config,
     )
-    # python will raise an error here if any cond_datasets are set to back multiple train_datasets
-    # this would be a problem since we wouldn't know how to prepare our sample
-    cond_mapping = {y: x for (x, y) in StateTracker.get_conditioning_mappings()}
-
-    if data_backend_id in cond_mapping:
-        conditioning_sample_path = training_sample.image_path()
-        # locate the partner backend id
-        train_id = cond_mapping[data_backend_id]
-        train_data_backend = StateTracker.get_data_backend(train_id)
-        train_sample_path = training_sample.training_sample_path(training_dataset_id=train_id)
-        cond_meta = StateTracker.get_metadata_by_filepath(conditioning_sample_path, data_backend_id=data_backend_id)
-        if not cond_meta:
-            train_meta = train_data_backend["metadata_backend"].get_metadata_by_filepath(train_sample_path)
-            prepared_sample = training_sample.prepare_like(
+    prepared_sample = None
+    if config.get("dataset_type") == "conditioning" and not metadata:
+        source_id = next(
+            (source for source, target in StateTracker.get_conditioning_mappings() if target == data_backend_id),
+            None,
+        )
+        if source_id is not None:
+            source = StateTracker.get_dataset(source_id)
+            source_ref = sample.training_sample_path(training_dataset_id=source_id)
+            source_metadata = source.metadata_backend.get_metadata_by_filepath(source_ref)
+            prepared_sample = sample.prepare_like(
                 TrainingSample(
                     image=None,
-                    data_backend_id=train_id,
-                    image_metadata=train_meta,
-                    image_path=train_sample_path,
+                    data_backend_id=source_id,
+                    image_metadata=source_metadata,
+                    image_path=source_ref,
                     model=model,
+                    data_backend_config=source.config,
                 )
             )
-        else:
-            # prepare the sample independently of the training sample,
-            # since the metadata scan built an element for this.
-            # a metadata object will exist for conditioning samples that
-            # have their dataset configured to operate somewhat independently.
-            prepared_sample = training_sample.prepare()
-    else:
-        # If this VAECache is attached to a *training* dataset, we prepare the
-        # sample for training, which includes cropping and resizing.
-        prepared_sample = training_sample.prepare()
+    if prepared_sample is None:
+        prepared_sample = sample.prepare()
 
-    return (
-        prepared_sample.image,
-        prepared_sample.crop_coordinates,
-        prepared_sample.aspect_ratio,
-    )
+    return prepared_sample.image, prepared_sample.crop_coordinates, prepared_sample.aspect_ratio
 
 
 class VAECache(WebhookMixin):
@@ -153,6 +123,7 @@ class VAECache(WebhookMixin):
         nsfw_check_video_min_flagged_frames: int = 1,
         delete_nsfw_images: bool = False,
         cache_inventory_dir: str | None = None,
+        dataset_config: dict | None = None,
     ):
         self.id = id
         self.dataset_type_enum = ensure_dataset_type(dataset_type, default=DatasetType.IMAGE)
@@ -205,6 +176,7 @@ class VAECache(WebhookMixin):
         self.transform_sample = model.get_transforms(dataset_type=transform_type)
         self.rank_info = rank_info()
         self.metadata_backend = metadata_backend
+        self.dataset_config = getattr(metadata_backend, "dataset_config", None) if dataset_config is None else dataset_config
         if self.metadata_backend and not self.metadata_backend.image_metadata_loaded:
             self.metadata_backend.load_image_metadata()
 
@@ -1501,12 +1473,17 @@ class VAECache(WebhookMixin):
                 if image_paths:
                     filepath = image_paths.pop()
                     image = image_data.pop()
-                    aspect_bucket = self.metadata_backend.get_metadata_attribute_by_filepath(
-                        filepath=filepath, attribute="aspect_bucket"
-                    )
+                    aspect_bucket = None
                 else:
                     filepath, image, aspect_bucket = self.process_queue.get()
                 initial_data.append((filepath, image, aspect_bucket))
+
+            refs = [path for path, _, _ in initial_data]
+            geometry = dict(zip(refs, self.metadata_backend.get_metadata_batch(refs), strict=True))
+            initial_data = [
+                (path, image, bucket if bucket is not None else (geometry[path] or {}).get("aspect_bucket"))
+                for path, image, bucket in initial_data
+            ]
 
             if self.dataset_type_enum is DatasetType.AUDIO:
                 return self._process_audio_samples_in_batch(initial_data, disable_queue=disable_queue)
@@ -1520,17 +1497,16 @@ class VAECache(WebhookMixin):
             for filepath, image, aspect_bucket in initial_data:
                 if aspect_bucket not in aspect_groups:
                     aspect_groups[aspect_bucket] = []
-                aspect_groups[aspect_bucket].append((filepath, image, aspect_bucket))
+                aspect_groups[aspect_bucket].append((filepath, image, geometry[filepath]))
 
             # Process using the batch processor
             try:
                 batch_results = self.batch_processor.process_aspect_grouped_images(
                     aspect_groups,
-                    metadata_backend=self.metadata_backend,
                 )
 
                 # Convert batch results to processed samples
-                for filepath, processed_image_array, metadata in batch_results:
+                for filepath, processed_image_array, _ in batch_results:
                     try:
                         # Convert back to PIL for TrainingSample compatibility
                         prepared_input = processed_image_array
@@ -1551,6 +1527,8 @@ class VAECache(WebhookMixin):
                             data_backend_id=self.id,
                             filepath=filepath,
                             model=self.model,
+                            metadata=geometry[filepath],
+                            config=self.dataset_config,
                         )
                         if result:
                             processed_images.append((filepath, result))
@@ -1567,6 +1545,8 @@ class VAECache(WebhookMixin):
                             data_backend_id=self.id,
                             filepath=filepath,
                             model=self.model,
+                            metadata=geometry[filepath],
+                            config=self.dataset_config,
                         )
                         if result:
                             processed_images.append((filepath, result))
@@ -1612,10 +1592,7 @@ class VAECache(WebhookMixin):
 
                 # Update crop coordinates metadata if needed
                 if crop_coordinates:
-                    current_crop_coordinates = self.metadata_backend.get_metadata_attribute_by_filepath(
-                        filepath=filepath,
-                        attribute="crop_coordinates",
-                    )
+                    current_crop_coordinates = (geometry[filepath] or {}).get("crop_coordinates")
                     if current_crop_coordinates is not None and tuple(current_crop_coordinates) != tuple(crop_coordinates):
                         logger.debug(
                             f"Should be updating crop_coordinates for {filepath} from {current_crop_coordinates} to {crop_coordinates}. But we won't.."

@@ -63,7 +63,9 @@ class TrainingSample:
         self.data_backend_id = data_backend_id
         self.paired_source: tuple[str, str] | None = None
         self.image_metadata = (
-            image_metadata if image_metadata else StateTracker.get_metadata_by_filepath(image_path, data_backend_id)
+            image_metadata
+            if image_metadata or data_backend_config is not None
+            else StateTracker.get_metadata_by_filepath(image_path, data_backend_id)
         )
         if isinstance(image, np.ndarray):
             if len(image.shape) == 4:
