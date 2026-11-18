@@ -165,20 +165,9 @@ def describe_missing_conditioning_pairs(
     return messages
 
 
-def fetch_pixel_values(fp, data_backend_id: str, model):
-    """Worker method to fetch pixel values for a single image."""
-    debug_log(f" -> pull pixels for fp {fp} from cache via data backend {data_backend_id}")
-    data_backend = StateTracker.get_data_backend(data_backend_id)
-    image = data_backend["data_backend"].read_image(fp)
-    training_sample = TrainingSample(image=image, data_backend_id=data_backend_id, model=model)
-    return training_sample.prepare(return_tensor=True).image
-
-
-def fetch_latent(fp, data_backend_id: str, vae_cache=None):
+def fetch_latent(fp, data_backend_id: str, vae_cache):
     """Worker method to fetch latent for a single image."""
     debug_log(f" -> pull latents for fp {fp} from cache via data backend {data_backend_id}")
-    if vae_cache is None:
-        vae_cache = StateTracker.get_vaecache(id=data_backend_id)
     latent = vae_cache.retrieve_from_cache(fp)
 
     # Move to CPU and pin memory if it's not on the GPU
@@ -193,24 +182,20 @@ def fetch_latent(fp, data_backend_id: str, vae_cache=None):
 
 def deepfloyd_pixels(filepaths, data_backend_id: str, model):
     """DeepFloyd doesn't use the VAE. We retrieve, normalise, and stack the pixel tensors directly."""
-    # Use a thread pool to fetch latents concurrently
-    try:
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            pixels = list(
-                executor.map(
-                    fetch_pixel_values,
-                    filepaths,
-                    [data_backend_id] * len(filepaths),
-                    [model] * len(filepaths),
-                )
-            )
-    except Exception as e:
-        logger.error(f"(id={data_backend_id}) Error while computing pixels: {e}")
-        raise
-    pixels = torch.stack(pixels)
-    pixels = pixels.to(memory_format=torch.contiguous_format).float()
-
-    return pixels
+    dataset = StateTracker.get_dataset(data_backend_id)
+    pixels = []
+    for record in dataset.read_samples(filepaths, fields=("image", "metadata")):
+        image = record.pop("image")
+        sample = TrainingSample(
+            image=image,
+            image_path=record["image_path"],
+            image_metadata=record,
+            data_backend_id=data_backend_id,
+            data_backend_config=dataset.config,
+            model=model,
+        )
+        pixels.append(sample.prepare(return_tensor=True).image)
+    return torch.stack(pixels).to(memory_format=torch.contiguous_format).float()
 
 
 _REQUIRED_GEOMETRY_KEYS = (
@@ -330,7 +315,7 @@ def compute_latents(filepaths, data_backend_id: str, model, *, vae_cache=None):
 
             return latents
         if vae_cache is None:
-            vae_cache = StateTracker.get_vaecache(id=data_backend_id)
+            vae_cache = StateTracker.get_dataset(data_backend_id).vae_cache
         if getattr(vae_cache, "vae_cache_ondemand", False):
             latents = vae_cache.encode_images([None] * len(filepaths), filepaths)
         else:
@@ -531,9 +516,9 @@ def check_latent_shapes(latents, filepaths, data_backend_id, batch, is_condition
             logger.error(error_msg)
             raise ValueError(error_msg)
         if torch.isnan(latent).any() or torch.isinf(latent).any():
-            data_backend = StateTracker.get_data_backend(data_backend_id)
-            cache_filepath, _ = data_backend["vaecache"].generate_vae_cache_filename(filepaths[idx])
-            data_backend["vaecache"].cache_data_backend.delete(cache_filepath)
+            cache = StateTracker.get_dataset(data_backend_id).vae_cache
+            cache_filepath, _ = cache.generate_vae_cache_filename(filepaths[idx])
+            cache.cache_data_backend.delete(cache_filepath)
             raise ValueError(f"(id={data_backend_id}) Deleted cache file {cache_filepath}: contains NaN or Inf values")
 
         # For conditioning latents, allow different shapes

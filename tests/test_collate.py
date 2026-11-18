@@ -10,9 +10,11 @@ from PIL import Image
 
 import tests.test_stubs  # noqa: F401
 from simpletuner.helpers.training.collate import (
+    check_latent_shapes,
     collate_fn,
     compute_latents,
     compute_prompt_embeddings,
+    deepfloyd_pixels,
     describe_missing_conditioning_pairs,
 )
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -422,12 +424,35 @@ class CollateFunctionTests(unittest.TestCase):
 
         with (
             patch.object(StateTracker, "get_args", return_value=self.base_args),
-            patch.object(StateTracker, "get_vaecache", return_value=vae_cache),
+            patch.object(StateTracker, "get_dataset", return_value=SimpleNamespace(vae_cache=vae_cache)),
         ):
             latents = compute_latents(["sample.png"], "backend-1", MagicMock())
 
         self.assertEqual(latents, ["latent"])
         vae_cache.encode_images.assert_called_once_with([None], ["sample.png"])
+
+    def test_deepfloyd_reads_ordered_payloads_and_geometry_together(self):
+        image = Image.new("RGB", (8, 8))
+        examples = [{"image": image, "image_path": path} for path in ("b.png", "a.png", "b.png")]
+        dataset = SimpleNamespace(config={"resolution": 8}, read_samples=MagicMock(return_value=examples))
+        samples = [SimpleNamespace(prepare=lambda **_: SimpleNamespace(image=torch.zeros(3, 8, 8))) for _ in examples]
+        with (
+            patch.object(StateTracker, "get_dataset", return_value=dataset),
+            patch("simpletuner.helpers.training.collate.TrainingSample", side_effect=samples) as constructor,
+        ):
+            pixels = deepfloyd_pixels(["b.png", "a.png", "b.png"], "backend-1", MagicMock())
+        self.assertEqual(pixels.shape, (3, 3, 8, 8))
+        dataset.read_samples.assert_called_once_with(["b.png", "a.png", "b.png"], fields=("image", "metadata"))
+        self.assertEqual([call.kwargs["image_path"] for call in constructor.call_args_list], ["b.png", "a.png", "b.png"])
+
+    def test_invalid_latent_is_deleted_through_the_bound_cache(self):
+        cache = MagicMock()
+        cache.generate_vae_cache_filename.return_value = ("artifact.pt", None)
+        with patch.object(StateTracker, "get_dataset", return_value=SimpleNamespace(vae_cache=cache)):
+            with self.assertRaisesRegex(ValueError, "Deleted cache file artifact.pt"):
+                check_latent_shapes([torch.tensor([float("nan")])], ["sample.png"], "backend-1", [])
+        cache.generate_vae_cache_filename.assert_called_once_with("sample.png")
+        cache.cache_data_backend.delete.assert_called_once_with("artifact.pt")
 
     def test_compute_prompt_embeddings_batches_precomputed_cache_access(self):
         text_cache = MagicMock(text_cache_ondemand=False)
