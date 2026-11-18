@@ -518,21 +518,21 @@ class PromptHandler:
         instance_prompt: str = None,
         sampler_backend_id: str = None,
         metadata_backend=None,
+        caption_lookup=None,
     ) -> str:
         if not use_captions:
             if not instance_prompt:
                 raise ValueError("Instance prompt is required when instance_prompt_only is enabled.")
             return instance_prompt
 
-        if sampler_backend_id is None:
-            sampler_backend_id = data_backend.id
-
-        if metadata_backend is None:
-            backend_info = StateTracker.get_data_backend(sampler_backend_id)
-            if not backend_info or "metadata_backend" not in backend_info:
-                raise ValueError(f"Could not find metadata backend for {sampler_backend_id}")
-            metadata_backend = backend_info["metadata_backend"]
-        caption = metadata_backend.caption_cache_entry(image_path)
+        if caption_lookup is None:
+            if metadata_backend is None:
+                backend_info = StateTracker.get_data_backend(sampler_backend_id or data_backend.id)
+                if not backend_info or "metadata_backend" not in backend_info:
+                    raise ValueError(f"Could not find metadata backend for {sampler_backend_id or data_backend.id}")
+                metadata_backend = backend_info["metadata_backend"]
+            caption_lookup = metadata_backend.caption_cache_entry
+        caption = caption_lookup(image_path)
         if caption is None:
             raise CaptionNotFoundError(f"Could not find caption for {image_path} in Webshart dataset")
 
@@ -542,10 +542,6 @@ class PromptHandler:
             caption_values = [instance_prompt + " " + c for c in caption_values]
 
         return PromptHandler._restore_caption_payload_shape(caption, caption_values)
-
-    @staticmethod
-    def caption_for_sampler(sampler, image_path):
-        return sampler.dataset_runtime.resolve_caption(image_path)
 
     @staticmethod
     def magic_prompt(
@@ -559,6 +555,7 @@ class PromptHandler:
         disable_multiline_split: bool = False,
         metadata_backend=None,
         backend_config=None,
+        caption_lookup=None,
     ) -> str:
         """Pull a prompt for an image file like magic, using one of the available caption strategies.
 
@@ -636,6 +633,7 @@ class PromptHandler:
                 data_backend=data_backend,
                 sampler_backend_id=sampler_backend_id,
                 metadata_backend=metadata_backend,
+                caption_lookup=caption_lookup,
             )
         elif caption_strategy == "instanceprompt":
             if instance_prompt is None:
@@ -922,90 +920,36 @@ class PromptHandler:
         If a line doesn't have any regex control characters in it, we'll treat it as a string.
         """
         data_backend_config = StateTracker.get_data_backend_config(data_backend_id=data_backend.id)
-        caption_filter_list = data_backend_config.get("caption_filter_list", None)
-        if not caption_filter_list or caption_filter_list == "":
+        filters = PromptHandler.load_caption_filters(data_backend_config.get("caption_filter_list"))
+        if not filters:
             return captions
-        if type(caption_filter_list) == str and os.path.splitext(caption_filter_list)[1] == ".json":
-            # It's a path to a filter list. Load it in JSON format.
-            caption_filter_list_path = Path(caption_filter_list)
-            try:
-                with open(caption_filter_list_path, "r") as caption_filter_list:
-                    caption_filter_list = json.load(caption_filter_list)
-            except Exception as e:
-                logger.error(f"Caption filter list for data backend '{data_backend.id}' could not be loaded: {e}")
-                raise e
-        elif type(caption_filter_list) == str and os.path.splitext(caption_filter_list)[1] == ".txt":
-            # We have a plain text list of filter strings/regex. Load them into an array:
-            caption_filter_list_path = Path(caption_filter_list)
-            try:
-                with open(caption_filter_list_path, "r") as caption_filter_list:
-                    caption_filter_list = caption_filter_list.readlines()
-                    # Strip newlines from the ends:
-                    caption_filter_list = [x.strip("\n") for x in caption_filter_list]
-            except Exception as e:
-                logger.error(f"Caption filter list for data backend '{data_backend.id}' could not be loaded: {e}")
-                raise e
-        # We have the filter list. Is it valid and non-empty?
-        if type(caption_filter_list) != list or len(caption_filter_list) == 0:
-            logger.debug(f"Data backend '{data_backend.id}' has an invalid or empty caption filter list.")
-            return captions
-        elif type(caption_filter_list) is not list:
-            raise ValueError(f"Data backend '{data_backend.id}' has an invalid caption filter list: {caption_filter_list}")
-        # Iterate through each caption
-        filtered_captions = []
-        for caption in tqdm(
-            captions,
-            desc="Filtering captions",
-            total=len(captions),
-            ncols=125,
-            disable=True if len(captions) < 10 else False,
-        ):
-            if type(caption) is list:
-                caption = caption[0]
-            modified_caption = caption
-            # Apply each filter to the caption
-            logger.debug(f"Filtering caption: {modified_caption}")
-            if modified_caption is None:
-                logger.error(f"Encountered a None caption in the list, data backend: {data_backend.id}")
-                continue
-            for filter_item in caption_filter_list:
-                # Check for special replace pattern 's/replace/entry/'
-                if filter_item.startswith("s/") and filter_item.count("/") == 2:
-                    _, search, replace = filter_item.split("/")
-                    regex_modified_caption = re.sub(search, replace, modified_caption)
-                    if regex_modified_caption != modified_caption:
-                        # logger.debug(
-                        #     f"Applying regex SEARCH {filter_item} to caption: {modified_caption}"
-                        # )
-                        modified_caption = regex_modified_caption
-                else:
-                    # Treat as plain string and remove occurrences
-                    if modified_caption is not None:
-                        modified_caption = str(modified_caption).replace(filter_item, "")
-                try:
-                    # Assume all filters as regex patterns for flexibility
-                    pattern = re.compile(filter_item)
-                    try:
-                        regex_modified_caption = pattern.sub("", modified_caption)
-                    except:
-                        regex_modified_caption = modified_caption
-                    if regex_modified_caption != modified_caption:
-                        # logger.debug(
-                        #     f"Applying regex FILTER {filter_item} to caption: {modified_caption}"
-                        # )
-                        modified_caption = regex_modified_caption
-                except re.error as e:
-                    logger.error(f"Regex error with pattern {filter_item}: {e}")
+        values = (caption[0] if isinstance(caption, list) else caption for caption in captions)
+        return [PromptHandler.apply_caption_filters(caption, filters) for caption in values if caption is not None]
 
-            # Add the modified caption to the filtered list
-            # if caption != modified_caption:
-            #     logger.debug(
-            #         f"After all filters have finished, here is the modified caption: {modified_caption}"
-            #     )
-            filtered_captions.append(modified_caption)
+    @staticmethod
+    def load_caption_filters(filters):
+        if isinstance(filters, str):
+            path = Path(filters)
+            if path.suffix == ".json":
+                filters = json.loads(path.read_text())
+            elif path.suffix == ".txt":
+                with path.open() as stream:
+                    filters = [line.rstrip("\n") for line in stream]
+        return tuple(filters) if isinstance(filters, list) else ()
 
-        # Return the list of modified captions
-        return filtered_captions
+    @staticmethod
+    def apply_caption_filters(caption, filters):
+        for item in filters:
+            if item.startswith("s/") and item.count("/") == 2:
+                _, search, replacement = item.split("/")
+                caption = re.sub(search, replacement, caption)
+            else:
+                caption = str(caption).replace(item, "")
+            try:
+                caption = re.sub(item, "", caption)
+            except re.error as error:
+                logger.error(f"Regex error with pattern {item}: {error}")
+        return caption
 
     @staticmethod
     def load_user_prompts(user_prompt_path: str = None):

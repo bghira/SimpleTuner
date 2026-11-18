@@ -146,6 +146,7 @@ class PromptUpsamplingTests(unittest.TestCase):
         cache.model_type = "flux3_image"
         cache.key_type = TextEmbedCacheKey.DATASET_AND_FILENAME
         cache._requires_path_based_keys = True
+        cache.caption_filters = ()
         original = [Image.new("RGB", (64, 32), "red"), Image.new("RGB", (32, 64), "blue")]
         prepared = [image.resize((512, 256)) for image in original]
         raw_context = model.validation_prompt_image_context(original, prepared)

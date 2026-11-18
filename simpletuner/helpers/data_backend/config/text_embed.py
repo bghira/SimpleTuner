@@ -15,6 +15,7 @@ class TextEmbedBackendConfig(BaseBackendConfig):
     caption_filter_list: Optional[List[str]] = None
     text_cache_ondemand: bool = False
     text_cache_disable: bool = False
+    text_cache_encode_only: bool = False
 
     def __post_init__(self):
         self.dataset_type = DatasetType.TEXT_EMBEDS
@@ -29,8 +30,11 @@ class TextEmbedBackendConfig(BaseBackendConfig):
             disabled=backend_dict.get("disabled", backend_dict.get("disable", False)),
             caption_filter_list=backend_dict.get("caption_filter_list", []),
             text_cache_ondemand=bool(backend_dict.get("text_cache_ondemand", False)),
+            text_cache_encode_only=bool(backend_dict.get("text_cache_encode_only", False)),
             text_cache_disable=bool(backend_dict.get("text_cache_disable", False)),
         )
+        if config.text_cache_encode_only:
+            config.text_cache_disable = True
         if config.text_cache_disable:
             config.text_cache_ondemand = True
 
@@ -91,6 +95,8 @@ class TextEmbedBackendConfig(BaseBackendConfig):
             result["config"]["caption_filter_list"] = self.caption_filter_list
         if self.text_cache_ondemand:
             result["config"]["text_cache_ondemand"] = True
+        if self.text_cache_encode_only:
+            result["config"]["text_cache_encode_only"] = True
         if self.text_cache_disable:
             result["config"]["text_cache_disable"] = True
 
