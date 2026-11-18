@@ -3519,11 +3519,8 @@ class FactoryRegistry:
                 info_log(f"(id={init_backend['id']}) Skipping text embedding processing due to missing output_dir in args.")
                 return
 
-            # Check if this model requires image context for text encoding
-            # If so, defer processing until after conditioning datasets are connected
-            requires_image_context = getattr(self.model, "requires_text_embed_image_context", lambda: False)()
             conditioning_data = init_backend["config"].get("conditioning_data")
-            if requires_image_context and conditioning_data:
+            if TextRequestBuilder.needs_conditioning_datasets(self.model, conditioning_data, self.args):
                 info_log(
                     f"(id={init_backend['id']}) Deferring text embed pre-computation until conditioning datasets are connected."
                 )
@@ -3549,7 +3546,7 @@ class FactoryRegistry:
         if not self._deferred_text_embed_backends:
             return
 
-        info_log(f"Processing {len(self._deferred_text_embed_backends)} deferred text embed backend(s) with image context.")
+        info_log(f"Processing {len(self._deferred_text_embed_backends)} deferred text embed backend(s) with conditioning.")
 
         for init_backend in self._deferred_text_embed_backends:
             dataset_id = init_backend["id"]

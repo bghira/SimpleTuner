@@ -385,15 +385,21 @@ class TestFactoryEdgeCases(unittest.TestCase):
         class Provider(MetadataBackend):
             pass
 
-        for deferred in (False, True):
-            with self.subTest(deferred=deferred):
+        for image_context, random_captions in ((False, False), (True, False), (False, True)):
+            with self.subTest(image_context=image_context, random_captions=random_captions):
+                deferred = image_context or random_captions
                 factory = FactoryRegistry.__new__(FactoryRegistry)
                 factory._uses_text_embeddings_cache = lambda: True
-                factory.args = SimpleNamespace(skip_file_discovery="")
+                factory.args = SimpleNamespace(
+                    skip_file_discovery="",
+                    conditioning_multidataset_sampling="random" if random_captions else "combined",
+                )
                 factory.accelerator = SimpleNamespace(device="cpu", num_processes=4)
                 factory.model = SimpleNamespace(
-                    requires_text_embed_image_context=lambda: deferred,
-                    text_embed_cache_key=lambda: TextEmbedCacheKey.DATASET_AND_FILENAME,
+                    requires_text_embed_image_context=lambda: image_context,
+                    text_embed_cache_key=lambda: (
+                        TextEmbedCacheKey.CAPTION if random_captions else TextEmbedCacheKey.DATASET_AND_FILENAME
+                    ),
                 )
                 factory.text_encoders = []
                 factory._deferred_text_embed_backends = []
@@ -412,9 +418,19 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 config = {
                     "caption_strategy": "instanceprompt",
                     "instance_prompt": "caption",
-                    "conditioning_data": ["reference"] if deferred else [],
+                    "conditioning_data": ["input-a", "input-b"] if random_captions else (["reference"] if deferred else []),
                 }
                 runtime = DatasetRuntime("images", backend, metadata, config)
+                if random_captions:
+                    runtime.conditioning_datasets = tuple(
+                        SimpleNamespace(
+                            id=dataset_id,
+                            config={"conditioning_type": "reference_strict"},
+                            conditioning_ref=lambda path, dataset_id=dataset_id: f"{dataset_id}/{path}",
+                            resolve_caption=lambda path: path.split("/", 1)[0],
+                        )
+                        for dataset_id in config["conditioning_data"]
+                    )
                 prepared = []
                 cache = SimpleNamespace(
                     text_cache_ondemand=False,
@@ -444,7 +460,13 @@ class TestFactoryEdgeCases(unittest.TestCase):
                         if deferred:
                             self.assertEqual(factory._deferred_text_embed_backends, [bundle])
                             factory._process_deferred_text_embeddings()
-                self.assertCountEqual([record["key"] for record in prepared], [f"images:{ref}" for ref in refs])
+                if random_captions:
+                    self.assertCountEqual(
+                        [record["prompt"] for record in prepared],
+                        ["input-a"] * len(refs) + ["input-b"] * len(refs),
+                    )
+                else:
+                    self.assertCountEqual([record["key"] for record in prepared], [f"images:{ref}" for ref in refs])
 
     def test_text_embed_disable_config_implies_ondemand_without_mutating_global_args(self):
         from simpletuner.helpers.data_backend.factory import init_backend_config

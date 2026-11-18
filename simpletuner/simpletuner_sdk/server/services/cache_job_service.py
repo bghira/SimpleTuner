@@ -768,7 +768,9 @@ class CacheJobService:
             StateTracker.register_dataset(source_runtime)
             conditioning = None
             ids = dataset_config.get("conditioning_data")
-            if ids and getattr(model, "requires_text_embed_image_context", lambda: False)():
+            from simpletuner.helpers.data_backend.dataset_runtime import TextRequestBuilder
+
+            if TextRequestBuilder.needs_conditioning_datasets(model, ids, args):
                 conditioning = []
                 available = {
                     item["id"]: item for item in dataset_plan or () if not (item.get("disabled") or item.get("disable"))

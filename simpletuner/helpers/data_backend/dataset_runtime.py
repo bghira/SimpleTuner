@@ -401,6 +401,18 @@ def text_embed_request(model, key_type, prompt, metadata, dataset_id, image_path
 
 
 class TextRequestBuilder:
+    @staticmethod
+    def needs_conditioning_datasets(model, linked_ids, args):
+        if not linked_ids:
+            return False
+        if getattr(model, "requires_text_embed_image_context", lambda: False)():
+            return True
+        return (
+            getattr(args, "conditioning_multidataset_sampling", None) == "random"
+            and not isinstance(linked_ids, str)
+            and len(linked_ids) > 1
+        )
+
     def __init__(
         self,
         model,
@@ -448,7 +460,7 @@ class TextRequestBuilder:
             else:
                 context.pop("image_paths", None)
                 context.pop("data_backend_ids", None)
-            if dataset.config.get("source_dataset_id") is not None and dataset.config["caption_strategy"] is None:
+            if dataset.config.get("source_dataset_id") is not None and dataset.config.get("caption_strategy") is None:
                 dataset, path = init_backend["dataset_runtime"], image_path
             alternatives = dataset.resolve_caption(path) or [caption]
             for alternative in alternatives if isinstance(alternatives, list) else [alternatives]:
