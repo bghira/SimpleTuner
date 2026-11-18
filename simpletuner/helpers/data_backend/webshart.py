@@ -12,6 +12,7 @@ from typing import Any, List, Optional, Tuple, Union
 import requests
 import torch
 from atomicwrites import atomic_write
+from PIL import Image
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.config.validators import validate_webshart_caption_key
@@ -644,7 +645,15 @@ class WebshartDataBackend(BaseDataBackend):
         cache_path = self._cache_path(sample_path)
         return str(cache_path) if cache_path.exists() else None
 
+    def _require_image_decoders(self, filepaths):
+        if any(self.filename_suffix(self.normalize_sample_id(path)) == ".jxl" for path in filepaths):
+            if ".jxl" not in Image.registered_extensions():
+                raise ImportError(
+                    "Webshart JPEG XL samples require pillow-jxl-plugin. Install SimpleTuner with the jxl extra."
+                )
+
     def read_image(self, filepath: str, delete_problematic_images: bool = False):
+        self._require_image_decoders((filepath,))
         try:
             file_extension = self.filename_suffix(self.normalize_sample_id(filepath)).strip(".")
             loader = load_video if file_extension in video_file_extensions else load_image
@@ -657,6 +666,7 @@ class WebshartDataBackend(BaseDataBackend):
 
     def read_image_batch(self, filepaths: list, delete_problematic_images: bool = False):
         if self.format == "parquet" and all(self.is_sample_id(path) for path in filepaths):
+            self._require_image_decoders(filepaths)
             refs = [self._resolve_sample_ref(path) for path in filepaths]
             samples = self.loader.load_samples(
                 [(ref.shard_idx, ref.sample_idx) for ref in refs],

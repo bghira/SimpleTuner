@@ -89,6 +89,17 @@ class TestWebshartParquetBackend(unittest.TestCase):
         self.assertEqual(runtime.count_source_rows(exclude_null_images=True), 2)
         self.assertEqual([row["sample_idx"] for row in self.backend.list_samples_in_shard(0)], [0, 2])
 
+    def test_missing_jpeg_xl_decoder_is_reported_before_reading_payloads(self):
+        ref = self.backend.sample_id(0, 0, "part.parquet/000000000000.jxl")
+        with (
+            patch("simpletuner.helpers.data_backend.webshart.Image.registered_extensions", return_value={}),
+            patch.object(self.backend.loader, "load_samples", side_effect=AssertionError("opened payloads")),
+        ):
+            with self.assertRaisesRegex(ImportError, "pillow-jxl-plugin"):
+                self.backend.read_image_batch([ref])
+            with self.assertRaisesRegex(ImportError, "pillow-jxl-plugin"):
+                self.backend.read_image(ref)
+
     def test_prepared_view_uses_factory_bound_settings_without_tracker_lookups(self):
         from simpletuner.helpers.data_backend.builders.base import create_metadata_provider
         from simpletuner.helpers.training.state_tracker import StateTracker
