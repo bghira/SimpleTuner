@@ -12,14 +12,13 @@
 
 ## Worktree management
 
-- Before making task changes or running commands that generate files, inspect `git status --short --branch` and `git worktree list`, fetch the target remote, and create a dedicated branch and worktree from the current target branch. Keep task worktrees outside the main repository directory.
-- After setup, run all task edits, builds, tests, and Git mutations in that worktree. Check the working directory and branch before making changes; keep the main repository checkout free of task changes.
-- Preserve pre-existing changes and untracked files in every checkout. If your task accidentally changes the main checkout, move only your own changes into the task worktree and verify the main checkout matches its initial state. Stop for clarification if ownership is unclear.
-- Audit worktree use at task start, at milestones during long tasks, and before handoff: run `git worktree list` and check `git status --short --branch` in the main checkout and the task worktree. Verify task changes are confined to the intended worktree and check whether worktrees from completed tasks are ready for cleanup.
-- After a PR is merged, fetch the target branch and verify the PR's merged status, including squash or rebase merges, before removing its worktree. Keep worktrees for open PRs or unfinished work.
-- Before cleanup, inspect the worktree's status, including untracked and ignored files, and confirm all task commits were included in the merged PR and no files need preserving. Never force-remove a worktree or discard unrelated work to make cleanup succeed.
-- Remove verified, completed worktrees with `git worktree remove`, prune stale worktree metadata with `git worktree prune`, and delete their local branches only after confirming the work was merged. Do not delete remote branches without user authorization.
-- At handoff, verify the main checkout still matches its initial state and report any task worktree retained for an open PR or any cleanup blocked by files or changes that need preserving.
+- At task start, check `git status --short --branch` and `git worktree list`. Use an existing checkout for read-only reviews, CI checks, and GPU monitoring.
+- Use one worktree per active change. Reuse it for follow-ups, tests, and turning an experiment into a PR. Create a new worktree only when there is no suitable checkout for the change or when independent work or an incompatible base requires isolation. Fetch the target remote before creating a new branch and worktree from the target branch, outside the main checkout.
+- Run edits, builds, tests that write files, and Git mutations in the task worktree. Verify the path and branch before making changes. Keep the main checkout free of task changes. Preserve pre-existing changes in every checkout. If task changes land in the main checkout, move only your own changes and verify the main checkout matches its initial state. Ask if ownership is unclear.
+- Keep experiment results, recovery scripts, and other files needed beyond the checkout in a private directory outside the repository and its worktrees. Record the path in the handoff. Before cleanup, move existing task-owned artifacts there and verify the archive is complete and readable. Leave other people's files in place.
+- Clean up completed task worktrees at handoff, including finished experiments and closed PRs. For a merged PR, fetch the target and verify the merge includes the work, including squash and rebase merges. For work without a merge, verify that any unique commits remain on a local branch and that any uncommitted changes are preserved. Keep a worktree while further local changes or tests are pending. A fully pushed PR can keep its branch without keeping a checkout once local work is done.
+- Before removal, check staged and unstaged changes, untracked and ignored files, and any processes that use the checkout. Remove only worktrees belonging to the task or identified by the user. Use `git worktree remove` without force. If cleanup would discard files or edits, keep the worktree and report the blocker. Prune verified stale metadata as needed. Delete a local branch only after verifying its work is merged or it has no unique commits. Leave remote branches in place unless the user authorizes deletion.
+- During long tasks and at handoff, recheck `git worktree list` and `git status --short --branch` in the main checkout and any task worktrees still present. Verify the main checkout matches its initial state. Report any retained task worktree and the reason it still needs to exist.
 
 ## Code style
 
@@ -43,7 +42,7 @@
 
 ## File preservation
 
-- Do not remove untracked files from the repository unless explicitly instructed to do so
+- Preserve untracked files. You may move task-owned files to a verified private archive during worktree cleanup. Delete untracked files only when explicitly instructed.
 
 ## Public text privacy
 
