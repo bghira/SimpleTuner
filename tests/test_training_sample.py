@@ -107,6 +107,26 @@ class TestTrainingSample(unittest.TestCase):
                             self.assertEqual(actual.aspect_ratio, expected.aspect_ratio)
                             self.assertEqual(result_metadata, metadata)
 
+    def test_prepared_crop_uses_published_offsets_after_json_roundtrip(self):
+        pixels = np.random.default_rng(13).integers(0, 256, (96, 128, 3), dtype=np.uint8)
+        metadata = {
+            "original_size": [128, 96],
+            "intermediary_size": [128, 96],
+            "target_size": [64, 64],
+            "crop_coordinates": [11, 27],
+            "aspect_ratio": 1.0,
+            "prepared_geometry": True,
+        }
+        self.default_config.update(crop=True, crop_style="random")
+        for image in (Image.fromarray(pixels), np.stack([pixels, pixels])):
+            with self.subTest(payload=type(image)):
+                sample = TrainingSample(image, self.data_backend_id, dict(metadata), image_path="sample.png")
+                with patch.object(sample.cropper, "crop", side_effect=AssertionError("selected a new crop")):
+                    prepared = sample.prepare()
+                expected = np.asarray(image)[..., 11:75, 27:91, :]
+                np.testing.assert_array_equal(np.asarray(prepared.image), expected)
+                self.assertEqual(prepared.crop_coordinates, (11, 27))
+
     def test_image_initialization(self):
         """Test that the image is correctly initialized and converted."""
         sample = TrainingSample(self.image, self.data_backend_id, self.image_metadata)

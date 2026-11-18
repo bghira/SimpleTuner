@@ -226,6 +226,11 @@ class TrainingSample:
             self.intermediary_size = self.image_metadata["intermediary_size"]
             self.crop_coordinates = self.image_metadata["crop_coordinates"]
             self.aspect_ratio = self.image_metadata["aspect_ratio"]
+            if self.image_metadata.get("prepared_geometry"):
+                self.original_size = tuple(self.original_size)
+                self.target_size = tuple(self.target_size)
+                self.intermediary_size = tuple(self.intermediary_size)
+                self.crop_coordinates = tuple(self.crop_coordinates)
 
         self.original_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
             self.original_size, geometry=self.geometry
@@ -703,10 +708,25 @@ class TrainingSample:
         """
         if not self.crop_enabled:
             return self
-        if not (self.valid_metadata and self.image_metadata.get("prepared_geometry")):
+        prepared = self.valid_metadata and self.image_metadata.get("prepared_geometry")
+        if not prepared:
             self.calculate_target_size()
         self._downsample_before_crop()
         self.save_debug_image(f"images/{time.time()}-0.5-downsampled.png")
+
+        if prepared and self.image is not None and self.crop_style != "face":
+            top, left = self.crop_coordinates
+            width, height = self.target_size
+            right, bottom = left + width, top + height
+            if min(top, left) < 0 or right > self.current_size[0] or bottom > self.current_size[1]:
+                raise ValueError(f"Prepared crop for {self._image_path} exceeds decoded image dimensions.")
+            if isinstance(self.image, Image.Image):
+                self.image = self.image.crop((left, top, right, bottom))
+            else:
+                self.image = self.image[..., top:bottom, left:right, :]
+            self.current_size = (width, height)
+            self.crop_coordinates = (top, left)
+            return self
 
         # Try to use trainingsample for efficient cropping when possible
         if self.image is not None and isinstance(self.image, Image.Image) and self.crop_style in ["center", "random"]:

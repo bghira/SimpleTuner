@@ -541,6 +541,8 @@ class WebshartMetadataBackend(MetadataBackend):
                 for key in ("crop", "crop_style", "crop_aspect", "video", "dataset_type", "conditioning_config")
             },
         ]
+        if self.dataset_config.get("crop") and self.dataset_config.get("crop_style") != "face":
+            spec.append("prepared-crop-v1")
         if kind == "vae" and self.dataset_config.get("vae_cache_clear_each_epoch"):
             spec.append(StateTracker.get_epoch())
         return sha256(json.dumps(spec, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
@@ -1141,7 +1143,7 @@ class WebshartMetadataBackend(MetadataBackend):
         rules.update(require_captions=require_captions, caption_key=self.data_backend.caption_key)
         args = StateTracker.get_args()
         rules.update(
-            preparation_version=5,
+            preparation_version=6,
             crop_seed=recipe.seed,
             source_revision=self._source_description().get("source_revision"),
             repeats=self.repeats,
