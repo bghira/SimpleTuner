@@ -447,16 +447,7 @@ class PromptHandler:
         caption = metadata_backend.caption_cache_entry(image_path)
 
         if caption is None:
-            # Try to resolve directly from the dataset row as a fallback.
-            try:
-                idx_str = str(image_path).split(".")[0]
-                idx = int(idx_str)
-                item = metadata_backend.data_backend.dataset[idx]
-                caption = metadata_backend._extract_caption_from_item(item)
-            except Exception:
-                caption = None
-            if caption is None:
-                raise CaptionNotFoundError(f"Could not find caption for {image_path} in HuggingFace dataset")
+            raise CaptionNotFoundError(f"Could not find caption for {image_path} in HuggingFace dataset")
 
         caption_values = PromptHandler._normalize_caption_payload(caption)
 

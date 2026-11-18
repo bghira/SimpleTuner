@@ -655,8 +655,10 @@ class TestHuggingfaceBackendBuilder(unittest.TestCase):
     @patch("datasets.load_dataset")
     @patch("datasets.load_dataset_builder")
     def test_audiofolder_loads_audio_without_decode(self, mock_load_dataset_builder, mock_load_dataset):
+        from datasets import Dataset
+
         mock_load_dataset_builder.return_value = SimpleNamespace(info=SimpleNamespace(splits={"train": None}))
-        mock_load_dataset.return_value = []
+        mock_load_dataset.return_value = Dataset.from_dict({"audio": []})
 
         HuggingfaceDatasetsBackend(
             accelerator=self.accelerator,

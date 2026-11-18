@@ -5,7 +5,7 @@ import random
 import threading
 import time
 from contextlib import contextmanager
-from itertools import batched, chain, count, islice
+from itertools import batched, chain, count
 from math import ceil, floor
 from multiprocessing import Process, Queue
 from pathlib import Path
@@ -1364,11 +1364,15 @@ class MetadataBackend:
         with stream as source:
             yield read_bucket_groups(source)
 
-    def iter_preparation_batches(self, worker, workers, batch_size):
+    def _preparation_ownership(self, worker, workers):
         positions = count()
+        return lambda _: next(positions) % workers == worker
+
+    def iter_preparation_batches(self, worker, workers, batch_size):
+        owns = self._preparation_ownership(worker, workers)
         with self._open_accepted_groups() as groups:
             for bucket, refs in groups:
-                assigned = (ref for ref in refs if next(positions) % workers == worker)
+                assigned = filter(owns, refs)
                 for batch in batched(assigned, batch_size):
                     yield bucket, batch
 
@@ -1392,8 +1396,8 @@ class MetadataBackend:
                 raise ValueError(
                     "No accepted samples in dataset metadata; scan the dataset before preparing text embeddings."
                 )
-            partition = islice(chain((first,), refs), worker, None, workers)
-            yield PreparationView(partition, self)
+            owns = self._preparation_ownership(worker, workers)
+            yield PreparationView(filter(owns, chain((first,), refs)), self)
 
     def read_cache(self):
         return self.aspect_ratio_bucket_indices

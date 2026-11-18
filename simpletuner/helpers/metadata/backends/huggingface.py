@@ -3,6 +3,7 @@ import logging
 import os
 import time
 import traceback
+from bisect import bisect_right
 from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
@@ -406,6 +407,18 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         ):
             return None
         return self._extract_caption_from_item(item)
+
+    def _preparation_ownership(self, worker, workers):
+        shards = self.data_backend.preparation_shards
+        if shards is None:
+            return super()._preparation_ownership(worker, workers)
+        boundaries = tuple(shard.stop for shard in shards)
+
+        def owns(ref):
+            row = self.data_backend._get_index_from_path(ref)
+            return bisect_right(boundaries, row) % workers == worker
+
+        return owns
 
     def _limited_dataset_indices(self) -> range | list[int]:
         indices = range(len(self.data_backend.dataset))

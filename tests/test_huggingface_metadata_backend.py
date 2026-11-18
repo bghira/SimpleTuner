@@ -7,10 +7,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from datasets import Dataset
+from datasets import Dataset, DatasetInfo, SplitDict, SplitInfo
 
 from simpletuner.helpers.data_backend.huggingface import HuggingfaceDatasetsBackend
 from simpletuner.helpers.metadata.backends.huggingface import HuggingfaceMetadataBackend
+from simpletuner.helpers.prompts import CaptionNotFoundError, PromptHandler
 
 
 class _DummyDataBackend:
@@ -70,6 +71,32 @@ class HuggingfaceMetadataBackendTests(unittest.TestCase):
         self.assertEqual(backend.caption_cache_entry("1.jpg"), ["first", "second"])
         self.assertIsNone(backend.caption_cache_entry("2.jpg"))
         self.assertIsNone(backend.caption_cache_entry("3.jpg"))
+        with self.assertRaises(CaptionNotFoundError):
+            PromptHandler.prepare_instance_prompt_from_huggingface("2.jpg", True, False, source, metadata_backend=backend)
+
+    def test_accepted_preparation_assigns_filtered_rows_by_physical_arrow_shard(self):
+        info = DatasetInfo(splits=SplitDict({"train": SplitInfo("train", num_examples=8, shard_lengths=[3, 2, 3])}))
+        rows = Dataset.from_dict({"number": list(range(8))}, info=info, split="train")
+        with (
+            patch("datasets.load_dataset_builder", return_value=SimpleNamespace(info=info)),
+            patch("datasets.load_dataset", return_value=rows),
+        ):
+            source = HuggingfaceDatasetsBackend(
+                None, "arrow-shards", "test", filter_func=lambda item: item["number"] in (0, 2, 5, 7), num_proc=1
+            )
+            self.assertEqual(source.preparation_shards, (range(0, 2), range(2, 2), range(2, 4)))
+
+        provider = HuggingfaceMetadataBackend.__new__(HuggingfaceMetadataBackend)
+        provider.data_backend = source
+        provider.read_only = False
+        provider.aspect_ratio_bucket_indices = {"square": ["3.jpg", "1.jpg"], "wide": ["0.jpg", "2.jpg"]}
+        with provider.open_preparation_view(worker=0, workers=3) as first:
+            self.assertEqual(list(first), ["1.jpg", "0.jpg"])
+        with provider.open_preparation_view(worker=1, workers=3) as empty:
+            self.assertEqual(list(empty), [])
+        with provider.open_preparation_view(worker=2, workers=3) as last:
+            self.assertEqual(list(last), ["3.jpg", "2.jpg"])
+        self.assertEqual(list(provider.iter_preparation_batches(2, 3, 4)), [("square", ("3.jpg",)), ("wide", ("2.jpg",))])
 
     def test_preparation_scan_uses_the_same_sample_cap_as_discovery(self):
         rows = Dataset.from_dict({"width": [512] * 18, "height": [256] * 18})

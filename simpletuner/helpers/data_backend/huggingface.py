@@ -2,7 +2,10 @@ import hashlib
 import logging
 import os
 import tempfile
+from bisect import bisect_left
+from functools import cached_property
 from io import BytesIO
+from itertools import accumulate, pairwise
 from pathlib import Path
 from typing import Any, BinaryIO, Dict, Optional, Union
 
@@ -80,6 +83,7 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         self._auto_load = auto_load
 
         self._dataset = None
+        self._source_shard_lengths = None
         self._dataset_loaded = False
         self._loading_dataset = False
 
@@ -139,6 +143,13 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
                 download_mode=download_mode,
             )
 
+            source_shard_lengths = None
+            if not self.streaming:
+                split_info = (self.dataset.info.splits or {}).get(self.split)
+                lengths = split_info.shard_lengths if split_info is not None else None
+                if lengths and len(lengths) > 1 and sum(lengths) == len(self.dataset):
+                    source_shard_lengths = tuple(lengths)
+
             # Log the initial size
             if not self.streaming:
                 logger.info(f"Loaded dataset with {len(self.dataset)} items")
@@ -160,6 +171,7 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
                 )
                 logger.info(f"Dataset filtered from {original_size} to {len(self.dataset)} items")
 
+            self._source_shard_lengths = source_shard_lengths
             self._dataset_loaded = True
         finally:
             if not self._dataset_loaded:
@@ -403,7 +415,24 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
     @dataset.setter
     def dataset(self, value):
         self._dataset = value
+        self._source_shard_lengths = None
+        self.__dict__.pop("preparation_shards", None)
         self._dataset_loaded = value is not None
+
+    @cached_property
+    def preparation_shards(self):
+        """Logical row ranges aligned with the published Arrow shards of one full split."""
+        dataset = self.dataset
+        if self._source_shard_lengths is None:
+            return None
+        boundaries = accumulate(self._source_shard_lengths, initial=0)
+        # Dataset.filter preserves physical row order. Its Arrow index maps logical rows to physical rows.
+        if dataset._indices is not None:
+            positions = dataset._indices.column("indices")
+            boundaries = (
+                bisect_left(range(len(dataset)), boundary, key=lambda i: positions[i].as_py()) for boundary in boundaries
+            )
+        return tuple(range(start, end) for start, end in pairwise(boundaries))
 
     def _get_index_from_path(self, filepath: str) -> Optional[int]:
         basename = os.path.basename(filepath)
