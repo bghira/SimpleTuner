@@ -32,6 +32,42 @@ except ImportError:
     raise ImportError("Pandas is required for the ParquetMetadataBackend.")
 
 
+def check_column_values(column_data, column_name, parquet_path, fallback_caption_column=False):
+    non_null_values = column_data.dropna()
+    if non_null_values.empty:
+        raise ValueError(f"Parquet file {parquet_path} contains only null values in the '{column_name}' column.")
+
+    first_non_null = non_null_values.iloc[0]
+    if isinstance(first_non_null, (list, tuple, numpy.ndarray, pd.Series)):
+        if column_data.isnull().any() and not fallback_caption_column:
+            raise ValueError(f"Parquet file {parquet_path} contains null arrays in the '{column_name}' column.")
+
+        empty_arrays = non_null_values.apply(lambda x: len(x) == 0)
+        if empty_arrays.any() and not fallback_caption_column:
+            raise ValueError(f"Parquet file {parquet_path} contains empty arrays in the '{column_name}' column.")
+
+        null_elements_in_arrays = non_null_values.apply(lambda arr: any(pd.isnull(s) for s in arr))
+        if null_elements_in_arrays.any() and not fallback_caption_column:
+            raise ValueError(
+                f"Parquet file {parquet_path} contains null values within arrays in the '{column_name}' column."
+            )
+
+        empty_strings_in_arrays = non_null_values.apply(lambda arr: any(s == "" for s in arr))
+        if empty_strings_in_arrays.all() and not fallback_caption_column:
+            raise ValueError(
+                f"Parquet file {parquet_path} contains only empty strings within arrays in the '{column_name}' column."
+            )
+
+    elif isinstance(first_non_null, str):
+        if column_data.isnull().any() and not fallback_caption_column:
+            raise ValueError(f"Parquet file {parquet_path} contains null values in the '{column_name}' column.")
+
+        if (column_data == "").any() and not fallback_caption_column:
+            raise ValueError(f"Parquet file {parquet_path} contains empty strings in the '{column_name}' column.")
+    else:
+        raise TypeError(f"Unsupported data type in column '{column_name}'. Expected strings or arrays of strings.")
+
+
 class ParquetMetadataBackend(MetadataBackend):
     def __init__(
         self,
@@ -90,6 +126,8 @@ class ParquetMetadataBackend(MetadataBackend):
             max_num_samples=max_num_samples,
         )
         self.load_parquet_database()
+        if self.dataset_config.get("caption_strategy") == "parquet":
+            self.validate_caption_columns()
         self.caption_cache = self._extract_captions_to_fast_list()
         self.missing_captions = self._locate_missing_caption_from_fast_list()
         if self.missing_captions:
@@ -122,13 +160,23 @@ class ParquetMetadataBackend(MetadataBackend):
                 raise e
 
             if self.is_json_lines or self.is_json_file:
-                self.parquet_database = pd.read_json(pq, lines=self.is_json_lines)
+                table = pd.read_json(pq, lines=self.is_json_lines)
             else:
-                self.parquet_database = pd.read_parquet(pq, engine="pyarrow")
+                table = pd.read_parquet(pq, engine="pyarrow")
 
-            self.parquet_database.set_index(self.parquet_config.get("filename_column"), inplace=True)
+            self.parquet_database = table.set_index(self.parquet_config.get("filename_column"))
         else:
             raise FileNotFoundError(f"Parquet could not be loaded from {self.parquet_path}: file does not exist.")
+
+    def validate_caption_columns(self):
+        table = self.parquet_database
+        check_column_values(pd.Series(table.index, copy=False), table.index.name, self.parquet_path)
+        column = self.parquet_config.get("caption_column")
+        columns = column if isinstance(column, list) else [column]
+        for name in columns:
+            if name not in table.columns:
+                raise ValueError(f"Parquet file {self.parquet_path} does not contain a column named '{name}'.")
+            check_column_values(table[name], name, self.parquet_path, self.parquet_config.get("fallback_caption_column"))
 
     def _locate_missing_caption_from_fast_list(self):
         missing_captions = []
@@ -176,6 +224,15 @@ class ParquetMetadataBackend(MetadataBackend):
         identifier_includes_extension = self.parquet_config.get("identifier_includes_extension", False)
         captions = {}
 
+        def clean(caption):
+            if pd.api.types.is_scalar(caption) and pd.isna(caption):
+                return None
+            if isinstance(caption, (numpy.ndarray, pd.Series)):
+                return [str(item) for item in caption if not pd.isna(item)]
+            if isinstance(caption, bytes):
+                caption = caption.decode("utf-8")
+            return caption.strip() if isinstance(caption, str) else caption
+
         for index, row in self.parquet_database.iterrows():
             if filename_column in row:
                 file_id = str(row[filename_column])
@@ -187,31 +244,15 @@ class ParquetMetadataBackend(MetadataBackend):
 
             # Could be list or single str
             if isinstance(caption_column, list):
-                if len(caption_column) > 0:
-                    # Gather all columns in a list
-                    cvals = [row.get(c, "") for c in caption_column]
-                    cvals = [c for c in cvals if c]  # remove empties
-                    caption = cvals if cvals else None
-                else:
-                    caption = None
+                caption = [value for column in caption_column if (value := clean(row.get(column)))]
             else:
-                caption = row.get(caption_column, None)
-
-            if caption is None and fallback_caption_column:
-                caption = row.get(fallback_caption_column, None)
-
-            if caption is None and caption_field_preferences:
+                caption = clean(row.get(caption_column))
+            if not caption and fallback_caption_column:
+                caption = clean(row.get(fallback_caption_column))
+            if not caption:
                 for field in caption_field_preferences:
-                    if field in row and row.get(field):
-                        caption = row.get(field)
+                    if caption := clean(row.get(field)):
                         break
-
-            if isinstance(caption, (numpy.ndarray, pd.Series)):
-                caption = [str(item) for item in caption if item is not None]
-            elif isinstance(caption, bytes):
-                caption = caption.decode("utf-8")
-            elif isinstance(caption, str):
-                caption = caption.strip()
 
             if not caption:
                 continue

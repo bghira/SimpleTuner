@@ -59,7 +59,6 @@ class StateTracker:
     accelerator = None
     data_backends = {}
     datasets: dict[str, "DatasetRuntime"] = {}
-    parquet_databases = {}
     # A list of backend IDs to exhaust.
     exhausted_backends = []
     consumed_dataset_mixer = None
@@ -211,15 +210,6 @@ class StateTracker:
         if set_value is not None:
             cls._is_sdxl_refiner = set_value
         return cls._is_sdxl_refiner
-
-    @classmethod
-    def set_parquet_database(cls, data_backend_id: str, parquet_database: tuple):
-        """parquet_database is a tuple (dataframe, filename_column, caption_column, fallback_caption_column)"""
-        cls.parquet_databases[data_backend_id] = parquet_database
-
-    @classmethod
-    def get_parquet_database(cls, data_backend_id: str):
-        return cls.parquet_databases.get(data_backend_id, (None, None, None, None))
 
     @classmethod
     def set_image_files(cls, raw_file_list: list, data_backend_id: str):

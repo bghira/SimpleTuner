@@ -304,32 +304,6 @@ class PromptHandler:
         return caption_values[0] if caption_values else ""
 
     @staticmethod
-    def retrieve_prompt_column_from_parquet(
-        sampler_backend_id: str,
-    ) -> str:
-        parquetdb = StateTracker.get_parquet_database(sampler_backend_id)
-        dataframe = parquetdb[0]
-        if dataframe is None:
-            raise ValueError(f"Parquet database not found for sampler {sampler_backend_id}.")
-        caption_column = (
-            StateTracker.get_data_backend_config(sampler_backend_id).get("parquet", {}).get("caption_column", None)
-        )
-        if not caption_column:
-            raise ValueError(
-                f"Caption column not found for sampler {sampler_backend_id}. Config: {StateTracker.get_data_backend_config(sampler_backend_id)}"
-            )
-        # Return just that column
-        all_captions = dataframe[caption_column].values
-        fallback_caption_column = (
-            StateTracker.get_data_backend_config(sampler_backend_id).get("parquet", {}).get("fallback_caption_column")
-        )
-        if fallback_caption_column is not None and all_captions is not None:
-            # Combine the lists
-            fallback_captions = dataframe[fallback_caption_column].values
-            all_captions = [x if x else y for x, y in zip(all_captions, fallback_captions)]
-        return all_captions
-
-    @staticmethod
     def prepare_instance_prompt_from_parquet(
         image_path: str,
         use_captions: bool,
@@ -348,22 +322,9 @@ class PromptHandler:
             return instance_prompt
         if metadata_backend is None:
             metadata_backend = StateTracker.get_data_backend(sampler_backend_id)["metadata_backend"]
-            (
-                parquet_db,
-                filename_column,
-                caption_column,
-                fallback_caption_column,
-                identifier_includes_extension,
-            ) = StateTracker.get_parquet_database(sampler_backend_id)
-        else:
-            parquet_db = metadata_backend.parquet_database
-            parquet_config = metadata_backend.parquet_config
-            filename_column = parquet_config.get("filename_column")
-            caption_column = parquet_config.get("caption_column")
-            fallback_caption_column = parquet_config.get("fallback_caption_column")
-            identifier_includes_extension = parquet_config.get("identifier_includes_extension", False)
         if metadata_backend is None:
             raise ValueError(f"Could not find metadata backend for sampler {sampler_backend_id}")
+        identifier_includes_extension = metadata_backend.parquet_config.get("identifier_includes_extension", False)
         if backend_config is None:
             backend_config = StateTracker.get_data_backend_config(data_backend_id=data_backend.id)
         instance_data_dir = backend_config.get("instance_data_dir")
@@ -376,13 +337,9 @@ class PromptHandler:
         if not identifier_includes_extension:
             image_filename_stem = os.path.splitext(image_filename_stem)[0]
         image_caption = metadata_backend.caption_cache_entry(image_filename_stem)
-        if instance_prompt is None and fallback_caption_column and not image_caption:
+        if instance_prompt is None and not image_caption:
             raise CaptionNotFoundError(
-                f"Could not locate caption for image {image_path} in sampler_backend {sampler_backend_id} with filename column {filename_column}, caption column {caption_column}, and a parquet database with {len(parquet_db)} entries."
-            )
-        elif instance_prompt is None and not fallback_caption_column and not image_caption:
-            raise CaptionNotFoundError(
-                f"Could not locate caption for image {image_path} in sampler_backend {sampler_backend_id} with filename column {filename_column}, caption column {caption_column}, and a parquet database with {len(parquet_db)} entries."
+                f"Could not locate a Parquet caption for image {image_path} in dataset {sampler_backend_id}."
             )
         caption_values = PromptHandler._normalize_caption_payload(image_caption)
         if prepend_instance_prompt:
@@ -716,11 +673,6 @@ class PromptHandler:
             all_image_files = all_image_files[0][2]
         all_image_files = filter_file_list(all_image_files, build_dataset_filter(backend_config))
         from tqdm import tqdm
-
-        # if caption_strategy == "parquet":
-        #     return PromptHandler.retrieve_prompt_column_from_parquet(
-        #         sampler_backend_id=data_backend.id
-        #     )
 
         if caption_strategy == "instanceprompt":
             if instance_prompt is None or instance_prompt == "":

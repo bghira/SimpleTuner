@@ -295,17 +295,61 @@ class DatasetRuntimeTests(unittest.TestCase):
         self.assertEqual([call.args[0] for call in expand.call_args_list], ["first", "second"])
 
     def test_parquet_caption_uses_injected_metadata_and_root(self):
-        self.metadata_backend.parquet_database = {}
         self.metadata_backend.parquet_config = {"filename_column": "file", "caption_column": "caption"}
         config = {**self.config, "caption_strategy": "parquet", "instance_data_dir": "images"}
         runtime = DatasetRuntime("images", self.data_backend, self.metadata_backend, config)
         with (
-            patch.object(StateTracker, "get_parquet_database", side_effect=AssertionError("database lookup")),
             patch.object(StateTracker, "get_data_backend", side_effect=AssertionError("registry lookup")),
             patch.object(StateTracker, "get_data_backend_config", side_effect=AssertionError("config lookup")),
         ):
             self.assertEqual(runtime.resolve_caption("images/nested/sample.jpg"), ["first", "second"])
         self.metadata_backend.caption_cache_entry.assert_called_once_with("nested/sample")
+
+    def test_parquet_provider_shares_one_side_table_with_caption_reads(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        import pandas as pd
+
+        from simpletuner.helpers.data_backend.local import LocalDataBackend
+        from simpletuner.helpers.metadata.backends.parquet import ParquetMetadataBackend
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            table = root / "metadata.parquet"
+            pd.DataFrame(
+                {"file": ["a/sample.jpg", "b/sample.jpg"], "caption": ["primary", None], "tags": ["unused", "fallback"]}
+            ).to_parquet(table)
+            config = {**self.config, "caption_strategy": "parquet", "instance_data_dir": directory}
+            accelerator = SimpleNamespace()
+            storage = LocalDataBackend(accelerator, "images")
+            with (
+                patch.object(StateTracker, "get_data_backend_config", return_value=config),
+                patch.object(storage, "read", wraps=storage.read) as reads,
+            ):
+                metadata = ParquetMetadataBackend(
+                    id="images",
+                    instance_data_dir=directory,
+                    cache_file=str(root / "buckets"),
+                    metadata_file=str(root / "geometry"),
+                    data_backend=storage,
+                    accelerator=accelerator,
+                    batch_size=1,
+                    resolution=512,
+                    resolution_type="pixel",
+                    parquet_config={
+                        "path": str(table),
+                        "filename_column": "file",
+                        "caption_column": "caption",
+                        "fallback_caption_column": "tags",
+                    },
+                )
+                dataset = DatasetRuntime("images", storage, metadata, config)
+                self.assertEqual(
+                    dataset.resolve_captions([str(root / "b/sample.jpg"), str(root / "a/sample.jpg")]),
+                    ["fallback", "primary"],
+                )
+                reads.assert_called_once_with(str(table))
 
     def test_config_is_a_snapshot_and_empty_shuffle_config_needs_no_registry(self):
         self.config["caption_shuffle"] = {"enable": False}

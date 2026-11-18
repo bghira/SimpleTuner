@@ -12,8 +12,8 @@ from pathlib import Path
 from PIL import Image
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
-from simpletuner.helpers.data_backend.factory import check_column_values
 from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend
+from simpletuner.helpers.metadata.backends.parquet import check_column_values
 from simpletuner.helpers.multiaspect.dataset import MultiAspectDataset
 
 

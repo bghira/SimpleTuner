@@ -1,4 +1,3 @@
-import io
 import json
 import logging
 import os
@@ -69,8 +68,6 @@ def _normalise_vae_cache_config(config: Dict[str, Any]) -> Tuple[bool, bool]:
     return vae_cache_disable, vae_cache_ondemand
 
 
-import numpy as np
-import pandas as pd
 import torch
 from tqdm import tqdm
 
@@ -234,42 +231,6 @@ def _synchronise_state_tracker(args: Any, accelerator: Any) -> Any:
         pass
 
     return args_for_tracker
-
-
-def check_column_values(column_data, column_name, parquet_path, fallback_caption_column=False):
-    non_null_values = column_data.dropna()
-    if non_null_values.empty:
-        raise ValueError(f"Parquet file {parquet_path} contains only null values in the '{column_name}' column.")
-
-    first_non_null = non_null_values.iloc[0]
-    if isinstance(first_non_null, (list, tuple, np.ndarray, pd.Series)):
-        if column_data.isnull().any() and not fallback_caption_column:
-            raise ValueError(f"Parquet file {parquet_path} contains null arrays in the '{column_name}' column.")
-
-        empty_arrays = column_data.apply(lambda x: len(x) == 0)
-        if empty_arrays.any() and not fallback_caption_column:
-            raise ValueError(f"Parquet file {parquet_path} contains empty arrays in the '{column_name}' column.")
-
-        null_elements_in_arrays = column_data.apply(lambda arr: any(pd.isnull(s) for s in arr))
-        if null_elements_in_arrays.any() and not fallback_caption_column:
-            raise ValueError(
-                f"Parquet file {parquet_path} contains null values within arrays in the '{column_name}' column."
-            )
-
-        empty_strings_in_arrays = column_data.apply(lambda arr: any(s == "" for s in arr))
-        if empty_strings_in_arrays.all() and not fallback_caption_column:
-            raise ValueError(
-                f"Parquet file {parquet_path} contains only empty strings within arrays in the '{column_name}' column."
-            )
-
-    elif isinstance(first_non_null, str):
-        if column_data.isnull().any() and not fallback_caption_column:
-            raise ValueError(f"Parquet file {parquet_path} contains null values in the '{column_name}' column.")
-
-        if (column_data == "").any() and not fallback_caption_column:
-            raise ValueError(f"Parquet file {parquet_path} contains empty strings in the '{column_name}' column.")
-    else:
-        raise TypeError(f"Unsupported data type in column '{column_name}'. Expected strings or arrays of strings.")
 
 
 def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
@@ -915,70 +876,6 @@ def print_bucket_info(metadata_backend, dataset_type: str = "image"):
             if sample_count == 0:
                 continue
             tqdm.write(f"{rank_info()} | {bucket:<10} | {sample_count:<20}")
-
-
-def configure_parquet_database(backend: dict, args, data_backend: BaseDataBackend):
-    """When given a backend config dictionary, configure a parquet database."""
-    parquet_config = backend.get("parquet", None)
-    if not parquet_config:
-        raise ValueError(
-            "Parquet backend must have a 'parquet' field in the backend config containing required fields for configuration."
-        )
-    parquet_path = parquet_config.get("path", None)
-    if not parquet_path:
-        raise ValueError("Parquet backend must have a 'path' field in the backend config under the 'parquet' key.")
-    if not data_backend.exists(parquet_path):
-        raise FileNotFoundError(f"Parquet file {parquet_path} not found.")
-    # Load the dataframe
-    import pandas as pd
-
-    bytes_string = data_backend.read(parquet_path)
-    pq = io.BytesIO(bytes_string)
-    if parquet_path.endswith(".jsonl"):
-        df = pd.read_json(pq, lines=True)
-    else:
-        df = pd.read_parquet(pq)
-
-    caption_column = parquet_config.get("caption_column", args.parquet_caption_column or "description")
-    fallback_caption_column = parquet_config.get("fallback_caption_column", None)
-    filename_column = parquet_config.get("filename_column", args.parquet_filename_column or "id")
-    identifier_includes_extension = parquet_config.get("identifier_includes_extension", False)
-
-    if caption_column not in df.columns:
-        raise ValueError(f"Parquet file {parquet_path} does not contain a column named '{caption_column}'.")
-    if filename_column not in df.columns:
-        raise ValueError(f"Parquet file {parquet_path} does not contain a column named '{filename_column}'.")
-
-    # Apply the function to the caption_column.
-    check_column_values(
-        df[caption_column],
-        caption_column,
-        parquet_path,
-        fallback_caption_column=fallback_caption_column,
-    )
-
-    # Apply the function to the filename_column.
-    check_column_values(
-        df[filename_column],
-        filename_column,
-        parquet_path,
-        fallback_caption_column=False,  # Always check filename_column
-    )
-
-    # Store the database in StateTracker
-    StateTracker.set_parquet_database(
-        backend["id"],
-        (
-            df,
-            filename_column,
-            caption_column,
-            fallback_caption_column,
-            identifier_includes_extension,
-        ),
-    )
-    info_log(
-        f"Configured parquet database for backend {backend['id']}. Caption column: {caption_column}. Filename column: {filename_column}."
-    )
 
 
 def move_text_encoders(args, text_encoders: list, target_device: str, force_move: bool = False):
@@ -3543,8 +3440,6 @@ class FactoryRegistry:
         init_backend["dataset_runtime"].sampler = init_backend["sampler"]
         init_backend["dataset_runtime"].training_dataset = init_backend["train_dataset"]
         StateTracker.own_dataset_resource(init_backend["sampler"])
-        if caption_strategy == "parquet":
-            configure_parquet_database(backend, self.args, init_backend["data_backend"])
         init_backend["train_dataloader"] = torch.utils.data.DataLoader(
             init_backend["train_dataset"],
             batch_size=1,
