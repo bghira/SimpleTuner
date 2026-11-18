@@ -722,17 +722,18 @@ def collate_fn(batch, *, dataset=None):
     conditioning_pixel_values = None
     conditioning_latents = None
     conditioning_latents_type = None
+    reference_pixels = {}
 
-    # get multiple backend ids (conditioning_data is already populated with full backend dicts by set_conditioning_datasets)
-    # Check sampling mode early since it affects expected counts and matching
     sampling_mode = getattr(StateTracker.get_args(), "conditioning_multidataset_sampling", "combined")
+    is_combined_mode = sampling_mode == "combined"
+    is_random_mode = sampling_mode == "random" and len(conditioning_ids) > 1
     if len(conditioning_examples) > 0:
         # check the # of conditioning backends
         logger.debug(f"Found {len(conditioning_examples)} conditioning examples.")
 
         # In "random" mode with multiple backends, only ONE conditioning sample per training example
         # In "combined" mode, one sample from EACH backend per training example
-        if sampling_mode == "random" and len(conditioning_ids) > 1:
+        if is_random_mode:
             expected_conditioning_total = len(examples)
         else:
             expected_conditioning_total = len(examples) * len(conditioning_ids)
@@ -757,9 +758,6 @@ def collate_fn(batch, *, dataset=None):
             )
 
         normalized_training_examples: dict[str, list[dict | TrainingSample]] = defaultdict(list)
-        # In combined mode, each training example needs to be matched once per conditioning backend.
-        # In random mode, each training example is matched only once.
-        num_matches_per_example = 1 if (sampling_mode == "random" and len(conditioning_ids) > 1) else len(conditioning_ids)
         for training_example in examples:
             training_image_path = (
                 training_example.get("image_path")
@@ -768,11 +766,11 @@ def collate_fn(batch, *, dataset=None):
             )
             identifier = normalize_data_path(training_image_path, training_data_root)
             if identifier:
-                # Add the example multiple times so it can be matched by each conditioning backend
-                for _ in range(num_matches_per_example):
-                    normalized_training_examples[identifier].append(training_example)
+                normalized_training_examples[identifier].append(training_example)
 
-        def _pop_training_example_for_path(match_path: str):
+        occurrence_positions = Counter()
+
+        def _next_training_example_for_path(match_path: str, backend_id: str):
             if not match_path:
                 return None
             candidates = [match_path]
@@ -788,9 +786,12 @@ def collate_fn(batch, *, dataset=None):
                 if not normalized_candidate or normalized_candidate in seen_keys:
                     continue
                 seen_keys.add(normalized_candidate)
-                entries = normalized_training_examples.get(normalized_candidate)
-                if entries:
-                    return entries.pop()
+                entries = normalized_training_examples.get(normalized_candidate, ())
+                key = (None if is_random_mode else backend_id, normalized_candidate)
+                position = occurrence_positions[key]
+                if position < len(entries):
+                    occurrence_positions[key] += 1
+                    return entries[position]
             return None
 
         training_resolution_errors: list[str] = []
@@ -811,7 +812,7 @@ def collate_fn(batch, *, dataset=None):
                 )
                 continue
 
-            paired_training_example = _pop_training_example_for_path(training_pair_path)
+            paired_training_example = _next_training_example_for_path(training_pair_path, backend_id)
             if paired_training_example is None:
                 training_resolution_errors.append(
                     f"{backend_id}: missing training metadata for {cond_example.image_path(basename_only=False)} (paired path: {training_pair_path})"
@@ -921,8 +922,7 @@ def collate_fn(batch, *, dataset=None):
                     conditioning_latents.append(_latents)
                     conditioning_latents_type.append(backend_cond_type)
 
-            # Collect pixels from reference/untyped backends FIRST if needed for text embed image context
-            # (must be first since _conditioning_pixel_value_for_example uses index 0)
+            # Preserve the existing group order while recording exact text context per occurrence.
             if latent_source_backends and needs_reference_pixels:
                 conditioning_pixel_values = []
                 debug_log("Collect conditioning pixel values from reference/untyped backends for text embed image context")
@@ -945,6 +945,8 @@ def collate_fn(batch, *, dataset=None):
                     conditioning_pixel_values.append(
                         torch.stack([pixels.to(StateTracker.get_accelerator().device) for pixels in _pixel_values])
                     )
+                    for paired, pixels in zip(paired_training_examples, conditioning_pixel_values[-1], strict=True):
+                        reference_pixels.setdefault(id(paired), pixels)
 
             # Collect pixels from mask backends (for loss masking)
             if mask_backends:
@@ -971,15 +973,10 @@ def collate_fn(batch, *, dataset=None):
                         torch.stack([pixels.to(StateTracker.get_accelerator().device) for pixels in _pixel_values])
                     )
 
-    def _conditioning_pixel_value_for_example(example_idx: int):
-        if not conditioning_pixel_values:
+    def _conditioning_pixel_value_for_example(example):
+        pixel_tensor = reference_pixels.get(id(example))
+        if pixel_tensor is None:
             return None
-        first_backend = conditioning_pixel_values[0]
-        if not torch.is_tensor(first_backend):
-            return None
-        if example_idx >= first_backend.shape[0]:
-            return None
-        pixel_tensor = first_backend[example_idx]
         if pixel_tensor.dim() == 4 and pixel_tensor.size(0) == 1:
             pixel_tensor = pixel_tensor.squeeze(0)
         if pixel_tensor.dim() != 3:
@@ -993,22 +990,20 @@ def collate_fn(batch, *, dataset=None):
                 pixel_tensor = (pixel_tensor + 1.0) / 2.0
             else:
                 pixel_tensor = pixel_tensor / 255.0
-        pixel_tensor = pixel_tensor.clamp_(0.0, 1.0)
+        pixel_tensor = pixel_tensor.clamp(0.0, 1.0)
         return pixel_tensor.detach().to("cpu")
-
-    # Check if we're in combined mode with multiple conditioning datasets
-    # (sampling_mode was already defined earlier in the function)
-    is_combined_mode = sampling_mode == "combined"
-    is_random_mode = sampling_mode == "random" and len(conditioning_ids) > 1
 
     # Compute embeddings and handle dropped conditionings
     debug_log(f"Extract captions. {is_combined_mode=}, {is_random_mode=}, {has_conditioning_captions=}")
 
     if has_conditioning_captions and is_random_mode:
-        # Only use conditioning captions in random mode
+        paired_captions = {
+            id(example): sample.caption for pairs in conditioning_pairs_by_backend.values() for sample, _, example in pairs
+        }
         captions = [
-            conditioning.caption or source["instance_prompt_text"]
-            for conditioning, source in zip(conditioning_examples, examples, strict=True)
+            (paired_captions.get(id(example)) if not example["drop_conditioning"] else None)
+            or example["instance_prompt_text"]
+            for example in examples
         ]
         debug_log(f"Pull cached text embeds. conditioning captions: {captions}")
     else:
@@ -1089,7 +1084,7 @@ def collate_fn(batch, *, dataset=None):
                 not has_multiple_combined_refs
                 and getattr(model, "requires_text_embed_conditioning_pixels", model.requires_text_embed_image_context)()
             ):
-                pixel_value = _conditioning_pixel_value_for_example(idx)
+                pixel_value = _conditioning_pixel_value_for_example(example)
                 if pixel_value is not None:
                     metadata["conditioning_pixel_values"] = pixel_value
                     metadata["conditioning_pixel_values_range"] = (0.0, 1.0)

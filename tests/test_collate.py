@@ -321,6 +321,50 @@ class CollateFunctionTests(unittest.TestCase):
         self.assertEqual(selected_keys, precomputed_keys)
         self.assertEqual(len(selected_keys), 3)
 
+    def test_random_reference_context_follows_each_occurrence_of_the_same_sample(self):
+        self.base_args.conditioning_multidataset_sampling = "random"
+        cache = SimpleNamespace(disabled=False)
+        dataset = {
+            "id": "backend-1",
+            "config": {"instance_data_dir": "/train"},
+            "text_embed_cache": cache,
+            "conditioning_data": [{"id": key, "text_embed_cache": cache} for key in ("first", "second")],
+        }
+        refs = ("/refs/second.png", "/refs/first.png")
+        batch = copy.deepcopy(self.base_batch)
+        batch[0]["training_samples"].extend(copy.deepcopy(batch[0]["training_samples"]))
+        batch[0]["conditioning_samples"] = [
+            _StubConditioningSample(
+                path, key, caption=key, paired_training_path="sample.png", conditioning_type="reference_loose"
+            )
+            for path, key in zip(refs, ("second", "first"), strict=True)
+        ]
+        model = _StubModel(requires_text_embed_image_context=True)
+        patchers, _ = self._patch_state_tracker(
+            model=model, data_backend=dataset, text_outputs={"prompt_embeds": torch.zeros(2, 1)}
+        )
+        with ExitStack() as stack:
+            mocks = [stack.enter_context(patcher) for patcher in patchers]
+            mocks[7].return_value = [torch.zeros(4, 4, 4), torch.zeros(4, 4, 4)]
+            stack.enter_context(
+                patch(
+                    "simpletuner.helpers.training.collate.conditioning_pixels",
+                    side_effect=lambda paths, *_: torch.stack(
+                        [torch.full((3, 8, 8), 0.25 if path == refs[0] else 0.75) for path in paths]
+                    ),
+                )
+            )
+            for dropout, prompts in ((0.0, ["second", "first"]), (1.0, ["", ""])):
+                self.base_args.caption_dropout_probability = dropout
+                collate_fn(copy.deepcopy(batch))
+                requests = mocks[9].call_args.args[0]
+                self.assertEqual([record["prompt"] for record in requests], prompts)
+                self.assertEqual([record["metadata"]["image_paths"] for record in requests], [[path] for path in refs])
+                self.assertEqual(
+                    [record["metadata"]["conditioning_pixel_values"][0, 0, 0].item() for record in requests],
+                    [0.25, 0.75],
+                )
+
     def test_collate_fn_loads_anyflow_unconditional_embeddings(self):
         self.base_args.distillation_method = "anyflow"
         self.base_args.distillation_config = {"anyflow": {"fuse_guidance_scale": 3.0}}
