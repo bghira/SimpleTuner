@@ -294,18 +294,19 @@ class WebshartMetadataBackend(MetadataBackend):
             # Nothing is cached: reads go to the source, which for a local dataset is the disk.
             return
         largest = max(backend.dataset.get_shard_info(unit)["size"] for unit in units)
-        # Every rank's cache is the same directory, and the limit applies to the directory.
-        needed = ranks * self.shuffle_window * largest
+        # Every rank's cache is the same directory, and the limit applies to the directory. A rank holds its
+        # window's shards and downloads the next one before it lets the oldest go.
+        needed = ranks * (self.shuffle_window + 1) * largest
         limit = backend.shard_cache_gb * 2**30
         if needed <= limit:
             return
         needed_gb = ceil(needed / 2**30)
         message = (
             f"(id={self.id}) webshart.shuffle_window={self.shuffle_window} keeps that many shards open on each of"
-            f" {ranks} rank(s), about {needed / 2**30:.1f} GiB with shards of up to {largest / 2**20:.0f} MiB,"
-            f" and shard_cache_gb={backend.shard_cache_gb:g} cannot hold them."
+            f" {ranks} rank(s), and one more while the next downloads, about {needed / 2**30:.1f} GiB with shards"
+            f" of up to {largest / 2**20:.0f} MiB, and shard_cache_gb={backend.shard_cache_gb:g} cannot hold them."
         )
-        fits = int(limit // (ranks * largest))
+        fits = int(limit // (ranks * largest)) - 1
         if fits >= 1:
             message += f" Set shuffle_window to {fits} or less, or shard_cache_gb to at least {needed_gb}."
         else:

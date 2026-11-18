@@ -186,7 +186,7 @@ Con varias GPU o nodos:
 
 - El dataset necesita al menos tantos shards como procesos.
 - Un bucket de aspecto no tiene que contener el tamaño de lote efectivo. Un tamaño con muy pocas muestras en una ventana se completa repitiendo sus muestras.
-- `shard_cache_gb` debe contener `shuffle_window` shards para cada proceso del entrenamiento, como si todos compartieran un mismo directorio de caché. Con un directorio de caché en cada nodo, eso es más de lo que necesita un nodo.
+- `shard_cache_gb` debe contener `shuffle_window` + 1 shards para cada proceso del entrenamiento (su ventana y el siguiente shard que descarga), como si todos compartieran un mismo directorio de caché. Con un directorio de caché en cada nodo, eso es más de lo que necesita un nodo.
 - Reanuda con el mismo número de procesos.
 
 ### Espacio de almacenamiento

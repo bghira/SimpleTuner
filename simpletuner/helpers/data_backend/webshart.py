@@ -139,7 +139,9 @@ class WebshartDataBackend(BaseDataBackend):
             discovery = {
                 "format": "parquet",
                 "manifest": self.manifest,
-                "metadata_cache_size": self._shard_metadata_cache_limit,
+                # Webshart keeps this many payload readers per process, and each one holds its shard in the
+                # shard cache against eviction; a windowed rank needs only its window's.
+                "metadata_cache_size": self.shuffle_window or self._shard_metadata_cache_limit,
                 "catalogue_cache_dir": self.metadata_cache_dir,
             }
             discovery.update({("caption_column" if k == "captions" else f"{k}_column"): v for k, v in self.columns.items()})

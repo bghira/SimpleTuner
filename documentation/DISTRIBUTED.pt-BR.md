@@ -186,7 +186,7 @@ Com várias GPUs ou nós:
 
 - O dataset precisa de pelo menos tantos shards quanto processos.
 - Um bucket de proporção não precisa conter o tamanho de lote efetivo. Um tamanho com poucas amostras em uma janela é completado repetindo suas amostras.
-- `shard_cache_gb` precisa comportar `shuffle_window` shards para cada processo do treinamento, como se todos compartilhassem um único diretório de cache. Com um diretório de cache em cada nó, isso é mais do que um nó precisa.
+- `shard_cache_gb` precisa comportar `shuffle_window` + 1 shards para cada processo do treinamento (sua janela e o próximo shard que ele baixa), como se todos compartilhassem um único diretório de cache. Com um diretório de cache em cada nó, isso é mais do que um nó precisa.
 - Retome com o mesmo número de processos.
 
 ### Espaco de armazenamento

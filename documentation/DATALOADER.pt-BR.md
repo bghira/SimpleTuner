@@ -1480,7 +1480,7 @@ O que exige. A configuração para com uma mensagem que nomeia o ajuste quando u
 - `max_num_samples`, `scan_for_errors` e `vae_cache_clear_each_epoch` não estão definidos.
 - O modelo não precisa de embeds de imagens de condicionamento.
 - O dataset tem pelo menos tantos shards quanto ranks.
-- Para uma fonte remota com cache de shards, `shard_cache_gb` comporta todos os shards abertos: ranks × `shuffle_window` × o maior shard da primeira janela. A mensagem informa uma janela que cabe ou o tamanho necessário.
+- Para uma fonte remota com cache de shards, `shard_cache_gb` comporta todos os shards abertos e o próximo que cada rank baixa: ranks × (`shuffle_window` + 1) × o maior shard da primeira janela. A mensagem informa uma janela que cabe ou o tamanho necessário. Janelas posteriores podem ter shards maiores que a primeira; deixe uma margem.
 
 Um dataset lido dessa forma não pode fornecer imagens para `--validation_using_datasets`.
 

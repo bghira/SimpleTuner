@@ -186,7 +186,7 @@ With several GPUs or nodes:
 
 - The dataset needs at least as many shards as there are processes.
 - An aspect bucket does not have to hold the effective batch size. A size with too few samples in a window is filled by repeating its samples.
-- `shard_cache_gb` must hold `shuffle_window` shards for every process in the run, as if they all shared one cache directory. With a cache directory on each node, that is more than one node needs.
+- `shard_cache_gb` must hold `shuffle_window` + 1 shards for every process in the run (its window and the next shard it downloads), as if they all shared one cache directory. With a cache directory on each node, that is more than one node needs.
 - Resume with the same number of processes.
 
 ### Storage space

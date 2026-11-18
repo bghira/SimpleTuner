@@ -184,7 +184,7 @@ effective_batch_size = train_batch_size × num_gpus × gradient_accumulation_ste
 
 - 数据集的分片数至少要等于进程数。
 - 宽高比桶不必容纳有效批量。窗口中样本过少的尺寸会重复其样本来补足。
-- `shard_cache_gb` 必须能为训练中的每个进程各容纳 `shuffle_window` 个分片，按所有进程共用一个缓存目录计算。若每个节点有自己的缓存目录，这比单个节点所需的更多。
+- `shard_cache_gb` 必须能为训练中的每个进程各容纳 `shuffle_window` + 1 个分片（其窗口以及它下载的下一个分片），按所有进程共用一个缓存目录计算。若每个节点有自己的缓存目录，这比单个节点所需的更多。
 - 恢复时使用相同的进程数。
 
 ### 存储空间

@@ -647,8 +647,9 @@ class TestShardMetadataKeptForTheWindow(unittest.TestCase):
         self.assertEqual(cache_size, 8)
         self.assertEqual(reads, self.SHARDS)
 
-    def test_a_small_window_keeps_the_usual_eight(self):
-        self.assertEqual(self.reads_on_a_second_pass(2)[0], 8)
+    def test_a_small_window_opens_only_its_own_shards_in_webshart(self):
+        # Webshart's open readers hold their shards in the shard cache; the metadata memo keeps eight.
+        self.assertEqual(self.reads_on_a_second_pass(2)[0], 2)
 
 
 class TestCaptureCatalogueSharedThroughTheMetadataCache(unittest.TestCase):
@@ -724,12 +725,14 @@ class TestWindowFitsShardCache(unittest.TestCase):
         return metadata
 
     def test_a_window_the_cache_holds_for_every_rank_is_accepted(self):
-        # 8 ranks x 4 shards x 80 MiB = 2.5 GiB
-        self.backend(window=4, shard_cache_gb=2.5).check_window([0, 1], ranks=8)
+        # 8 ranks x (4 + 1 downloading) shards x 80 MiB = 3.125 GiB
+        self.backend(window=4, shard_cache_gb=3.125).check_window([0, 1], ranks=8)
+        with self.assertRaises(ValueError):
+            self.backend(window=4, shard_cache_gb=3.12).check_window([0, 1], ranks=8)
 
     def test_the_largest_shard_of_the_ones_given_is_the_measure(self):
-        metadata = self.backend(window=4, shard_cache_gb=2.4)
-        metadata.check_window([0, 2, 3], ranks=8)  # 8 x 4 x 75 MiB = 2.34 GiB
+        metadata = self.backend(window=4, shard_cache_gb=3.0)
+        metadata.check_window([0, 2, 3], ranks=8)  # 8 x 5 x 75 MiB = 2.93 GiB
         with self.assertRaises(ValueError):
             metadata.check_window([0, 1], ranks=8)
 
@@ -738,17 +741,20 @@ class TestWindowFitsShardCache(unittest.TestCase):
             self.backend(window=24, shard_cache_gb=5).check_window([0, 1], ranks=8)
         message = str(raised.exception)
         self.assertIn("(id=ws) webshart.shuffle_window=24", message)
-        self.assertIn("each of 8 rank(s), about 15.0 GiB with shards of up to 80 MiB", message)
+        self.assertIn(
+            "each of 8 rank(s), and one more while the next downloads, about 15.6 GiB with shards of up to 80 MiB",
+            message,
+        )
         self.assertIn("shard_cache_gb=5 cannot hold them", message)
-        # 5 GiB / (8 x 80 MiB) = 8 shards; 8 x 24 x 80 MiB = 15 GiB
-        self.assertIn("Set shuffle_window to 8 or less, or shard_cache_gb to at least 15.", message)
+        # 5 GiB / (8 x 80 MiB) = 8 shards a rank, one of them downloading; 8 x 25 x 80 MiB = 15.6 GiB
+        self.assertIn("Set shuffle_window to 7 or less, or shard_cache_gb to at least 16.", message)
         self.assertNotIn("free", message)
 
     def test_a_cache_too_small_for_one_shard_a_rank_names_only_the_cache_it_needs(self):
         with self.assertRaises(ValueError) as raised:
             self.backend(window=2, shard_cache_gb=0.5).check_window([1], ranks=8)
         message = str(raised.exception)
-        self.assertIn("Set shard_cache_gb to at least 2.", message)  # 8 x 2 x 80 MiB = 1.25 GiB
+        self.assertIn("Set shard_cache_gb to at least 2.", message)  # 8 x 3 x 80 MiB = 1.875 GiB
         self.assertNotIn("Set shuffle_window", message)
 
     def test_a_volume_without_room_for_that_cache_is_pointed_out(self):
@@ -758,10 +764,12 @@ class TestWindowFitsShardCache(unittest.TestCase):
             "The volume holding cache/shards has 9.5 GiB free, which is not enough for that.", str(raised.exception)
         )
 
-    def test_one_rank_needs_one_window(self):
-        self.backend(window=4, shard_cache_gb=0.32).check_window([1], ranks=1)  # 4 x 80 MiB = 0.3125 GiB
+    def test_one_rank_needs_one_window_and_the_shard_it_downloads_next(self):
+        self.backend(window=4, shard_cache_gb=0.4).check_window([1], ranks=1)  # 5 x 80 MiB = 0.39 GiB
         with self.assertRaises(ValueError):
-            self.backend(window=4, shard_cache_gb=0.32).check_window([1], ranks=2)
+            self.backend(window=4, shard_cache_gb=0.38).check_window([1], ranks=1)
+        with self.assertRaises(ValueError):
+            self.backend(window=4, shard_cache_gb=0.4).check_window([1], ranks=2)
 
     def test_a_dataset_that_caches_no_shards_takes_any_window(self):
         self.backend(window=1000, shard_cache_gb=0).check_window([0, 1], ranks=8)
