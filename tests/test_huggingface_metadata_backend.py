@@ -211,6 +211,11 @@ class HuggingfaceMetadataBackendTests(unittest.TestCase):
             provider.compute_aspect_ratio_bucket_indices(ignore_existing_cache=True)
             self.assertEqual(provider.read_page(limit=10), (expected, 3))
             self.assertEqual(set(provider.image_metadata), set(expected))
+            provider.enqueue_prepared_metadata({expected[0]: {"target_size": [64, 32]}})
+            provider.enqueue_prepared_metadata({expected[0]: {"target_size": [128, 64]}})
+            provider.close()
+            provider.load_image_metadata()
+            self.assertEqual(provider.get_metadata_by_filepath(expected[0]), {"target_size": [128, 64]})
 
     def test_metadata_reload_keeps_existing_entries_visible_until_read_completes(self):
         read_started = threading.Event()

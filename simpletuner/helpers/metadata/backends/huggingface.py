@@ -4,8 +4,11 @@ import os
 import time
 import traceback
 from bisect import bisect_right
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing, contextmanager
 from itertools import batched, chain
+from threading import Lock
 from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
@@ -149,6 +152,9 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         if not self.dataset_config.get("dataset_type"):
             self.dataset_type = ensure_dataset_type(dataset_type)
 
+        self._prepared_writer = None
+        self._prepared_writes = deque()
+        self._prepared_write_lock = Lock()
         with accelerator.main_process_first():
             if not hasattr(data_backend, "dataset"):
                 raise ValueError("HuggingfaceMetadataBackend requires HuggingfaceDatasetsBackend")
@@ -367,6 +373,40 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         self.data_backend.write(self.cache_file, cache_data_str)
         self._stale_geometry = False
         logger.debug("Aspect ratio cache saved.")
+
+    def enqueue_prepared_metadata(self, records):
+        if not records:
+            return
+        with self._prepared_write_lock:
+            if self._prepared_writer is None:
+                self._prepared_writer = ThreadPoolExecutor(max_workers=1, thread_name_prefix="hf-prepared-metadata")
+            if len(self._prepared_writes) == 4:
+                self._prepared_writes[0].result()
+                self._prepared_writes.popleft()
+            update = super().enqueue_prepared_metadata
+            self._prepared_writes.append(self._prepared_writer.submit(update, dict(records)))
+
+    def _drain_prepared_writes(self):
+        while self._prepared_writes:
+            self._prepared_writes[0].result()
+            self._prepared_writes.popleft()
+
+    def flush_prepared_metadata(self):
+        with self._prepared_write_lock:
+            self._drain_prepared_writes()
+            super().flush_prepared_metadata()
+
+    def close(self):
+        with self._prepared_write_lock:
+            if self._prepared_writer is not None:
+                try:
+                    if self._prepared_writes:
+                        self._drain_prepared_writes()
+                        super().flush_prepared_metadata()
+                finally:
+                    self._prepared_writer.shutdown(wait=True)
+                    self._prepared_writer = None
+        super().close()
 
     def save_image_metadata(self):
         full_metadata_path = self.metadata_file
@@ -933,6 +973,9 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                 statistics=statistics,
             )
             statistics["total_processed"] += 1
+            if len(metadata_updates) >= 128:
+                self.enqueue_prepared_metadata(metadata_updates)
+                metadata_updates = {}
 
             current_time = time.time()
             if (current_time - last_save_time) >= self.metadata_update_interval:
@@ -941,22 +984,20 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                     self.aspect_ratio_bucket_indices.setdefault(key, []).extend(value)
                 aspect_ratio_bucket_updates = {}
 
-                for path, metadata in metadata_updates.items():
-                    self.set_metadata_by_filepath(path, metadata, update_json=False)
+                self.enqueue_prepared_metadata(metadata_updates)
                 metadata_updates = {}
 
+                self.flush_prepared_metadata()
                 self.save_cache(enforce_constraints=False)
-                self.save_image_metadata()
                 last_save_time = current_time
         for key, value in aspect_ratio_bucket_updates.items():
             self.aspect_ratio_bucket_indices.setdefault(key, []).extend(value)
 
-        for path, metadata in metadata_updates.items():
-            self.set_metadata_by_filepath(path, metadata, update_json=False)
+        self.enqueue_prepared_metadata(metadata_updates)
 
         logger.info(f"Processing complete. Statistics: {statistics}")
         self.filtering_statistics = statistics
-        self.save_image_metadata()
+        self.flush_prepared_metadata()
         self.save_cache(enforce_constraints=True)
         if self.bucket_report:
             self.bucket_report.update_statistics(statistics)
