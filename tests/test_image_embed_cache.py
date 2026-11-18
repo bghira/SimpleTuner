@@ -10,6 +10,7 @@ import torch
 from PIL import Image
 
 from simpletuner.helpers.caching.image_embed import ImageEmbedCache
+from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 
@@ -36,6 +37,8 @@ class DummyImageBackend:
 
 
 class DummyCacheBackend:
+    bulk_exists = BaseDataBackend.bulk_exists
+
     def __init__(self, root: str) -> None:
         self.root = root
         self.type = "local"
@@ -134,7 +137,6 @@ class TestImageEmbedCache(unittest.TestCase):
         StateTracker.set_args(SimpleNamespace(output_dir=self.tempdir.name))
 
         self._old_image_files = StateTracker.all_image_files.copy()
-        self._old_conditioning_embed_files = StateTracker.all_conditioning_image_embed_files.copy()
         self._old_data_backends = StateTracker.data_backends.copy()
 
     def tearDown(self):
@@ -143,7 +145,6 @@ class TestImageEmbedCache(unittest.TestCase):
         else:
             StateTracker.set_args(None)
         StateTracker.all_image_files = self._old_image_files
-        StateTracker.all_conditioning_image_embed_files = self._old_conditioning_embed_files
         StateTracker.data_backends = self._old_data_backends
         self.tempdir.cleanup()
 
@@ -171,6 +172,42 @@ class TestImageEmbedCache(unittest.TestCase):
         self.assertEqual(os.path.basename(full_path), expected_filename)
         self.assertEqual(os.path.dirname(full_path), os.path.abspath("cache"))
 
+    def test_native_preparation_and_demand_reads_do_not_retain_inventory(self):
+        from simpletuner.helpers.data_backend.webshart import WebshartDataBackend
+
+        refs = ("webshart://0/0/name.jpg", "webshart://1/0/name.jpg")
+        source = MagicMock()
+        source.is_sample_id = WebshartDataBackend.is_sample_id
+        source.normalize_sample_id = WebshartDataBackend.normalize_sample_id
+        source.read_image.side_effect = lambda ref: Image.new("RGB", (8, 8), "red" if ref == refs[0] else "blue")
+        store = DummyCacheBackend(self.cache_dir)
+        store.list_files = MagicMock(side_effect=AssertionError("artifact inventory requested"))
+        store.bulk_exists = MagicMock(wraps=store.bulk_exists)
+        dataset = MagicMock()
+        dataset.iter_preparation_batches.return_value = [("1.0", refs)]
+        model = DummyModel(SimpleNamespace(image_processor=DummyImageProcessor(), image_encoder=DummyImageEncoder()))
+        cache = ImageEmbedCache(
+            "source",
+            "image",
+            model,
+            SimpleNamespace(device=torch.device("cpu")),
+            SimpleNamespace(
+                native_policy="shard_local", image_artifact_key=lambda ref, kind, model: sha256(ref.encode()).hexdigest()
+            ),
+            source,
+            store,
+            cache_dir=self.cache_dir,
+            embed_batch_size=2,
+        )
+        cache.prepare_dataset(dataset)
+        self.assertNotEqual(cache.generate_embed_filename(refs[0]), cache.generate_embed_filename(refs[1]))
+        self.assertEqual(source.read_image.call_count, 2)
+        cache.prepare_dataset(dataset)
+        cache.retrieve_from_cache(refs[1])
+        self.assertEqual(source.read_image.call_count, 2)
+        store.list_files.assert_not_called()
+        self.assertEqual(store.bulk_exists.call_count, 2)
+
     def test_process_and_retrieve_embeddings(self):
         image_path = os.path.join(self.images_dir, "frame.png")
         Image.new("RGB", (8, 8), color=(120, 60, 30)).save(image_path)
@@ -193,25 +230,16 @@ class TestImageEmbedCache(unittest.TestCase):
             cache_dir=self.cache_dir,
         )
 
-        StateTracker.all_image_files.setdefault("dataset1", {})
+        cache_backend.list_files = MagicMock(side_effect=AssertionError("artifact inventory"))
+        dataset = MagicMock()
+        dataset.describe.return_value = SimpleNamespace(accepted_samples=1)
+        dataset.iter_preparation_batches.return_value = [("square", (image_path,))]
+        self.assertEqual(cache.prepare_dataset(dataset), 1)
 
-        discovered = cache.discover_all_files()
-        cache.build_embed_filename_map(list(discovered.keys()))
-
-        pending = cache.discover_unprocessed_files()
-        self.assertEqual(pending, [image_path])
-
-        cache.process_files(pending)
-
-        cache_file = cache.image_path_to_embed_path[image_path]
+        cache_file, _ = cache.generate_embed_filename(image_path)
         self.assertTrue(cache_backend.exists(cache_file))
-
-        retrieved = cache.retrieve_from_cache(image_path)
-        self.assertIsInstance(retrieved, torch.Tensor)
-        self.assertGreater(retrieved.numel(), 0)
-
-        conditioning_records = StateTracker.get_conditioning_image_embed_files("dataset1")
-        self.assertIn(cache_file, conditioning_records)
+        self.assertIsInstance(cache.retrieve_from_cache(image_path), torch.Tensor)
+        cache_backend.list_files.assert_not_called()
 
 
 if __name__ == "__main__":

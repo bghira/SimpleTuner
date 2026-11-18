@@ -1,13 +1,18 @@
 import copy
+import os
 import threading
 import unittest
 from queue import Queue
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import torch
+
 from simpletuner.helpers.caching.vae import VAECache
 from simpletuner.helpers.data_backend.base import BaseDataBackend
+from simpletuner.helpers.data_backend.local import LocalDataBackend
 from simpletuner.helpers.data_backend.webshart import WebshartDataBackend
+from simpletuner.helpers.metadata.backends.base import MetadataBackend
 
 
 class TestCacheGroups(unittest.TestCase):
@@ -47,6 +52,128 @@ class TestVaeCacheTraversal(unittest.TestCase):
     def test_default_traversal_retains_bucket_order(self):
         self._run_pipeline(webshart=False)
 
+    def test_cache_scan_streams_keys_from_the_bound_artifact_store(self):
+        cache = VAECache.__new__(VAECache)
+        cache.cache_dir = "latents/"
+        cache.read_batch_size = 2
+        visited = []
+
+        def entries(*args):
+            for key in ("latents/a.pt", "latents/b.pt", "latents/c.pt"):
+                visited.append(key)
+                yield key
+
+        cache.cache_data_backend = Mock()
+        cache.cache_data_backend.iter_file_keys.side_effect = entries
+        cache._read_from_storage_concurrently = Mock(side_effect=lambda keys, hide_errors: zip(keys, keys))
+        results = cache.scan_cache_contents()
+        self.assertEqual(next(results), ("latents/a.pt", "latents/a.pt"))
+        self.assertEqual(visited, ["latents/a.pt", "latents/b.pt"])
+        self.assertEqual(len(list(results)), 2)
+        cache.cache_data_backend.iter_file_keys.assert_called_once_with(["pt"], "latents/")
+        self.assertEqual(cache._read_from_storage_concurrently.call_count, 2)
+
+    def test_local_artifact_listing_streams_directories(self):
+        storage = LocalDataBackend(accelerator=None, id="artifacts")
+
+        def directories(*args, **kwargs):
+            yield "latents", ["subdir"], ["a.pt", "notes.txt"]
+            self.assertTrue(first_read)
+            yield "latents/subdir", [], ["b.PT"]
+
+        first_read = []
+        with patch("simpletuner.helpers.data_backend.local.os.walk", side_effect=directories):
+            keys = storage.iter_file_keys(["pt"], "latents")
+            first_read.append(next(keys))
+            self.assertEqual(first_read, [os.path.abspath("latents/a.pt")])
+            self.assertEqual(list(keys), [os.path.abspath("latents/subdir/b.PT")])
+
+    def test_cache_recreation_deletes_from_artifact_storage(self):
+        source = Mock()
+        store = Mock()
+        store.type = "aws"
+        metadata = SimpleNamespace(data_backend=source, save_cache=Mock())
+        metadata.is_cache_inconsistent = lambda *args: MetadataBackend.is_cache_inconsistent(metadata, *args)
+        cache = VAECache.__new__(VAECache)
+        cache.cache_data_backend = store
+        cache.generate_vae_cache_filename = lambda ref: ("vae/known.pt", "known.pt")
+        cache.build_vae_cache_filename_map(["images/sample.jpg"])
+        self.assertEqual(cache._image_filename_from_vaecache_filename("vae/known.pt"), "images/sample.jpg")
+        invalid = torch.tensor([float("nan")])
+        cache.scan_cache_contents = lambda: iter([("vae/unknown.pt", invalid), ("vae/known.pt", invalid)])
+        with patch(
+            "simpletuner.helpers.metadata.backends.base.StateTracker.get_args",
+            return_value=SimpleNamespace(model_type="lora"),
+        ):
+            MetadataBackend.handle_vae_cache_inconsistencies(metadata, cache, "recreate")
+        store.delete.assert_called_once_with("vae/known.pt")
+        source.delete.assert_not_called()
+
+    def test_accepted_partition_drives_cold_mixed_and_warm_latents(self):
+        dataset = Mock()
+        dataset.describe.return_value.accepted_samples = 3
+        dataset.iter_preparation_batches.return_value = [("wide", ("a", "b")), ("square", ("c",))]
+        dataset.read_samples.side_effect = lambda refs, fields: [{"image": ref} for ref in refs]
+        stored = {"b"}
+        cache = VAECache.__new__(VAECache)
+        cache.vae_batch_size = 2
+        cache.cache_path_for_image = lambda ref: "cache-" + ref
+        cache.cache_data_backend = Mock()
+        cache.cache_data_backend.bulk_exists.side_effect = lambda keys: [
+            key.removeprefix("cache-") in stored for key in keys
+        ]
+        cache.init_vae = Mock()
+        cache.nsfw_check_enabled = False
+        cache._process_images_in_batch = lambda refs, images, disable_queue: [
+            (image, ref) for ref, image in zip(refs, images)
+        ]
+        cache._encode_images_in_batch = lambda pixels, disable_queue: [("cache-" + ref, ref, image) for image, ref in pixels]
+        cache._write_latents_in_batch = lambda latents: stored.update(ref for _, ref, _ in latents)
+        cache.prepare_dataset(dataset, worker=1, workers=2)
+        self.assertEqual(stored, {"a", "b", "c"})
+        dataset.iter_preparation_batches.assert_called_with(worker=1, workers=2, batch_size=2)
+        cache.prepare_dataset(dataset, worker=1, workers=2)
+        cache.init_vae.assert_called_once()
+        self.assertEqual(dataset.read_samples.call_count, 2)
+
+    def test_vae_inventory_is_only_needed_for_legacy_filtering_and_maintenance(self):
+        cache = VAECache.__new__(VAECache)
+        cache.metadata_backend = SimpleNamespace(native_policy=None)
+        cache.vae_cache_ondemand = False
+        cache.nsfw_check_enabled = False
+        cache.delete_problematic_images = False
+        self.assertFalse(cache.needs_legacy_cache_inventory({}))
+        self.assertTrue(cache.needs_legacy_cache_inventory({"crop": True, "crop_aspect": "random"}))
+        self.assertTrue(cache.needs_legacy_cache_inventory({"scan_for_errors": True}))
+        cache.vae_cache_ondemand = True
+        self.assertTrue(cache.needs_legacy_cache_inventory({"crop": True, "crop_aspect": "random"}))
+        cache.vae_cache_ondemand = False
+        cache.nsfw_check_enabled = True
+        self.assertTrue(cache.needs_legacy_cache_inventory({}))
+        cache.metadata_backend.native_policy = "global"
+        self.assertFalse(cache.needs_legacy_cache_inventory({"scan_for_errors": True}))
+
+    def test_legacy_preparation_preserves_partial_reads_and_accepts_audio_payloads(self):
+        dataset = Mock(uses_native_schedule=False)
+        dataset.describe.return_value.accepted_samples = 2
+        dataset.iter_preparation_batches.return_value = [("audio", ("available.wav", "missing.wav"))]
+        cache = VAECache.__new__(VAECache)
+        cache.vae_batch_size = 2
+        cache.nsfw_check_enabled = False
+        cache.cache_path_for_image = lambda ref: "cache-" + ref
+        cache.cache_data_backend = Mock()
+        cache.cache_data_backend.bulk_exists.side_effect = lambda keys: [False for _ in keys]
+        cache._read_from_storage_concurrently = Mock(return_value=iter([("available.wav", "waveform")]))
+        cache.init_vae = Mock()
+        cache._process_images_in_batch = Mock(return_value=[("pixels", "available.wav")])
+        cache._encode_images_in_batch = Mock(return_value=[("artifact", "available.wav", "latent")])
+        cache._write_latents_in_batch = Mock()
+
+        self.assertEqual(cache.prepare_dataset(dataset), 2)
+        cache._process_images_in_batch.assert_called_once_with(["available.wav"], ["waveform"], disable_queue=True)
+        cache._write_latents_in_batch.assert_called_once_with([("artifact", "available.wav", "latent")])
+        dataset.read_samples.assert_not_called()
+
     def _run_pipeline(self, webshart):
         wide0, wide1 = "webshart://0/0/wide.jpg", "webshart://1/0/wide.jpg"
         square0, square1 = "webshart://0/1/square.jpg", "webshart://1/1/square.jpg"
@@ -65,7 +192,8 @@ class TestVaeCacheTraversal(unittest.TestCase):
         cache.metadata_backend.get_metadata_attribute_by_filepath.return_value = "wide"
         cache.local_unprocessed_files = [wide0, wide1, square0, square1, "cached", restored]
         cache.generate_vae_cache_filename = lambda path: (path + ".pt", path)
-        cache._image_filename_from_vaecache_filename = lambda path: path
+        cache.cache_path_for_image = lambda path: path + ".pt"
+        cache._image_filename_from_vaecache_filename = lambda key: key.removesuffix(".pt")
         cache.already_cached = Mock(return_value=False)
         cache.webhook_handler = None
         cache.max_workers = 2

@@ -5,9 +5,11 @@ import random
 import threading
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import nullcontext
 from copy import deepcopy
 from hashlib import sha256
 from io import BytesIO
+from itertools import batched
 from pathlib import Path
 from queue import Queue
 from random import shuffle
@@ -160,6 +162,7 @@ class VAECache(WebhookMixin):
             raise ValueError(f"VAECache received incorrect image_data_backend: {image_data_backend}")
         self.image_data_backend = image_data_backend
         self.cache_data_backend = cache_data_backend if cache_data_backend is not None else image_data_backend
+        self.vae_path_to_image_path = {}
         self.hash_filenames = hash_filenames
         self.vae = vae
         self.accelerator = accelerator
@@ -575,14 +578,18 @@ class VAECache(WebhookMixin):
         if self._is_multi_process():
             self.accelerator.wait_for_everyone()
 
-    def _scan_sample_for_nsfw(self, filepath: str, sample, bucket: str) -> bool:
+    def _scan_sample_for_nsfw(self, filepath: str, sample, bucket: str, *, exclusions=None) -> bool:
         classifier_store = self._get_nsfw_classifier_store()
         classification = classifier_store.classify_sample(sample, filepath=filepath)
         with self._nsfw_lock:
             self._nsfw_scan_report["images_scanned"] += 1
             self._record_nsfw_classifier_verdicts(classification)
             if classification.get("summary", {}).get("rejected", False):
-                self._handle_nsfw_rejected_sample(filepath, bucket, classification)
+                if exclusions is None:
+                    self._handle_nsfw_rejected_sample(filepath, bucket, classification)
+                else:
+                    exclusions.add(filepath, bucket, "nsfw")
+                    self._nsfw_scan_report["images_rejected"] += 1
                 return True
         return False
 
@@ -684,6 +691,9 @@ class VAECache(WebhookMixin):
             and self.image_data_backend.is_sample_id(filepath)
         ):
             sample_id = self.image_data_backend.normalize_sample_id(filepath)
+            if getattr(self.metadata_backend, "native_policy", None) in ("global", "shard_local"):
+                name = self.metadata_backend.image_artifact_key(sample_id, "vae", self.model) + ".pt"
+                return os.path.join(self.cache_dir, name), name
             base_filename = str(sha256(sample_id.encode()).hexdigest()) if self.hash_filenames else sample_id
             base_filename = str(base_filename).replace("/", "_").replace(":", "_") + ".pt"
             return os.path.join(self.cache_dir, base_filename), base_filename
@@ -702,24 +712,21 @@ class VAECache(WebhookMixin):
             full_filename = os.path.join(self.cache_dir, base_filename)
         return full_filename, base_filename
 
-    def _image_filename_from_vaecache_filename(self, filepath: str) -> tuple[str, str]:
-        test_filepath, _ = self.generate_vae_cache_filename(filepath)
-        result = self.vae_path_to_image_path.get(test_filepath, None)
+    def _image_filename_from_vaecache_filename(self, cache_key: str) -> str | None:
+        return self.vae_path_to_image_path.get(self._store_key(cache_key))
 
-        return result
+    def cache_path_for_image(self, filepath):
+        path, _ = self.generate_vae_cache_filename(filepath)
+        return self._store_key(path)
+
+    def _store_key(self, path):
+        return os.path.abspath(path) if self.cache_data_backend.type in {"local", "memory"} else path
 
     def build_vae_cache_filename_map(self, all_image_files: list):
-        self.image_path_to_vae_path = {}
-        self.vae_path_to_image_path = {}
-        for image_file in all_image_files:
-            cache_filename, _ = self.generate_vae_cache_filename(image_file)
-            if self.cache_data_backend.type in {"local", "memory"}:
-                cache_filename = os.path.abspath(cache_filename)
-            self.image_path_to_vae_path[image_file] = cache_filename
-            self.vae_path_to_image_path[cache_filename] = image_file
+        self.vae_path_to_image_path = {self.cache_path_for_image(image_path): image_path for image_path in all_image_files}
 
     def already_cached(self, filepath: str) -> bool:
-        test_path = self.image_path_to_vae_path.get(filepath, None)
+        test_path = self.cache_path_for_image(filepath)
         if self.cache_data_backend.exists(test_path):
             return True
         return False
@@ -1014,7 +1021,6 @@ class VAECache(WebhookMixin):
             self.debug_log(f"All ({len(all_image_files)}) image files: (truncated) {list(all_image_files)[:5]}")
             self.debug_log(f"Existing cache files: (truncated) {list(existing_cache_files)[:5]}")
             self.debug_log(f"Already cached images: (truncated) {already_cached_images[:5]}")
-            self.debug_log(f"VAECache Mapping: (truncated) {list(self.image_path_to_vae_path.items())[:5]}")
 
         return self.local_unprocessed_files
 
@@ -1489,6 +1495,7 @@ class VAECache(WebhookMixin):
 
             # Use BatchedTrainingSamples for efficient batch processing
             processed_images = []
+            buckets_by_path = {path: bucket for path, _, bucket in initial_data}
 
             # Group images by aspect ratio for batch processing
             aspect_groups = {}
@@ -1528,7 +1535,7 @@ class VAECache(WebhookMixin):
                             model=self.model,
                         )
                         if result:
-                            processed_images.append(result)
+                            processed_images.append((filepath, result))
                     except Exception as e:
                         logger.error(f"Error processing batch result {filepath}: {e}, traceback: {traceback.format_exc()}")
 
@@ -1544,14 +1551,14 @@ class VAECache(WebhookMixin):
                             model=self.model,
                         )
                         if result:
-                            processed_images.append(result)
+                            processed_images.append((filepath, result))
                     except Exception as e:
                         logger.error(f"Error processing individual image {filepath}: {e}")
 
             # Final Processing - simplified without complex threading
             output_values = []
             first_aspect_ratio = None
-            for idx, (image, crop_coordinates, new_aspect_ratio) in enumerate(processed_images):
+            for idx, (filepath, (image, crop_coordinates, new_aspect_ratio)) in enumerate(processed_images):
                 is_final_sample = idx == len(processed_images) - 1
                 if first_aspect_ratio is None:
                     first_aspect_ratio = new_aspect_ratio
@@ -1559,7 +1566,7 @@ class VAECache(WebhookMixin):
                     is_final_sample = True
                     first_aspect_ratio = new_aspect_ratio
 
-                filepath, _, aspect_bucket = initial_data[idx]
+                aspect_bucket = buckets_by_path[filepath]
                 filepaths.append(filepath)
 
                 if (
@@ -1842,8 +1849,6 @@ class VAECache(WebhookMixin):
         try:
             if image_pixel_values is not None:
                 qlen = len(image_pixel_values)
-                if self.vae_batch_size != len(image_pixel_values):
-                    self.vae_batch_size = len(image_pixel_values)
             else:
                 qlen = self.vae_input_queue.qsize()
 
@@ -2073,6 +2078,73 @@ class VAECache(WebhookMixin):
                 completed_futures.append(future)
         return [f for f in futures if f not in completed_futures]
 
+    def needs_legacy_cache_inventory(self, config):
+        if getattr(self.metadata_backend, "native_policy", None) in ("global", "shard_local"):
+            return False
+        maintenance = (
+            config.get("scan_for_errors")
+            or config.get("vae_cache_clear_each_epoch")
+            or (config.get("crop") and config.get("crop_aspect") == "random")
+        )
+        return bool(
+            maintenance or (not self.vae_cache_ondemand and (self.nsfw_check_enabled or self.delete_problematic_images))
+        )
+
+    def prepare_dataset(self, dataset, *, worker=0, workers=1, progress_callback=None):
+        if not self.nsfw_check_enabled:
+            return self._prepare_dataset_batches(dataset, worker, workers, progress_callback, None)
+        try:
+            with dataset.metadata_backend.collect_exclusions() as exclusions:
+                count = self._prepare_dataset_batches(dataset, worker, workers, progress_callback, exclusions)
+        finally:
+            self._close_nsfw_classifier_store()
+        self._write_nsfw_scan_report()
+        return count
+
+    def _prepare_dataset_batches(self, dataset, worker, workers, progress_callback, exclusions):
+        current = 0
+        total = dataset.describe().accepted_samples
+        ready = False
+        for bucket, refs in dataset.iter_preparation_batches(worker=worker, workers=workers, batch_size=self.vae_batch_size):
+            keys = (self.cache_path_for_image(ref) for ref in refs)
+            cached = self.cache_data_backend.bulk_exists(keys)
+            pending = [ref for ref, present in zip(refs, cached, strict=True) if not present]
+            requested = refs if exclusions is not None else pending
+            if requested:
+                if dataset.uses_native_schedule:
+                    records = dataset.read_samples(requested, fields={"image"})
+                    images = {ref: record["image"] for ref, record in zip(requested, records, strict=True)}
+                else:
+                    images = {
+                        ref: payload
+                        for ref, payload in self._read_from_storage_concurrently(requested, hide_errors=True)
+                        if payload is not None
+                    }
+                    pending = [ref for ref in pending if ref in images]
+                if exclusions is not None:
+                    rejected = {
+                        ref for ref in refs if self._scan_sample_for_nsfw(ref, images[ref], bucket, exclusions=exclusions)
+                    }
+                    pending = [ref for ref in pending if ref not in rejected]
+            if pending:
+                if not ready:
+                    self.init_vae()
+                    ready = True
+                images = [images[ref] for ref in pending]
+                pixels = self._process_images_in_batch(pending.copy(), images, disable_queue=True)
+                if dataset.uses_native_schedule and {entry[1] for entry in pixels} != set(pending):
+                    raise ValueError("Some requested Webshart samples could not be prepared for VAE encoding.")
+                if pixels:
+                    latents = self._encode_images_in_batch(pixels, disable_queue=True)
+                    if dataset.uses_native_schedule and {entry[1] for entry in latents} != set(pending):
+                        raise ValueError("The VAE did not return every requested Webshart latent.")
+                    self._write_latents_in_batch(latents)
+            current += len(refs)
+            if progress_callback:
+                progress_callback(current, total)
+
+        return current
+
     def process_buckets(self, progress_callback=None):
         futures = []
         self.debug_log("Listing cached images")
@@ -2146,7 +2218,7 @@ class VAECache(WebhookMixin):
                         if progress_callback is not None:
                             progress_callback(overall_processed, total_count)
                         filepath = self._process_raw_filepath(raw_filepath)
-                        test_filepath = self._image_filename_from_vaecache_filename(filepath)
+                        test_filepath = self._image_filename_from_vaecache_filename(self.cache_path_for_image(filepath))
                         if test_filepath is None:
                             continue
                         if test_filepath not in local_unprocessed_files:
@@ -2276,20 +2348,7 @@ class VAECache(WebhookMixin):
             self.webhook_handler.send_raw(event, message_level="info", job_id=StateTracker.get_job_id())
 
     def scan_cache_contents(self):
-        """
-        A generator method that iterates over the VAE cache, yielding each cache file's path and its contents
-        using multi-threading for improved performance.
-
-        Yields:
-            Tuple[str, Any]: A tuple containing the file path and its contents.
-        """
-        try:
-            all_cache_files = StateTracker.get_vae_cache_files(data_backend_id=self.id)
-            try:
-                yield from self._read_from_storage_concurrently(all_cache_files, hide_errors=True)
-            except FileNotFoundError:
-                yield (None, None)
-        except Exception as e:
-            if "is not iterable" not in str(e):
-                logger.error(f"Error in scan_cache_contents: {e}")
-                self.debug_log(f"Error traceback: {traceback.format_exc()}")
+        """Yield cache entries from the bound artifact store in batches."""
+        keys = self.cache_data_backend.iter_file_keys(["pt"], self.cache_dir)
+        for batch in batched(keys, self.read_batch_size):
+            yield from self._read_from_storage_concurrently(batch, hide_errors=True)
