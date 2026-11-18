@@ -64,6 +64,7 @@ class ImageBackendConfig(BaseBackendConfig):
     webshart_max_file_size: Optional[int] = None
     webshart_optimize_captions: Optional[bool] = None
     webshart_caption_key: Optional[Union[str, List[str]]] = None
+    webshart_shuffle_window: Optional[int] = None
 
     vae_cache_clear_each_epoch: Optional[bool] = None
     probability: float = 1.0
@@ -192,6 +193,8 @@ class ImageBackendConfig(BaseBackendConfig):
             config.webshart = webshart_block
             config.webshart_caption_key = webshart_block.get("caption_key")
             validators.validate_webshart_caption_key(config.webshart_caption_key)
+            config.webshart_shuffle_window = webshart_block.get("shuffle_window")
+            validators.validate_webshart_shuffle_window(config.webshart_shuffle_window)
             config.webshart_source = backend_dict.get("source", webshart_block.get("source"))
             config.webshart_metadata = backend_dict.get("metadata", webshart_block.get("metadata"))
             config.webshart_hf_token = backend_dict.get("hf_token", webshart_block.get("hf_token"))
@@ -610,6 +613,8 @@ class ImageBackendConfig(BaseBackendConfig):
                 webshart_config["optimize_captions"] = self.webshart_optimize_captions
             if self.webshart_caption_key is not None:
                 webshart_config["caption_key"] = self.webshart_caption_key
+            if self.webshart_shuffle_window is not None:
+                webshart_config["shuffle_window"] = self.webshart_shuffle_window
 
         if self.video is not None:
             config["video"] = self.video

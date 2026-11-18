@@ -2,17 +2,22 @@
 
 import os
 import random
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from copy import deepcopy
 from typing import Any
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
-from simpletuner.helpers.data_backend.cursor import DatasetCursor
+from simpletuner.helpers.data_backend.cursor import DatasetCursor, WindowedCursor
 from simpletuner.helpers.metadata.backends.base import MetadataBackend, get_cp_aware_dp_info
 from simpletuner.helpers.prompts import CaptionNotFoundError, PromptHandler
 from simpletuner.helpers.training.multi_process import broadcast_object_from_main
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.utils.pathing import normalize_data_path
+
+
+def shuffle_window(config: Mapping[str, Any]) -> int | None:
+    """How many shards a rank keeps open, for a dataset that is indexed a shard at a time."""
+    return (config.get("webshart") or {}).get("shuffle_window")
 
 
 class DatasetRuntime:
@@ -36,7 +41,7 @@ class DatasetRuntime:
             **deepcopy(config),
         }
         self._cursor_options: dict[str, Any] | None = None
-        self._cursor: DatasetCursor | None = None
+        self._cursor: DatasetCursor | WindowedCursor | None = None
 
     def configure_cursor(self, *, accelerator, batch_size: int, shared_by_all_ranks: bool) -> None:
         """Fix how this dataset is traversed. Every rank must call this at the same point."""
@@ -61,8 +66,38 @@ class DatasetRuntime:
             "shared_by_all_ranks": shared_by_all_ranks,
         }
         self._cursor = None
+        window = shuffle_window(self.config)
+        if window is not None:
+            self._cursor = self._windowed_cursor(accelerator, window)
 
-    def cursor(self) -> DatasetCursor:
+    def _windowed_cursor(self, accelerator, window: int) -> WindowedCursor:
+        options = self._cursor_options
+        cursor = WindowedCursor(
+            self.id,
+            unit_count=self.metadata_backend.unit_count(),
+            open_unit=self.metadata_backend.open_unit,
+            close_unit=self.metadata_backend.close_unit,
+            window=window,
+            batch_size=options["batch_size"],
+            repeats=int(StateTracker.get_data_backend_config(self.id).get("repeats") or 0),
+            seed=options["seed"],
+            dp_size=options["dp_size"],
+            dp_rank=options["dp_rank"],
+        )
+        self.metadata_backend.check_window(cursor.units_in_window(), ranks=options["dp_size"])
+        # The ranks have to plan the same number of steps for an epoch, so one of them measures
+        # its first window and tells the others.
+        cursor.samples_per_unit = broadcast_object_from_main(
+            cursor.measure_samples_per_unit() if accelerator.is_main_process else None
+        )
+        if not cursor.samples_per_unit:
+            raise ValueError(
+                f"(id={self.id}) The first {len(cursor.units_in_window())} shard(s) opened hold no usable sample."
+                " Check minimum_image_size, the aspect ratio limits and the caption settings against what the dataset holds."
+            )
+        return cursor
+
+    def cursor(self) -> DatasetCursor | WindowedCursor:
         """This rank's traversal of the dataset, built from the bucket lists on first use."""
         if self._cursor is None:
             if self._cursor_options is None:
@@ -78,7 +113,8 @@ class DatasetRuntime:
     def rebuild_cursor(self) -> None:
         """Read the bucket lists again after they changed. The epoch and the seed are kept."""
         previous = self._cursor
-        if previous is None:
+        # A windowed dataset has no bucket lists; it indexes each shard again as it opens.
+        if previous is None or isinstance(previous, WindowedCursor):
             return
         self._cursor_options["seed"] = previous.seed
         self._cursor = None

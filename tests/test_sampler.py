@@ -94,6 +94,37 @@ class TestMultiAspectSampler(unittest.TestCase):
         self.assertIn("- Target frame count: 39", overview)
         self.assertIn("- FPS: unknown", overview)
 
+    def test_model_card_overview_of_a_dataset_read_a_window_at_a_time_gives_shards_and_an_estimate(self):
+        sampler = object.__new__(MultiAspectSampler)
+        sampler.id = "pretrain"
+        sampler.metadata_backend = SimpleNamespace(aspect_ratio_bucket_indices={})
+        sampler.dataset_runtime = SimpleNamespace(
+            cursor=lambda: SimpleNamespace(unit_count=471955, window=24, dp_size=8, progress=lambda: (160, 45000000))
+        )
+        sampler.accelerator = SimpleNamespace(num_processes=8, process_index=0)
+        sampler.logger = MagicMock()
+        sampler.sample_type_strs = "images"
+        sampler.resolution = 256
+        sampler.resolution_type = "pixel"
+        sampler.is_regularisation_data = False
+        sampler.conditioning_type = None
+
+        with (
+            patch.object(StateTracker, "get_data_backend_config", return_value={"webshart": {"shuffle_window": 24}}),
+            patch.object(StateTracker, "get_dataset_schedule", return_value={"reached": True}),
+        ):
+            overview = sampler.log_state(show_rank=False, alt_stats=True)
+
+        self.assertIn("- Shards: 471955, read 24 at a time by each of 8 rank(s)", overview)
+        self.assertIn("- Estimated number of images a rank reads in an epoch: 45000000", overview)
+        self.assertNotIn("Total number of", overview)
+
+    def test_a_dataset_read_a_window_at_a_time_gives_no_validation_images(self):
+        self.sampler.dataset_runtime.config["webshart"] = {"shuffle_window": 2}
+        self.sampler.logger = MagicMock()
+        self.assertEqual(self.sampler.retrieve_validation_set(2), [])
+        self.assertIn("indexed a shard at a time", self.sampler.logger.warning.call_args.args[0])
+
     def test_validation_paths_are_the_first_of_the_whole_dataset_in_path_order(self):
         self.metadata_backend.aspect_ratio_bucket_indices = {"1.5": ["c", "a", "e"], "1.0": ["d", "b"]}
         self.assertEqual(self.sampler._next_validation_paths(2), ["a", "b"])

@@ -2295,7 +2295,7 @@ class TestTrainer(unittest.TestCase):
         return trainer, backends
 
     @contextmanager
-    def _rollover_patches(self, backends):
+    def _rollover_patches(self, backends, config=None):
         with (
             patch("simpletuner.helpers.training.trainer.StateTracker.set_epoch"),
             patch(
@@ -2304,10 +2304,26 @@ class TestTrainer(unittest.TestCase):
             ),
             patch(
                 "simpletuner.helpers.training.trainer.StateTracker.get_data_backend_config",
-                return_value={"crop": True, "crop_aspect": "random"},
+                return_value=config or {"crop": True, "crop_aspect": "random"},
             ),
         ):
             yield
+
+    def test_epoch_rollover_leaves_a_dataset_read_a_window_at_a_time_alone(self):
+        # It has no bucket lists to rebuild: its shards are indexed again as they open.
+        trainer, backends = self._rollover_fixture(bucket_contents={})
+        backend = backends["train"]
+        sampler = backend["sampler"] = MagicMock()
+        config = {"crop": True, "crop_aspect": "random", "webshart": {"shuffle_window": 4}}
+
+        with self._rollover_patches(backends, config):
+            trainer._epoch_rollover(2)
+
+        sampler.drop_unfinished_epoch.assert_called_once()
+        backend["metadata_backend"].compute_aspect_ratio_bucket_indices.assert_not_called()
+        backend["metadata_backend"].reload_cache.assert_not_called()
+        backend["dataset_runtime"].rebuild_cursor.assert_not_called()
+        backend["vaecache"].rebuild_cache.assert_not_called()
 
     def test_epoch_rollover_rejects_a_dataset_the_rebucketing_left_empty(self):
         trainer, backends = self._rollover_fixture(bucket_contents={"1.0": [], "1.5": []})

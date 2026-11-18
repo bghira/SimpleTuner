@@ -42,6 +42,7 @@ from simpletuner.helpers.caching.memory import reclaim_memory
 from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
 from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
 from simpletuner.helpers.configuration.loader import load_config
+from simpletuner.helpers.data_backend.dataset_runtime import shuffle_window
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.data_backend.factory import (
     BatchFetcher,
@@ -6053,6 +6054,9 @@ class Trainer:
         )
         for backend_id, backend in StateTracker.get_data_backends().items():
             backend_config = StateTracker.get_data_backend_config(backend_id)
+            if shuffle_window(backend_config) is not None:
+                # Its shards are indexed again as they open in the new epoch.
+                continue
             if (
                 backend_config.get("crop")
                 and backend_config.get("crop_aspect") == "random"

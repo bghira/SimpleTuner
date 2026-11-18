@@ -12,7 +12,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime, shuffle_window
 
 from .runtime import BatchFetcher
 
@@ -517,6 +517,8 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
             value = backend.get(field, webshart_config.get(field))
             if value is not None:
                 webshart_output[field] = value
+        if webshart_config.get("shuffle_window") is not None:
+            webshart_output["shuffle_window"] = webshart_config["shuffle_window"]
         if webshart_output:
             output["config"]["webshart"] = webshart_output
     if not is_audio_dataset:
@@ -3153,6 +3155,56 @@ class FactoryRegistry:
             "mask",
         )
 
+    def _refuse_what_a_shuffle_window_rules_out(self, backend: Dict[str, Any], init_backend: Dict[str, Any]) -> None:
+        """A dataset indexed a shard at a time cannot serve anything that needs every sample listed up front."""
+        window = shuffle_window(init_backend["config"])
+        if window is None:
+            return
+        dataset_type = ensure_dataset_type(init_backend.get("dataset_type"), default=DatasetType.IMAGE)
+        _, vae_cache_ondemand = _normalise_vae_cache_config(init_backend["config"])
+        text_embed_cache = init_backend.get("text_embed_cache")
+        conflicts = [
+            (
+                not (getattr(self.args, "max_train_steps", None) or 0) > 0,
+                "The length of its epochs is an estimate, so --num_train_epochs cannot set the length of the run."
+                " Set --max_train_steps.",
+            ),
+            (
+                dataset_type is not DatasetType.IMAGE,
+                f"Only image datasets can be read this way, and its dataset_type is {dataset_type.value}.",
+            ),
+            (
+                self._is_eval_dataset(init_backend["id"]),
+                "It cannot be the --eval_dataset_id dataset, which is read whole.",
+            ),
+            (
+                bool(backend.get("conditioning_data") or backend.get("conditioning")),
+                "It cannot be paired with conditioning datasets; remove conditioning_data and conditioning.",
+            ),
+            *(
+                (bool(backend.get(key)), f"{key} needs the whole dataset indexed before training; remove it.")
+                for key in ("max_num_samples", "scan_for_errors", "vae_cache_clear_each_epoch")
+            ),
+            (
+                getattr(self.model, "AUTOENCODER_CLASS", None) is not None and not vae_cache_ondemand,
+                "Its latents cannot be encoded before training. Set vae_cache_ondemand or vae_cache_disable on the dataset.",
+            ),
+            (
+                text_embed_cache is not None and not text_embed_cache.text_cache_ondemand,
+                "Its captions cannot be encoded before training. Set text_cache_ondemand on its text embed backend.",
+            ),
+            (
+                bool(self.model.requires_conditioning_image_embeds()),
+                "This model needs conditioning image embeds prepared for every sample before training.",
+            ),
+        ]
+        for conflict, reason in conflicts:
+            if conflict:
+                raise ValueError(
+                    f"(id={init_backend['id']}) webshart.shuffle_window={window} has the dataset indexed a shard at a time"
+                    f" while training. {reason}"
+                )
+
     def _handle_bucket_operations(
         self,
         backend: Dict[str, Any],
@@ -3160,6 +3212,10 @@ class FactoryRegistry:
         conditioning_type: Optional[str],
     ) -> None:
         """Handle bucket refreshing and validation."""
+        if shuffle_window(init_backend["config"]) is not None:
+            # Every rank indexes its own shards as it opens them: there are no bucket lists to refresh, reload or copy.
+            self._handle_config_versioning(backend, init_backend)
+            return
         metadata_clone_source_id = backend.get("metadata_clone_source_id")
         has_metadata_clone_source = metadata_clone_source_id is not None
         if (
@@ -3402,6 +3458,9 @@ class FactoryRegistry:
             isinstance(instance_dir, str) and instance_dir not in ("", None) and not os.path.exists(instance_dir)
         )
 
+        if shuffle_window(init_backend["config"]) is not None:
+            # Whether it holds usable samples is found out when the cursor opens its first shards.
+            return
         dataset_type = init_backend.get("dataset_type")
         dataset_empty = not any(init_backend["metadata_backend"].aspect_ratio_bucket_indices.values())
 
@@ -4266,6 +4325,10 @@ class FactoryRegistry:
                     return
             if self._is_multi_process():
                 self.accelerator.wait_for_everyone()
+        if shuffle_window(init_backend["config"]) is not None:
+            # The map finds the sample a cache file belongs to, which only encoding before training asks for.
+            init_backend["vaecache"].build_vae_cache_filename_map(all_image_files=[])
+            return
         all_image_files = StateTracker.get_image_files(
             data_backend_id=init_backend["id"],
             retry_limit=3,  # some filesystems maybe take longer to make it available.
@@ -4635,6 +4698,7 @@ class FactoryRegistry:
         self._configure_backend_by_type(backend, init_backend)
 
         self._assign_text_embed_cache(backend, init_backend)
+        self._refuse_what_a_shuffle_window_rules_out(backend, init_backend)
 
         data_backend_is_mock = hasattr(init_backend["data_backend"], "_mock_children")
 

@@ -9,8 +9,8 @@ import torch
 from accelerate.logging import get_logger
 from PIL import Image
 
-from simpletuner.helpers.data_backend.cursor import DatasetCursor
-from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+from simpletuner.helpers.data_backend.cursor import DatasetCursor, WindowedCursor
+from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime, shuffle_window
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.multiaspect.state import BucketStateManager
 from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
@@ -96,7 +96,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.state_manager = BucketStateManager(self.id)
 
     @property
-    def cursor(self) -> DatasetCursor:
+    def cursor(self) -> DatasetCursor | WindowedCursor:
         return self.dataset_runtime.cursor()
 
     @property
@@ -173,6 +173,12 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         stopped and wrapping at the end. Nothing is random and every rank holds the whole dataset,
         so the same calls return the same paths on every rank and in every run.
         """
+        if shuffle_window(self.dataset_runtime.config) is not None:
+            self.logger.warning(
+                f"Dataset '{self.id}' is indexed a shard at a time (webshart.shuffle_window),"
+                " so it has no fixed set of samples to draw validation images from. None are returned."
+            )
+            return []
         buckets = self.metadata_backend.aspect_ratio_bucket_indices.values()
         available = sum(len(bucket) for bucket in buckets)
         if count > available:
@@ -228,12 +234,21 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             # Return an overview instead of a snapshot.
             # Eg. return totals, and not "as it is now"
             data_backend_config = StateTracker.get_data_backend_config(self.id)
-            total_image_count = sum(len(bucket) for bucket in self.metadata_backend.aspect_ratio_bucket_indices.values())
             printed_state = [f"- Repeats: {data_backend_config.get('repeats', 0)}"]
-            printed_state.append(f"- Total number of {self.sample_type_strs}: {total_image_count}")
-            printed_state.append(
-                f"- Total number of aspect buckets: {len(self.metadata_backend.aspect_ratio_bucket_indices)}"
-            )
+            if shuffle_window(data_backend_config) is not None:
+                printed_state.append(
+                    f"- Shards: {self.cursor.unit_count}, read {self.cursor.window} at a time by each of"
+                    f" {self.cursor.dp_size} rank(s)"
+                )
+                printed_state.append(
+                    f"- Estimated number of {self.sample_type_strs} a rank reads in an epoch: {self.cursor.progress()[1]}"
+                )
+            else:
+                total_image_count = sum(len(bucket) for bucket in self.metadata_backend.aspect_ratio_bucket_indices.values())
+                printed_state.append(f"- Total number of {self.sample_type_strs}: {total_image_count}")
+                printed_state.append(
+                    f"- Total number of aspect buckets: {len(self.metadata_backend.aspect_ratio_bucket_indices)}"
+                )
             schedule_state = StateTracker.get_dataset_schedule(self.id) or {}
             start_epoch = schedule_state.get("start_epoch", 1)
             start_step = schedule_state.get("start_step", 0)

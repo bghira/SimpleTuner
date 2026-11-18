@@ -56,6 +56,7 @@ class WebshartBackendBuilder(BaseBackendBuilder):
             "dataset_type": getattr(config, "dataset_type", "image"),
             "optimize_captions": bool(getattr(config, "webshart_optimize_captions", None) or False),
             "caption_key": config.webshart_caption_key,
+            "shuffle_window": config.webshart_shuffle_window,
             "format": webshart_config.get("format", "tar"),
             "manifest": webshart_config.get("manifest"),
             "columns": webshart_config.get("columns"),
