@@ -1,4 +1,5 @@
 import gzip
+import os
 from abc import ABC, abstractmethod
 from collections import defaultdict, deque
 from contextlib import closing
@@ -9,6 +10,26 @@ from pathlib import Path
 import torch
 
 from simpletuner.helpers.data_backend.source_inventory import SourceFileInventory
+
+
+def conditioning_file_path(relative_ref, root, config):
+    """Resolve a pairing key to a file-backed conditioning artifact."""
+    from simpletuner.helpers.data_backend.webshart import WebshartDataBackend
+
+    if WebshartDataBackend.is_sample_id(relative_ref):
+        relative_ref = WebshartDataBackend.parse_sample_id(relative_ref).filename
+        if os.path.isabs(relative_ref) or ".." in relative_ref.split("/"):
+            raise ValueError("Webshart pairing requires a filename relative to the conditioning dataset.")
+    if root:
+        relative_ref = os.path.normpath(relative_ref)
+        if os.path.isabs(relative_ref) or relative_ref.startswith(f"..{os.sep}"):
+            relative_ref = os.path.basename(relative_ref)
+        if relative_ref in {"", ".", ".."}:
+            raise ValueError("A conditioning reference must name a file.")
+    path = os.path.join(root, relative_ref) if root else relative_ref
+    if (config.get("conditioning_config") or {}).get("type") == "i2v_first_frame":
+        path = os.path.splitext(path)[0] + ".png"
+    return path
 
 
 def ordered_sample_payloads(dataset_id, refs, returned, *, allow_missing=False):

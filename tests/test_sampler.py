@@ -321,6 +321,8 @@ class TestMultiAspectSampler(unittest.TestCase):
             "resolution": 8,
             "resolution_type": "pixel",
         }
+        sampler.metadata_backend.active_dataset_config = backend_config
+        sampler.metadata_backend.conditioning_ref = MetadataBackend.conditioning_ref.__get__(sampler.metadata_backend)
 
         sampler.dataset_runtime = DatasetRuntime(
             "conditioning", sampler.data_backend, sampler.metadata_backend, backend_config
@@ -366,6 +368,10 @@ class TestMultiAspectSampler(unittest.TestCase):
                 conditioning_metadata.get_metadata_batch.side_effect = lambda refs: (metadata for _ in refs)
                 conditioning_metadata.id = conditioning_id
                 conditioning_metadata.instance_data_dir = conditioning_dir
+                conditioning_metadata.active_dataset_config = {}
+                conditioning_metadata.conditioning_ref.side_effect = MetadataBackend.conditioning_ref.__get__(
+                    conditioning_metadata
+                )
                 conditioning_metadata.aspect_ratio_bucket_indices = {}
                 conditioning_metadata.get_metadata_by_filepath.return_value = metadata
                 conditioning_sampler = MultiAspectSampler(

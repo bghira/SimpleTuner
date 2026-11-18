@@ -2,7 +2,6 @@
 
 import hashlib
 import json
-import os
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from copy import deepcopy
 from itertools import batched, islice
@@ -214,47 +213,7 @@ class DatasetRuntime:
 
     def conditioning_ref(self, relative_ref):
         """Resolve a training sample's pairing key inside this conditioning dataset."""
-        from simpletuner.helpers.data_backend.webshart import WebshartDataBackend
-        from simpletuner.helpers.metadata.backends.aligned_conditioning import AlignedConditioningMetadata
-
-        if isinstance(self.metadata_backend, AlignedConditioningMetadata):
-            return self.metadata_backend.conditioning_ref(relative_ref)
-        if isinstance(self.data_backend, WebshartDataBackend):
-            if self.data_backend.format == "parquet":
-                if self.data_backend.is_sample_id(relative_ref):
-                    relative_ref = self.data_backend.parse_sample_id(relative_ref).filename
-                return next(
-                    (
-                        ref
-                        for ref in self.data_backend.parquet_sample_refs_for_filename(relative_ref)
-                        if self.metadata_backend.admits_related_sample(ref)
-                    ),
-                    None,
-                )
-            self.data_backend._resolve_sample_ref(relative_ref)
-            sample_ref = self.data_backend.normalize_sample_id(relative_ref)
-            return sample_ref if self.metadata_backend.admits_related_sample(sample_ref) else None
-        root = self.config.get("instance_data_dir") or self.metadata_backend.instance_data_dir
-        return self.conditioning_file_path(relative_ref, root, self.config)
-
-    @staticmethod
-    def conditioning_file_path(relative_ref, root, config):
-        from simpletuner.helpers.data_backend.webshart import WebshartDataBackend
-
-        if WebshartDataBackend.is_sample_id(relative_ref):
-            relative_ref = WebshartDataBackend.parse_sample_id(relative_ref).filename
-            if os.path.isabs(relative_ref) or ".." in relative_ref.split("/"):
-                raise ValueError("Webshart pairing requires a filename relative to the conditioning dataset.")
-        if root:
-            relative_ref = os.path.normpath(relative_ref)
-            if os.path.isabs(relative_ref) or relative_ref.startswith(f"..{os.sep}"):
-                relative_ref = os.path.basename(relative_ref)
-            if relative_ref in {"", ".", ".."}:
-                raise ValueError("A conditioning reference must name a file.")
-        path = os.path.join(root, relative_ref) if root else relative_ref
-        if (config.get("conditioning_config") or {}).get("type") == "i2v_first_frame":
-            path = os.path.splitext(path)[0] + ".png"
-        return path
+        return self.metadata_backend.conditioning_ref(relative_ref)
 
     def resolve_captions(self, sample_refs):
         lookup = self._caption_lookup(sample_refs)

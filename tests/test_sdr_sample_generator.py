@@ -15,6 +15,7 @@ from simpletuner.helpers.data_generation.sample_generator import (
     SampleGenerator,
     SDRDownsampleSampleGenerator,
 )
+from simpletuner.helpers.metadata.backends.base import MetadataBackend
 
 
 class TestSDRDownsampleSampleGenerator(unittest.TestCase):
@@ -87,10 +88,11 @@ class TestSDRDownsampleSampleGenerator(unittest.TestCase):
                 generator.transform_batch([video], ["sample.mp4"], [{}], None)
 
     def test_generated_first_frames_use_the_conditioning_pairing_path(self):
+        metadata = MetadataBackend.__new__(MetadataBackend)
         target = DatasetRuntime(
             "frames",
             Mock(),
-            None,
+            metadata,
             {"instance_data_dir": "/conditioning", "conditioning_config": {"type": "i2v_first_frame"}},
         )
         self.assertEqual(target.conditioning_ref("nested/clip.mp4"), "/conditioning/nested/clip.png")
@@ -113,10 +115,11 @@ class TestSDRDownsampleSampleGenerator(unittest.TestCase):
             )
             source = DatasetRuntime("source", data, provider, {})
             target_store = LocalDataBackend(accelerator, "conditioning")
+            target_metadata = MetadataBackend.__new__(MetadataBackend)
             target = DatasetRuntime(
                 "conditioning",
                 target_store,
-                None,
+                target_metadata,
                 {"instance_data_dir": str(target_root), "conditioning_config": {"type": "sdr"}},
             )
             existing = target_root / "nested" / "already.png"

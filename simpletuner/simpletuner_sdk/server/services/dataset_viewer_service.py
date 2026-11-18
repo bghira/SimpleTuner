@@ -1790,7 +1790,7 @@ class DatasetViewerService:
         Checks linked conditioning datasets in the plan and also attempts
         to discover auto-generated conditioning images on disk.
         """
-        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+        from simpletuner.helpers.data_backend.base import conditioning_file_path
         from simpletuner.helpers.data_backend.webshart import WebshartDataBackend
 
         native_ref = source_config.get("type") == "webshart" and WebshartDataBackend.is_sample_id(source_file_path)
@@ -1825,7 +1825,7 @@ class DatasetViewerService:
                 root = cond_config.get("instance_data_dir")
                 if cond_config.get("type", "local") != "local" or not root:
                     continue
-                path = Path(DatasetRuntime.conditioning_file_path(source_file_path, root, cond_config)).resolve()
+                path = Path(conditioning_file_path(source_file_path, root, cond_config)).resolve()
                 if not path.is_relative_to(Path(root).resolve()) or not path.is_file():
                     continue
                 match = {"path": path}

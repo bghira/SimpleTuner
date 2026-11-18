@@ -431,6 +431,18 @@ class WebshartMetadataBackend(MetadataBackend):
         source = stack.enter_context(self.data_backend.open_file(self.metadata_file, "rb"))
         return stack.enter_context(open_geometry(source, digest))
 
+    def conditioning_ref(self, pairing_key):
+        source = self.data_backend
+        if source.format == "parquet":
+            filename = source.parse_sample_id(pairing_key).filename if source.is_sample_id(pairing_key) else pairing_key
+            return next(
+                (ref for ref in source.parquet_sample_refs_for_filename(filename) if self.admits_related_sample(ref)),
+                None,
+            )
+        source._resolve_sample_ref(pairing_key)
+        ref = source.normalize_sample_id(pairing_key)
+        return ref if self.admits_related_sample(ref) else None
+
     def admits_related_sample(self, ref):
         """Check the target view's membership before a related sample can be read."""
         if not self.native_policy:

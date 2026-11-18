@@ -20,7 +20,7 @@ import torch
 from PIL import Image
 from tqdm import tqdm
 
-from simpletuner.helpers.data_backend.base import BaseDataBackend
+from simpletuner.helpers.data_backend.base import BaseDataBackend, conditioning_file_path
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.data_backend.filters import build_dataset_filter
 from simpletuner.helpers.data_backend.runtime.context_parallel_sync import get_cp_info
@@ -103,6 +103,11 @@ def get_cp_aware_dp_info(accelerator) -> Tuple[int, int, int]:
 
 
 class MetadataBackend:
+    def conditioning_ref(self, pairing_key):
+        config = self.active_dataset_config
+        root = config.get("instance_data_dir") or self.instance_data_dir
+        return conditioning_file_path(pairing_key, root, config)
+
     # Providers with a reconstructible schedule expose epoch_spec, open_epoch,
     # scheduled_batches and open_validation here.
     epoch_provider = None

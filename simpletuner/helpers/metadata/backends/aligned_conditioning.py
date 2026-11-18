@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 from filelock import FileLock
 
+from simpletuner.helpers.data_backend.base import conditioning_file_path
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.helpers.metadata.backends.webshart_exclusions import collect_exclusions, exclusion_path
 from simpletuner.helpers.metadata.backends.webshart_geometry import accepted_geometry_predicate, link_snapshot
@@ -115,7 +116,7 @@ class AlignedConditioningMetadata(MetadataBackend):
 
     def _target_ref(self, source_ref):
         if not self.generated:
-            return self.source.conditioning_file_path(source_ref, self.artifact_root, self.dataset_config)
+            return conditioning_file_path(source_ref, self.artifact_root, self.dataset_config)
         relative_path = canonicalize_data_uri(source_ref).removeprefix("webshart://")
         if os.path.isabs(relative_path) or ".." in relative_path.split("/"):
             raise ValueError("Generated Webshart conditioning requires a source reference with a safe relative path.")
