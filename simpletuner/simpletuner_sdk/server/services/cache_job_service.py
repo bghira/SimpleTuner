@@ -592,7 +592,6 @@ class CacheJobService:
         StateTracker.set_args(args)
         StateTracker.set_accelerator(accelerator)
         scope = ExitStack()
-        scope.enter_context(self._job_registration(dataset_config["id"]))
         model = None
         vae_cache = None
 
@@ -665,17 +664,12 @@ class CacheJobService:
         from simpletuner.helpers.training.state_tracker import StateTracker
 
         previous_dataset = StateTracker.datasets.pop(dataset_id, None)
-        previous = StateTracker.data_backends.pop(dataset_id, None)
         try:
             yield
         finally:
             StateTracker.datasets.pop(dataset_id, None)
             if previous_dataset is not None:
                 StateTracker.register_dataset(previous_dataset)
-            if previous is None:
-                StateTracker.data_backends.pop(dataset_id, None)
-            else:
-                StateTracker.data_backends[dataset_id] = previous
 
     def _text_embed_store(self, dataset, plan, global_config, args, accelerator):
         from simpletuner.helpers.data_backend.factory import (
@@ -842,7 +836,6 @@ class CacheJobService:
         StateTracker.set_args(args)
         StateTracker.set_accelerator(accelerator)
         scope = ExitStack()
-        scope.enter_context(self._job_registration(dataset_config["id"]))
         model = None
         embed_cache = None
 
