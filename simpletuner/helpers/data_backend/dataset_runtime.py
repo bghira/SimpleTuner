@@ -404,7 +404,7 @@ class TextRequestBuilder:
             ) > 0 or "unconditional_text_embeddings" in needs
 
     def _contexts(self, metadata, caption, image_path, init_backend, related_samples):
-        if self.sampling != "random" or len(self.conditioning_datasets) <= 1:
+        if self.sampling != "random" or len(self.conditioning_datasets) <= 1 or not related_samples:
             yield metadata, caption
             return
         for dataset, path in related_samples:

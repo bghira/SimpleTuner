@@ -669,6 +669,18 @@ class TestWebshartParquetBackend(unittest.TestCase):
             self.assertEqual(records[0]["metadata"]["image_paths"], [accepted])
             self.assertNotIn("image_paths", records[1]["metadata"])
 
+            other = SimpleNamespace(id="other", config={}, conditioning_ref=lambda _: None)
+            builder = TextRequestBuilder(
+                model,
+                "source",
+                None,
+                conditioning_datasets=[runtime, other],
+                args=SimpleNamespace(conditioning_multidataset_sampling="random"),
+            )
+            records = list(builder.records([("missing every reference", excluded)], {}))
+            self.assertEqual([record["prompt"] for record in records], ["missing every reference"])
+            self.assertNotIn("image_paths", records[0]["metadata"])
+
     def test_generated_conditioning_reuses_native_prepared_geometry_without_cloning(self):
         from simpletuner.helpers.data_backend.builders.base import create_metadata_provider
         from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
