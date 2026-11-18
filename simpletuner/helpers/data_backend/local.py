@@ -311,9 +311,7 @@ class LocalDataBackend(BaseDataBackend):
         Load a torch tensor from a file.
         """
         if not self.exists(filename):
-            error_msg = f"{filename} not found."
-            logger.error(error_msg)
-            raise FileNotFoundError(error_msg)
+            raise FileNotFoundError(f"{filename} not found.")
 
         try:
             with self.read(filename, as_byteIO=True) as stored_tensor:

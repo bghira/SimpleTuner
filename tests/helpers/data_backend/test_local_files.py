@@ -1,7 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from simpletuner.helpers.data_backend.local import LocalDataBackend
 
@@ -86,6 +86,15 @@ class TestLocalDataBackendListFiles(unittest.TestCase):
         self.assertEqual(keys, [])
         self.assertEqual(images, [])
         self.backend.delete.assert_called_once_with("bad.jpg")
+
+    def test_loading_a_missing_tensor_raises_and_leaves_reporting_to_the_caller(self):
+        # A cache that encodes on demand asks for every entry before it exists.
+        missing = str(self.root / "missing.pt")
+        with patch("simpletuner.helpers.data_backend.local.logger") as logger:
+            with self.assertRaisesRegex(FileNotFoundError, "missing.pt not found."):
+                self.backend.torch_load(missing)
+        logger.error.assert_not_called()
+        logger.warning.assert_not_called()
 
     def test_write_batch_raises_worker_errors(self):
         def write(filepath, data):
