@@ -116,7 +116,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         This method should be called when the accelerator save hook is called,
          so that the state is correctly restored with a given checkpoint.
         """
-        self.state_manager.save_state(self.cursor.state(), state_path)
+        self.state_manager.save_state(StateTracker.sampler_state_to_save(self), state_path)
 
     def load_states(self, state_path: str):
         state = self.state_manager.load_state(state_path)

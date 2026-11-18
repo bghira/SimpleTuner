@@ -10,6 +10,7 @@ from torch.utils.data import Sampler
 from simpletuner.helpers.data_backend.cursor import DatasetCursor
 from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 from simpletuner.helpers.multiaspect.state import BucketStateManager
+from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ class CaptionSampler(Sampler):
             self.cursor.finish_epoch()
 
     def save_state(self, state_path: str) -> None:
-        self.state_manager.save_state(self.cursor.state(), state_path)
+        self.state_manager.save_state(StateTracker.sampler_state_to_save(self), state_path)
 
     def load_states(self, state_path: str) -> None:
         state = self.state_manager.load_state(state_path)

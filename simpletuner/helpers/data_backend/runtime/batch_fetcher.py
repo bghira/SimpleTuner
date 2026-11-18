@@ -5,9 +5,11 @@ import os
 import queue
 import threading
 import time
+from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 from simpletuner.helpers.training.multi_process import should_log
+from simpletuner.helpers.training.state_tracker import StateTracker
 
 from .dataloader_iterator import _set_epoch_step_for_training_step
 from .dataloader_iterator import random_dataloader_iterator as _runtime_random_iterator
@@ -49,6 +51,14 @@ def _resolve_random_iterator():
         return DEFAULT_RANDOM_ITERATOR
 
 
+@dataclass(frozen=True)
+class DatasetPosition:
+    """Where the prefetched datasets stood after a batch was fetched; saved once training consumes that batch."""
+
+    samplers: Dict[str, dict]
+    exhausted_backends: tuple
+
+
 class BatchFetcher:
     """Prefetch batches using the last consumed training step as the first schedule hint."""
 
@@ -64,6 +74,7 @@ class BatchFetcher:
             type(self).keep_running = DEFAULT_KEEP_RUNNING_PROPERTY
         self.queue = queue.Queue(max_size)
         self.datasets = datasets or {}
+        self._samplers = {loader.sampler.id: loader.sampler for loader in self.datasets.values()}
         self._keep_running = True
         self._failure: Optional[Exception] = None
         self.step = step
@@ -109,9 +120,13 @@ class BatchFetcher:
                         self._failure = exc
                         self._keep_running = False
                         break
+                    position = DatasetPosition(
+                        samplers={sampler_id: sampler.cursor.state() for sampler_id, sampler in self._samplers.items()},
+                        exhausted_backends=tuple(StateTracker.exhausted_backends),
+                    )
                     if self.device_prefetcher is not None:
                         item = self.device_prefetcher.prefetch(item)
-                    self.queue.put(item)
+                    self.queue.put((item, position))
                     self._next_fetch_step += 1
                     if self.queue.qsize() >= self.queue.maxsize:
                         prefetch_log_debug("Completed fetching data. Queue is full.")
@@ -135,7 +150,7 @@ class BatchFetcher:
             prefetch_log_debug("Queue is empty. Waiting for data.")
         while True:
             try:
-                item = self.queue.get(timeout=0.1)
+                item, position = self.queue.get(timeout=0.1)
                 break
             except queue.Empty:
                 if self._failure is not None:
@@ -144,6 +159,7 @@ class BatchFetcher:
         if self.device_prefetcher is not None:
             item = self.device_prefetcher.consume(item)
         _set_epoch_step_for_training_step(step)
+        StateTracker.set_consumed_position(position)
         return item
 
     def stop_fetching(self) -> None:

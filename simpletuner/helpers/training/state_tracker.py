@@ -57,6 +57,8 @@ class StateTracker:
     parquet_databases = {}
     # A list of backend IDs to exhaust.
     exhausted_backends = []
+    # Set by the batch prefetcher: the dataset position of the last batch training consumed.
+    consumed_position = None
     # A dict of backend IDs to the number of times they have been repeated.
     # The images we'll use for upscaling at validation time. Stored at startup.
     validation_sample_images = []
@@ -311,24 +313,33 @@ class StateTracker:
 
     @classmethod
     def save_training_state(cls, state_path: str):
-        training_state = {
-            "global_step": cls.global_step,
-            "epoch_step": cls.epoch_step,
-            "epoch": cls.epoch,
-            "exhausted_backends": cls.exhausted_backends,
-        }
+        training_state = cls.get_training_state()
         logger.debug(f"Saving training state: {training_state}")
         with open(state_path, "w") as f:
             json.dump(training_state, f)
 
     @classmethod
     def get_training_state(cls):
+        exhausted_backends = cls.exhausted_backends
+        if cls.consumed_position is not None:
+            exhausted_backends = list(cls.consumed_position.exhausted_backends)
         return {
             "global_step": cls.global_step,
             "epoch_step": cls.epoch_step,
             "epoch": cls.epoch,
-            "exhausted_backends": cls.exhausted_backends,
+            "exhausted_backends": exhausted_backends,
         }
+
+    @classmethod
+    def set_consumed_position(cls, position):
+        cls.consumed_position = position
+
+    @classmethod
+    def sampler_state_to_save(cls, sampler) -> dict:
+        """The sampler's position as of the last batch training consumed, which a prefetcher may have read past."""
+        if cls.consumed_position is not None and sampler.id in cls.consumed_position.samplers:
+            return cls.consumed_position.samplers[sampler.id]
+        return sampler.cursor.state()
 
     @classmethod
     def _ramtorch_prefetch_order_path(cls, directory: str | Path | None = None) -> Path | None:

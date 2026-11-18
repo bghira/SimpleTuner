@@ -21,6 +21,7 @@ from simpletuner.helpers.data_backend.runtime import BatchFetcher
 from simpletuner.helpers.data_backend.runtime import batch_fetcher as batch_fetcher_module
 from simpletuner.helpers.data_backend.runtime import dataloader_iterator as dataloader_module
 from simpletuner.helpers.data_backend.runtime import get_backend_weight, random_dataloader_iterator, select_dataloader_index
+from simpletuner.helpers.training.state_tracker import StateTracker
 
 
 class TestBatchFetcher(unittest.TestCase):
@@ -29,6 +30,7 @@ class TestBatchFetcher(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures"""
         self.datasets = {"dataset1": Mock(), "dataset2": Mock()}
+        self.addCleanup(StateTracker.set_consumed_position, None)
 
     def test_batch_fetcher_initialization(self):
         """Test BatchFetcher initialization with default parameters"""
@@ -73,7 +75,7 @@ class TestBatchFetcher(unittest.TestCase):
         self.assertEqual(fetcher.queue.qsize(), 1)
 
         # Verify the correct data was added
-        queued_data = fetcher.queue.get()
+        queued_data, _position = fetcher.queue.get()
         self.assertEqual(queued_data, {"batch": "data", "step": 100})
 
         # Verify random_dataloader_iterator was called correctly
@@ -166,7 +168,7 @@ class TestBatchFetcher(unittest.TestCase):
 
         # Add test data to queue
         test_data = {"batch": "test_data", "step": 100}
-        fetcher.queue.put(test_data)
+        fetcher.queue.put((test_data, None))
 
         # Get next response
         result = fetcher.next_response(step=101)
@@ -187,7 +189,7 @@ class TestBatchFetcher(unittest.TestCase):
         def add_data_later():
             time.sleep(0.1)
             test_data = {"batch": "delayed_data", "step": 100}
-            fetcher.queue.put(test_data)
+            fetcher.queue.put((test_data, None))
 
         thread = threading.Thread(target=add_data_later)
         thread.start()
@@ -295,7 +297,7 @@ class TestBatchFetcher(unittest.TestCase):
                 consumer.start()
                 consumer.join(timeout=5)
                 still_waiting = consumer.is_alive()
-                fetcher.queue.put(None)  # release a consumer left waiting on the dead producer
+                fetcher.queue.put((None, None))  # release a consumer left waiting on the dead producer
                 consumer.join(timeout=5)
 
                 self.assertFalse(still_waiting, "next_response kept waiting on a producer that had failed")
@@ -564,6 +566,7 @@ class TestRuntimeIntegration(unittest.TestCase):
         self.mock_backend2.get_data_loader.return_value = {"data": "from_backend2"}
 
         self.backends = {"backend1": self.mock_backend1, "backend2": self.mock_backend2}
+        self.addCleanup(StateTracker.set_consumed_position, None)
 
     @patch("simpletuner.helpers.data_backend.runtime.batch_fetcher.random_dataloader_iterator")
     def test_batch_fetcher_with_real_iterator(self, mock_iterator):
@@ -655,7 +658,7 @@ class TestRuntimeIntegration(unittest.TestCase):
         self.assertEqual(fetcher.step, 100)
 
         # Add some data
-        fetcher.queue.put({"data": "test"})
+        fetcher.queue.put(({"data": "test"}, None))
 
         # Get next response with step update
         result = fetcher.next_response(step=150)
@@ -664,7 +667,7 @@ class TestRuntimeIntegration(unittest.TestCase):
         self.assertEqual(fetcher.step, 150)
 
         # Get another response
-        fetcher.queue.put({"data": "test2"})
+        fetcher.queue.put(({"data": "test2"}, None))
         result = fetcher.next_response(step=200)
 
         # Verify step updated again
@@ -680,6 +683,7 @@ class TestRuntimePerformance(unittest.TestCase):
         for i, backend in enumerate(self.backends.values()):
             backend.id = f"backend{i}"
             backend.get_data_loader.return_value = f"dataloader{i}"
+        self.addCleanup(StateTracker.set_consumed_position, None)
 
     def test_batch_fetcher_queue_performance(self):
         """Test that BatchFetcher queue operations are efficient"""
@@ -690,7 +694,7 @@ class TestRuntimePerformance(unittest.TestCase):
 
         # Add many items to queue
         for i in range(100):
-            fetcher.queue.put({"batch": f"data{i}"})
+            fetcher.queue.put(({"batch": f"data{i}"}, None))
 
         # Get many items from queue
         for i in range(100):
@@ -1111,6 +1115,143 @@ class TestContextParallelDataParallelInfo(unittest.TestCase):
         self.assertEqual(effective_dp_size, 8)
         self.assertEqual(dp_rank, 3)
         self.assertEqual(cp_size, 1)
+
+
+class _CursorLoader:
+    """A train dataloader reduced to what the iterator and the prefetcher use: one batch per iter, and its sampler."""
+
+    def __init__(self, dataset_id, buckets, batch_size=2):
+        from simpletuner.helpers.data_backend.cursor import DatasetCursor
+
+        cursor = DatasetCursor(
+            dataset_id,
+            buckets,
+            batch_size=batch_size,
+            repeats=0,
+            seed=3,
+            dp_size=1,
+            dp_rank=0,
+            gradient_accumulation_steps=1,
+            allow_oversubscription=False,
+            shared_by_all_ranks=False,
+        )
+        self.sampler = SimpleNamespace(id=dataset_id, cursor=cursor)
+        self.config = {}
+
+    def __iter__(self):
+        yield self.sampler.cursor.next_batch()
+
+
+class TestPrefetchSavesConsumedPosition(unittest.TestCase):
+    """A checkpoint taken while batches are prefetched saves where training is, not where the fetch thread is."""
+
+    def setUp(self):
+        self.addCleanup(StateTracker.set_consumed_position, None)
+        self.addCleanup(StateTracker.clear_exhausted_buckets)
+        self.addCleanup(setattr, StateTracker, "dataset_schedule", dict(StateTracker.dataset_schedule))
+        self.addCleanup(StateTracker.set_epoch_step, StateTracker.epoch_step)
+        StateTracker.clear_exhausted_buckets()
+
+    @staticmethod
+    def _loaders(layout):
+        StateTracker.set_consumed_position(None)
+        StateTracker.clear_exhausted_buckets()
+        StateTracker.dataset_schedule = {}
+        return {dataset_id: _CursorLoader(dataset_id, buckets) for dataset_id, buckets in layout.items()}
+
+    @staticmethod
+    def _wait_until_full(fetcher, thread, qlen):
+        deadline = time.monotonic() + 10
+        while fetcher.queue.qsize() < qlen and thread.is_alive() and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+    def _without_prefetch(self, layout, consumed):
+        loaders = self._loaders(layout)
+        backends = dict(loaders)
+        for step in range(consumed):
+            random_dataloader_iterator(step, backends)
+        return (
+            {dataset_id: loader.sampler.cursor.state() for dataset_id, loader in loaders.items()},
+            list(StateTracker.exhausted_backends),
+        )
+
+    def _with_prefetch(self, layout, consumed, qlen):
+        loaders = self._loaders(layout)
+        fetcher = BatchFetcher(step=0, max_size=qlen, datasets=dict(loaders))
+        thread = fetcher.start_fetching()
+        try:
+            self._wait_until_full(fetcher, thread, qlen)
+            for step in range(1, consumed + 1):
+                fetcher.next_response(step)
+            self._wait_until_full(fetcher, thread, qlen)
+            live = {dataset_id: loader.sampler.cursor.state() for dataset_id, loader in loaders.items()}
+            saved = {
+                dataset_id: StateTracker.sampler_state_to_save(loader.sampler) for dataset_id, loader in loaders.items()
+            }
+            return (
+                live,
+                list(StateTracker.exhausted_backends),
+                saved,
+                StateTracker.get_training_state()["exhausted_backends"],
+            )
+        finally:
+            fetcher.stop_fetching()
+            thread.join(timeout=5)
+
+    def _assert_saves_consumed_position(self, layout, consumed, qlen):
+        expected_states, expected_exhausted = self._without_prefetch(layout, consumed)
+        live, live_exhausted, saved, saved_exhausted = self._with_prefetch(layout, consumed, qlen)
+        self.assertNotEqual((live, live_exhausted), (expected_states, expected_exhausted), "the fetch thread was not ahead")
+        self.assertEqual(saved, expected_states)
+        self.assertEqual(saved_exhausted, expected_exhausted)
+
+    def test_mid_epoch(self):
+        layout = {"pf-a": {"1.0": [f"a{i}" for i in range(10)], "1.5": [f"b{i}" for i in range(6)]}}
+        self._assert_saves_consumed_position(layout, consumed=3, qlen=4)
+
+    def test_last_batch_of_an_epoch_already_exhausted_by_the_fetch_thread(self):
+        layout = {"pf-a": {"1.0": [f"a{i}" for i in range(10)], "1.5": [f"b{i}" for i in range(6)]}}
+        live, _, saved, _ = self._with_prefetch(layout, consumed=7, qlen=4)
+        self.assertEqual(live["pf-a"]["epoch"], 2)
+        self.assertEqual(saved["pf-a"]["epoch"], 1)
+        self._assert_saves_consumed_position(layout, consumed=7, qlen=4)
+
+    def test_one_dataset_exhausted_ahead_of_training(self):
+        layout = {
+            "pf-a": {"1.0": ["a0", "a1", "a2", "a3"]},
+            "pf-b": {"1.0": [f"b{i}" for i in range(16)]},
+        }
+        _, live_exhausted, _, saved_exhausted = self._with_prefetch(layout, consumed=1, qlen=6)
+        self.assertEqual(live_exhausted, ["pf-a"])
+        self.assertEqual(saved_exhausted, [])
+        self._assert_saves_consumed_position(layout, consumed=1, qlen=6)
+
+    def test_samplers_save_the_consumed_state(self):
+        from simpletuner.helpers.data_backend.caption_sampler import CaptionSampler
+        from simpletuner.helpers.multiaspect.sampler import MultiAspectSampler
+        from simpletuner.helpers.multiaspect.state import BucketStateManager
+
+        layout = {"pf-a": {"1.0": [f"a{i}" for i in range(10)]}}
+        expected_states, _ = self._without_prefetch(layout, consumed=1)
+        loaders = self._loaders(layout)
+        cursor = loaders["pf-a"].sampler.cursor
+        runtime = SimpleNamespace(id="pf-a", cursor=lambda: cursor)
+        image_sampler = MultiAspectSampler.__new__(MultiAspectSampler)
+        image_sampler.id, image_sampler.dataset_runtime = "pf-a", runtime
+        image_sampler.state_manager = BucketStateManager("pf-a")
+        fetcher = BatchFetcher(step=0, max_size=3, datasets=dict(loaders))
+        fetcher.fetch_responses()
+        fetcher.next_response(1)
+        self.assertNotEqual(cursor.state(), expected_states["pf-a"])
+        import json
+        import tempfile
+
+        for sampler in (image_sampler, CaptionSampler(runtime)):
+            with self.subTest(sampler=type(sampler).__name__), tempfile.TemporaryDirectory() as tmp:
+                path = f"{tmp}/training_state.json"
+                sampler.save_state(path)
+                with open(sampler.state_manager.mangle_state_path(path)) as handle:
+                    self.assertEqual(json.load(handle), expected_states["pf-a"])
 
 
 if __name__ == "__main__":
