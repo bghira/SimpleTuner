@@ -76,11 +76,8 @@ def select_dataloader_index(step: int, backends: Dict[str, Any], *, mixer=None) 
         exhausted = StateTracker.exhausted_backends if mixer is None else mixer.dataset_ids.difference(backends)
         if exhausted:
             return None
-        try:
-            next_step = (StateTracker.get_global_step() or 0) + 1
-        except Exception:
-            next_step = step
-        current_epoch = StateTracker.get_epoch()
+        next_step = (StateTracker.get_global_step() or 0) + 1 if mixer is None else mixer.optimizer_step + 1
+        current_epoch = StateTracker.get_epoch() if mixer is None else mixer.epoch
         raise ValueError(
             f"No active datasets available for sampling at epoch {current_epoch}, step {next_step}. "
             "Adjust start_epoch/start_step so at least one dataset is active."
@@ -113,8 +110,9 @@ def get_backend_weight(backend_id: str, backend: Any, step: int, *, mixer=None) 
         sampling_method = "uniform"
 
     epoch = StateTracker.get_epoch() if mixer is None else mixer.epoch
+    optimizer_step = step if mixer is None else mixer.optimizer_step
     is_active, _ = dataset_is_active(
-        backend_id, backend_config, step_hint=step, epoch_hint=epoch, update_state=mixer is None
+        backend_id, backend_config, step_hint=optimizer_step, epoch_hint=epoch, update_state=mixer is None
     )
     if not is_active:
         return 0.0
@@ -293,7 +291,7 @@ def _get_scaled_sampler(backends: Dict[str, Any]) -> Optional[ScaledDatasetSampl
 class DatasetMixer:
     """Keep the fetched selection phase separate from the trainer's acknowledged frontier."""
 
-    def __init__(self, backends, epoch, step, saved=None):
+    def __init__(self, backends, epoch, step, saved=None, *, optimizer_step=0, accumulated_microbatches=0):
         self.sampler = ScaledDatasetSampler()
         keys = (
             "probability",
@@ -306,26 +304,40 @@ class DatasetMixer:
         )
         settings = {name: {key: dataset.config.get(key) for key in keys} for name, dataset in backends.items()}
         args = StateTracker.get_args()
-        identity = [settings, args.seed, getattr(args, "data_backend_sampling", "uniform")]
+        self.gradient_accumulation_steps = max(1, int(getattr(args, "gradient_accumulation_steps", 1)))
+        identity = [settings, args.seed, getattr(args, "data_backend_sampling", "uniform"), self.gradient_accumulation_steps]
         self.revision = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
         self.epoch = epoch
         self.step = step
+        self.optimizer_step = optimizer_step
+        self.accumulated_microbatches = accumulated_microbatches
         self.dataset_ids = set(backends)
         if saved is not None:
-            if saved["version"] != 1 or saved["revision"] != self.revision or saved["epoch"] != epoch:
+            if saved["version"] != 2 or saved["revision"] != self.revision or saved["epoch"] != epoch:
                 raise ValueError("Dataset mixing resume requires the same datasets, epoch, weights and sampling settings.")
             self.step = saved["step"]
+            self.optimizer_step = saved["optimizer_step"]
+            self.accumulated_microbatches = saved["accumulated_microbatches"]
             for name in saved["exhausted_backends"]:
                 del backends[name]
             self.sampler.rebuild(backends)
             self.sampler._phase_index = saved["phase"]
 
+    def advance(self):
+        self.step += 1
+        completed, self.accumulated_microbatches = divmod(
+            self.accumulated_microbatches + 1, self.gradient_accumulation_steps
+        )
+        self.optimizer_step += completed
+
     def state_dict(self, backends):
         return {
-            "version": 1,
+            "version": 2,
             "revision": self.revision,
             "epoch": self.epoch,
             "step": self.step,
+            "optimizer_step": self.optimizer_step,
+            "accumulated_microbatches": self.accumulated_microbatches,
             "phase": self.sampler._phase_index,
             "exhausted_backends": sorted(self.dataset_ids.difference(backends)),
         }
@@ -380,7 +392,7 @@ def random_dataloader_iterator(
             else:
                 batch = next(iter(backend))
             if mixer is not None:
-                mixer.step = step
+                mixer.advance()
                 batch["dataset_mixer_state"] = mixer.state_dict(backends)
             return batch
         except MultiDatasetExhausted:

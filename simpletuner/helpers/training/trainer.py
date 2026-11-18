@@ -6985,7 +6985,15 @@ class Trainer:
                 dataset.start_epoch(epoch)
             if resumable:
                 saved = saved_mix if saved_mix and saved_mix["epoch"] == epoch else None
-                mixer = DatasetMixer(train_backends, epoch, step, saved)
+                accumulated_microbatches = self.accelerator.step % self.config.gradient_accumulation_steps
+                mixer = DatasetMixer(
+                    train_backends,
+                    epoch,
+                    step,
+                    saved,
+                    optimizer_step=self.state["global_step"],
+                    accumulated_microbatches=accumulated_microbatches,
+                )
                 step = mixer.step
                 StateTracker.consumed_dataset_mixer = mixer.state_dict(train_backends)
                 StateTracker.set_exhausted_backends(StateTracker.consumed_dataset_mixer["exhausted_backends"].copy())
