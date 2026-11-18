@@ -3383,6 +3383,7 @@ class FactoryRegistry:
             },
         )
         init_backend["dataset_runtime"].text_embed_cache = init_backend.get("text_embed_cache")
+        init_backend["config"] = init_backend["dataset_runtime"].config
         StateTracker.own_dataset_resource(init_backend["dataset_runtime"])
         StateTracker.register_dataset(init_backend["dataset_runtime"])
         init_backend["sampler"] = MultiAspectSampler(
@@ -4118,8 +4119,6 @@ class FactoryRegistry:
             and "cache_dir_vae" not in backend
         ):
             backend["cache_dir_vae"] = self._default_vae_cache_dir(backend["id"], dataset_type_enum)
-        if init_backend.get("bucket_report"):
-            StateTracker.attach_bucket_report(init_backend["id"], init_backend["bucket_report"])
         StateTracker.set_data_backend_config(
             data_backend_id=init_backend["id"],
             config=init_backend["config"],
@@ -4175,7 +4174,6 @@ class FactoryRegistry:
         self._handle_bucket_operations(backend, init_backend, conditioning_type, skip_bucket_split=is_audio_only_dataset)
 
         self._create_dataset_and_sampler(backend, init_backend, conditioning_type)
-        StateTracker.register_data_backend(init_backend)
 
         text_precompute_cleanup = getattr(self.model, "after_text_embed_cache_precompute", None)
         try:
@@ -4247,6 +4245,7 @@ class FactoryRegistry:
         self._move_text_encoders_for_vae_cache(self.accelerator.device)
         init_backend["metadata_backend"].save_cache()
 
+        StateTracker.register_data_backend(init_backend)
         self.data_backends[init_backend["id"]] = init_backend
 
     def configure(self, data_backend_config: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:

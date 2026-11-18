@@ -683,7 +683,11 @@ class TestFactoryEdgeCases(unittest.TestCase):
             factory._handle_config_versioning(backend, init_backend)
             factory._create_dataset_and_sampler(backend, init_backend, conditioning_type=None)
 
-        set_config.assert_called_once_with(init_backend["id"], init_backend["config"])
+        set_config.assert_called_once()
+        registered_id, setup_config = set_config.call_args.args
+        self.assertEqual(registered_id, init_backend["id"])
+        self.assertEqual(setup_config["train_batch_size"], effective_train_batch_size)
+        self.assertIs(init_backend["config"], init_backend["dataset_runtime"].config)
         self.assertEqual(init_backend["config"]["train_batch_size"], effective_train_batch_size)
         self.assertEqual(metadata_backend.batch_size, effective_train_batch_size)
         self.assertEqual(metadata_backend.config["train_batch_size"], effective_train_batch_size)
@@ -739,8 +743,9 @@ class TestFactoryEdgeCases(unittest.TestCase):
                     patch("simpletuner.helpers.data_backend.factory.torch.utils.data.DataLoader"),
                 ):
                     metadata.reload_cache()
+                    self.assertIs(init_backend["config"], live_config)
                     factory._create_dataset_and_sampler(backend, init_backend, conditioning_type=None)
-                self.assertIs(init_backend["config"], live_config)
+                self.assertIs(init_backend["config"], init_backend["dataset_runtime"].config)
                 self.assertEqual(sampler.call_args.kwargs["batch_size"], dataset_batch_size or 8)
 
     def test_cached_batch_size_does_not_override_changed_global_default(self):
