@@ -331,9 +331,9 @@ class TestWebshartMetadataCaptionFiltering(unittest.TestCase):
         backend.reload_cache = Mock()
         backend.load_image_metadata = Mock()
         backend.save_cache = Mock()
-        backend.save_image_metadata = Mock()
         backend._sync_image_files_with_buckets = Mock()
-        backend.set_metadata_by_filepath = Mock()
+        backend.enqueue_prepared_metadata = Mock()
+        backend.flush_prepared_metadata = Mock()
         backend._all_shard_indices = Mock(return_value=[0])
         backend._entries_for_shard = Mock(return_value=entries)
         backend._sample_id_from_entry = Mock(side_effect=lambda shard_idx, entry: f"webshart://0/0/{entry['path']}")
@@ -363,6 +363,10 @@ class TestWebshartMetadataCaptionFiltering(unittest.TestCase):
         )
         self.assertEqual(backend.filtering_statistics["skipped"]["caption_missing"], 1)
         self.assertEqual(backend.filtering_statistics["total_processed"], 1)
+        backend.enqueue_prepared_metadata.assert_called_once_with(
+            {"webshart://0/0/captioned.webp": {"original_size": (512, 512)}}
+        )
+        backend.flush_prepared_metadata.assert_called_once_with()
 
     def test_webshart_caption_strategy_accepts_txt_sidecar_samples(self):
         backend = self._build_backend(self._entries())
