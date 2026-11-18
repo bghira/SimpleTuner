@@ -39,6 +39,29 @@ class PixArtModelTests(unittest.TestCase):
         self.model.crepa_regularizer = SimpleNamespace(enabled=True, block_index=2)
         self.model.unwrap_model = MagicMock(side_effect=lambda model=None, **kwargs: model)
 
+    def test_collates_trimmed_text_cache_entries_and_legacy_masks(self):
+        from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
+
+        cache = TextEmbeddingCache.__new__(TextEmbeddingCache)
+        cache.model = self.model
+        output = {
+            "prompt_embeds": torch.arange(24, dtype=torch.float32).reshape(2, 4, 3),
+            "attention_mask": torch.tensor([[1, 0, 0, 0], [1, 1, 1, 0]]),
+        }
+        short, long = [cache._slice_batch_output_for_cache(output, index, 2) for index in range(2)]
+        long = {
+            "prompt_embeds": long["prompt_embeds"].squeeze(0),
+            "prompt_attention_mask": long["attention_mask"].squeeze(0),
+        }
+
+        batch = self.model.collate_prompt_embeds([short, long])
+
+        self.assertEqual(batch["prompt_embeds"].shape, (2, 3, 3))
+        self.assertTrue(torch.equal(batch["prompt_embeds"][0, :1], output["prompt_embeds"][0, :1]))
+        self.assertTrue(torch.equal(batch["prompt_embeds"][0, 1:], torch.zeros(2, 3)))
+        self.assertTrue(torch.equal(batch["prompt_embeds"][1], output["prompt_embeds"][1, :3]))
+        self.assertTrue(torch.equal(batch["attention_masks"], torch.tensor([[1, 0, 0], [1, 1, 1]])))
+
     def _enable_xm(
         self,
         candidate_count: int = 2,
