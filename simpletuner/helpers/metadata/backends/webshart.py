@@ -1190,7 +1190,6 @@ class WebshartMetadataBackend(MetadataBackend):
             preparation_version=6,
             crop_seed=recipe.seed,
             source_revision=self._source_description().get("source_revision"),
-            repeats=self.repeats,
             minimum_num_frames=self.minimum_num_frames,
             maximum_num_frames=self.maximum_num_frames,
             num_frames=self.num_frames,
@@ -1200,20 +1199,23 @@ class WebshartMetadataBackend(MetadataBackend):
             framerate=getattr(args, "framerate", None),
             model_family=getattr(args, "model_family", None),
             maximum_canvas_size=getattr(recipe.model, "MAXIMUM_CANVAS_SIZE", None),
-            scan_batch_size=self.batch_size,
             resolution=self.resolution,
             resolution_type=self.resolution_type,
             max_num_samples=self.max_num_samples,
             minimum_image_size=self.minimum_image_size,
-            maximum_aspect_ratio=self.maximum_aspect_ratio,
-            minimum_aspect_ratio=self.minimum_aspect_ratio,
-            disable_bucket_pruning=bool(args.disable_bucket_pruning),
         )
+        pruning = {
+            "repeats": self.repeats,
+            "scan_batch_size": self.batch_size,
+            "maximum_aspect_ratio": self.maximum_aspect_ratio,
+            "minimum_aspect_ratio": self.minimum_aspect_ratio,
+            "disable_bucket_pruning": bool(args.disable_bucket_pruning),
+        }
         if self.dataset_filter is not None:
             rules["filter_func"] = make_public_config_serializable(self.dataset_filter.config)
         if not config.get("crop"):
             rules["alignment_crop"] = "center-v1"
-        rules_revision = sha256(json.dumps(rules, sort_keys=True).encode()).hexdigest()
+        rules_revision = sha256(json.dumps({**rules, **pruning}, sort_keys=True).encode()).hexdigest()
         if not refresh and self._published and self._published.get("rules_revision") == rules_revision:
             return
         path = self.data_backend._cache_path(self.metadata_file)
@@ -1241,7 +1243,7 @@ class WebshartMetadataBackend(MetadataBackend):
                 minimum_batch = 1 if self.dataset_type is DatasetType.EVAL else self.batch_size
                 if (
                     self.minimum_image_size is not None
-                    and not rules["disable_bucket_pruning"]
+                    and not pruning["disable_bucket_pruning"]
                     and size * (self.repeats + 1) < minimum_batch
                 ):
                     del counts[key]

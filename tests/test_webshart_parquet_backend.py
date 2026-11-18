@@ -904,7 +904,7 @@ class TestWebshartParquetBackend(unittest.TestCase):
         args = SimpleNamespace(model_family="sdxl", disable_bucket_pruning=False)
         accelerator = SimpleNamespace(num_processes=1, process_index=0, is_main_process=True)
 
-        def build(*, cap=None, refresh=False, unopened=()):
+        def build(*, cap=None, refresh=False, unopened=(), batch_size=1, repeats=0, maximum_aspect_ratio=None):
             source = WebshartDataBackend(
                 None,
                 "capture",
@@ -921,10 +921,13 @@ class TestWebshartParquetBackend(unittest.TestCase):
                 metadata_file=str(self.root / "geometry"),
                 data_backend=source,
                 accelerator=accelerator,
-                batch_size=1,
+                batch_size=batch_size,
                 resolution=config["resolution"],
                 resolution_type="pixel",
+                minimum_image_size=1,
+                maximum_aspect_ratio=maximum_aspect_ratio,
                 max_num_samples=cap,
+                repeats=repeats,
             )
             self.addCleanup(metadata.close)
             original_open = source.dataset._file
@@ -954,7 +957,34 @@ class TestWebshartParquetBackend(unittest.TestCase):
             self._publish_capture_manifest()
             before, scanned = build()
             self.assertCountEqual(scanned, [(0,), (1,)])
-            self.assertEqual(before.read_page(limit=10)[1], 4)
+            original_page = before.read_page(limit=10)
+            original_revision = before.describe().view_revision
+            self.assertEqual(original_page[1], 4)
+
+            pruned, scanned = build(batch_size=5, unopened=(0, 1))
+            self.assertEqual(scanned, [])
+            self.assertEqual(pruned.read_page(limit=10), ([], 0))
+            self.assertNotEqual(pruned.describe().view_revision, original_revision)
+            self.assertTrue(first_partition(before).samefile(first_partition(pruned)))
+
+            repeated, scanned = build(batch_size=5, repeats=1, unopened=(0, 1))
+            self.assertEqual(scanned, [])
+            self.assertEqual(repeated.read_page(limit=10), original_page)
+            self.assertEqual(repeated.describe().view_revision, original_revision)
+
+            args.disable_bucket_pruning = True
+            unpruned, scanned = build(batch_size=5, unopened=(0, 1))
+            self.assertEqual(scanned, [])
+            self.assertEqual(unpruned.read_page(limit=10), original_page)
+            args.disable_bucket_pruning = False
+
+            aspect_filtered, scanned = build(maximum_aspect_ratio=1.1, unopened=(0, 1))
+            self.assertEqual(scanned, [])
+            self.assertEqual(aspect_filtered.read_page(limit=10), ([], 0))
+
+            restored, scanned = build(unopened=(0, 1))
+            self.assertEqual(scanned, [])
+            self.assertEqual(restored.describe().view_revision, original_revision)
 
             updated_rows = [dict(row) for row in self.rows]
             updated_rows[-1]["captions"] = "   "
