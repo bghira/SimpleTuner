@@ -697,6 +697,11 @@ class WebshartDataBackend(BaseDataBackend):
             raise ValueError("Parquet catalog changed since worker serialization; reopen the dataset with a fixed snapshot.")
         return backend
 
+    def shard_key(self, shard_idx: int) -> str:
+        """The shard's name in its source, which stays the shard's while its index may not."""
+        info = self.dataset.get_shard_info(int(shard_idx))
+        return info["path"] if self.format == "parquet" else info["name"]
+
     def num_shards(self) -> int:
         value = getattr(self.dataset, "num_shards", None)
         if callable(value):

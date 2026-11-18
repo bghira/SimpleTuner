@@ -15,12 +15,17 @@ from typing import Any, Dict, List, Optional
 
 from tqdm import tqdm
 
-from simpletuner.helpers.data_backend.dataset_runtime import RUNTIME_MUTABLE_KEYS, recrops_each_epoch
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.data_backend.webshart import CaptionValue, WebshartDataBackend
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
-from simpletuner.helpers.metadata.decisions import UnitDecisions
+from simpletuner.helpers.metadata.transform_records import (
+    DECIDED,
+    decode_transform,
+    encode_transform,
+    settings_digest,
+    transform_recipe,
+)
 from simpletuner.helpers.prompts import CaptionNotFoundError
 from simpletuner.helpers.training import video_file_extensions
 from simpletuner.helpers.training.multi_process import should_log
@@ -32,14 +37,14 @@ if should_log():
 else:
     logger.setLevel("ERROR")
 
-
-# What preparing a sample decides, as it is named in the sample's record.
-DECIDED = ("aspect_ratio", "target_size", "intermediary_size", "crop_coordinates")
+# Under webshart's limit, which counts 32 bytes a row; ours counts 64.
+_TRANSFORM_BATCH_BYTES = 1 << 20
 
 
 class WebshartMetadataBackend(MetadataBackend):
     shuffle_window = None
-    _decisions = None
+    _digest = None
+    _transforms = None
 
     def __init__(
         self,
@@ -201,23 +206,15 @@ class WebshartMetadataBackend(MetadataBackend):
 
         What is decided for a shard is recorded, and a later opening gives every sample the size and the
         crop it was given before: its latent may already be written. A dataset that re-crops each epoch
-        keeps a shard's decisions for the epoch they were made in.
+        records each epoch's decisions apart. The first decisions recorded for a shard are the ones kept,
+        so the shard is read back after it is decided.
         """
-        decisions = self._unit_decisions()
-        recorded = decisions.read(unit)
-        config = StateTracker.get_data_backend_config(self.id)
-        if recorded is not None and (recorded[0] == epoch or not recrops_each_epoch(config, StateTracker.get_args())):
-            samples = self._recorded_samples(unit, recorded[1])
-        else:
-            samples = self._decide_samples(unit)
-            decisions.write(
-                unit,
-                epoch,
-                {
-                    int(metadata["webshart"]["sample_idx"]): {key: metadata[key] for key in DECIDED}
-                    for metadata in samples.values()
-                },
-            )
+        cache, shard = self._transform_cache(epoch), self.data_backend.shard_key(unit)
+        # The row after the shard's last is written once all of its decisions are: without it the shard was not decided.
+        decided = int(self.data_backend.dataset.get_shard_info(unit)["num_samples"])
+        if cache.read_batch([(shard, decided)])[0] is None:
+            self._record_decisions(cache, shard, decided, self._decide_samples(unit))
+        samples = self._recorded_samples(unit, cache, shard)
         pools: dict[str, list[str]] = {}
         for sample_path, sample_metadata in samples.items():
             width, height = sample_metadata["target_size"]
@@ -226,11 +223,43 @@ class WebshartMetadataBackend(MetadataBackend):
         self._open_units[unit] = list(samples)
         return pools
 
+    @staticmethod
+    def _record_decisions(cache, shard: str, decided: int, samples: dict[str, dict]) -> None:
+        rows = [
+            (int(metadata["webshart"]["sample_idx"]), encode_transform({key: metadata[key] for key in DECIDED}))
+            for metadata in samples.values()
+        ]
+        rows.append((decided, b"1"))
+        batch, size = [], len(shard.encode("utf-8"))
+        for row in rows:
+            cost = 64 + len(row[1])
+            if batch and size + cost > _TRANSFORM_BATCH_BYTES:
+                cache.enqueue(shard, batch)
+                batch, size = [], len(shard.encode("utf-8"))
+            batch.append(row)
+            size += cost
+        cache.enqueue(shard, batch)
+        cache.flush()
+
+    def _samples_per_unit_path(self) -> Path:
+        return Path(self.data_backend.cache_dir) / "decisions" / self._settings_digest() / "samples_per_unit.json"
+
     def recorded_samples_per_unit(self) -> float | None:
-        return self._unit_decisions().read_samples_per_unit()
+        """How many samples a unit kept on average, as measured when the first units were decided."""
+        path = self._samples_per_unit_path()
+        return json.loads(path.read_text())["samples_per_unit"] if path.exists() else None
 
     def record_samples_per_unit(self, value: float) -> None:
-        self._unit_decisions().write_samples_per_unit(value)
+        path = self._samples_per_unit_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handle, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+        try:
+            with os.fdopen(handle, "w") as file:
+                json.dump({"samples_per_unit": value}, file)
+            os.replace(temporary, path)
+        except BaseException:
+            Path(temporary).unlink(missing_ok=True)
+            raise
 
     def _decide_samples(self, unit: int) -> dict[str, dict]:
         skipped = dict.fromkeys(("metadata_missing", "caption_missing", "too_small", "aspect_ratio", "error"), 0)
@@ -246,42 +275,46 @@ class WebshartMetadataBackend(MetadataBackend):
         logger.debug("(id=%s) Shard %s holds %s usable samples; skipped %s.", self.id, unit, len(samples), skipped)
         return samples
 
-    def _recorded_samples(self, unit: int, decisions: dict[int, dict]) -> dict[str, dict]:
+    def _recorded_samples(self, unit: int, cache, shard: str) -> dict[str, dict]:
         """The shard's samples as they were decided. A sample without a decision was left out then."""
-        if not decisions:
+        entries = self._entries_for_shard(unit)
+        decisions = cache.read_batch([(shard, int(entry["sample_idx"])) for entry in entries])
+        if not any(decisions):
             return {}
         shard_metadata = self.data_backend.get_shard_metadata(unit)
         samples = {}
-        for entry in self._entries_for_shard(unit):
-            decision = decisions.get(int(entry["sample_idx"]))
+        for entry, decision in zip(entries, decisions):
             if decision is None:
                 continue
             entry = {**entry, "shard_idx": unit}
             sample_path = self._sample_id_from_entry(unit, entry)
             samples[sample_path] = {
                 **self._metadata_for_entry(shard_metadata, str(entry["filename"]), entry, sample_path),
-                **decision,
+                **decode_transform(decision),
             }
         return samples
 
-    def _unit_decisions(self) -> UnitDecisions:
-        """Where this dataset's decisions are recorded: a directory of their own for each set of settings they follow from."""
-        if self._decisions is None:
-            args, model, backend = StateTracker.get_args(), StateTracker.get_model(), self.data_backend
-            config = StateTracker.get_data_backend_config(self.id)
-            decided_by = {
-                "config": {key: value for key, value in config.items() if key not in RUNTIME_MUTABLE_KEYS},
-                "resolution": [self.resolution, self.resolution_type],
-                "limits": [self.minimum_image_size, self.minimum_aspect_ratio, self.maximum_aspect_ratio],
-                "alignment": getattr(args, "aspect_bucket_alignment", None),
-                "rounding": getattr(args, "aspect_bucket_rounding", None),
-                "canvas": getattr(model, "MAXIMUM_CANVAS_SIZE", None),
-                "shards": backend.num_shards(),
-                "fingerprint": backend.dataset.fingerprint if backend.format == "parquet" else None,
-            }
-            digest = sha256(json.dumps(decided_by, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:16]
-            self._decisions = UnitDecisions(Path(backend.cache_dir) / "decisions" / digest)
-        return self._decisions
+    def _settings_digest(self) -> str:
+        if self._digest is None:
+            backend = self.data_backend
+            self._digest = settings_digest(
+                self,
+                fingerprint=backend.dataset.fingerprint if backend.format == "parquet" else None,
+                units=backend.num_shards(),
+            )
+        return self._digest
+
+    def _transform_cache(self, epoch: int):
+        """The store of this dataset's decisions for the recipe they follow in this epoch."""
+        recipe = transform_recipe(self._settings_digest(), epoch, self.id)
+        if self._transforms is None or self._transforms[0] != recipe:
+            if self._transforms is not None:
+                self._transforms[1].close()
+            directory = Path(self.data_backend.cache_dir) / "transforms"
+            directory.mkdir(parents=True, exist_ok=True)
+            cache = self.data_backend.webshart.TransformCache(str(directory), recipe, max_batch_bytes=_TRANSFORM_BATCH_BYTES)
+            self._transforms = (recipe, cache)
+        return self._transforms[1]
 
     def close_unit(self, unit: int) -> None:
         for sample_path in self._open_units.pop(unit):
