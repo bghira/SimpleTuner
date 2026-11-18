@@ -119,7 +119,6 @@ class TestConditioningSplitAlignment(unittest.TestCase):
         StateTracker.clear_data_backends()
         StateTracker.all_image_files = {}
         StateTracker.all_vae_cache_files = {}
-        StateTracker.all_text_cache_files = {}
 
     def _init_state(
         self,

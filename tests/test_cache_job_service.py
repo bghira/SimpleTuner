@@ -339,7 +339,7 @@ class TestStateTrackerSetup(unittest.TestCase):
     """Verify that cache execute methods set StateTracker globals correctly."""
 
     def test_accelerator_stub_has_is_local_main_process(self):
-        """StateTracker.set_text_cache_files() requires accelerator.is_local_main_process."""
+        """Standalone providers use the local-main-process flag during setup."""
         stub = _CacheAcceleratorStub()
         self.assertTrue(stub.is_local_main_process)
 

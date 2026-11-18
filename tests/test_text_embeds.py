@@ -130,10 +130,7 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
                 yield {"prompt": prompt, "key": prompt}
 
         progress = []
-        with (
-            patch.object(StateTracker, "get_text_cache_files", side_effect=AssertionError("inventory lookup")),
-            patch.object(cache.data_backend, "list_files", side_effect=AssertionError("storage listing")),
-        ):
+        with patch.object(cache.data_backend, "list_files", side_effect=AssertionError("storage listing")):
             self.assertEqual(cache.precompute_embeddings(records(), batch_size=2, progress_callback=progress.append), 6)
         self.assertEqual(encoded, [["one"], ["two", "three"], ["four"]])
         self.assertEqual(progress[-1], 6)
@@ -147,7 +144,7 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
         )
         cache.model.unpack_text_embeddings_from_cache = lambda value: value
         cache.model.encode_text_batch = MagicMock(return_value={"value": torch.tensor([1, 2])})
-        with patch.object(StateTracker, "get_text_cache_files", side_effect=AssertionError("cache inventory")):
+        with patch.object(cache.data_backend, "list_files", side_effect=AssertionError("cache inventory")):
             result = cache.read_training_batch(["one", "two", "one"])
         self.assertEqual([record["value"].item() for record in result], [1, 2, 1])
         cache.model.encode_text_batch.assert_called_once()
@@ -182,7 +179,7 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
         cache.model.unpack_text_embeddings_from_cache = lambda value: value
         cache.model.encode_text_batch = MagicMock(return_value={"value": torch.tensor([2, 0])})
         cache._queue_packed = MagicMock(side_effect=AssertionError("writes disabled"))
-        with patch.object(StateTracker, "get_text_cache_files", side_effect=AssertionError("inventory")):
+        with patch.object(cache.data_backend, "list_files", side_effect=AssertionError("inventory")):
             result = cache.read_training_batch([records[2], records[1], records[0], records[2]])
         self.assertEqual([r["value"].item() for r in result], [2, 99, 0, 2])
         requested = next(iter(cache.data_backend.read_cached_tensors.call_args.args))
@@ -244,9 +241,8 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
         cache.compute_prompt_embeddings_with_model = lambda records, **kwargs: calls.append(len(records))
         marker = Marker()
         reference = weakref.ref(marker)
-        with patch.object(StateTracker, "get_text_cache_files", return_value={}):
-            cache.compute_embeddings_for_prompts([{"prompt": "one", "metadata": {"marker": marker}}], return_concat=False)
-            cache.compute_embeddings_for_prompts([], return_concat=False)
+        cache.compute_embeddings_for_prompts([{"prompt": "one", "metadata": {"marker": marker}}], return_concat=False)
+        cache.compute_embeddings_for_prompts([], return_concat=False)
         del marker
         gc.collect()
         self.assertIsNone(reference())
@@ -527,8 +523,7 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
             ["dataset-1:path/to/sample.png:0", "dataset-1:path/to/sample.png:1"],
         )
 
-    @patch("simpletuner.helpers.caching.text_embeds.StateTracker.get_text_cache_files", return_value={})
-    def test_compute_embeddings_caches_each_uncached_path_keyed_prompt(self, _mock_cache_files):
+    def test_compute_embeddings_caches_each_uncached_path_keyed_prompt(self):
         cache = _make_cache(TextEmbedCacheKey.DATASET_AND_FILENAME)
         saved = []
         cache.save_to_cache = lambda filename, embeddings: saved.append((filename, embeddings))
@@ -581,8 +576,7 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
         )
         self.assertEqual(len(saved), 2)
 
-    @patch("simpletuner.helpers.caching.text_embeds.StateTracker.get_text_cache_files", return_value={})
-    def test_compute_embeddings_does_not_resplit_rank_local_records(self, _mock_cache_files):
+    def test_compute_embeddings_does_not_resplit_rank_local_records(self):
         cache = _make_cache(TextEmbedCacheKey.CAPTION)
         cache.split_prompt_records_between_processes = MagicMock(return_value=[])
         cache.save_to_cache = MagicMock()
@@ -618,8 +612,7 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
         self.assertEqual(cache.model.encode_text_batch.call_count, 2)
         self.assertEqual(cache.save_to_cache.call_count, 2)
 
-    @patch("simpletuner.helpers.caching.text_embeds.StateTracker.get_text_cache_files", return_value={})
-    def test_compute_embeddings_waits_for_inflight_cache_write(self, _mock_cache_files):
+    def test_compute_embeddings_waits_for_inflight_cache_write(self):
         write_started = Event()
         release_write = Event()
         backend = _DummyDataBackend()
@@ -732,8 +725,7 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
             cache.wait_for_pending_writes()
         self.assertIsInstance(context.exception.__cause__, OSError)
 
-    @patch("simpletuner.helpers.caching.text_embeds.StateTracker.get_text_cache_files", return_value={})
-    def test_validation_encode_marks_model_context(self, _mock_cache_files):
+    def test_validation_encode_marks_model_context(self):
         cache = _make_cache(TextEmbedCacheKey.CAPTION)
         cache.save_to_cache = MagicMock()
 
