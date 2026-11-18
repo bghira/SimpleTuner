@@ -122,6 +122,7 @@ class HuggingfaceMetadataBackendTests(unittest.TestCase):
 
         provider = HuggingfaceMetadataBackend.__new__(HuggingfaceMetadataBackend)
         provider.data_backend = source
+        provider.id = source.id
         provider.read_only = False
         provider.aspect_ratio_bucket_indices = {"square": ["3.jpg", "1.jpg"], "wide": ["0.jpg", "2.jpg"]}
         with provider.open_preparation_view(worker=0, workers=3) as first:
@@ -131,6 +132,29 @@ class HuggingfaceMetadataBackendTests(unittest.TestCase):
         with provider.open_preparation_view(worker=2, workers=3) as last:
             self.assertEqual(list(last), ["3.jpg", "2.jpg"])
         self.assertEqual(list(provider.iter_preparation_batches(2, 3, 4)), [("square", ("3.jpg",)), ("wide", ("2.jpg",))])
+
+        with tempfile.TemporaryDirectory() as directory:
+            from simpletuner.helpers.metadata.preparation import ShardedPreparationIndex
+
+            provider.cache_file = Path(directory) / "buckets.json"
+            source.write(provider.cache_file, {"aspect_ratio_bucket_indices": provider.aspect_ratio_bucket_indices})
+            provider.read_only = True
+            provider.aspect_ratio_bucket_indices = {}
+
+            with provider.open_preparation_view(worker=2, workers=3) as cold:
+                self.assertEqual(list(cold), ["3.jpg", "2.jpg"])
+            index = provider._sharded_preparation_index()
+            self.assertEqual(index.accepted_samples, 4)
+            self.assertEqual({file.name for file in index.directory.glob("*.jsonl")}, {"0.jsonl", "2.jsonl"})
+
+            with patch.object(ShardedPreparationIndex, "_publish", side_effect=AssertionError("warm index rebuild")):
+                with provider.open_preparation_view(worker=0, workers=3) as warm:
+                    self.assertEqual(list(warm), ["1.jpg", "0.jpg"])
+                self.assertEqual(list(provider.iter_preparation_batches(1, 3, 2)), [])
+
+            source.write(provider.cache_file, {"aspect_ratio_bucket_indices": {"square": ["3.jpg"]}})
+            self.assertEqual(list(provider.iter_preparation_batches(2, 3, 2)), [("square", ("3.jpg",))])
+            self.assertNotEqual(provider._sharded_preparation_index().directory, index.directory)
 
     def test_preparation_scan_uses_the_same_sample_cap_as_discovery(self):
         rows = Dataset.from_dict({"width": [512] * 18, "height": [256] * 18})

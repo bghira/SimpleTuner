@@ -4,6 +4,8 @@ import os
 import time
 import traceback
 from bisect import bisect_right
+from contextlib import closing, contextmanager
+from itertools import batched, chain
 from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
@@ -16,6 +18,7 @@ from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.dataset_types import ensure_dataset_type
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
+from simpletuner.helpers.metadata.preparation import PreparationView, ShardedPreparationIndex
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
 from simpletuner.helpers.training import image_file_extensions
 from simpletuner.helpers.training.multi_process import should_log
@@ -426,6 +429,48 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             for position, values in zip(selected, zip(*columns.values(), strict=True), strict=True)
         }
         return [captions.get(position) for position in positions]
+
+    def _sharded_preparation_index(self):
+        shards = self.data_backend.preparation_shards
+        publication = getattr(self, "cache_file", None)
+        if shards is None or publication is None or not self.data_backend.exists(publication):
+            return None
+
+        sizes = tuple(len(shard) for shard in shards)
+        boundaries = tuple(shard.stop for shard in shards)
+        dataset = self.data_backend.dataset
+
+        def partition_for(ref):
+            row = self.data_backend._get_index_from_path(ref)
+            if row is None or not 0 <= row < len(dataset):
+                raise ValueError("Prepared Hugging Face membership contains a row outside the current split.")
+            return bisect_right(boundaries, row)
+
+        with self.data_backend.open_read_stream(publication) as source:
+            return ShardedPreparationIndex.open(
+                source, source_revision=dataset._fingerprint, partition_sizes=sizes, partition_for=partition_for
+            )
+
+    @contextmanager
+    def open_preparation_view(self, *, worker=0, workers=1):
+        index = None if self._preparation_source is not None else self._sharded_preparation_index()
+        if index is None:
+            with super().open_preparation_view(worker=worker, workers=workers) as view:
+                yield view
+            return
+        if not index.accepted_samples:
+            raise ValueError("No accepted samples in dataset metadata; scan the dataset before preparing text embeddings.")
+        with closing(index.groups(worker, workers)) as groups:
+            yield PreparationView(chain.from_iterable(refs for _, refs in groups), self)
+
+    def iter_preparation_batches(self, worker, workers, batch_size):
+        index = None if self._preparation_source is not None else self._sharded_preparation_index()
+        if index is None:
+            yield from super().iter_preparation_batches(worker, workers, batch_size)
+            return
+        for bucket, refs in index.groups(worker, workers):
+            for batch in batched(refs, batch_size):
+                yield bucket, batch
 
     def _preparation_ownership(self, worker, workers):
         shards = self.data_backend.preparation_shards

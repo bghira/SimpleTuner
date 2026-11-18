@@ -1,8 +1,18 @@
 """Metadata access scoped to one traversal of the accepted samples."""
 
+import hashlib
+import json
+import os
+from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
+from itertools import batched, groupby
+from operator import itemgetter
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Protocol
+
+from filelock import FileLock
 
 
 @dataclass(frozen=True)
@@ -26,6 +36,57 @@ class PreparationView:
 
     def __iter__(self):
         return iter(self.refs)
+
+
+@dataclass(frozen=True)
+class ShardedPreparationIndex:
+    directory: Path
+    partitions: int
+    accepted_samples: int
+
+    @classmethod
+    def open(cls, source, *, source_revision, partition_sizes, partition_for):
+        stat = os.fstat(source.fileno())
+        version = json.dumps(
+            [1, source_revision, partition_sizes, stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns]
+        )
+        revision = hashlib.sha256(version.encode()).hexdigest()
+        root = Path(source.name).with_suffix(".preparation")
+        directory = root / revision
+        if not directory.is_dir():
+            root.mkdir(parents=True, exist_ok=True)
+            with FileLock(str(root / f"{revision}.lock")):
+                if not directory.is_dir():
+                    cls._publish(source, directory, partition_for)
+        return cls(directory, len(partition_sizes), int((directory / "count").read_text(encoding="utf-8")))
+
+    @staticmethod
+    def _publish(source, destination, partition_for):
+        with TemporaryDirectory(dir=destination.parent) as temporary:
+            staging = Path(temporary) / "membership"
+            staging.mkdir()
+            count = 0
+            for bucket, refs in read_bucket_groups(source):
+                for batch in batched(refs, 2048):
+                    groups = defaultdict(list)
+                    for ref in batch:
+                        groups[partition_for(ref)].append(ref)
+                    for partition, selected in groups.items():
+                        with (staging / f"{partition}.jsonl").open("a", encoding="utf-8") as output:
+                            output.writelines(json.dumps((bucket, ref)) + "\n" for ref in selected)
+                    count += len(batch)
+            (staging / "count").write_text(str(count), encoding="utf-8")
+            os.replace(staging, destination)
+
+    def groups(self, worker, workers):
+        for partition in range(worker, self.partitions, workers):
+            path = self.directory / f"{partition}.jsonl"
+            if not path.is_file():
+                continue
+            with path.open(encoding="utf-8") as source:
+                records = map(json.loads, source)
+                for bucket, rows in groupby(records, key=itemgetter(0)):
+                    yield bucket, map(itemgetter(1), rows)
 
 
 def bucket_groups_from_events(events):
