@@ -843,6 +843,8 @@ effective_batch_size = 数据集 train_batch_size × num_gpus × gradient_accumu
 - **警告:** 此操作不可恢复，请谨慎使用。
 - **默认值:** 回退到训练器的 `--delete_problematic_images` 参数（默认：`false`）。
 
+使用 Webshart 原生视图时，VAE 预处理会将无法读取的样本记录为已准备视图中的排除项。源对象仍保留在 R2 中。
+
 ### `delete_nsfw_images`
 
 - **取值:** `true` | `false`

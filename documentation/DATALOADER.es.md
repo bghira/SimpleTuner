@@ -844,6 +844,8 @@ En este ejemplo, el dataset de 512px se usa para los pasos 1-300, luego el datas
 - **Advertencia:** Esto es destructivo y no se puede deshacer. Úsalo con cuidado.
 - **Default:** Usa el argumento `--delete_problematic_images` del trainer (default: `false`).
 
+En las vistas nativas de Webshart, la preparación del VAE registra las muestras ilegibles como exclusiones en la vista preparada. Los objetos de origen permanecen en R2.
+
 ### `delete_nsfw_images`
 
 - **Valores:** `true` | `false`

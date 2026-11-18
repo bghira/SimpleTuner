@@ -846,6 +846,8 @@ In this example, the 512px dataset is used for steps 1-300, then the 1024px data
 - **Warning:** This is destructive and cannot be undone. Use with caution.
 - **Default:** Falls back to the trainer's `--delete_problematic_images` argument (default: `false`).
 
+For native Webshart views, VAE preparation records unreadable samples as exclusions in the prepared view. The source objects stay in R2.
+
 ### `delete_nsfw_images`
 
 - **Values:** `true` | `false`

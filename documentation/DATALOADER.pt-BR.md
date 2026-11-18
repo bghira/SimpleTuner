@@ -844,6 +844,8 @@ Neste exemplo, o dataset de 512px é usado para steps 1-300, então o dataset de
 - **Aviso:** Isso é destrutivo e não pode ser desfeito. Use com cuidado.
 - **Padrão:** Usa o argumento do trainer `--delete_problematic_images` (padrão: `false`).
 
+Nas visualizações nativas do Webshart, a preparação do VAE registra amostras ilegíveis como exclusões na visualização preparada. Os objetos de origem permanecem no R2.
+
 ### `delete_nsfw_images`
 
 - **Valores:** `true` | `false`

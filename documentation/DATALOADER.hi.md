@@ -844,6 +844,8 @@ effective_batch_size = dataset train_batch_size × num_gpus × gradient_accumula
 - **Warning:** यह destructive है और undo नहीं किया जा सकता। सावधानी से उपयोग करें।
 - **Default:** trainer के `--delete_problematic_images` argument पर fallback करता है (डिफ़ॉल्ट: `false`)।
 
+नेटिव Webshart व्यू में, VAE की तैयारी के दौरान न पढ़े जा सकने वाले नमूनों को तैयार व्यू से बाहर रखा जाता है। स्रोत ऑब्जेक्ट R2 में बने रहते हैं।
+
 ### `delete_nsfw_images`
 
 - **Values:** `true` | `false`

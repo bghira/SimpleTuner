@@ -844,6 +844,8 @@ effective_batch_size = データセットの train_batch_size × num_gpus × gra
 - **警告:** 破壊的で元に戻せません。注意して使用してください。
 - **既定値:** トレーナーの `--delete_problematic_images` 引数（既定: `false`）にフォールバックします。
 
+Webshart のネイティブビューでは、VAE の前処理で読み取れないサンプルを準備済みビューの除外として記録します。元のオブジェクトは R2 に残ります。
+
 ### `delete_nsfw_images`
 
 - **値:** `true` | `false`
