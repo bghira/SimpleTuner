@@ -45,9 +45,8 @@ def _set_epoch_step_for_training_step(step: int) -> None:
     StateTracker.set_epoch_step(int(step / gradient_accumulation_steps))
 
 
-def _selection_generator(step: int) -> torch.Generator:
-    args = StateTracker.get_args()
-    base_seed = getattr(args, "seed", 0) if args is not None else 0
+def _selection_generator(step: int, *, mixer=None) -> torch.Generator:
+    base_seed = getattr(StateTracker.get_args(), "seed", 0) if mixer is None else mixer.seed
     generator = torch.Generator(device="cpu")
     generator.manual_seed((int(base_seed or 0) + int(step)) % _MAX_TORCH_SEED)
     return generator
@@ -89,7 +88,7 @@ def select_dataloader_index(step: int, backends: Dict[str, Any], *, mixer=None) 
         raise ValueError("All backend sampling weights are zero.")
     weights_tensor /= total
 
-    chosen_index = torch.multinomial(weights_tensor, 1, generator=_selection_generator(step)).item()
+    chosen_index = torch.multinomial(weights_tensor, 1, generator=_selection_generator(step, mixer=mixer)).item()
     chosen_backend_id = backend_ids[chosen_index]
 
     return chosen_backend_id
@@ -104,8 +103,9 @@ def get_backend_weight(backend_id: str, backend: Any, step: int, *, mixer=None) 
             backend_config = StateTracker.get_data_backend_config(backend_id)
     prob = backend_config.get("probability", 1)
 
-    sampling_args = StateTracker.get_args()
-    sampling_method = getattr(sampling_args, "data_backend_sampling", "uniform") if sampling_args is not None else "uniform"
+    sampling_method = (
+        getattr(StateTracker.get_args(), "data_backend_sampling", "uniform") if mixer is None else mixer.sampling_method
+    )
     if not isinstance(sampling_method, str):
         sampling_method = "uniform"
 
@@ -120,17 +120,18 @@ def get_backend_weight(backend_id: str, backend: Any, step: int, *, mixer=None) 
     if sampling_method == "uniform":
         return prob
     elif sampling_method == "auto-weighting":
-        dataset_length = StateTracker.get_dataset_size(backend_id)
-
-        try:
-            total = sum(
-                StateTracker.get_dataset_size(b) for b in StateTracker.get_data_backends(_types=["image", "video", "audio"])
-            )
-        except Exception:
-            total = 0
-        if not total:
-            total = dataset_length or 1
-        length_factor = dataset_length / total
+        if mixer is not None:
+            length_factor = mixer.dataset_batches[backend_id]
+        else:
+            dataset_length = StateTracker.get_dataset_size(backend_id)
+            try:
+                total = sum(
+                    StateTracker.get_dataset_size(b)
+                    for b in StateTracker.get_data_backends(_types=["image", "video", "audio"])
+                )
+            except Exception:
+                total = 0
+            length_factor = dataset_length / (total or dataset_length or 1)
 
         adjusted_prob = prob * length_factor
 
@@ -250,7 +251,7 @@ class ScaledDatasetSampler:
         if total <= 0:
             return None
         weights_tensor /= total
-        chosen_index = torch.multinomial(weights_tensor, 1, generator=_selection_generator(step)).item()
+        chosen_index = torch.multinomial(weights_tensor, 1, generator=_selection_generator(step, mixer=mixer)).item()
         return filtered_ids[chosen_index]
 
     def next_backend_id(self, step: int, backends: Dict[str, Any], *, mixer=None) -> Optional[str]:
@@ -304,8 +305,17 @@ class DatasetMixer:
         )
         settings = {name: {key: dataset.config.get(key) for key in keys} for name, dataset in backends.items()}
         args = StateTracker.get_args()
+        self.seed = args.seed
+        self.sampling_method = getattr(args, "data_backend_sampling", "uniform")
         self.gradient_accumulation_steps = max(1, int(getattr(args, "gradient_accumulation_steps", 1)))
-        identity = [settings, args.seed, getattr(args, "data_backend_sampling", "uniform"), self.gradient_accumulation_steps]
+        self.dataset_batches = (
+            {name: dataset.training_batch_count() for name, dataset in backends.items()}
+            if self.sampling_method == "auto-weighting"
+            else {}
+        )
+        identity = [settings, self.seed, self.sampling_method, self.gradient_accumulation_steps]
+        if self.dataset_batches:
+            identity.append(self.dataset_batches)
         self.revision = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
         self.epoch = epoch
         self.step = step

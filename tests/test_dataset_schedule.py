@@ -390,6 +390,26 @@ class TestCurriculumLearningScenarios(unittest.TestCase):
             self.assertEqual(expected, actual)
             self.assertEqual([item["dataset"] for item in actual], ["first", "next", "next"])
 
+    def test_mixer_auto_weighting_uses_provider_batch_counts_once(self):
+        from simpletuner.helpers.data_backend.runtime.dataloader_iterator import DatasetMixer, get_backend_weight
+
+        backends = {
+            name: SimpleNamespace(config={"probability": probability}, training_batch_count=MagicMock(return_value=count))
+            for name, probability, count in (("local", 1, 4), ("webshart", 0.5, 20))
+        }
+        args = SimpleNamespace(seed=19, data_backend_sampling="auto-weighting")
+        with (
+            patch.object(StateTracker, "get_args", return_value=args) as get_args,
+            patch.object(StateTracker, "get_dataset_size", side_effect=AssertionError("read the global registry")),
+        ):
+            mixer = DatasetMixer(backends, 1, 0)
+            get_args.side_effect = AssertionError("retrieved sampling settings inside the mixer")
+            for step in range(10):
+                self.assertEqual(get_backend_weight("local", backends["local"], step, mixer=mixer), 4)
+                self.assertEqual(get_backend_weight("webshart", backends["webshart"], step, mixer=mixer), 10)
+        for dataset in backends.values():
+            dataset.training_batch_count.assert_called_once()
+
     def test_epoch_based_curriculum_three_stages(self):
         """
         Three-stage curriculum based on epochs.
