@@ -3826,6 +3826,7 @@ class Trainer:
                     caption_batches_supported = False
 
         epoch_batches_map: dict[int, int] = {}
+        batch_windows: list[tuple[int, int | None, int, int | None, int]] = []
         datasets = self._registered_training_datasets()
         eval_ids = getattr(self.config, "eval_dataset_id", None) or ()
         if isinstance(eval_ids, str):
@@ -3850,6 +3851,8 @@ class Trainer:
             if (end_epoch is not None and end_epoch < start_epoch) or (end_step is not None and end_step < start_step):
                 continue
             dataset_batches = dataset.training_batch_count()
+            if dataset_batches:
+                batch_windows.append((start_epoch, end_epoch, start_step, end_step, dataset_batches))
             total_num_batches += dataset_batches
             epoch_batches_map[start_epoch] = epoch_batches_map.get(start_epoch, 0) + dataset_batches
             if end_epoch is not None:
@@ -3867,6 +3870,9 @@ class Trainer:
         self.config.initial_num_batches = initial_num_batches
 
         self.config.epoch_batches_schedule = epoch_batches_map
+        self.config.step_batches_schedule = (
+            batch_windows if any(start > 1 or end is not None for _, _, start, end, _ in batch_windows) else None
+        )
 
         if initial_num_batches < total_num_batches:
             logger.info(
@@ -3940,26 +3946,46 @@ class Trainer:
             self.config.train_batch_size * self.accelerator.num_processes * self.config.gradient_accumulation_steps
         )
 
-    def get_steps_per_epoch_for_epoch(self, epoch: int) -> int:
-        """
-        Calculate the number of steps per epoch for a specific epoch.
-
-        The schedule records batch deltas at the start and end of each dataset's epoch window.
-        Progress calculations use at least one step as a divisor.
-
-        Args:
-            epoch: The epoch number (1-indexed) to calculate steps for.
-
-        Returns:
-            The number of update steps for that epoch.
-        """
+    def get_steps_per_epoch_for_epoch(self, epoch: int, *, first_step: int | None = None) -> int:
+        """Estimate epoch length from provider batch counts and inclusive activation windows."""
         epoch_batches_schedule = getattr(self.config, "epoch_batches_schedule", None)
         if epoch_batches_schedule is None:
             # No schedule, use the cached value
             return getattr(self.config, "num_update_steps_per_epoch", 1) or 1
 
-        active_batches = sum(change for boundary, change in epoch_batches_schedule.items() if boundary <= epoch)
         grad_accum = max(self.config.gradient_accumulation_steps or 1, 1)
+        step_windows = getattr(self.config, "step_batches_schedule", None)
+        if first_step is not None and step_windows is not None:
+            active_windows = sorted(
+                (
+                    (start, end, batches)
+                    for lo, hi, start, end, batches in step_windows
+                    if lo <= epoch and (hi is None or hi >= epoch)
+                ),
+                key=lambda window: window[0],
+            )
+            # Each reachable dataset can add only its available batches within its window.
+            # The mixer can select fewer batches, so this is a progress upper bound.
+            available_batches = 0
+            horizon = last_finite_step = first_step - 1
+            has_unlimited_window = False
+            for start, end, batches in active_windows:
+                start = max(start, first_step)
+                if start > horizon + 1:
+                    break
+                if end is None:
+                    has_unlimited_window = True
+                elif end < start:
+                    continue
+                else:
+                    batches = min(batches, (end - start + 1) * grad_accum)
+                    last_finite_step = max(last_finite_step, end)
+                available_batches += batches
+                horizon = first_step - 1 + math.ceil(available_batches / grad_accum)
+                if not has_unlimited_window:
+                    horizon = min(horizon, last_finite_step)
+            return max(horizon - first_step + 1, 1)
+        active_batches = sum(change for boundary, change in epoch_batches_schedule.items() if boundary <= epoch)
         return max(math.ceil(active_batches / grad_accum), 1)
 
     def _setup_ramtorch_zero_state(self):
@@ -5975,9 +6001,10 @@ class Trainer:
         self.state["current_epoch"] = epoch
         StateTracker.set_epoch(epoch)
 
-        # Update steps per epoch for the current epoch based on active datasets.
-        # This handles dynamic dataset scheduling where datasets have different start_epoch values.
-        new_steps_per_epoch = self.get_steps_per_epoch_for_epoch(epoch)
+        # A resumed epoch may have started before the saved global step.
+        current_step = self.state.get("global_step", 0)
+        first_step = None if current_step and self.state["first_epoch"] == epoch else current_step + 1
+        new_steps_per_epoch = self.get_steps_per_epoch_for_epoch(epoch, first_step=first_step)
         old_steps_per_epoch = getattr(self.config, "num_update_steps_per_epoch", new_steps_per_epoch)
         if new_steps_per_epoch != old_steps_per_epoch:
             logger.info(

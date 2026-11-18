@@ -2553,6 +2553,19 @@ class TestTrainer(unittest.TestCase):
         self.assertEqual(trainer.config.epoch_batches_schedule, {1: 10, 2: -3, 3: -3})
         self.assertEqual([trainer.get_steps_per_epoch_for_epoch(epoch) for epoch in (1, 2, 3)], [5, 4, 2])
 
+        mock_get_datasets.return_value = {
+            "initial": dataset(6, end_step=2),
+            "bridge": dataset(4, start_step=3, end_epoch=2),
+            "later": dataset(40, start_step=5, end_step=6),
+            "gap": dataset(40, start_step=10),
+        }
+        trainer._recalculate_training_steps()
+        self.assertEqual(trainer.get_steps_per_epoch_for_epoch(1, first_step=1), 6)
+        self.assertEqual(trainer.get_steps_per_epoch_for_epoch(2, first_step=3), 4)
+        self.assertEqual(trainer.get_steps_per_epoch_for_epoch(2, first_step=5), 4)
+        self.assertEqual(trainer.get_steps_per_epoch_for_epoch(3, first_step=1), 2)
+        self.assertEqual(trainer.get_steps_per_epoch_for_epoch(3, first_step=7), 1)
+
     @patch("simpletuner.helpers.training.trainer.Trainer._misc_init", return_value=Mock())
     @patch(
         "simpletuner.helpers.training.trainer.Trainer.parse_arguments",
