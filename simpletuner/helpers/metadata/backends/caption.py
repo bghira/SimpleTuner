@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fcntl
 import io
 import json
 import logging
@@ -154,8 +155,39 @@ class CaptionMetadataBackend(MetadataBackend):
             and Path(filepath).suffix.lstrip(".").lower() in self.caption_extensions
         )
 
+    def discover_caption_files(self, inventory_file: Path) -> Dict[str, bool]:
+        try:
+            with inventory_file.open(encoding="utf-8") as handle:
+                fcntl.flock(handle, fcntl.LOCK_SH)
+                existing = json.load(handle)
+        except FileNotFoundError:
+            existing = None
+        except (OSError, ValueError) as exc:
+            logger.warning(f"(id={self.id}) Failed to load caption file inventory: {exc}")
+            existing = None
+
+        if existing:
+            paths = existing
+        elif self.instance_data_dir:
+            paths = self.data_backend.iter_file_keys(self.caption_extensions, self.instance_data_dir)
+        else:
+            logger.warning(f"(id={self.id}) Caption dataset has no instance_data_dir; skipping discovery.")
+            return {}
+
+        try:
+            inventory = {path: False for path in paths if self.is_caption_source(path)}
+        except FileNotFoundError:
+            logger.warning(f"(id={self.id}) Caption source was not found: {self.instance_data_dir}")
+            return {}
+        inventory_file.parent.mkdir(parents=True, exist_ok=True)
+        with inventory_file.open("a", encoding="utf-8") as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            handle.truncate(0)
+            json.dump(inventory, handle)
+        return inventory
+
     def ingest_from_file_cache(self, caption_files: Dict[str, bool]) -> int:
-        """Populate caption records from a cache built by StateTracker.set_caption_files."""
+        """Populate caption records from a discovered file inventory."""
         self.reset_records()
         if not caption_files:
             logger.warning(f"(id={self.id}) No caption files discovered.")

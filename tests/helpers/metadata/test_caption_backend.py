@@ -56,7 +56,6 @@ class TestCaptionMetadataBackend(unittest.TestCase):
     def setUp(self):
         StateTracker.set_args(SimpleNamespace(output_dir="/tmp"))
         StateTracker.data_backends = {}
-        StateTracker.all_caption_files = {}
         self.backend = InMemoryDataBackend()
         self.accelerator = SimpleNamespace(is_local_main_process=True)
         self.instance_dir = "/datasets/captions"

@@ -49,7 +49,6 @@ class StateTracker:
     all_image_files = {}
     all_vae_cache_files = {}
     all_distillation_cache_files = {}
-    all_caption_files = {}
 
     ## Backend entities for retrieval
     default_text_embed_cache = None
@@ -678,38 +677,6 @@ class StateTracker:
                 f"all_distillation_cache_files_{data_backend_id}", retry_limit=retry_limit
             )
         return cls.all_distillation_cache_files.get(data_backend_id) or {}
-
-    @classmethod
-    def set_caption_files(cls, raw_file_list: list, data_backend_id: str):
-        if data_backend_id not in cls.all_caption_files or cls.all_caption_files.get(data_backend_id) is None:
-            cls.all_caption_files[data_backend_id] = {}
-        else:
-            cls.all_caption_files[data_backend_id].clear()
-
-        for subdirectory_list in raw_file_list or []:
-            _, _, files = subdirectory_list
-            for caption_path in files:
-                cls.all_caption_files[data_backend_id][caption_path] = False
-
-        cls._save_to_disk(
-            f"all_caption_files_{data_backend_id}",
-            cls.all_caption_files[data_backend_id],
-        )
-        return cls.all_caption_files[data_backend_id]
-
-    @classmethod
-    def get_caption_files(cls, data_backend_id: str, retry_limit: int = 0):
-        if data_backend_id in cls.all_caption_files and cls.all_caption_files[data_backend_id] is None:
-            cls.all_caption_files[data_backend_id] = cls._load_from_disk(
-                f"all_caption_files_{data_backend_id}",
-                retry_limit=retry_limit,
-            )
-        elif data_backend_id not in cls.all_caption_files:
-            cls.all_caption_files[data_backend_id] = cls._load_from_disk(
-                f"all_caption_files_{data_backend_id}",
-                retry_limit=retry_limit,
-            )
-        return cls.all_caption_files.get(data_backend_id, {})
 
     @classmethod
     def get_validation_sample_images(cls):

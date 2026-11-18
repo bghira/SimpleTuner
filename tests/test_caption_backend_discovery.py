@@ -7,7 +7,6 @@ from unittest.mock import patch
 
 from simpletuner.helpers.data_backend.builders.local import LocalBackendBuilder
 from simpletuner.helpers.data_backend.config import create_backend_config
-from simpletuner.helpers.data_backend.factory import FactoryRegistry
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 
@@ -39,12 +38,10 @@ class CaptionDiscoveryRestartTests(unittest.TestCase):
                     declaration["caption_file_extensions"] = extensions
                 config = create_backend_config(declaration, vars(args))
                 config.validate(vars(args))
-                factory = FactoryRegistry.__new__(FactoryRegistry)
-                factory.args = args
+                inventory = Path(args.output_dir) / "all_caption_files_captions.json"
                 expected = ["a fox", "a landscape"] if extensions else ["a lake", "a fox", "a landscape"]
 
                 with (
-                    patch.object(StateTracker, "all_caption_files", {}),
                     patch.object(StateTracker, "data_backends", {}),
                     patch.object(StateTracker, "args", args),
                 ):
@@ -54,17 +51,17 @@ class CaptionDiscoveryRestartTests(unittest.TestCase):
                     metadata = first["metadata_backend"]
                     if extensions is not None:
                         self.assertEqual(metadata.caption_extensions, ("jsonl",))
-                    discovered = factory._discover_caption_files(first, metadata)
+                    discovered = metadata.discover_caption_files(inventory)
                     self.assertEqual(metadata.ingest_from_file_cache(discovered), len(expected))
                     self.assertEqual([record.caption_text for record in metadata.iter_records()], expected)
                     self.assertTrue(metadata.cache_file.exists())
                     self.assertTrue(metadata.metadata_file.exists())
 
                     # A fresh process discovers the JSON caches that now live beside the source captions.
-                    StateTracker.all_caption_files["captions"] = {}
+                    inventory.write_text("{}", encoding="utf-8")
                     second = builder.build_with_metadata(config, vars(args))
                     metadata = second["metadata_backend"]
-                    discovered = factory._discover_caption_files(second, metadata)
+                    discovered = metadata.discover_caption_files(inventory)
                     self.assertNotIn(str(metadata.cache_file), discovered)
                     self.assertNotIn(str(metadata.metadata_file), discovered)
                     self.assertEqual(metadata.ingest_from_file_cache(discovered), len(expected))
@@ -72,9 +69,11 @@ class CaptionDiscoveryRestartTests(unittest.TestCase):
 
                     # Old persisted listings are filtered too, and direct ingestion has the same source guard.
                     polluted = {**discovered, str(metadata.cache_file): False, str(metadata.metadata_file): False}
-                    StateTracker.all_caption_files["captions"] = polluted
-                    filtered = factory._discover_caption_files(second, metadata)
+                    inventory.write_text(json.dumps(polluted), encoding="utf-8")
+                    with patch.object(metadata.data_backend, "iter_file_keys", side_effect=AssertionError("listed files")):
+                        filtered = metadata.discover_caption_files(inventory)
                     self.assertEqual(set(filtered), set(discovered))
+                    self.assertEqual(json.loads(inventory.read_text(encoding="utf-8")), discovered)
                     self.assertEqual(metadata.ingest_from_file_cache(polluted), len(expected))
                     self.assertEqual([record.caption_text for record in metadata.iter_records()], expected)
 

@@ -3985,7 +3985,8 @@ class FactoryRegistry:
                 elif ingest_strategy == "huggingface":
                     new_entries = metadata_backend.ingest_from_huggingface_dataset()
                 else:
-                    caption_cache = self._discover_caption_files(init_backend, metadata_backend)
+                    inventory = Path(self.args.output_dir) / f"all_caption_files_{metadata_backend.id}.json"
+                    caption_cache = metadata_backend.discover_caption_files(inventory)
                     new_entries = metadata_backend.ingest_from_file_cache(caption_cache)
                 info_log(f"(id={init_backend['id']}) Captured {new_entries} caption entries via {ingest_strategy}.")
                 built_on_rank = True
@@ -4075,38 +4076,6 @@ class FactoryRegistry:
         global_skip = str(getattr(self.args, "skip_file_discovery", "") or "")
         backend_skip = str(backend.get("skip_file_discovery", "") or "")
         return ("caption" in global_skip) or ("caption" in backend_skip)
-
-    def _discover_caption_files(
-        self, init_backend: Dict[str, Any], metadata_backend: CaptionMetadataBackend
-    ) -> Dict[str, bool]:
-        """Return cached caption files, discovering them if necessary."""
-        existing = StateTracker.get_caption_files(init_backend["id"])
-        if existing:
-            sources = [path for path in existing if metadata_backend.is_caption_source(path)]
-            return StateTracker.set_caption_files([("", [], sources)], init_backend["id"])
-
-        instance_dir = init_backend.get("instance_data_dir")
-        if not instance_dir:
-            warning_log(f"(id={init_backend['id']}) Caption dataset has no instance_data_dir; skipping discovery.")
-            return {}
-
-        extensions = [ext.lstrip(".") for ext in metadata_backend.supported_extensions]
-        try:
-            raw_listing = init_backend["data_backend"].list_files(
-                instance_data_dir=instance_dir,
-                file_extensions=extensions,
-            )
-        except FileNotFoundError:
-            warning_log(
-                f"(id={init_backend['id']}) Skipping caption discovery because data directory was not found: {instance_dir}"
-            )
-            return {}
-
-        sources = [
-            (directory, subdirs, [path for path in files if metadata_backend.is_caption_source(path)])
-            for directory, subdirs, files in raw_listing
-        ]
-        return StateTracker.set_caption_files(sources, init_backend["id"])
 
     def _configure_single_data_backend(
         self,
