@@ -321,7 +321,11 @@ class TestTrainingSample(unittest.TestCase):
             )
 
     def test_i2v_first_frame_metadata_copy_targets_png_and_preserves_pairing_path(self):
+        from simpletuner.helpers.metadata.backends.base import MetadataBackend
+
         class FakeMetadata:
+            bind_preparation_source = MetadataBackend.bind_preparation_source
+
             def __init__(self):
                 self.aspect_ratio_bucket_indices = {"1.0": ["25.mp4"]}
                 self.image_metadata = {"25.mp4": {"original_size": (480, 270), "aspect_ratio": 1.83}}

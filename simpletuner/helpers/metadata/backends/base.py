@@ -108,6 +108,7 @@ class MetadataBackend:
     epoch_provider = None
     caption_projection_strategy = None
     requires_complete_preparation = False
+    _preparation_source = None
 
     def __init__(
         self,
@@ -1388,7 +1389,15 @@ class MetadataBackend:
         positions = count()
         return lambda _: next(positions) % workers == worker
 
+    def bind_preparation_source(self, source, translate):
+        self._preparation_source = source, translate
+
     def iter_preparation_batches(self, worker, workers, batch_size):
+        if self._preparation_source is not None:
+            source, translate = self._preparation_source
+            for bucket, refs in source.iter_preparation_batches(worker, workers, batch_size):
+                yield bucket, tuple(map(translate, refs))
+            return
         owns = self._preparation_ownership(worker, workers)
         with self._open_accepted_groups() as groups:
             for bucket, refs in groups:
@@ -1397,12 +1406,19 @@ class MetadataBackend:
                     yield bucket, batch
 
     def read_page(self, *, bucket=None, offset=0, limit=50):
+        if self._preparation_source is not None:
+            source, translate = self._preparation_source
+            refs, count = source.read_page(bucket=bucket, offset=offset, limit=limit)
+            return list(map(translate, refs)), count
         with self._open_accepted_groups() as groups:
             return read_bucket_page(groups, bucket, offset, limit)
 
     def describe(self, spec=None):
         if spec is not None:
             raise ValueError("An epoch specification requires a native training cursor.")
+        if self._preparation_source is not None:
+            source, _ = self._preparation_source
+            return DatasetDescription(accepted_samples=source.describe().accepted_samples)
         summaries = getattr(self.bucket_report, "bucket_summaries", {}) if self.bucket_report else {}
         return DatasetDescription(accepted_samples=summaries.get("post_refresh", {}).get("total_samples"))
 
@@ -1413,6 +1429,11 @@ class MetadataBackend:
     @contextmanager
     def open_preparation_view(self, *, worker=0, workers=1):
         """Traverse accepted membership independently of the training split."""
+        if self._preparation_source is not None:
+            source, translate = self._preparation_source
+            with source.open_preparation_view(worker=worker, workers=workers) as view:
+                yield PreparationView(map(translate, view), self)
+            return
         with self._open_accepted_groups() as groups:
             refs = chain.from_iterable(refs for _, refs in groups)
             first = next(refs, None)

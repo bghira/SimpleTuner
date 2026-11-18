@@ -3,6 +3,7 @@ import multiprocessing
 import os
 import unittest
 from copy import deepcopy
+from io import BytesIO
 from types import SimpleNamespace
 
 from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend
@@ -63,6 +64,11 @@ class InMemoryDataBackend:
 
     def write(self, path, data):
         self._storage[str(path)] = data
+
+    def open_read_stream(self, path):
+        if not self.exists(path):
+            raise FileNotFoundError(path)
+        return BytesIO(self.read(path).encode())
 
     def read_image(self, path):  # pragma: no cover - not exercised in this test
         raise NotImplementedError("Image reads are not required for this unit test.")
@@ -155,6 +161,7 @@ class TestConditioningSplitAlignment(unittest.TestCase):
         conditioning_data_backend: InMemoryDataBackend | None = None,
         before_copy_callback=None,
         apply_padding: bool = False,
+        generated: bool = False,
     ):
         source_config = {
             "resolution_type": "area",
@@ -243,8 +250,37 @@ class TestConditioningSplitAlignment(unittest.TestCase):
                 conditioning_entry,
             )
 
-        DatasetDuplicator.copy_metadata(source_entry, conditioning_entry)
+        DatasetDuplicator.copy_metadata(source_entry, conditioning_entry, generated=generated)
         return training_metadata, conditioning_metadata
+
+    def test_generated_preparation_follows_canonical_source_membership_after_training_split(self):
+        refs = ["day1/clip.mp4", "day2/clip.mp4", "day3/clip.mp4", "day4/clip.mp4"]
+        buckets = {"1.0": refs}
+        accelerator = self._init_state(num_processes=2, process_index=0)
+
+        def publish_canonical(source_meta, _, store, *unused):
+            store.write(source_meta.cache_file, json.dumps({"aspect_ratio_bucket_indices": buckets}))
+
+        source, target = self._prepare_metadata_backends(
+            accelerator=accelerator,
+            base_buckets=buckets,
+            source_id="source",
+            source_dir="dataset",
+            conditioning_id="frames",
+            conditioning_dir="conditioning",
+            conditioning_config_overrides={
+                "conditioning_type": "reference_strict",
+                "conditioning_config": {"type": "i2v_first_frame"},
+            },
+            before_copy_callback=publish_canonical,
+            generated=True,
+        )
+        expected = [os.path.abspath(f"conditioning/day{index}/clip.png") for index in range(1, 5)]
+        self.assertEqual(len(source.aspect_ratio_bucket_indices["1.0"]), 2)
+        self.assertEqual(target.read_page(limit=4), (expected, 4))
+        self.assertEqual(list(target.iter_preparation_batches(1, 2, 4)), [("1.0", tuple(expected[1::2]))])
+        with target.open_preparation_view(worker=0, workers=2) as view:
+            self.assertEqual(list(view), expected[::2])
 
     def test_paired_webshart_metadata_keeps_physical_row_ids(self):
         paths = ["webshart://0/3/a.parquet/000000000003.jpg", "webshart://1/3/b.parquet/000000000003.jpg"]

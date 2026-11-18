@@ -3087,6 +3087,7 @@ class FactoryRegistry:
                 DatasetDuplicator.copy_metadata(
                     source_backend=StateTracker.get_data_backend(metadata_clone_source_id),
                     target_backend=init_backend,
+                    generated=backend.get("auto_generated", False),
                 )
         elif clone_conditioning:
             # special case where strict/mask conditioning alignment allows us to duplicate metadata from the source dataset.

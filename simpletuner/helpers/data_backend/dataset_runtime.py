@@ -207,6 +207,12 @@ class DatasetRuntime:
             relative_ref = WebshartDataBackend.parse_sample_id(relative_ref).filename
             if os.path.isabs(relative_ref) or ".." in relative_ref.split("/"):
                 raise ValueError("Webshart pairing requires a filename relative to the conditioning dataset.")
+        if root:
+            relative_ref = os.path.normpath(relative_ref)
+            if os.path.isabs(relative_ref) or relative_ref.startswith(f"..{os.sep}"):
+                relative_ref = os.path.basename(relative_ref)
+            if relative_ref in {"", ".", ".."}:
+                raise ValueError("A conditioning reference must name a file.")
         path = os.path.join(root, relative_ref) if root else relative_ref
         if (config.get("conditioning_config") or {}).get("type") == "i2v_first_frame":
             path = os.path.splitext(path)[0] + ".png"

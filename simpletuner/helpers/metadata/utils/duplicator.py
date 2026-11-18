@@ -1,8 +1,10 @@
 import logging
 import os
 
+from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 from simpletuner.helpers.training.multi_process import should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
+from simpletuner.helpers.utils.pathing import normalize_data_path
 
 logger = logging.getLogger(__name__)
 if should_log():
@@ -34,7 +36,7 @@ class DatasetDuplicator:
         return new_path
 
     @staticmethod
-    def copy_metadata(source_backend, target_backend):
+    def copy_metadata(source_backend, target_backend, *, generated=False):
         """Copy metadata from source backend to target backend with path updates."""
         source_meta = source_backend.get("metadata_backend", None)
         target_meta = target_backend.get("metadata_backend", None)
@@ -65,41 +67,29 @@ class DatasetDuplicator:
         )
         needs_path_update = source_dir != target_dir and target_backend.get("dataset_type") == "conditioning"
 
+        def translate(path):
+            if not needs_path_update or shared_sample_ids:
+                return path
+            if generated:
+                return DatasetRuntime.conditioning_file_path(
+                    normalize_data_path(path, source_dir), os.path.abspath(target_dir), target_config
+                )
+            return DatasetDuplicator._translate_conditioning_path(path, source_dir, target_dir, conditioning_data_type)
+
+        target_meta.bind_preparation_source(source_meta, translate)
+
         if needs_path_update:
             logger.info(f"Copying metadata with path translation: '{source_dir}' -> '{target_dir}'")
 
-            # Copy and update bucket indices
-            target_meta.aspect_ratio_bucket_indices = {}
-            for bucket, paths in source_meta.aspect_ratio_bucket_indices.items():
-                updated_paths = []
-                for path in paths:
-                    new_path = (
-                        path
-                        if shared_sample_ids
-                        else DatasetDuplicator._translate_conditioning_path(
-                            path,
-                            source_dir,
-                            target_dir,
-                            conditioning_data_type,
-                        )
-                    )
-                    updated_paths.append(new_path)
-                target_meta.aspect_ratio_bucket_indices[bucket] = updated_paths
+            target_meta.aspect_ratio_bucket_indices = {
+                bucket: list(map(translate, paths)) for bucket, paths in source_meta.aspect_ratio_bucket_indices.items()
+            }
 
             # Copy other metadata
             if hasattr(source_meta, "image_metadata") and source_meta.image_metadata:
                 target_meta.image_metadata = {}
                 for path, metadata in source_meta.image_metadata.items():
-                    new_path = (
-                        path
-                        if shared_sample_ids
-                        else DatasetDuplicator._translate_conditioning_path(
-                            path,
-                            source_dir,
-                            target_dir,
-                            conditioning_data_type,
-                        )
-                    )
+                    new_path = translate(path)
                     copied_metadata = dict(metadata)
                     if conditioning_data_type == "i2v_first_frame":
                         copied_metadata["training_sample_path"] = path
