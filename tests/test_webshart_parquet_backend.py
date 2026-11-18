@@ -1,13 +1,14 @@
 import json
 import sqlite3
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from dataclasses import replace
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from threading import Event, get_ident
+from threading import Barrier, Event, get_ident
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -650,6 +651,74 @@ class TestWebshartParquetBackend(unittest.TestCase):
             capped, scanned = build(cap=1)
             self.assertEqual(scanned, [(0,)])
             self.assertEqual(capped.read_page(limit=10)[1], 1)
+
+    def test_concurrent_views_share_cold_capture_group(self):
+        from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBackend
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        self._publish_capture_manifest()
+        config = {
+            "caption_strategy": "webshart",
+            "webshart": {"sampling_policy": "global"},
+            "resolution": 8,
+            "resolution_type": "pixel",
+        }
+        args = SimpleNamespace(model_family="sdxl", disable_bucket_pruning=False)
+        accelerator = SimpleNamespace(num_processes=1, process_index=0, is_main_process=True)
+        ready = Barrier(2, timeout=10)
+
+        def make_metadata(view):
+            source = WebshartDataBackend(
+                None,
+                f"concurrent-{view}",
+                str(self.source),
+                manifest="capture.json",
+                format="parquet",
+                cache_dir=str(self.root / "shared-cache"),
+            )
+            metadata = WebshartMetadataBackend(
+                id=source.id,
+                instance_data_dir=source.cache_dir,
+                cache_file=str(self.root / f"{view}-buckets"),
+                metadata_file=str(self.root / f"{view}-geometry"),
+                data_backend=source,
+                accelerator=accelerator,
+                batch_size=1,
+                resolution=8,
+                resolution_type="pixel",
+            )
+            self.addCleanup(metadata.close)
+            return metadata
+
+        def align_lookup(lookup):
+            def resolve(*args):
+                path = lookup(*args)
+                self.assertIsNotNone(path)
+                ready.wait()
+                return path
+
+            return resolve
+
+        with (
+            patch.object(StateTracker, "get_data_backend_config", return_value=config),
+            patch.object(StateTracker, "get_args", return_value=args),
+            patch.object(StateTracker, "get_model", return_value=None),
+        ):
+            first, second = (make_metadata(view) for view in ("first", "second"))
+            with (
+                patch.object(first, "_partition_cache_path", side_effect=align_lookup(first._partition_cache_path)),
+                patch.object(second, "_partition_cache_path", side_effect=align_lookup(second._partition_cache_path)),
+                patch.object(first, "_scan_rows", wraps=first._scan_rows) as first_scan,
+                patch.object(second, "_scan_rows", wraps=second._scan_rows) as second_scan,
+                ThreadPoolExecutor(max_workers=2) as pool,
+            ):
+                tasks = [pool.submit(view.compute_aspect_ratio_bucket_indices) for view in (first, second)]
+                for task in tasks:
+                    task.result(timeout=15)
+
+            self.assertEqual(first_scan.call_count + second_scan.call_count, 1)
+            self.assertEqual(first.read_page(limit=8), second.read_page(limit=8))
+            self.assertEqual(first.describe().view_revision, second.describe().view_revision)
 
     def test_parallel_cold_preparation_resumes_after_a_worker_failure(self):
         from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBackend

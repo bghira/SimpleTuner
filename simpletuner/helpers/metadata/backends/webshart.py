@@ -1038,38 +1038,44 @@ class WebshartMetadataBackend(MetadataBackend):
             partition, indices = job
             with closing(_read_index(exclusion_file)) if exclusion_file is not None else nullcontext() as exclusions:
                 cached = self._partition_cache_path(cache_root, indices, group_rules, exclusions)
-                if cached is not None and not refresh and cached.is_file():
-                    entry = json.loads(cached.read_text())
-                    snapshot = snapshot_path(cache_root / "geometry", entry["geometry"])
-                    for _ in indices:
-                        report()
-                    return snapshot, entry["filtering_statistics"]
+                lock = nullcontext()
+                if cached is not None:
+                    cache_root.mkdir(exist_ok=True)
+                    lock = FileLock(str(cached) + ".lock")
+                with lock:
+                    if stop is not None and stop.is_set():
+                        raise CancelledError()
+                    if cached is not None and not refresh and cached.is_file():
+                        entry = json.loads(cached.read_text())
+                        snapshot = snapshot_path(cache_root / "geometry", entry["geometry"])
+                        for _ in indices:
+                            report()
+                        return snapshot, entry["filtering_statistics"]
 
-                group_statistics = statistics if self.max_num_samples is not None else _empty_filtering_statistics()
-                with writer.stage_partition(partition) as (group_writer, staged):
-                    rows = self._scan_rows(
-                        (),
-                        group_statistics,
-                        require_captions,
-                        lambda *_: report(),
-                        recipe=recipe,
-                        shard_indices=indices,
-                        stop=stop,
-                    )
-                    self._write_native_geometry(group_writer, rows, exclusions)
-                if cached is None or group_statistics["skipped"]["error"]:
-                    return staged, group_statistics
+                    group_statistics = statistics if self.max_num_samples is not None else _empty_filtering_statistics()
+                    with writer.stage_partition(partition) as (group_writer, staged):
+                        rows = self._scan_rows(
+                            (),
+                            group_statistics,
+                            require_captions,
+                            lambda *_: report(),
+                            recipe=recipe,
+                            shard_indices=indices,
+                            stop=stop,
+                        )
+                        self._write_native_geometry(group_writer, rows, exclusions)
+                    if cached is None or group_statistics["skipped"]["error"]:
+                        return staged, group_statistics
 
-                cache_root.mkdir(exist_ok=True)
-                digest = group_writer.digest.hexdigest()
-                snapshot = snapshot_path(cache_root / "geometry", digest)
-                link_snapshot(staged, snapshot)
-                staged.unlink()
-                entry = {"geometry": digest, "filtering_statistics": group_statistics}
-                staged_entry = staged.with_suffix(".json")
-                staged_entry.write_text(json.dumps(entry))
-                os.replace(staged_entry, cached)
-                return snapshot, group_statistics
+                    digest = group_writer.digest.hexdigest()
+                    snapshot = snapshot_path(cache_root / "geometry", digest)
+                    link_snapshot(staged, snapshot)
+                    staged.unlink()
+                    entry = {"geometry": digest, "filtering_statistics": group_statistics}
+                    staged_entry = staged.with_suffix(".json")
+                    staged_entry.write_text(json.dumps(entry))
+                    os.replace(staged_entry, cached)
+                    return snapshot, group_statistics
 
         def adopt(partition, result):
             snapshot, group_statistics = result
