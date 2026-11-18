@@ -292,6 +292,51 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
         self.assertEqual(saved_embeddings["prompt_embeds"].shape, torch.Size([1, 2, 4]))
         self.assertEqual(cache.model.pack_input_dims, [4])
 
+    def test_ondemand_cache_miss_answers_on_the_device_a_hit_does(self):
+        cache = _make_cache(TextEmbedCacheKey.CAPTION, text_cache_ondemand=True)
+        cache.accelerator.device = torch.device("meta")
+
+        class EncodingModel(_DummyModel):
+            def encode_text_batch(self, prompts, is_negative_prompt=False, prompt_contexts=None):
+                return {"prompt_embeds": torch.ones(1, 2, 3)}
+
+            def unpack_text_embeddings_from_cache(self, embeddings):
+                return embeddings
+
+        cache.model = EncodingModel(TextEmbedCacheKey.CAPTION)
+        cache.save_to_cache = MagicMock()
+        cache.load_from_cache = MagicMock(
+            side_effect=[{"prompt_embeds": torch.zeros(1, 2, 3)}, FileNotFoundError("missing")]
+        )
+
+        hit, miss = (
+            cache.compute_prompt_embeddings_with_model(prompt_records=[{"prompt": prompt, "key": prompt, "metadata": {}}])
+            for prompt in ("cached prompt", "uncached prompt")
+        )
+
+        self.assertEqual(miss["prompt_embeds"].device, hit["prompt_embeds"].device)
+        self.assertEqual(torch.cat([hit["prompt_embeds"], miss["prompt_embeds"]]).sum().item(), 6)
+
+    def test_encoding_without_reading_the_cache_answers_on_the_training_device(self):
+        cache = _make_cache(TextEmbedCacheKey.CAPTION)
+        cache.accelerator.device = torch.device("meta")
+
+        class EncodingModel(_DummyModel):
+            def encode_text_batch(self, prompts, is_negative_prompt=False, prompt_contexts=None):
+                return {"prompt_embeds": torch.ones(1, 2, 3)}
+
+            def unpack_text_embeddings_from_cache(self, embeddings):
+                return embeddings
+
+        cache.model = EncodingModel(TextEmbedCacheKey.CAPTION)
+        cache.save_to_cache = MagicMock()
+
+        output = cache.compute_prompt_embeddings_with_model(
+            prompt_records=[{"prompt": "a prompt", "key": "a prompt", "metadata": {}}], load_from_cache=False
+        )
+
+        self.assertEqual(output["prompt_embeds"].device.type, "meta")
+
     def test_cache_miss_error_mentions_multi_caption_workaround(self):
         cache = _make_cache(TextEmbedCacheKey.CAPTION)
 

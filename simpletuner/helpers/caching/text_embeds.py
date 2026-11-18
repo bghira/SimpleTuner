@@ -810,9 +810,9 @@ class TextEmbeddingCache(WebhookMixin):
                         )
 
                     if return_concat:
-                        # we're returning the embeds for training, so we'll prepare them
+                        # A cache miss answers as a hit does, on the CPU: a batch can hold both.
                         text_encoder_output = move_dict_of_tensors_to_device(
-                            tensors=text_encoder_output, device=self.accelerator.device
+                            tensors=text_encoder_output, device="cpu" if load_from_cache else self.accelerator.device
                         )
                     else:
                         # if we're not returning them, we'll just nuke them
