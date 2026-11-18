@@ -3,8 +3,9 @@
 import unittest
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, Mock, patch
 
+from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.simpletuner_sdk.server.services.cache_job_service import (
     CacheJob,
     CacheJobService,
@@ -134,6 +135,20 @@ class TestCacheAcceleratorStub(unittest.TestCase):
         self.assertIs(stub.unwrap_model(obj), obj)
 
 
+def waiting_cache_worker(connection, cancelled, job, config, global_config, plan):
+    from simpletuner.helpers.training.state_tracker import StateTracker
+
+    StateTracker.set_args(global_config)
+    job.status = CacheJobStatus.RUNNING
+    job.stage = "waiting"
+    with connection:
+        connection.send(CacheJobService._job_to_dict(job))
+        if not cancelled.wait(30):
+            raise TimeoutError("Did not receive cancellation")
+        job.status = CacheJobStatus.CANCELLED
+        connection.send(CacheJobService._job_to_dict(job))
+
+
 class TestCacheJobManagement(unittest.TestCase):
     def setUp(self):
         self.service = CacheJobService(broadcast_fn=MagicMock())
@@ -143,6 +158,45 @@ class TestCacheJobManagement(unittest.TestCase):
 
     def test_get_active_status_when_idle(self):
         self.assertIsNone(self.service.get_active_status())
+
+    def test_spawned_worker_has_isolated_state_and_receives_cancellation(self):
+        import threading
+
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        ready = threading.Event()
+        before = StateTracker.get_args()
+        self.service._broadcast_fn = lambda data, event_type: ready.set() if data["stage"] == "waiting" else None
+        with (
+            patch("simpletuner.simpletuner_sdk.server.services.dataset_scan_service.get_scan_service") as scan,
+            patch.object(self.service, "_check_training_running", return_value=False),
+            patch(
+                "simpletuner.simpletuner_sdk.server.services.cache_job_service._execute_cache_process", waiting_cache_worker
+            ),
+        ):
+            scan.return_value.get_active_status.return_value = None
+            job = self.service.start_cache_job("images", "vae", {"id": "images"}, {"tenant": "worker"})
+            try:
+                self.assertTrue(ready.wait(30))
+                self.assertIs(StateTracker.get_args(), before)
+            finally:
+                self.service.cancel()
+                self.service._thread.join(30)
+            self.assertFalse(self.service._thread.is_alive())
+            self.assertIsNone(self.service.get_active_status())
+            self.assertEqual(self.service.get_job_status(job)["status"], "cancelled")
+
+    def test_spawned_worker_propagates_terminal_error(self):
+        with (
+            patch("simpletuner.simpletuner_sdk.server.services.dataset_scan_service.get_scan_service") as scan,
+            patch.object(self.service, "_check_training_running", return_value=False),
+        ):
+            scan.return_value.get_active_status.return_value = None
+            job = self.service.start_cache_job("images", "invalid", {"id": "images"}, {})
+            self.service._thread.join(30)
+            self.assertFalse(self.service._thread.is_alive())
+            self.assertIn("Unknown cache type", self.service.get_job_status(job)["error"])
+            self.assertEqual(self.service.get_job_status(job)["status"], "failed")
 
     def test_cancel_when_idle(self):
         self.assertFalse(self.service.cancel())
@@ -326,13 +380,51 @@ class TestStateTrackerSetup(unittest.TestCase):
             StateTracker.set_accelerator(original)
 
 
+class _LegacyPreparationMetadata(SimpleNamespace):
+    _open_accepted_groups = MetadataBackend._open_accepted_groups
+    open_preparation_view = MetadataBackend.open_preparation_view
+
+
 class TestStreamingTextPreparation(unittest.TestCase):
+
+    def test_artifact_store_is_independent_of_source(self):
+        from pathlib import Path
+
+        service = CacheJobService()
+        source = {"id": "source", "type": "webshart", "text_embeds": "embeddings"}
+        store = {"id": "embeddings", "type": "local", "dataset_type": "text_embeds"}
+        with TemporaryDirectory() as directory:
+            store["cache_dir"] = directory
+            args = _CacheArgsNamespace({})
+            accelerator = _CacheAcceleratorStub()
+            default = dict(store, id="default-store", default=True)
+            config, backend, prefix = service._text_embed_store(source, [source, default, store], {}, args, accelerator)
+            self.assertEqual((backend.type, backend.id, Path(prefix)), ("local", store["id"], Path(directory)))
+            aws = dict(
+                store,
+                type="aws",
+                aws_bucket_name="embeddings",
+                aws_data_prefix="cache/text",
+                aws_endpoint_url="https://storage.example",
+                aws_access_key_id="example",
+                aws_secret_access_key="example",
+            )
+            with patch("simpletuner.helpers.data_backend.builders.aws.S3DataBackend") as create:
+                config, backend, prefix = service._text_embed_store(source, [source, default, aws], {}, args, accelerator)
+            self.assertEqual(prefix, "cache/text")
+            self.assertIs(backend, create.return_value)
+            self.assertEqual(create.call_args.kwargs["bucket_name"], "embeddings")
+            with self.assertRaisesRegex(ValueError, "not found"):
+                service._text_embed_store(source, [source, default], {}, args, accelerator)
+            with self.assertRaisesRegex(ValueError, "writes disabled"):
+                service._text_embed_store(source, [source, dict(store, text_cache_disable=True)], {}, args, accelerator)
+
     def test_job_streams_accepted_samples_without_inventory_discovery(self):
         from simpletuner.helpers.models.common import TextEmbedCacheKey
         from simpletuner.helpers.training.state_tracker import StateTracker
 
         service = CacheJobService(broadcast_fn=MagicMock())
-        metadata = SimpleNamespace(
+        metadata = _LegacyPreparationMetadata(
             read_only=False,
             read_cache=lambda: {"1.0": ["accepted.jpg", "also-accepted.jpg"]},
             get_metadata_by_filepath=lambda ref: {},
@@ -361,6 +453,7 @@ class TestStreamingTextPreparation(unittest.TestCase):
             text_encoder_batch_size=1,
             encode_dropout_caption=MagicMock(),
             precompute_embeddings=consume,
+            close=MagicMock(),
         )
         job = CacheJob(job_id="stream-job", dataset_id="stream-test", cache_type="text_embeds")
         with TemporaryDirectory() as cache_dir:
@@ -378,15 +471,30 @@ class TestStreamingTextPreparation(unittest.TestCase):
                 service._execute_text_embed_cache(job, config, {"model_family": "test"})
         self.assertEqual([record["prompt"] for record in captured], ["accepted", "also-accepted"])
         self.assertEqual((job.current, job.total), (2, 2))
+        cache.close.assert_called_once_with()
 
     def test_standalone_preparation_rejects_rank_local_training_buckets(self):
-        records = CacheJobService._iter_prompt_records(None, {"id": "dataset"}, None, SimpleNamespace(read_only=True))
-        with self.assertRaisesRegex(ValueError, "unsplit dataset metadata"):
+        records = CacheJobService._iter_prompt_records(
+            None,
+            CacheJobService._text_dataset(
+                {"id": "dataset"},
+                None,
+                _LegacyPreparationMetadata(
+                    read_only=True,
+                    cache_file="missing.json",
+                    data_backend=Mock(open_read_stream=Mock(side_effect=FileNotFoundError)),
+                ),
+            ),
+        )
+        with self.assertRaisesRegex(ValueError, "publish accepted membership"):
             next(records)
 
     def test_standalone_preparation_requires_an_accepted_sample_view(self):
         records = CacheJobService._iter_prompt_records(
-            None, {"id": "dataset"}, None, SimpleNamespace(read_only=False, read_cache=lambda: {})
+            None,
+            CacheJobService._text_dataset(
+                {"id": "dataset"}, None, _LegacyPreparationMetadata(read_only=False, read_cache=lambda: {})
+            ),
         )
         with self.assertRaisesRegex(ValueError, "scan the dataset"):
             next(records)
