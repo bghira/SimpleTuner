@@ -16,7 +16,7 @@ from simpletuner.helpers.models.minimaxh3.transformer import MiniMaxH3Transforme
 from tests.test_minimaxh3 import tiny_h3_transformer
 
 
-def image_wrapper(vae_path=None):
+def image_wrapper(vae_path=None, **config_overrides):
     wrapper = MiniMaxH3.__new__(MiniMaxH3)
     wrapper.config = SimpleNamespace(
         model_flavour="h3_image",
@@ -29,6 +29,8 @@ def image_wrapper(vae_path=None):
         audio_flow_schedule_shift=None,
     )
     wrapper.accelerator = SimpleNamespace(device=torch.device("cpu"))
+    for key, value in config_overrides.items():
+        setattr(wrapper.config, key, value)
     wrapper.setup_model_flavour()
     return wrapper
 
@@ -124,8 +126,62 @@ class H3ImageTests(unittest.TestCase):
         self.assertEqual(len(scheduler.timesteps), 6)
         timesteps = torch.tensor([1 - sigma for sigma in MINIMAX_H3_IMAGE_SIGMAS[:-1]])
         torch.testing.assert_close(scheduler.sigmas, torch.cat([1 - timesteps, torch.zeros(1)]), rtol=0, atol=0)
-        with self.assertRaisesRegex(ValueError, "six"):
-            scheduler.set_timesteps(30)
+        self.assertEqual(scheduler.pdd_step_indices, list(range(6)))
+        for invalid in (0, 5, 6.5):
+            with self.subTest(steps=invalid), self.assertRaisesRegex(ValueError, "at least six"):
+                scheduler.set_timesteps(invalid)
+
+    def test_image_config_uses_six_steps_only_when_omitted(self):
+        from simpletuner.helpers.configuration.loader import load_config
+
+        with tempfile.TemporaryDirectory() as directory:
+            config = {
+                "model_family": "minimaxh3",
+                "model_flavour": "h3_image",
+                "model_type": "lora",
+                "optimizer": "adamw_bf16",
+                "output_dir": directory,
+                "data_backend_config": str(Path(directory) / "dataloader.json"),
+            }
+            default = load_config(config, exit_on_error=True)
+            self.assertEqual(default.validation_num_inference_steps, 6)
+            self.assertEqual(default.validation_guidance_real, 1.0)
+            explicit = load_config(
+                dict(config, validation_num_inference_steps=30, validation_guidance_real=4.0), exit_on_error=True
+            )
+            self.assertEqual(explicit.validation_num_inference_steps, 30)
+            self.assertEqual(explicit.validation_guidance_real, 4.0)
+            video = load_config(dict(config, model_flavour="fl2va"), exit_on_error=True)
+            self.assertEqual(video.validation_num_inference_steps, 30)
+
+    def test_image_validation_preserves_requested_steps_and_real_guidance(self):
+        wrapper = image_wrapper(validation_num_inference_steps=30, validation_guidance=1.0, validation_guidance_real=4.0)
+        self.assertEqual(wrapper.config.validation_num_inference_steps, 30)
+        self.assertEqual(wrapper.config.validation_guidance_real, 4.0)
+        self.assertTrue(wrapper.uses_validation_negative_prompt())
+        kwargs = wrapper.update_pipeline_call_kwargs({"num_inference_steps": 30, "guidance_scale": 1.0})
+        self.assertEqual(kwargs["num_inference_steps"], 30)
+        self.assertEqual(kwargs["guidance_scale"], 4.0)
+        self.assertEqual(kwargs["num_frames"], 1)
+        self.assertFalse(kwargs["use_cfg_zero_star"])
+        self.assertFalse(kwargs["use_zero_init"])
+
+    def test_image_scheduler_interpolates_longer_grid_and_resets(self):
+        from simpletuner.helpers.models.minimaxh3.image import MiniMaxH3ImageScheduler
+
+        scheduler = MiniMaxH3ImageScheduler()
+        scheduler.set_timesteps(30)
+        self.assertEqual(len(scheduler.timesteps), 30)
+        torch.testing.assert_close(scheduler.sigmas[::5], torch.tensor(MINIMAX_H3_IMAGE_SIGMAS), rtol=0, atol=0)
+        self.assertTrue(bool((scheduler.sigmas[:-1] > scheduler.sigmas[1:]).all()))
+        self.assertEqual(scheduler.pdd_step_indices, [0] * 3 + [1] * 5 + [2] * 5 + [3] * 5 + [4] * 5 + [5] * 7)
+        sample = torch.zeros(2)
+        for timestep in scheduler.timesteps:
+            sample = scheduler.step(torch.ones(2), timestep, sample).prev_sample
+        torch.testing.assert_close(sample, torch.ones(2))
+        scheduler.set_timesteps(6)
+        self.assertIsNone(scheduler.step_index)
+        self.assertEqual(scheduler.pdd_step_indices, list(range(6)))
 
     def test_image_blocks_generate_a_still_image_with_cached_text(self):
         from diffusers.video_processor import VideoProcessor
@@ -156,10 +212,15 @@ class H3ImageTests(unittest.TestCase):
             scheduler=MiniMaxH3ImageScheduler(),
             video_processor=VideoProcessor(do_resize=False, do_normalize=False, vae_scale_factor=2, vae_latent_channels=2),
         )
-        for images in (None, [Image.new("RGB", (32, 32)), Image.new("RGB", (64, 32))]):
-            with self.subTest(references=0 if images is None else len(images)):
-                with patch(
-                    "simpletuner.helpers.models.minimaxh3.image_blocks.resize_reference", side_effect=lambda image, *_: image
+        references = [Image.new("RGB", (32, 32)), Image.new("RGB", (64, 32))]
+        for images, steps, guidance in ((None, 6, 1.0), (references, 6, 1.0), (None, 30, 4.0), (references, 30, 4.0)):
+            with self.subTest(references=0 if images is None else len(images), steps=steps, guidance=guidance):
+                with (
+                    patch(
+                        "simpletuner.helpers.models.minimaxh3.image_blocks.resize_reference",
+                        side_effect=lambda image, *_: image,
+                    ),
+                    patch.object(model, "forward", wraps=model.forward) as forward,
                 ):
                     state = pipeline(
                         prompt_embeds=torch.randn(1, 2, 6),
@@ -167,11 +228,19 @@ class H3ImageTests(unittest.TestCase):
                         image=images,
                         height=32,
                         width=32,
-                        num_inference_steps=6,
+                        num_inference_steps=steps,
+                        guidance_scale=guidance,
+                        negative_prompt_embeds=torch.randn(1, 2, 6) if guidance > 1 else None,
+                        negative_text_token_tags=torch.ones(2, dtype=torch.long) if guidance > 1 else None,
                         output_type="pil",
                     )
                 self.assertIsInstance(state.get("videos")[0], Image.Image)
                 self.assertEqual(state.get("videos")[0].size, (32, 32))
+                heads = list(range(6)) if steps == 6 else [0] * 3 + [1] * 5 + [2] * 5 + [3] * 5 + [4] * 5 + [5] * 7
+                self.assertEqual(
+                    [call.kwargs["pdd_step_index"] for call in forward.call_args_list],
+                    [head for head in heads for _ in range(2 if guidance > 1 else 1)],
+                )
 
     def test_prompt_expander_option_is_parseable(self):
         from simpletuner.helpers.configuration.cmd_args import get_argument_parser

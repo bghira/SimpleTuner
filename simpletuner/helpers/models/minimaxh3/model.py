@@ -465,9 +465,11 @@ class MiniMaxH3(VideoModelFoundation):
             self.MODEL_LICENSE_LINK = f"https://huggingface.co/{MINIMAX_H3_IMAGE_REPO}/blob/main/LICENSE"
             self.config.validation_num_video_frames = 1
             self.config.minimax_h3_target_mode = "video"
-            self.config.validation_num_inference_steps = 6
+            if getattr(self.config, "validation_num_inference_steps", None) is None:
+                self.config.validation_num_inference_steps = 6
             self.config.validation_guidance = 1.0
-            self.config.validation_guidance_real = 1.0
+            if getattr(self.config, "validation_guidance_real", None) is None:
+                self.config.validation_guidance_real = 1.0
             self.config.aspect_bucket_alignment = 32
             self.config.vae_dtype = "fp32"
             if explicit_vae_path is None:
@@ -1321,7 +1323,10 @@ class MiniMaxH3(VideoModelFoundation):
 
     def update_pipeline_call_kwargs(self, pipeline_kwargs):
         if self._is_image_flavour():
-            pipeline_kwargs.update(num_frames=1, num_inference_steps=6, guidance_scale=1.0)
+            pipeline_kwargs["num_frames"] = 1
+            pipeline_kwargs.setdefault("num_inference_steps", self.config.validation_num_inference_steps)
+            pipeline_kwargs.setdefault("use_cfg_zero_star", False)
+            pipeline_kwargs.setdefault("use_zero_init", False)
         pipeline_kwargs.setdefault("minimax_h3_target_mode", self._h3_target_mode_for_validation())
         num_frames = getattr(self.config, "validation_num_video_frames", None)
         if num_frames:

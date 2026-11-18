@@ -689,7 +689,12 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     parser_error_traceback = None
     try:
         normalized_args = _normalize_input_args(input_args)
-        args = parser.parse_args(normalized_args)
+        args = parser.parse_args(normalized_args, namespace=argparse.Namespace(validation_num_inference_steps=None))
+        if args.validation_num_inference_steps is None:
+            if args.model_family == "minimaxh3" and args.model_flavour == "h3_image":
+                args.validation_num_inference_steps = 6
+            else:
+                args.validation_num_inference_steps = parser.get_default("validation_num_inference_steps")
     except Exception:  # pragma: no cover - parser handles errors consistently
         parser_error = sys.exc_info()[1]
         import traceback

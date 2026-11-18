@@ -69,6 +69,7 @@ def _denoiser_inputs() -> list[InputParam]:
             description="Target video latent width before transformer patchification.",
         ),
         InputParam.template("prompt_embeds"),
+        InputParam("pdd_step_indices", type_hint=list, description="Image PDD output head for each sampling step."),
         InputParam(
             name="negative_prompt_embeds",
             type_hint=torch.Tensor,
@@ -288,7 +289,8 @@ def _predict_velocity(
         "return_dict": False,
     }
     if getattr(getattr(transformer, "config", None), "num_pdd_heads", 0):
-        transformer_kwargs["pdd_step_index"] = i
+        pdd_step_indices = block_state.pdd_step_indices
+        transformer_kwargs["pdd_step_index"] = i if pdd_step_indices is None else pdd_step_indices[i]
     if video_hidden_shape is not None:
         transformer_kwargs["video_hidden_shape"] = video_hidden_shape
     return transformer(**transformer_kwargs)
@@ -404,11 +406,7 @@ class MiniMaxH3LoopDenoiser(ModularPipelineBlocks):
 
     @property
     def description(self) -> str:
-        return (
-            "Runs the one MiniMax-H3 forward pass of a denoising iteration, which predicts the velocity of every row "
-            "of the packed sequence at once. The checkpoint is guidance-distilled, so there is no unconditional pass "
-            "and no guider."
-        )
+        return "Predicts packed video/audio velocities and applies optional real CFG."
 
     @property
     def expected_components(self) -> list[ComponentSpec]:
