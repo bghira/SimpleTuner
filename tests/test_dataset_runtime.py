@@ -1,7 +1,12 @@
 import unittest
+from contextlib import closing
 from dataclasses import dataclass
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
+
+from PIL import Image
 
 from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
@@ -11,6 +16,40 @@ from simpletuner.helpers.training.state_tracker import StateTracker
 
 
 class DatasetRuntimeTests(unittest.TestCase):
+    def test_standalone_local_preparation_uses_its_bound_geometry_config(self):
+        from simpletuner.simpletuner_sdk.server.services.dataset_scan_service import _ScanArgsNamespace
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            image_dir = root / "images"
+            image_dir.mkdir()
+            Image.new("RGB", (96, 64)).save(image_dir / "sample.png")
+            args = _ScanArgsNamespace(
+                {"output_dir": str(root), "resolution": 64, "aspect_bucket_alignment": 8, "model_family": "sd1x"}
+            )
+            accelerator = SimpleNamespace(num_processes=1, process_index=0, is_main_process=True, is_local_main_process=True)
+            config = {
+                "id": "standalone",
+                "type": "local",
+                "instance_data_dir": str(image_dir),
+                "preserve_data_backend_cache": True,
+                "crop": True,
+                "crop_style": "center",
+                "crop_aspect": "square",
+                "resolution": 64,
+                "resolution_type": "pixel",
+            }
+            with (
+                patch.object(StateTracker, "get_args", return_value=args),
+                patch.object(StateTracker, "get_data_backend_config", side_effect=AssertionError("global dataset config")),
+                closing(DatasetRuntime.from_config(config, args, accelerator)) as dataset,
+            ):
+                dataset.prepare_view()
+                refs, total = dataset.read_page(limit=1)
+                self.assertEqual(total, 1)
+                (record,) = dataset.read_samples(refs)
+                self.assertEqual(tuple(record["target_size"]), (64, 64))
+
     def setUp(self):
         self.metadata = {
             "original_size": (512, 512),

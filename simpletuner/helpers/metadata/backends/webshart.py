@@ -778,7 +778,7 @@ class WebshartMetadataBackend(MetadataBackend):
     ) -> Optional[tuple[str, dict]]:
         if not sample_metadata or "original_size" not in sample_metadata:
             return None
-        config = recipe.config if recipe is not None else None
+        config = recipe.config if recipe is not None else self.active_dataset_config
         if not self.meets_resolution_requirements(image_metadata=sample_metadata, dataset_config=config):
             return None
         training_sample = TrainingSample(

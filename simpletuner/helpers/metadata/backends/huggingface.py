@@ -772,6 +772,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                     data_backend_id=self.id,
                     image_metadata=sample_metadata,
                     image_path=image_path_str,
+                    data_backend_config=self.active_dataset_config,
                 )
             elif dataset_type_value == "video":
                 if self.video_column not in item:
@@ -803,6 +804,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                     data_backend_id=self.id,
                     image_metadata=sample_metadata,
                     image_path=image_path_str,
+                    data_backend_config=self.active_dataset_config,
                 )
             else:
                 training_sample = None
