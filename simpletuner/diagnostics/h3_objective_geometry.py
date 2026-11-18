@@ -381,9 +381,9 @@ def _first_raw_batch():
     from simpletuner.helpers.training.state_tracker import StateTracker
 
     backends = {
-        backend_id: backend["train_dataloader"]
-        for backend_id, backend in StateTracker.get_data_backends().items()
-        if "train_dataloader" in backend and not StateTracker.backend_status(backend_id)
+        dataset_id: dataset.training_dataloader
+        for dataset_id, dataset in StateTracker.get_datasets("image", "video", "audio", "caption").items()
+        if dataset.training_dataloader is not None and not StateTracker.backend_status(dataset_id)
     }
     raw_batch = random_dataloader_iterator(1, backends)
     if raw_batch is False or not isinstance(raw_batch, dict):

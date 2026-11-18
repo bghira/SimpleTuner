@@ -1953,6 +1953,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
 
         mock_copy_metadata.assert_not_called()
 
+        source = {"id": "primary"}
+        factory.data_backends["primary"] = source
         factory._handle_bucket_operations(
             backend={
                 "id": "generated-conditioning",
@@ -1964,8 +1966,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
             conditioning_type=None,
         )
 
-        mock_state_tracker.get_data_backend.assert_called_once_with("primary")
-        mock_copy_metadata.assert_called_once()
+        mock_state_tracker.get_data_backend.assert_not_called()
+        mock_copy_metadata.assert_called_once_with(source_backend=source, target_backend=init_backend, generated=True)
 
     def test_image_embeds_backend_configuration(self):
         """Image embed configuration should not instantiate VAE cache directly."""

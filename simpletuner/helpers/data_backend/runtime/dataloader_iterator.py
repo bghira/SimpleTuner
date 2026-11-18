@@ -125,10 +125,7 @@ def get_backend_weight(backend_id: str, backend: Any, step: int, *, mixer=None) 
         else:
             dataset_length = StateTracker.get_dataset_size(backend_id)
             try:
-                total = sum(
-                    StateTracker.get_dataset_size(b)
-                    for b in StateTracker.get_data_backends(_types=["image", "video", "audio"])
-                )
+                total = sum(StateTracker.get_dataset_size(b) for b in StateTracker.get_datasets("image", "video", "audio"))
             except Exception:
                 total = 0
             length_factor = dataset_length / (total or dataset_length or 1)

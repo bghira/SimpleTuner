@@ -2650,18 +2650,7 @@ class FactoryRegistry:
 
     def _prevalidate_backend_ids(self, data_backend_config: List[Dict[str, Any]]) -> None:
         """Validate that data backends provide unique, non-empty identifiers before configuration."""
-        try:
-            existing_backends = StateTracker.get_data_backends(_types=["image", "video", "audio"])
-        except Exception:
-            existing_backends = {}
-
-        if isinstance(existing_backends, dict):
-            existing_ids = set(existing_backends.keys())
-        elif isinstance(existing_backends, (list, set, tuple)):
-            existing_ids = set(existing_backends)
-        else:
-            existing_ids = set()
-
+        existing_ids = set(StateTracker.get_datasets())
         seen_ids: set[str] = set()
 
         allowed_types = {
@@ -3104,7 +3093,7 @@ class FactoryRegistry:
         if has_metadata_clone_source:
             info_log(f"Duplicating metadata for generated dataset from {metadata_clone_source_id}")
             DatasetDuplicator.copy_metadata(
-                source_backend=StateTracker.get_data_backend(metadata_clone_source_id),
+                source_backend=self.data_backends[metadata_clone_source_id],
                 target_backend=init_backend,
                 generated=backend.get("auto_generated", False),
             )
@@ -3115,10 +3104,7 @@ class FactoryRegistry:
             target_dataset_id = backend.get("id")
             if source_dataset_id is None:
                 # other configuration style where the *source* dataset config has conditioning_data defined
-                for source_backend in self.data_backends:
-                    if isinstance(source_backend, str):
-                        # we have to retrieve the config from the state tracker
-                        source_backend = StateTracker.get_data_backend(source_backend)
+                for source_backend in self.data_backends.values():
                     logger.debug("Checking backend %s for strict conditioning source", source_backend.get("id"))
                     source_conditioning_data_config = source_backend.get("config", {}).get("conditioning_data", None)
                     if (
@@ -3136,7 +3122,7 @@ class FactoryRegistry:
                 )
             info_log(f"Duplicating metadata for {conditioning_type} conditioning dataset from {source_dataset_id}")
             DatasetDuplicator.copy_metadata(
-                source_backend=StateTracker.get_data_backend(source_dataset_id),
+                source_backend=self.data_backends[source_dataset_id],
                 target_backend=init_backend,
             )
             if skip_bucket_split:
@@ -4119,11 +4105,7 @@ class FactoryRegistry:
         """
         Configure a single data backend with all its components.
         """
-        if (
-            "id" not in backend
-            or backend["id"] == ""
-            or backend["id"] in StateTracker.get_data_backends(_types=["image", "video", "audio"])
-        ):
+        if not backend.get("id") or backend["id"] in StateTracker.get_datasets():
             raise ValueError("Each dataset needs a unique 'id' field.")
 
         info_log(f"Configuring {backend.get('type')} data backend {backend['id']}.")
@@ -4328,8 +4310,13 @@ class FactoryRegistry:
 
         self._configure_model_data_signals(data_backend_config)
 
+        training_types = {DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.AUDIO, DatasetType.CAPTION}
         result = {
-            "data_backends": StateTracker.get_data_backends(),
+            "data_backends": {
+                dataset_id: backend
+                for dataset_id, backend in {**self.data_backends, **self.caption_backends}.items()
+                if _backend_dataset_type(backend) in training_types
+            },
             "text_embed_backends": self.text_embed_backends,
             "image_embed_backends": self.image_embed_backends,
             "conditioning_image_embed_backends": self.conditioning_image_embed_backends,
