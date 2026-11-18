@@ -613,6 +613,36 @@ except ImportError:
 
 
 class TestTrainer(unittest.TestCase):
+    def test_main_rank_eval_forward_uses_the_local_ddp_module_and_restores_training_binding(self):
+        class FakeDDP:
+            module = object()
+
+        for success in (True, False):
+            with self.subTest(success=success):
+                wrapped = FakeDDP()
+                trainer = object.__new__(Trainer)
+                trainer.accelerator = SimpleNamespace(is_main_process=True)
+                trainer.model = SimpleNamespace(
+                    get_trained_component=Mock(return_value=wrapped),
+                    set_prepared_model=Mock(),
+                    loss=Mock(),
+                )
+                trainer._get_noise_schedule = Mock()
+
+                def evaluate(**kwargs):
+                    trainer.model.set_prepared_model.assert_called_once_with(wrapped.module)
+                    if not success:
+                        raise ValueError("evaluation interrupted")
+                    return {"loss": 1}
+
+                trainer.evaluation = SimpleNamespace(execute_eval=evaluate)
+                with patch.object(torch.nn.parallel, "DistributedDataParallel", FakeDDP):
+                    if success:
+                        self.assertEqual(trainer._execute_eval_loss(), {"loss": 1})
+                    else:
+                        with self.assertRaisesRegex(ValueError, "evaluation interrupted"):
+                            trainer._execute_eval_loss()
+                self.assertEqual(trainer.model.set_prepared_model.call_args_list, [call(wrapped.module), call(wrapped)])
 
     def setUp(self):
         registry = patch.object(StateTracker, "datasets", {})

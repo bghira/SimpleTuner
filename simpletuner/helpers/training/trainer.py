@@ -25,7 +25,7 @@ import time
 import uuid
 from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from enum import Enum
 from functools import partial
 from pathlib import Path
@@ -6891,6 +6891,22 @@ class Trainer:
     def _registered_training_datasets():
         return StateTracker.get_datasets(DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.AUDIO, DatasetType.CAPTION)
 
+    def _execute_eval_loss(self):
+        with ExitStack() as stack:
+            if self.accelerator.is_main_process:
+                model = self.model.get_trained_component(unwrap_model=False)
+                if isinstance(model, torch.nn.parallel.DistributedDataParallel):
+                    # Evaluation runs on the main process. Its forward must not broadcast DDP buffers.
+                    self.model.set_prepared_model(model.module)
+                    stack.callback(self.model.set_prepared_model, model)
+            return self.evaluation.execute_eval(
+                prepare_batch=self.prepare_batch,
+                model_predict=self.model_predict,
+                calculate_loss=self.model.loss,
+                get_prediction_target=self.get_prediction_target,
+                noise_scheduler=self._get_noise_schedule(),
+            )
+
     def train(self):
         self.init_trackers()
         self._train_initial_msg()
@@ -7584,13 +7600,7 @@ class Trainer:
                     # here we might run eval loss calculations.
                     if self.evaluation is not None and self.evaluation.would_evaluate(self.state):
                         self.mark_optimizer_eval()
-                        all_accumulated_losses = self.evaluation.execute_eval(
-                            prepare_batch=self.prepare_batch,
-                            model_predict=self.model_predict,
-                            calculate_loss=self.model.loss,
-                            get_prediction_target=self.get_prediction_target,
-                            noise_scheduler=self._get_noise_schedule(),
-                        )
+                        all_accumulated_losses = self._execute_eval_loss()
                         if all_accumulated_losses:
                             tracker_table = self.evaluation.generate_tracker_table(
                                 all_accumulated_losses=all_accumulated_losses
