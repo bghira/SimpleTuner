@@ -651,6 +651,56 @@ class TestShardMetadataKeptForTheWindow(unittest.TestCase):
         self.assertEqual(self.reads_on_a_second_pass(2)[0], 8)
 
 
+class TestCaptureCatalogueSharedThroughTheMetadataCache(unittest.TestCase):
+    """Processes sharing a metadata cache index a capture manifest once."""
+
+    def setUp(self):
+        temp = TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        self.source = self.root / "source"
+        self.source.mkdir()
+        write_parquet_source(self.source)
+        lines = [
+            json.dumps({"key": path.name, "size_bytes": path.stat().st_size, "num_rows": pq.read_metadata(path).num_rows})
+            for path in sorted(self.source.glob("*.parquet"))
+        ]
+        (self.source / "files.jsonl").write_text("\n".join(lines) + "\n")
+        (self.source / "dataset.json").write_text(
+            json.dumps({"format": "parquet-image-capture", "version": 2, "files_manifest": "files.jsonl"})
+        )
+
+    def open(self, cache):
+        return WebshartDataBackend(
+            None,
+            "ws",
+            str(self.source),
+            format="parquet",
+            manifest="dataset.json",
+            cache_dir=str(self.root / cache),
+            metadata_cache_dir=str(self.root / "metadata"),
+        )
+
+    def test_the_second_process_reads_the_catalogue_the_first_indexed(self):
+        import webshart.parquet
+
+        with patch.object(
+            webshart.parquet._Repository,
+            "iter_capture_records",
+            autospec=True,
+            side_effect=webshart.parquet._Repository.iter_capture_records,
+        ) as indexed:
+            first = self.open("rank-0")
+            second = self.open("rank-1")
+        self.assertEqual(indexed.call_count, 1)
+        self.assertEqual(len(list((self.root / "metadata").glob("capture-catalogue-*.sqlite3"))), 1)
+        self.assertEqual(second.dataset.num_shards, SHARDS)
+        self.assertEqual(
+            second.list_samples_in_shard(SHARDS - 1),
+            first.list_samples_in_shard(SHARDS - 1),
+        )
+
+
 class TestWindowFitsShardCache(unittest.TestCase):
     MIB = 2**20
     SIZES = [70 * MIB, 80 * MIB, 60 * MIB, 75 * MIB]

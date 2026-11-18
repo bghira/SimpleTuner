@@ -140,6 +140,7 @@ class WebshartDataBackend(BaseDataBackend):
                 "format": "parquet",
                 "manifest": self.manifest,
                 "metadata_cache_size": self._shard_metadata_cache_limit,
+                "catalogue_cache_dir": self.metadata_cache_dir,
             }
             discovery.update({("caption_column" if k == "captions" else f"{k}_column"): v for k, v in self.columns.items()})
             if self.source.startswith("s3://"):
