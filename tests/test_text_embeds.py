@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import torch
 
+from simpletuner.helpers.caching.artifact_listing import ArtifactListing
 from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.models.common import TextEmbedCacheKey
@@ -134,6 +135,50 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
             self.assertEqual(cache.precompute_embeddings(records(), batch_size=2, progress_callback=progress.append), 6)
         self.assertEqual(encoded, [["one"], ["two", "three"], ["four"]])
         self.assertEqual(progress[-1], 6)
+
+    def test_offline_index_reuses_listed_hits_and_probes_only_missing_keys(self):
+        cache = _make_cache(TextEmbedCacheKey.CAPTION)
+        cache.model.TEXT_ENCODER_CONFIGURATION = {"text_encoder": {}}
+        records = [{"prompt": prompt} for prompt in ("warm", "warm", "missing")]
+        warm, _, missing = [cache.hash_prompt_with_path(record) for record in records]
+        current = {warm}
+        cache.data_backend.iter_file_keys = MagicMock(side_effect=lambda *_: iter(sorted(current)))
+        cache.data_backend.exists = MagicMock(side_effect=lambda key: key in current)
+
+        def encode(records, **kwargs):
+            current.update(cache.hash_prompt_with_path(record) for record in records)
+
+        cache.compute_prompt_embeddings_with_model = MagicMock(side_effect=encode)
+        with TemporaryDirectory() as output_dir:
+            listing = ArtifactListing(
+                cache.data_backend, cache.cache_dir + "/", output_dir, SimpleNamespace(is_local_main_process=True)
+            )
+            cache.preparation_listing = listing
+            self.assertEqual(cache.precompute_embeddings(records, batch_size=3), 3)
+            self.assertEqual(current, {warm, missing})
+            cache.compute_prompt_embeddings_with_model.assert_called_once()
+            cache.data_backend.exists.assert_called_once_with(missing)
+            cache.data_backend.iter_file_keys.assert_called_once_with(["pt"], cache.cache_dir + "/")
+
+            cache.compute_prompt_embeddings_with_model.reset_mock()
+            cache.data_backend.exists.reset_mock()
+            self.assertEqual(cache.precompute_embeddings(records, batch_size=3), 3)
+            cache.data_backend.exists.assert_called_once_with(missing)
+            cache.compute_prompt_embeddings_with_model.assert_not_called()
+            cache.data_backend.iter_file_keys.assert_called_once()
+
+            cache.finish_preparation()
+            self.assertFalse(listing.path.exists())
+
+            current.remove(warm)
+            cache.preparation_listing = ArtifactListing(
+                cache.data_backend, cache.cache_dir + "/", output_dir, SimpleNamespace(is_local_main_process=True)
+            )
+            cache.data_backend.exists.reset_mock()
+            self.assertEqual(cache.precompute_embeddings(records, batch_size=3), 3)
+            cache.data_backend.exists.assert_called_once_with(warm)
+            cache.compute_prompt_embeddings_with_model.assert_called_once()
+            cache.close()
 
     def test_encode_only_skips_existing_artifacts_and_batches_duplicate_prompts(self):
         cache = _make_cache(TextEmbedCacheKey.CAPTION, text_cache_encode_only=True, text_encoder_batch_size=2)

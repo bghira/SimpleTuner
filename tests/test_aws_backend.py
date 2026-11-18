@@ -1,11 +1,14 @@
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import torch
 from botocore.exceptions import ClientError
 
+from simpletuner.helpers.caching.artifact_listing import ArtifactListing
 from simpletuner.helpers.data_backend.aws import S3DataBackend, normalise_s3_prefixes, test_s3_connection
 
 
@@ -30,6 +33,35 @@ class TestS3PrefixHandling(unittest.TestCase):
         self.assertEqual(backend.bulk_exists(["a/1001", "a/1001", "b/2", "a/2"], prefix="a/"), [True, True, False, False])
         self.assertEqual(sorted(call.args[0] for call in backend.exists.call_args_list), ["a/1001", "a/2"])
         backend.client.list_objects_v2.assert_not_called()
+
+    def test_shared_artifact_index_streams_one_bounded_listing(self):
+        backend = S3DataBackend.__new__(S3DataBackend)
+        backend.bucket_name = "cache"
+        backend.max_pool_connections = 2
+        backend.client = Mock()
+        backend.exists = Mock(return_value=False)
+        paginator = FakePaginator({"prefix/": ["prefix/a.pt", "prefix/readme", "prefix/b.pt"]})
+        backend.client.get_paginator.return_value = paginator
+
+        with (
+            TemporaryDirectory() as output_dir,
+            patch("simpletuner.helpers.caching.artifact_listing.broadcast_object_from_main", return_value="shared"),
+            ThreadPoolExecutor(max_workers=2) as pool,
+        ):
+            main = ArtifactListing(backend, "prefix/", output_dir, SimpleNamespace(is_local_main_process=True))
+            worker = ArtifactListing(backend, "prefix/", output_dir, SimpleNamespace(is_local_main_process=False))
+
+            def check(index):
+                with index.open() as probe:
+                    return probe(["prefix/b.pt", "prefix/b.pt", "prefix/a.pt", "prefix/absent.pt"])
+
+            self.assertEqual(list(pool.map(check, (main, worker))), [[True, True, True, False]] * 2)
+            self.assertEqual(paginator.calls, [{"Bucket": "cache", "Prefix": "prefix/", "MaxKeys": 1000}])
+            self.assertEqual([call.args for call in backend.exists.call_args_list], [("prefix/absent.pt",)] * 2)
+            worker.close()
+            self.assertTrue(main.path.is_file())
+            main.close()
+            self.assertFalse(main.path.exists())
 
     def test_read_cached_tensors_uses_get_for_hits_and_missing_objects(self):
         backend = S3DataBackend.__new__(S3DataBackend)

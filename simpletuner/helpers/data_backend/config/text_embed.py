@@ -16,6 +16,7 @@ class TextEmbedBackendConfig(BaseBackendConfig):
     text_cache_ondemand: bool = False
     text_cache_disable: bool = False
     text_cache_encode_only: bool = False
+    text_cache_use_listing: bool = False
 
     def __post_init__(self):
         self.dataset_type = DatasetType.TEXT_EMBEDS
@@ -31,6 +32,7 @@ class TextEmbedBackendConfig(BaseBackendConfig):
             caption_filter_list=backend_dict.get("caption_filter_list", []),
             text_cache_ondemand=bool(backend_dict.get("text_cache_ondemand", False)),
             text_cache_encode_only=bool(backend_dict.get("text_cache_encode_only", False)),
+            text_cache_use_listing=backend_dict.get("text_cache_use_listing", False),
             text_cache_disable=bool(backend_dict.get("text_cache_disable", False)),
         )
         if config.text_cache_encode_only:
@@ -84,6 +86,11 @@ class TextEmbedBackendConfig(BaseBackendConfig):
 
         validators.validate_dataset_type(self.dataset_type, [DatasetType.TEXT_EMBEDS], self.id)
 
+        if not isinstance(self.text_cache_use_listing, bool):
+            raise ValueError("text_cache_use_listing must be a boolean.")
+        if self.text_cache_use_listing and self.backend_type != "aws":
+            raise ValueError("text_cache_use_listing requires an AWS text embedding store.")
+
         validators.check_for_caption_filter_list_misuse(
             self.dataset_type, self.caption_filter_list is not None and len(self.caption_filter_list) > 0, self.id
         )
@@ -99,6 +106,8 @@ class TextEmbedBackendConfig(BaseBackendConfig):
             result["config"]["text_cache_encode_only"] = True
         if self.text_cache_disable:
             result["config"]["text_cache_disable"] = True
+        if self.text_cache_use_listing:
+            result["config"]["text_cache_use_listing"] = True
 
         for key, value in self.config.items():
             result["config"][key] = value

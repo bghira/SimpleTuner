@@ -722,6 +722,7 @@ class CacheJobService:
     def _execute_text_embed_cache(
         self, job: CacheJob, dataset_config: Dict[str, Any], global_config: Dict[str, Any], dataset_plan=None
     ):
+        from simpletuner.helpers.data_backend.factory import build_text_preparation_listing
         from simpletuner.helpers.training.state_tracker import StateTracker
 
         args = self._build_args(global_config)
@@ -772,6 +773,7 @@ class CacheJobService:
                 text_encoder_batch_size=int(store_config.get("text_encoder_batch_size", args.text_encoder_batch_size) or 1),
                 model=model,
                 caption_filter_list=store_config.get("caption_filter_list"),
+                preparation_listing=build_text_preparation_listing(store_config, store, cache_dir_text, args, accelerator),
             )
 
             self._check_cancelled(job)

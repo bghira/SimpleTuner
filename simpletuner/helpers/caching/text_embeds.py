@@ -5,7 +5,8 @@ import os
 import queue
 from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
-from itertools import batched
+from contextlib import nullcontext
+from itertools import batched, chain
 from queue import Queue
 from threading import Condition, Thread
 from typing import Any, Dict, List, Optional, Sequence, TypedDict
@@ -42,6 +43,7 @@ class PromptCacheRecord(TypedDict, total=False):
 class TextEmbeddingCache(WebhookMixin):
     _instances: "WeakSet[TextEmbeddingCache]" = WeakSet()
     text_cache_encode_only = False
+    preparation_listing = None
 
     def __init__(
         self,
@@ -65,6 +67,7 @@ class TextEmbeddingCache(WebhookMixin):
         write_budget_bytes: int = 256 * 1024**2,
         text_cache_encode_only: bool = False,
         caption_filter_list: list[str] | str | None = None,
+        preparation_listing=None,
     ):
         self.id = id
         if data_backend.id != id:
@@ -75,6 +78,7 @@ class TextEmbeddingCache(WebhookMixin):
         self.tokenizers = tokenizers
         self.accelerator = accelerator
         self.cache_dir = cache_dir
+        self.preparation_listing = preparation_listing
         self.model_type = model_type
         self.model = model
         self.caption_filters = PromptHandler.load_caption_filters(caption_filter_list)
@@ -592,12 +596,12 @@ class TextEmbeddingCache(WebhookMixin):
             by_filename = {key: move_dict_of_tensors_to_device(value, device) for key, value in by_filename.items()}
         return [by_filename[name] for name in filenames]
 
-    def _uncached_records(self, records, *, is_negative_prompt=False):
+    def _uncached_records(self, records, *, is_negative_prompt=False, probe=None):
         unique = {}
         for record in records:
             filename, _ = self._embedding_input(record, is_negative_prompt=is_negative_prompt)
             unique.setdefault(filename, record)
-        presence = self.data_backend.bulk_exists(unique)
+        presence = (self.data_backend.bulk_exists if probe is None else probe)(unique)
         for record, present in zip(unique.values(), presence, strict=True):
             if not present:
                 yield record
@@ -609,7 +613,7 @@ class TextEmbeddingCache(WebhookMixin):
         batch_size: int = 128,
         progress_callback: Callable[[int], None] | None = None,
     ) -> int:
-        """Consume an explicitly partitioned preparation stream without listing the cache."""
+        """Consume an explicitly partitioned preparation stream using the bound presence lookup."""
         if self.text_cache_encode_only:
             raise ValueError("Text embedding preparation requires a writable cache binding.")
         if self.model is None:
@@ -621,22 +625,28 @@ class TextEmbeddingCache(WebhookMixin):
         processed = 0
         if progress_callback is not None:
             progress_callback(processed)
-        for batch in batched(prompt_records, batch_size):
-            pending = []
-            for record in self._uncached_records(self._normalize_prompt_records(batch)):
-                if self.model.requires_text_embed_image_context() and not record.get("metadata"):
-                    raise ValueError("Text embedding preparation requires image-context metadata for every prompt.")
-                pending.append(record)
-            if pending:
-                self.compute_prompt_embeddings_with_model(
-                    pending,
-                    return_concat=False,
-                    load_from_cache=False,
-                    split_between_processes=False,
-                )
-            processed += len(batch)
-            if progress_callback is not None:
-                progress_callback(processed)
+        batches = batched(prompt_records, batch_size)
+        first = next(batches, None)
+        if first is None:
+            return 0
+        lookup = self.preparation_listing.open() if self.preparation_listing is not None else nullcontext()
+        with lookup as probe:
+            for batch in chain((first,), batches):
+                pending = []
+                for record in self._uncached_records(self._normalize_prompt_records(batch), probe=probe):
+                    if self.model.requires_text_embed_image_context() and not record.get("metadata"):
+                        raise ValueError("Text embedding preparation requires image-context metadata for every prompt.")
+                    pending.append(record)
+                if pending:
+                    self.compute_prompt_embeddings_with_model(
+                        pending,
+                        return_concat=False,
+                        load_from_cache=False,
+                        split_between_processes=False,
+                    )
+                processed += len(batch)
+                if progress_callback is not None:
+                    progress_callback(processed)
         self.wait_for_pending_writes()
         return processed
 
@@ -914,6 +924,11 @@ class TextEmbeddingCache(WebhookMixin):
 
         return text_encoder_output
 
+    def finish_preparation(self):
+        if self.preparation_listing is not None:
+            self.preparation_listing.close()
+            self.preparation_listing = None
+
     def close(self):
         """Drain a job-owned cache and release its writer and model references."""
         with self._writer_condition:
@@ -925,3 +940,4 @@ class TextEmbeddingCache(WebhookMixin):
         finally:
             if self.batch_write_thread is not None:
                 self.batch_write_thread.join()
+            self.finish_preparation()

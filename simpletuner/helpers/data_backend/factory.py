@@ -72,6 +72,7 @@ import torch
 from tqdm import tqdm
 
 # Note: load_audio is imported lazily where needed to avoid requiring torchaudio at import time
+from simpletuner.helpers.caching.artifact_listing import ArtifactListing
 from simpletuner.helpers.caching.distillation import DistillationArtifactCycle, DistillationCache
 from simpletuner.helpers.caching.image_embed import ImageEmbedCache
 from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
@@ -371,6 +372,8 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         output["config"]["text_cache_disable"] = text_cache_disable
         if encode_only:
             output["config"]["text_cache_encode_only"] = True
+        if backend.get("text_cache_use_listing") is True:
+            output["config"]["text_cache_use_listing"] = True
 
         return output
     elif dataset_type is DatasetType.IMAGE_EMBEDS:
@@ -1264,6 +1267,17 @@ def build_text_embed_store(backend, args, accelerator):
     elif kind == "aws":
         directory = getattr(config, "aws_data_prefix", None) or directory
     return store, directory
+
+
+def build_text_preparation_listing(config, store, directory, args, accelerator):
+    if not config.get("text_cache_use_listing", False):
+        return None
+    if not isinstance(directory, str) or not directory.rstrip("/"):
+        raise ValueError("text_cache_use_listing requires a dedicated non-empty S3 prefix.")
+    output_dir = _get_arg_value(args, "output_dir")
+    if output_dir is None:
+        raise ValueError("text_cache_use_listing requires an output directory for the scratch index.")
+    return ArtifactListing(store, directory.rstrip("/") + "/", output_dir, accelerator)
 
 
 class FactoryRegistry:
@@ -2366,6 +2380,11 @@ class FactoryRegistry:
                 text_cache_disable=text_cache_disable,
                 text_cache_encode_only=init_backend["config"].get("text_cache_encode_only", False),
                 caption_filter_list=init_backend["config"].get("caption_filter_list"),
+                preparation_listing=(
+                    None
+                    if text_cache_ondemand
+                    else build_text_preparation_listing(backend, store, text_cache_dir, self.args, self.accelerator)
+                ),
             )
             StateTracker.own_dataset_resource(init_backend["text_embed_cache"])
             logger.debug(f"rank {get_rank()} completed creation of TextEmbeddingCache")
@@ -4285,6 +4304,15 @@ class FactoryRegistry:
         self.configure_conditioning_image_embed_backends(data_backend_config)
         self.configure_distillation_cache_backends(data_backend_config)
         self.configure_data_backends(data_backend_config)
+        prepared_caches = [
+            entry["text_embed_cache"]
+            for entry in self.text_embed_backends.values()
+            if entry["config"].get("text_cache_use_listing") and not entry["config"].get("text_cache_ondemand")
+        ]
+        if prepared_caches:
+            self.accelerator.wait_for_everyone()
+            for cache in prepared_caches:
+                cache.finish_preparation()
         self._configure_grounding_image_embed_caches(data_backend_config)
 
         self._configure_model_data_signals(data_backend_config)
