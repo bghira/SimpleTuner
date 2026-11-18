@@ -607,6 +607,8 @@ class StateTracker:
 
     @classmethod
     def get_datasets(cls, *dataset_types) -> dict[str, "DatasetRuntime"]:
+        if not dataset_types:
+            return dict(cls.datasets)
         allowed = {ensure_dataset_type(value) for value in dataset_types}
         return {
             dataset_id: dataset

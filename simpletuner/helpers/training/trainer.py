@@ -2800,9 +2800,7 @@ class Trainer:
             logger.exception("Could not generate validation prompts")
             raise e
 
-        # We calculate the number of steps per epoch by dividing the number of images by the effective batch divisor.
-        # Gradient accumulation steps mean that we only update the model weights every /n/ steps.
-        collected_data_backend_keys = list(StateTracker.get_data_backends().keys())
+        collected_data_backend_keys = list(self._registered_training_datasets())
         if self.hub_manager is not None and self.accelerator.is_main_process:
             self.hub_manager.collected_data_backend_str = collected_data_backend_keys
             validation_prompt_metadata = self.validation_prompt_metadata if self.validation_prompt_metadata else {}
@@ -2934,16 +2932,16 @@ class Trainer:
                 components.append((f"cached_pipeline[{k}]", v))
         seen_caches: set[int] = set()
         try:
-            for backend_id, backend in StateTracker.get_data_backends().items():
-                cache = backend.get("text_embed_cache") if isinstance(backend, dict) else None
-                if cache is None:
+            for dataset_id, dataset in StateTracker.get_datasets().items():
+                cache = dataset.text_embed_cache
+                if cache is None or id(cache) in seen_caches:
                     continue
                 seen_caches.add(id(cache))
-                components.append((f"text_embed_cache[{backend_id}].pipeline", getattr(cache, "pipeline", None)))
+                components.append((f"text_embed_cache[{dataset_id}].pipeline", getattr(cache, "pipeline", None)))
                 encs = getattr(cache, "text_encoders", None)
                 if encs:
                     for idx, enc in enumerate(encs):
-                        components.append((f"text_embed_cache[{backend_id}].te{idx+1}", enc))
+                        components.append((f"text_embed_cache[{dataset_id}].te{idx+1}", enc))
         except Exception:
             pass
         try:
@@ -2989,8 +2987,8 @@ class Trainer:
             logger.debug("Failed to clear model pipeline caches.", exc_info=True)
 
         try:
-            for backend in StateTracker.get_data_backends().values():
-                cache = backend.get("text_embed_cache") if isinstance(backend, dict) else None
+            for dataset in StateTracker.get_datasets().values():
+                cache = dataset.text_embed_cache
                 if cache is None:
                     continue
                 if hasattr(cache, "pipeline"):
@@ -3022,8 +3020,8 @@ class Trainer:
         caches_seen: set[int] = set()
         caches_to_clear: list[object] = []
         try:
-            for backend in StateTracker.get_data_backends().values():
-                cache = backend.get("text_embed_cache") if isinstance(backend, dict) else None
+            for dataset in StateTracker.get_datasets().values():
+                cache = dataset.text_embed_cache
                 if cache is None:
                     continue
                 cache_id = id(cache)
@@ -4709,9 +4707,9 @@ class Trainer:
             return
         memory_before_unload = self.stats_memory_used()
         self.model.unload_vae()
-        for _, backend in StateTracker.get_data_backends().items():
-            if "vaecache" in backend:
-                backend["vaecache"].vae = None
+        for dataset in StateTracker.get_datasets().values():
+            if dataset.vae_cache is not None:
+                dataset.vae_cache.vae = None
         reclaim_memory()
         memory_after_unload = self.stats_memory_used()
         memory_saved = memory_after_unload - memory_before_unload
@@ -6110,20 +6108,10 @@ class Trainer:
         logger.info("Aborting training run.")
         if self.bf is not None:
             self.bf.stop_fetching()
-        # we should set should_abort = True on each data backend's vae cache, metadata, and text backend
-        for _, backend in StateTracker.get_data_backends().items():
-            if "vaecache" in backend:
-                logger.debug(f"Aborting VAE cache")
-                backend["vaecache"].should_abort = True
-            if "metadata_backend" in backend:
-                logger.debug(f"Aborting metadata backend")
-                backend["metadata_backend"].should_abort = True
-            if "text_backend" in backend:
-                logger.debug(f"Aborting text backend")
-                backend["text_backend"].should_abort = True
-            if "sampler" in backend:
-                logger.debug(f"Aborting sampler")
-                backend["sampler"].should_abort = True
+        for dataset in StateTracker.get_datasets().values():
+            for component in (dataset.vae_cache, dataset.metadata_backend, dataset.text_embed_cache, dataset.sampler):
+                if component is not None:
+                    component.should_abort = True
         self.should_abort = True
 
     def cleanup(self) -> None:

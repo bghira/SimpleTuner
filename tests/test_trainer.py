@@ -613,6 +613,25 @@ except ImportError:
 
 
 class TestTrainer(unittest.TestCase):
+    def test_abort_signals_bindings_on_registered_datasets(self):
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+
+        trainer = object.__new__(Trainer)
+        trainer.bf = Mock()
+        dataset = DatasetRuntime("references", None, SimpleNamespace(should_abort=False), {"dataset_type": "conditioning"})
+        dataset.vae_cache = SimpleNamespace(should_abort=False)
+        dataset.text_embed_cache = SimpleNamespace(should_abort=False)
+        with (
+            patch.object(StateTracker, "datasets", {dataset.id: dataset}),
+            patch.object(StateTracker, "get_data_backends", side_effect=AssertionError("bundle registry read")),
+        ):
+            trainer.abort()
+        trainer.bf.stop_fetching.assert_called_once()
+        self.assertTrue(trainer.should_abort)
+        self.assertTrue(dataset.metadata_backend.should_abort)
+        self.assertTrue(dataset.vae_cache.should_abort)
+        self.assertTrue(dataset.text_embed_cache.should_abort)
+
     def test_main_rank_eval_forward_uses_the_local_ddp_module_and_restores_training_binding(self):
         class FakeDDP:
             module = object()
