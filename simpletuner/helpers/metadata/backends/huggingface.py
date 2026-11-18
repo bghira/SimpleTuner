@@ -407,22 +407,20 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             return None
         return self._extract_caption_from_item(item)
 
+    def _limited_dataset_indices(self) -> range | list[int]:
+        indices = range(len(self.data_backend.dataset))
+        if self.max_num_samples is None or len(indices) <= self.max_num_samples:
+            return indices
+        refs = self._apply_max_num_samples_limit([f"{idx}.{self.file_extension}" for idx in indices])
+        return [int(ref.rsplit(".", 1)[0]) for ref in refs]
+
     def _discover_new_files(self, for_metadata: bool = False, ignore_existing_cache: bool = False):
         # for HF datasets, we process all items
         if hasattr(self.data_backend, "streaming") and self.data_backend.streaming:
             logger.warning("Cannot discover files in streaming mode")
             return []
 
-        total_items = len(self.data_backend.dataset)
-        is_composite = self.composite_config.get("enabled", False)
-        select_index = self.composite_config.get("select_index", None)
-        all_files = []
-        for idx in range(total_items):
-            virtual_path = f"{idx}.{self.file_extension}"
-            all_files.append(virtual_path)
-
-        # Apply max_num_samples limit deterministically after explicit dataset filters.
-        all_files = self._apply_max_num_samples_limit(all_files)
+        all_files = [f"{idx}.{self.file_extension}" for idx in self._limited_dataset_indices()]
 
         if ignore_existing_cache:
             logger.debug("Ignoring existing cache, returning all files")

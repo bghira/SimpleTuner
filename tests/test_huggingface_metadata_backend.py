@@ -1,3 +1,4 @@
+import contextlib
 import json
 import tempfile
 import threading
@@ -69,6 +70,42 @@ class HuggingfaceMetadataBackendTests(unittest.TestCase):
         self.assertEqual(backend.caption_cache_entry("1.jpg"), ["first", "second"])
         self.assertIsNone(backend.caption_cache_entry("2.jpg"))
         self.assertIsNone(backend.caption_cache_entry("3.jpg"))
+
+    def test_preparation_scan_uses_the_same_sample_cap_as_discovery(self):
+        rows = Dataset.from_dict({"width": [512] * 18, "height": [256] * 18})
+        prepared = SimpleNamespace(
+            aspect_ratio=2.0, target_size=(512, 256), crop_coordinates=(0, 0), intermediary_size=(512, 256)
+        )
+        accelerator = SimpleNamespace(main_process_first=contextlib.nullcontext, wait_for_everyone=lambda: None)
+        source = HuggingfaceDatasetsBackend(accelerator, "test-cap", "test")
+        source.dataset = rows
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch("simpletuner.helpers.metadata.backends.huggingface.TrainingSample") as sample,
+        ):
+            root = Path(directory)
+            sample.return_value.prepare.return_value = prepared
+            provider = HuggingfaceMetadataBackend(
+                id=source.id,
+                instance_data_dir=directory,
+                cache_file=str(root / "buckets"),
+                metadata_file=str(root / "geometry"),
+                data_backend=source,
+                accelerator=accelerator,
+                batch_size=1,
+                resolution=512,
+                resolution_type="pixel",
+                hf_config={"width_column": "width", "height_column": "height"},
+            )
+            self.assertEqual(provider._limited_dataset_indices(), range(18))
+            refs = [f"{index}.jpg" for index in range(18)]
+            provider.max_num_samples = 3
+            expected = provider._apply_max_num_samples_limit(refs)
+            self.assertEqual(provider._discover_new_files(ignore_existing_cache=True), expected)
+
+            provider.compute_aspect_ratio_bucket_indices(ignore_existing_cache=True)
+            self.assertEqual(provider.read_page(limit=10), (expected, 3))
+            self.assertEqual(set(provider.image_metadata), set(expected))
 
     def test_metadata_reload_keeps_existing_entries_visible_until_read_completes(self):
         read_started = threading.Event()
