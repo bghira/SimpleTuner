@@ -381,9 +381,59 @@ class TestStateTrackerSetup(unittest.TestCase):
 
 
 class _LegacyPreparationMetadata(SimpleNamespace):
+    close = MetadataBackend.close
     _open_accepted_groups = MetadataBackend._open_accepted_groups
     _preparation_ownership = MetadataBackend._preparation_ownership
     open_preparation_view = MetadataBackend.open_preparation_view
+
+
+class TestImageArtifactPreparation(unittest.TestCase):
+    def test_vae_and_conditioning_jobs_use_the_configured_artifact_store(self):
+        service = CacheJobService()
+        source = Mock(type="webshart")
+        store = Mock(type="aws")
+        global_config = {"model_family": "sdxl"}
+        for role, kind, cache_dir_key, implementation in (
+            ("image_embeds", "vae", "cache_dir_vae", "simpletuner.helpers.caching.vae.VAECache"),
+            (
+                "conditioning_image_embeds",
+                "conditioning",
+                "cache_dir_conditioning_image_embeds",
+                "simpletuner.helpers.caching.image_embed.ImageEmbedCache",
+            ),
+        ):
+            with self.subTest(role=role):
+                dataset = {"id": "source", "type": "webshart", role: "artifacts", cache_dir_key: "cache/images"}
+                entry = {
+                    "id": "artifacts",
+                    "type": "aws",
+                    "dataset_type": role,
+                    "aws_bucket_name": "artifacts",
+                    "aws_endpoint_url": "https://storage.example",
+                    "aws_access_key_id": "example",
+                    "aws_secret_access_key": "example",
+                }
+                config = Mock()
+                config.to_dict.return_value = {"config": dataset}
+                metadata = Mock()
+                job = CacheJob("job", "source", kind)
+                with (
+                    patch.object(service, "_load_model", return_value=Mock()),
+                    patch.object(
+                        service, "_create_data_backend_and_metadata", return_value=(config, source, metadata, "source")
+                    ),
+                    patch.object(service, "_prepare_image_artifacts"),
+                    patch("simpletuner.helpers.data_backend.builders.aws.S3DataBackend", return_value=store) as s3,
+                    patch(implementation) as cache,
+                ):
+                    service._run_cache_job(job, dataset, global_config, [dataset, entry])
+
+                self.assertEqual(job.status, CacheJobStatus.COMPLETED, job.error)
+                self.assertEqual(s3.call_args.kwargs["bucket_name"], "artifacts")
+                self.assertIs(cache.call_args.kwargs["image_data_backend"], source)
+                self.assertIs(cache.call_args.kwargs["cache_data_backend"], store)
+                self.assertEqual(cache.call_args.kwargs["cache_dir"], "cache/images")
+                metadata.close.assert_called_once_with()
 
 
 class TestStreamingTextPreparation(unittest.TestCase):

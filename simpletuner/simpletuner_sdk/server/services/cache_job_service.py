@@ -387,9 +387,9 @@ class CacheJobService:
             if job.cache_type == CacheType.TEXT_EMBEDS.value:
                 self._execute_text_embed_cache(job, dataset_config, global_config, dataset_plan)
             elif job.cache_type == CacheType.VAE.value:
-                self._execute_vae_cache(job, dataset_config, global_config)
+                self._execute_vae_cache(job, dataset_config, global_config, dataset_plan)
             elif job.cache_type == CacheType.CONDITIONING.value:
-                self._execute_conditioning_cache(job, dataset_config, global_config)
+                self._execute_conditioning_cache(job, dataset_config, global_config, dataset_plan)
             else:
                 raise ValueError(f"Unknown cache type: {job.cache_type}")
 
@@ -441,6 +441,8 @@ class CacheJobService:
         template: str,
         global_config: Dict[str, Any],
         dataset_config: Dict[str, Any],
+        *,
+        absolute=True,
     ) -> Optional[str]:
         if not template:
             return None
@@ -461,7 +463,7 @@ class CacheJobService:
                 "id": dataset_config.get("id", ""),
             },
         )
-        return os.path.abspath(resolved) if resolved else None
+        return (os.path.abspath(resolved) if absolute else resolved) if resolved else None
 
     def _create_data_backend_and_metadata(
         self,
@@ -600,7 +602,36 @@ class CacheJobService:
         if processed == 0:
             raise ValueError("No accepted samples found. Run a metadata scan before preparing this cache.")
 
-    def _execute_vae_cache(self, job: CacheJob, dataset_config: Dict[str, Any], global_config: Dict[str, Any]):
+    @staticmethod
+    def _image_artifact_store(dataset, plan, args, accelerator, source, role):
+        from simpletuner.helpers.data_backend.builders import create_backend_builder
+        from simpletuner.helpers.data_backend.config import create_backend_config
+
+        store_id = dataset.get(role)
+        if store_id is None:
+            return source, {}
+        entry = next(
+            (
+                item
+                for item in plan or ()
+                if item.get("id") == store_id
+                and item.get("dataset_type") == role
+                and not (item.get("disabled") or item.get("disable"))
+            ),
+            None,
+        )
+        if entry is None:
+            raise ValueError(f"Could not find {role} backend {store_id!r} in the standalone cache plan.")
+        config = create_backend_config(entry, vars(args))
+        config.validate(vars(args))
+        if config.backend_type not in {"local", "aws"}:
+            raise ValueError(f"Standalone {role} preparation requires a persistent Local or AWS store.")
+        store = create_backend_builder(config.backend_type, accelerator, args).build(config)
+        return store, entry
+
+    def _execute_vae_cache(
+        self, job: CacheJob, dataset_config: Dict[str, Any], global_config: Dict[str, Any], dataset_plan=None
+    ):
         from simpletuner.helpers.training.state_tracker import StateTracker
 
         args = self._build_args(global_config)
@@ -632,15 +663,19 @@ class CacheJobService:
             config, data_backend, metadata_backend, config_id = self._create_data_backend_and_metadata(
                 dataset_config, args, accelerator
             )
+            scope.callback(metadata_backend.close)
 
+            cache_store, _ = self._image_artifact_store(
+                dataset_config, dataset_plan, args, accelerator, data_backend, "image_embeds"
+            )
             cache_dir_vae = self._resolve_cache_dir(
                 dataset_config.get("cache_dir_vae") or self._resolve_global_key(global_config, "cache_dir_vae"),
                 global_config,
                 dataset_config,
+                absolute=cache_store.type != "aws",
             )
             if not cache_dir_vae:
                 raise ValueError("No VAE cache directory configured for this dataset")
-            os.makedirs(cache_dir_vae, exist_ok=True)
 
             from simpletuner.helpers.caching.vae import VAECache
 
@@ -654,7 +689,7 @@ class CacheJobService:
                 accelerator=accelerator,
                 metadata_backend=metadata_backend,
                 image_data_backend=data_backend,
-                cache_data_backend=data_backend,
+                cache_data_backend=cache_store,
                 instance_data_dir=dataset_config.get("instance_data_dir", ""),
                 cache_dir=cache_dir_vae,
                 vae_batch_size=int(global_config.get("vae_batch_size", 4) or 4),
@@ -755,6 +790,7 @@ class CacheJobService:
             config, data_backend, metadata_backend, _ = self._create_data_backend_and_metadata(
                 dataset_config, args, accelerator, preparation_only=True
             )
+            scope.callback(metadata_backend.close)
 
             store_config, store, cache_dir_text = self._text_embed_store(
                 dataset_config, dataset_plan, global_config, args, accelerator
@@ -804,6 +840,7 @@ class CacheJobService:
                     _, ref_backend, ref_metadata, _ = self._create_data_backend_and_metadata(
                         ref_config, args, accelerator, preparation_only=True
                     )
+                    scope.callback(ref_metadata.close)
                     runtime = self._text_dataset(ref_config, ref_backend, ref_metadata, args)
                     StateTracker.register_dataset(runtime)
                     entry = StateTracker.get_data_backend(ref_id)
@@ -854,7 +891,9 @@ class CacheJobService:
                 del text_cache, model
                 self._cleanup_gpu()
 
-    def _execute_conditioning_cache(self, job: CacheJob, dataset_config: Dict[str, Any], global_config: Dict[str, Any]):
+    def _execute_conditioning_cache(
+        self, job: CacheJob, dataset_config: Dict[str, Any], global_config: Dict[str, Any], dataset_plan=None
+    ):
         from simpletuner.helpers.training.state_tracker import StateTracker
 
         args = self._build_args(global_config)
@@ -890,16 +929,24 @@ class CacheJobService:
             config, data_backend, metadata_backend, config_id = self._create_data_backend_and_metadata(
                 dataset_config, args, accelerator
             )
+            scope.callback(metadata_backend.close)
 
+            cache_store, store_config = self._image_artifact_store(
+                dataset_config, dataset_plan, args, accelerator, data_backend, "conditioning_image_embeds"
+            )
+            store_directory = store_config.get("cache_dir")
+            if store_directory == dataset_config.get("cache_dir_vae"):
+                store_directory = None
             cache_dir = self._resolve_cache_dir(
                 dataset_config.get("cache_dir_conditioning_image_embeds")
+                or store_directory
                 or self._resolve_global_key(global_config, "cache_dir_conditioning_image_embeds"),
                 global_config,
                 dataset_config,
+                absolute=cache_store.type != "aws",
             )
             if not cache_dir:
                 raise ValueError("No conditioning cache directory configured")
-            os.makedirs(cache_dir, exist_ok=True)
 
             from simpletuner.helpers.caching.image_embed import ImageEmbedCache
 
@@ -912,7 +959,7 @@ class CacheJobService:
                 accelerator=accelerator,
                 metadata_backend=metadata_backend,
                 image_data_backend=data_backend,
-                cache_data_backend=data_backend,
+                cache_data_backend=cache_store,
                 instance_data_dir=dataset_config.get("instance_data_dir", ""),
                 cache_dir=cache_dir,
                 write_batch_size=int(global_config.get("write_batch_size", 64) or 64),
