@@ -22,7 +22,13 @@ from PIL import Image
 from pydantic import BaseModel, Field
 
 from simpletuner.helpers.metadata.backends.webshart_exclusions import read_exclusion_page
-from simpletuner.helpers.metadata.backends.webshart_geometry import accepted_ref_lookup, geometry_lookup, read_snapshot
+from simpletuner.helpers.metadata.backends.webshart_geometry import (
+    _read_index,
+    accepted_ref_lookup,
+    geometry_lookup,
+    prepared_geometry_path,
+    read_snapshot,
+)
 from simpletuner.helpers.metadata.backends.webshart_membership import MembershipPages
 from simpletuner.helpers.metadata.preparation import read_bucket_groups, read_bucket_page
 
@@ -611,10 +617,7 @@ class DatasetViewerService:
             files=files, total=total, limit=limit, offset=offset, bucket_key=bucket_key, view_revision=revision
         )
 
-    def get_file_metadata(
-        self, dataset_config: Dict[str, Any], file_path: str, *, view_revision: Optional[str] = None
-    ) -> Optional[FileMetadata]:
-        """Read per-file metadata from the metadata cache."""
+    def _webshart_view(self, dataset_config, view_revision):
         indices = self._find_cache_file(dataset_config, "indices") if dataset_config.get("type") == "webshart" else None
         index = None
         if indices is not None:
@@ -623,7 +626,19 @@ class DatasetViewerService:
         current_revision = index.header["view_revision"] if index is not None else None
         if view_revision is not None and current_revision != view_revision:
             raise DatasetViewChanged("The prepared dataset changed. Reopen its bucket to inspect the current view.")
+        return indices, index
+
+    def get_file_metadata(
+        self, dataset_config: Dict[str, Any], file_path: str, *, view_revision: Optional[str] = None
+    ) -> Optional[FileMetadata]:
+        """Read per-file metadata from the metadata cache."""
+        indices, index = self._webshart_view(dataset_config, view_revision)
+        current_revision = index.header["view_revision"] if index is not None else None
         if index is not None and index.header.get("geometry_format") == "sqlite-v1":
+            if index.header.get("source_pins"):
+                with accepted_ref_lookup(indices, index) as contains:
+                    if not contains(file_path):
+                        return None
             name = index.header["geometry_name"]
             if Path(name).name != name:
                 raise ValueError("Invalid Webshart geometry filename.")
@@ -664,7 +679,7 @@ class DatasetViewerService:
             view_revision=current_revision,
             extra=extra,
         )
-        result.caption = self._get_file_caption(dataset_config, file_path)
+        result.caption = self._get_file_caption(dataset_config, file_path, view_revision=current_revision)
         return result
 
     def update_crop_coordinates(
@@ -873,7 +888,9 @@ class DatasetViewerService:
         except OSError as e:
             return {"deleted": False, "cache_path": cache_path, "error": str(e)}
 
-    def _get_file_caption(self, dataset_config: Dict[str, Any], file_path: str) -> Optional[str]:
+    def _get_file_caption(
+        self, dataset_config: Dict[str, Any], file_path: str, *, view_revision: Optional[str] = None
+    ) -> Optional[str]:
         """Resolve the caption for a file based on the dataset's caption strategy."""
         strategy = dataset_config.get("caption_strategy", "filename")
         instance_prompt = dataset_config.get("instance_prompt", "")
@@ -886,6 +903,20 @@ class DatasetViewerService:
 
         if strategy == "textfile":
             return self._read_textfile_caption(dataset_config, file_path)
+
+        if strategy == "webshart":
+            from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+            from simpletuner.helpers.prompts import CaptionNotFoundError, PromptHandler
+
+            with self._open_view_data_backend(dataset_config, view_revision) as pinned:
+                backend = pinned if pinned is not None else self._get_or_create_data_backend(dataset_config)
+                settings = {**dataset_config, **DatasetRuntime.caption_config(dataset_config)}
+                dataset = DatasetRuntime(dataset_config["id"], backend, None, settings)
+                try:
+                    caption = dataset.resolve_caption(file_path, caption_lookup=backend.get_caption)
+                except CaptionNotFoundError:
+                    return None
+                return "\n".join(PromptHandler._normalize_caption_payload(caption)) or None
 
         # For parquet/huggingface/csv, try the textfile sidecar as a best-effort fallback
         caption = self._read_textfile_caption(dataset_config, file_path)
@@ -937,9 +968,10 @@ class DatasetViewerService:
 
         return None
 
-    def _get_thumbnail_cache_path(self, dataset_id: str, file_path: str) -> Path:
+    def _get_thumbnail_cache_path(self, dataset_id: str, file_path: str, view_revision: Optional[str] = None) -> Path:
         """Get the local cache path for a thumbnail."""
-        path_hash = hashlib.md5(file_path.encode()).hexdigest()
+        cache_key = file_path if view_revision is None else f"{view_revision}:{file_path}"
+        path_hash = hashlib.md5(cache_key.encode()).hexdigest()
         cache_dir = self.project_root / self.THUMBNAIL_CACHE_DIR / dataset_id
         return cache_dir / f"{path_hash}.jpg"
 
@@ -978,6 +1010,12 @@ class DatasetViewerService:
         if dataset_id in _data_backend_cache:
             return _data_backend_cache[dataset_id]
 
+        data_backend = self._create_data_backend(dataset_config)
+        _data_backend_cache[dataset_id] = data_backend
+        return data_backend
+
+    @staticmethod
+    def _create_data_backend(dataset_config):
         from simpletuner.helpers.data_backend.builders import create_backend_builder
         from simpletuner.helpers.data_backend.config import create_backend_config
         from simpletuner.simpletuner_sdk.server.services.dataset_scan_service import _ScanAcceleratorStub, _ScanArgsNamespace
@@ -989,10 +1027,28 @@ class DatasetViewerService:
         config = create_backend_config(dataset_config, args_dict)
 
         builder = create_backend_builder(config.backend_type, accelerator, scan_args)
-        data_backend = builder.build(config)
+        return builder.build(config)
 
-        _data_backend_cache[dataset_id] = data_backend
-        return data_backend
+    @contextmanager
+    def _open_view_data_backend(self, dataset_config, view_revision):
+        if view_revision is None:
+            yield None
+            return
+        indices, index = self._webshart_view(dataset_config, view_revision)
+        if not index.header.get("source_pins"):
+            yield None
+            return
+        backend = self._create_data_backend(dataset_config)
+        if backend.dataset.fingerprint != index.header["source_revision"]:
+            raise DatasetViewChanged("The source catalogue changed. Prepare the dataset again to browse the new source.")
+        geometry_path = prepared_geometry_path(indices, index.header)
+        with closing(_read_index(geometry_path)) as db:
+            lookup = geometry_lookup(indices, index.header, db)
+            backend.dataset.bind_source_revisions(lookup.shard_revision)
+            try:
+                yield backend
+            finally:
+                backend.dataset.bind_source_revisions(None)
 
     def _read_remote_thumbnail(
         self,
@@ -1031,7 +1087,9 @@ class DatasetViewerService:
 
         return generate_thumbnail_from_pil(pil_image, max_size)
 
-    def _load_pil_image(self, dataset_config: Dict[str, Any], file_path: str) -> Optional[Image.Image]:
+    def _load_pil_image(
+        self, dataset_config: Dict[str, Any], file_path: str, *, view_revision: Optional[str] = None
+    ) -> Optional[Image.Image]:
         """Load the full PIL Image for a file, local or remote.
 
         For video files, extracts the first frame via trainingsample's VideoCapture.
@@ -1054,9 +1112,21 @@ class DatasetViewerService:
                 logger.warning("Failed to open %s: %s", resolved, e)
                 return None
 
+        if view_revision is not None:
+            try:
+                with self._open_view_data_backend(dataset_config, view_revision) as pinned:
+                    if pinned is not None:
+                        _, images = pinned.read_image_batch([file_path])
+                        return self._ensure_pil_image(images[0]) if images else None
+            except DatasetViewChanged:
+                raise
+            except (ValueError, OSError) as exc:
+                logger.warning("Failed to load the pinned image %s: %s", file_path, exc)
+                return None
+
         # Remote: try thumbnail disk cache first for speed, then fetch full image
         dataset_id = dataset_config.get("id", "")
-        cached_path = self._get_thumbnail_cache_path(dataset_id, file_path)
+        cached_path = self._get_thumbnail_cache_path(dataset_id, file_path, view_revision)
         if cached_path.is_file():
             try:
                 with Image.open(cached_path) as img:
@@ -1071,6 +1141,8 @@ class DatasetViewerService:
             if pil_image is not None:
                 self._save_thumbnail_to_cache(cached_path, pil_image)
             return pil_image
+        except DatasetViewChanged:
+            raise
         except Exception as e:
             logger.warning("Failed to load remote image %s: %s", file_path, e)
             return None
@@ -1081,6 +1153,8 @@ class DatasetViewerService:
         file_path: str,
         metadata: Optional[Dict[str, Any]] = None,
         max_size: int = 1024,
+        *,
+        view_revision: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Get preview images for the detail modal.
 
@@ -1093,7 +1167,9 @@ class DatasetViewerService:
         Uses the trainingsample Rust library for resize (matching the training
         pipeline) and numpy slicing for the crop (matching cropping.py).
         """
-        img = self._load_pil_image(dataset_config, file_path)
+        if view_revision is None and metadata is not None:
+            view_revision = metadata.get("view_revision")
+        img = self._load_pil_image(dataset_config, file_path, view_revision=view_revision)
         if img is None:
             return None
 
@@ -1159,6 +1235,11 @@ class DatasetViewerService:
             dataset_config, bucket_key=bucket_key, limit=limit, offset=offset, view_revision=view_revision
         )
 
+        if file_page.view_revision and file_page.files:
+            with self._open_view_data_backend(dataset_config, file_page.view_revision) as pinned:
+                if pinned is not None:
+                    return self._prepared_thumbnails(dataset_config, pinned, file_page, max_size)
+
         thumbnails: List[ViewerThumbnailInfo] = []
         for file_path in file_page.files:
             display_name = self._get_display_name(dataset_config, file_path)
@@ -1201,6 +1282,33 @@ class DatasetViewerService:
                     )
                 )
 
+        return thumbnails
+
+    def _prepared_thumbnails(self, dataset_config, backend, page, max_size):
+        dataset_id = dataset_config["id"]
+        cached = {ref: self._get_thumbnail_cache_path(dataset_id, ref, page.view_revision) for ref in page.files}
+        missing = [ref for ref, path in cached.items() if not path.is_file()]
+        loaded = {}
+        if missing:
+            refs, images = backend.read_image_batch(missing)
+            loaded.update(zip(refs, images, strict=True))
+        thumbnails = []
+        for ref in page.files:
+            path = cached[ref]
+            image = self._ensure_pil_image(loaded.get(ref))
+            if image is not None:
+                self._save_thumbnail_to_cache(path, image, self.MAX_THUMBNAIL_SIZE)
+                thumbnail = generate_thumbnail_from_pil(image, max_size)
+            else:
+                thumbnail = generate_thumbnail(path, max_size) if path.is_file() else None
+            thumbnails.append(
+                ViewerThumbnailInfo(
+                    path=ref,
+                    filename=self._get_display_name(dataset_config, ref),
+                    thumbnail=thumbnail,
+                    error=None if thumbnail else "Failed to load remote image",
+                )
+            )
         return thumbnails
 
     # --- Stage 3: Caption Validation ---

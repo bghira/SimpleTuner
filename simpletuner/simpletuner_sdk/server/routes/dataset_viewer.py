@@ -184,11 +184,10 @@ async def get_viewer_preview(
     # Load metadata so the preview can simulate the crop pipeline
     try:
         meta = service.get_file_metadata(config, file_path, view_revision=view_revision)
+        meta_dict = meta.model_dump() if meta else None
+        result = service.get_image_preview(config, file_path, metadata=meta_dict, view_revision=view_revision)
     except DatasetViewChanged as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    meta_dict = meta.model_dump() if meta else None
-
-    result = service.get_image_preview(config, file_path, metadata=meta_dict)
     if result is None:
         raise HTTPException(status_code=404, detail="Image not available")
     return result

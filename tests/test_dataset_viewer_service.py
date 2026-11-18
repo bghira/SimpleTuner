@@ -22,6 +22,78 @@ from simpletuner.simpletuner_sdk.server.services.dataset_viewer_service import (
 
 
 class TestWebshartMembershipPages(unittest.TestCase):
+    def test_native_caption_and_preview_are_read_with_prepared_source_pins(self):
+        from simpletuner.helpers.metadata.backends.webshart_geometry import snapshot_path, stage_geometry
+        from simpletuner.helpers.metadata.backends.webshart_membership import publish_indexed_membership
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = {
+                "id": "images",
+                "type": "webshart",
+                "caption_strategy": "webshart",
+                "webshart": {"source": "s3://example", "cache_dir": directory, "format": "parquet"},
+            }
+            metadata = root / "geometry.json"
+            ref = "webshart://0/0/data/0000.jpg"
+            with stage_geometry(metadata) as (writer, staging):
+                writer.pin_shard(0, "pinned-object")
+                writer.add("square", ref, {"original_size": [32, 32]}, shard=0)
+                writer.finish()
+                writer.db.commit()
+                revision = writer.digest.hexdigest()
+                staging.replace(snapshot_path(metadata, revision))
+            publication = root / "aspect_ratio_bucket_indices_source_0123456789abcdef_images.json"
+            publish_indexed_membership(
+                publication,
+                {
+                    "view_revision": revision,
+                    "source_revision": "catalogue",
+                    "source_pins": True,
+                    "geometry_name": metadata.name,
+                    "geometry_sha256": revision,
+                    "geometry_format": "sqlite-v1",
+                    "bucket_counts": {"square": 1},
+                    "config": config,
+                },
+            )
+
+            service = DatasetViewerService(project_root=root)
+            backend = MagicMock()
+            backend.dataset.fingerprint = "catalogue"
+            pins = []
+            backend.dataset.bind_source_revisions.side_effect = pins.append
+
+            def caption(path):
+                self.assertEqual(path, ref)
+                self.assertEqual(pins[-1](0), "pinned-object")
+                return ["first", "alternate"]
+
+            def image(paths):
+                self.assertEqual(paths, [ref])
+                self.assertEqual(pins[-1](0), "pinned-object")
+                return [ref], [Image.new("RGB", (32, 32), "red")]
+
+            backend.get_caption.side_effect = caption
+            backend.read_image_batch.side_effect = image
+            with patch.object(service, "_create_data_backend", return_value=backend):
+                entry = service.get_file_metadata(config, ref, view_revision=revision)
+                self.assertEqual(entry.caption, "first\nalternate")
+                self.assertIsNone(pins[-1])
+                self.assertIsNotNone(service.get_image_preview(config, ref, metadata=entry.model_dump()))
+                self.assertIsNone(pins[-1])
+                thumbnails = service.get_dataset_thumbnails(config, view_revision=revision)
+                self.assertIsNotNone(thumbnails[0].thumbnail)
+                self.assertIsNone(pins[-1])
+                self.assertTrue(service._get_thumbnail_cache_path("images", ref, revision).exists())
+                self.assertFalse(service._get_thumbnail_cache_path("images", ref).exists())
+                self.assertEqual(backend.read_image_batch.call_count, 2)
+                service.get_dataset_thumbnails(config, view_revision=revision)
+                self.assertEqual(backend.read_image_batch.call_count, 2)
+                backend.dataset.fingerprint = "new-catalogue"
+                with self.assertRaisesRegex(DatasetViewChanged, "catalogue changed"):
+                    service.get_file_metadata(config, ref, view_revision=revision)
+
     def test_published_pages_are_bounded_and_survive_replacement(self):
         from simpletuner.helpers.metadata.backends.webshart_membership import MembershipPages, write_membership
 
