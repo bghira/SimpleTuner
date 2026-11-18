@@ -236,9 +236,9 @@ class TestWindowedDatasetConfiguration(unittest.TestCase):
                     shards.add(int(path.split("/")[2]))
                     self.assertIn(caption, [caption for _, _, caption in USABLE] + [f"extra {n}" for n in range(SHARDS)])
             trained.append(shards)
-            # Nothing describing the whole dataset exists, in memory or on disk.
+            # Nothing describing the whole dataset exists, in memory or on disk; only the measured figure.
             self.assertEqual(report["buckets"], {})
-            self.assertEqual(report["json_files"], [])
+            self.assertEqual(report["json_files"], ["samples_per_unit.json"])
             self.assertEqual(report["open_after_the_epoch"], [])
             self.assertEqual(report["epoch_after"], 2)
         self.assertEqual(sorted(len(shards) for shards in trained), [2, 3])
@@ -428,10 +428,12 @@ class TestShuffleWindowOption(unittest.TestCase):
 class TestRuntimeWithAWindow(unittest.TestCase):
     """What configure_cursor does with the dataset's unit interface."""
 
-    def runtime(self, pools_per_unit, units=4, dp=(1, 0), repeats=0):
+    def runtime(self, pools_per_unit, units=4, dp=(1, 0), repeats=0, recorded=None, main=True):
         self.calls = []
         metadata = MagicMock()
         metadata.unit_count.return_value = units
+        metadata.recorded_samples_per_unit.return_value = recorded
+        metadata.record_samples_per_unit.side_effect = lambda value: self.calls.append(("record", value))
         metadata.check_window.side_effect = lambda window, ranks: self.calls.append(("check", sorted(window), ranks))
 
         def open_unit(unit, epoch):
@@ -451,9 +453,13 @@ class TestRuntimeWithAWindow(unittest.TestCase):
                 return_value={"repeats": repeats},
             ),
             patch("simpletuner.helpers.data_backend.dataset_runtime.get_cp_aware_dp_info", return_value=(*dp, 1)),
+            patch(
+                "simpletuner.helpers.data_backend.dataset_runtime.broadcast_object_from_main",
+                side_effect=lambda value: value if main else 5.0,
+            ),
         ):
             runtime.configure_cursor(
-                accelerator=SimpleNamespace(is_main_process=True), batch_size=2, shared_by_all_ranks=False
+                accelerator=SimpleNamespace(is_main_process=main), batch_size=2, shared_by_all_ranks=False
             )
         return runtime
 
@@ -461,7 +467,25 @@ class TestRuntimeWithAWindow(unittest.TestCase):
         runtime = self.runtime({"64x64": 2}, dp=(2, 1))
         window = sorted(runtime.cursor().units_in_window())
         self.assertEqual(self.calls[0], ("check", window, 2))
-        self.assertEqual(sorted(self.calls[1:]), [("open", unit, 1) for unit in window])
+        self.assertEqual(sorted(self.calls[1:-1]), [("open", unit, 1) for unit in window])
+
+    def test_the_first_measure_of_samples_per_unit_is_recorded(self):
+        cursor = self.runtime({"64x64": 4, "96x64": 2}).cursor()
+        self.assertEqual(self.calls[-1], ("record", 6.0))
+        self.assertEqual(cursor.samples_per_unit, 6.0)
+
+    def test_a_recorded_measure_is_used_and_nothing_is_opened_for_it(self):
+        cursor = self.runtime({"64x64": 4}, recorded=7.5).cursor()
+        self.assertEqual(cursor.samples_per_unit, 7.5)
+        self.assertEqual([call[0] for call in self.calls], ["check"])
+        self.assertEqual(len(cursor), 15)  # 4 shards x 7.5 samples / 2
+        cursor.next_batch()
+        self.assertEqual([call[0] for call in self.calls], ["check", "open", "open"])
+
+    def test_other_ranks_take_the_measure_of_the_main_process(self):
+        cursor = self.runtime({"64x64": 4}, dp=(2, 1), main=False).cursor()
+        self.assertEqual(cursor.samples_per_unit, 5.0)
+        self.assertEqual([call[0] for call in self.calls], ["check"])
 
     def test_the_cursor_reads_the_dataset_through_its_units_with_the_dataset_repeats(self):
         cursor = self.runtime({"64x64": 4, "96x64": 2}, repeats=1).cursor()
@@ -477,9 +501,10 @@ class TestRuntimeWithAWindow(unittest.TestCase):
         self.assertIs(runtime.cursor(), cursor)
         self.assertEqual(cursor.progress()[0], 2)
 
-    def test_a_first_window_without_usable_samples_is_refused(self):
+    def test_a_first_window_without_usable_samples_is_refused_and_not_recorded(self):
         with self.assertRaisesRegex(ValueError, r"\(id=train\) The first 2 shard\(s\) opened hold no usable sample"):
             self.runtime({})
+        self.assertNotIn("record", [call[0] for call in self.calls])
 
     def test_a_dataset_with_fewer_shards_than_ranks_is_refused(self):
         with self.assertRaisesRegex(ValueError, "fewer than the 8 ranks"):

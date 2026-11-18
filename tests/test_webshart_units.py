@@ -397,6 +397,10 @@ class UnitTests(WebshartSource):
         with patch.object(StateTracker, "get_model", return_value=SimpleNamespace(MAXIMUM_CANVAS_SIZE=4096)):
             self.assertNotEqual(directory_with(), directory)
 
+        first.record_samples_per_unit(4.5)
+        self.assertEqual(self.windowed().recorded_samples_per_unit(), 4.5)
+        self.assertIsNone(self.windowed(minimum_aspect_ratio=0.9).recorded_samples_per_unit())
+
         other_settings = self.metadata_backend(first.data_backend, "other", minimum_aspect_ratio=0.9)
         with patch.object(other_settings, "_decide_samples", wraps=other_settings._decide_samples) as decide:
             self.opened(other_settings, 0)
@@ -545,6 +549,14 @@ class TestUnitDecisions(unittest.TestCase):
         for unit in (999, 1000, 471954):
             self.store.write(unit, 1, {})
         self.assertEqual(self.files(), ["0/999.sqlite", "1/1000.sqlite", "471/471954.sqlite"])
+
+    def test_the_measure_of_samples_per_unit_is_kept_beside_the_units(self):
+        self.assertIsNone(self.store.read_samples_per_unit())
+        self.store.write_samples_per_unit(812.25)
+        self.assertEqual(UnitDecisions(self.directory).read_samples_per_unit(), 812.25)
+        self.store.write_samples_per_unit(3.0)
+        self.assertEqual(self.store.read_samples_per_unit(), 3.0)
+        self.assertEqual(self.files(), ["samples_per_unit.json"])
 
     def test_a_write_that_fails_leaves_what_was_recorded(self):
         self.store.write(12, 1, self.DECISIONS)

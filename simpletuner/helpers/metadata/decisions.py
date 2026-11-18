@@ -1,5 +1,6 @@
 """What was decided for each sample of one unit of a dataset: its size and where it is cropped."""
 
+import json
 import os
 import sqlite3
 import tempfile
@@ -43,6 +44,23 @@ class UnitDecisions:
                 **{key: None if pair == (None, None) else pair for key, pair in zip(_PAIRS, pairs)},
             }
         return epoch, decisions
+
+    def read_samples_per_unit(self) -> float | None:
+        """How many samples a unit kept on average, as measured when the first units were decided."""
+        path = self.directory / "samples_per_unit.json"
+        return json.loads(path.read_text())["samples_per_unit"] if path.exists() else None
+
+    def write_samples_per_unit(self, value: float) -> None:
+        self.directory.mkdir(parents=True, exist_ok=True)
+        path = self.directory / "samples_per_unit.json"
+        handle, temporary = tempfile.mkstemp(dir=self.directory, prefix=f".{path.name}.", suffix=".tmp")
+        try:
+            with os.fdopen(handle, "w") as file:
+                json.dump({"samples_per_unit": value}, file)
+            os.replace(temporary, path)
+        except BaseException:
+            Path(temporary).unlink(missing_ok=True)
+            raise
 
     def write(self, unit: int, epoch: int, decisions: dict[int, dict]) -> None:
         """Replace what is recorded for a unit."""

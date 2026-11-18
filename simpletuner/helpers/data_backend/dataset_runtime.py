@@ -96,7 +96,7 @@ class DatasetRuntime:
         # The ranks have to plan the same number of steps for an epoch, so one of them measures
         # its first window and tells the others.
         cursor.samples_per_unit = broadcast_object_from_main(
-            cursor.measure_samples_per_unit() if accelerator.is_main_process else None
+            self._samples_per_unit(cursor) if accelerator.is_main_process else None
         )
         if not cursor.samples_per_unit:
             raise ValueError(
@@ -104,6 +104,19 @@ class DatasetRuntime:
                 " Check minimum_image_size, the aspect ratio limits and the caption settings against what the dataset holds."
             )
         return cursor
+
+    def _samples_per_unit(self, cursor: WindowedCursor) -> float:
+        """
+        Measured once and kept with the dataset's decisions. A resumed run opens nothing before its
+        saved position is loaded, and plans the epochs the run it continues planned.
+        """
+        recorded = self.metadata_backend.recorded_samples_per_unit()
+        if recorded is not None:
+            return recorded
+        measured = cursor.measure_samples_per_unit()
+        if measured:
+            self.metadata_backend.record_samples_per_unit(measured)
+        return measured
 
     def cursor(self) -> DatasetCursor | WindowedCursor:
         """This rank's traversal of the dataset, built from the bucket lists on first use."""

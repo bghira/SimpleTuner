@@ -226,6 +226,12 @@ class WebshartMetadataBackend(MetadataBackend):
         self._open_units[unit] = list(samples)
         return pools
 
+    def recorded_samples_per_unit(self) -> float | None:
+        return self._unit_decisions().read_samples_per_unit()
+
+    def record_samples_per_unit(self, value: float) -> None:
+        self._unit_decisions().write_samples_per_unit(value)
+
     def _decide_samples(self, unit: int) -> dict[str, dict]:
         skipped = dict.fromkeys(("metadata_missing", "caption_missing", "too_small", "aspect_ratio", "error"), 0)
         samples = {}
