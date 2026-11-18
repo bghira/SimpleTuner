@@ -186,7 +186,7 @@ class TestVaeCacheTraversal(unittest.TestCase):
         source = Mock()
         store = Mock()
         store.type = "aws"
-        metadata = SimpleNamespace(data_backend=source, save_cache=Mock())
+        metadata = SimpleNamespace(data_backend=source, save_cache=Mock(), runtime_args=SimpleNamespace(model_type="lora"))
         metadata.is_cache_inconsistent = lambda *args: MetadataBackend.is_cache_inconsistent(metadata, *args)
         cache = VAECache.__new__(VAECache)
         cache.cache_data_backend = store
@@ -195,11 +195,7 @@ class TestVaeCacheTraversal(unittest.TestCase):
         self.assertEqual(cache._image_filename_from_vaecache_filename("vae/known.pt"), "images/sample.jpg")
         invalid = torch.tensor([float("nan")])
         cache.scan_cache_contents = lambda: iter([("vae/unknown.pt", invalid), ("vae/known.pt", invalid)])
-        with patch(
-            "simpletuner.helpers.metadata.backends.base.StateTracker.get_args",
-            return_value=SimpleNamespace(model_type="lora"),
-        ):
-            MetadataBackend.handle_vae_cache_inconsistencies(metadata, cache, "recreate")
+        MetadataBackend.handle_vae_cache_inconsistencies(metadata, cache, "recreate")
         store.delete.assert_called_once_with("vae/known.pt")
         source.delete.assert_not_called()
 
