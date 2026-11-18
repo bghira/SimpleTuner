@@ -132,10 +132,7 @@ class BatchedTrainingSamples:
 
                 for filepath, image, metadata in group_data:
                     if isinstance(image, Image.Image):
-                        image = np.array(image)
-                        if image.ndim != 3 or image.shape[2] != 3:
-                            logger.warning(f"Skipping image {filepath} with unexpected shape: {image.shape}")
-                            continue
+                        image = np.array(image if image.mode == "RGB" else image.convert("RGB"))
                     if isinstance(image, np.ndarray):
                         batch_images.append(image)
                         batch_filepaths.append(filepath)

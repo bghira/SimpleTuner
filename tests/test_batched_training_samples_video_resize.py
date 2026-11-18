@@ -2,11 +2,27 @@ import unittest
 from unittest.mock import patch
 
 import numpy as np
+from PIL import Image
 
 from simpletuner.helpers.image_manipulation.batched_training_samples import BatchedTrainingSamples
 
 
 class BatchedTrainingSamplesVideoResizeTests(unittest.TestCase):
+    def test_grouped_image_preparation_keeps_grayscale_and_cmyk_payloads(self):
+        images = [
+            Image.new("L", (6, 8), 37),
+            Image.new("LA", (6, 8), (10, 20)),
+            Image.new("CMYK", (6, 8), (10, 20, 30, 40)),
+        ]
+        geometry = {"target_size": (6, 8)}
+        grouped = {"0.75": [(str(index), image, geometry) for index, image in enumerate(images)]}
+
+        results = BatchedTrainingSamples().process_aspect_grouped_images(grouped)
+
+        self.assertEqual([ref for ref, _, _ in results], ["0", "1", "2"])
+        for image, (_, pixels, _) in zip(images, results, strict=True):
+            np.testing.assert_array_equal(pixels, np.asarray(image.convert("RGB")))
+
     def test_grouped_processing_preserves_image_pixels_and_resizes_video(self):
         batches = BatchedTrainingSamples()
         pixels = np.random.default_rng(42).integers(0, 256, (8, 6, 3), dtype=np.uint8)
