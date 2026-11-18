@@ -3373,7 +3373,7 @@ class FactoryRegistry:
             conditioning_type=conditioning_type,
             is_regularisation_data=is_regularisation_data,
             source_dataset_id=init_backend["config"].get("source_dataset_id", None),
-            track_consumed=getattr(self.args, "dataloader_prefetch", False),
+            track_consumed=True,
         )
         init_backend["dataset_runtime"].sampler = init_backend["sampler"]
         init_backend["dataset_runtime"].training_dataset = init_backend["train_dataset"]
@@ -3427,13 +3427,14 @@ class FactoryRegistry:
             repeats=repeats,
             shuffle=shuffle,
             seed=seed,
-            track_consumed=getattr(self.args, "dataloader_prefetch", False),
+            track_consumed=True,
         )
         init_backend["train_dataloader"] = torch.utils.data.DataLoader(
             init_backend["train_dataset"],
             batch_size=1,
             shuffle=False,
             sampler=init_backend["sampler"],
+            generator=torch.Generator().manual_seed(int(seed or 0)),
             collate_fn=collate_caption_batch,
             num_workers=0,
             persistent_workers=False,

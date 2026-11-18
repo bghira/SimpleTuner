@@ -184,14 +184,16 @@ class CaptionSamplerCheckpointTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "invalid epoch or cursor"):
                 sampler.load_states(state_path)
 
-    def test_caption_loader_tracks_consumed_progress_when_prefetch_is_enabled(self):
-        factory = FactoryRegistry.__new__(FactoryRegistry)
-        factory.args = SimpleNamespace(dataloader_prefetch=True, train_batch_size=2, seed=42)
-        factory.accelerator = self.accelerator
-        bundle = {"id": "caption", "config": {"train_batch_size": 2}, "metadata_backend": self.metadata}
-        factory._create_caption_dataloader({"shuffle": False}, bundle)
-        self.assertTrue(bundle["sampler"].tracks_consumed_batches)
-        self.assertEqual(next(iter(bundle["train_dataloader"]))["metadata_ids"], ["meta-0", "meta-1"])
+    def test_caption_loader_tracks_consumed_progress_independent_of_prefetch(self):
+        for prefetch in (False, True):
+            with self.subTest(prefetch=prefetch):
+                factory = FactoryRegistry.__new__(FactoryRegistry)
+                factory.args = SimpleNamespace(dataloader_prefetch=prefetch, train_batch_size=2, seed=42)
+                factory.accelerator = self.accelerator
+                bundle = {"id": "caption", "config": {"train_batch_size": 2}, "metadata_backend": self.metadata}
+                factory._create_caption_dataloader({"shuffle": False}, bundle)
+                self.assertTrue(bundle["sampler"].tracks_consumed_batches)
+                self.assertEqual(next(iter(bundle["train_dataloader"]))["metadata_ids"], ["meta-0", "meta-1"])
 
     def test_prefetched_caption_checkpoint_resumes_at_the_consumed_frontier(self):
         def runtime():
