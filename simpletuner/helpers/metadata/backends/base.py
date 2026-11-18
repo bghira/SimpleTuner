@@ -217,6 +217,27 @@ class MetadataBackend:
         self._bound_config = config
         self.dataset_config = config
 
+    @contextmanager
+    def edit_persisted_membership(self):
+        """Temporarily open the complete legacy membership for a cache update."""
+        if not self.read_only:
+            yield
+            return
+        if not self.data_backend.exists(self.cache_file):
+            raise FileNotFoundError(f"Cannot update missing dataset membership: {self.cache_file}")
+        rank_buckets = self._aspect_ratio_bucket_indices
+        rank_statistics = self.filtering_statistics
+        try:
+            self._aspect_ratio_bucket_indices = {}
+            self.filtering_statistics = None
+            self.read_only = False
+            self.reload_cache(set_config=False)
+            yield
+        finally:
+            self._aspect_ratio_bucket_indices = rank_buckets
+            self.filtering_statistics = rank_statistics
+            self.read_only = True
+
     def _apply_max_num_samples_limit(self, file_list: list) -> list:
         """
         Apply a deterministic limit to the file list if max_num_samples is set.

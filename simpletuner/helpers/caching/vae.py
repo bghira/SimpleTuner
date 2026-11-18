@@ -7,7 +7,6 @@ import threading
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import nullcontext
-from copy import deepcopy
 from hashlib import sha256
 from io import BytesIO
 from itertools import batched
@@ -469,32 +468,25 @@ class VAECache(WebhookMixin):
             return True
 
         metadata_backend = self.metadata_backend
-        original_read_only = getattr(metadata_backend, "read_only", False)
-        original_bucket_indices = deepcopy(getattr(metadata_backend, "aspect_ratio_bucket_indices", {}))
-        original_filtering_statistics = deepcopy(getattr(metadata_backend, "filtering_statistics", None))
-
         try:
-            if original_read_only:
-                metadata_backend.read_only = False
-                metadata_backend.reload_cache(set_config=False)
+            with metadata_backend.edit_persisted_membership():
+                removed_count = 0
+                for action in actions:
+                    filepath = action["filepath"]
+                    bucket = action.get("bucket")
+                    reason = action.get("reason", "other")
+                    if self._remove_image_from_metadata_backend(metadata_backend, filepath, bucket):
+                        removed_count += 1
+                        self._record_filter_stat(
+                            reason=reason,
+                            bucket=bucket,
+                            filepath=filepath,
+                            metadata_backend=metadata_backend,
+                            update_bucket_report=False,
+                        )
 
-            removed_count = 0
-            for action in actions:
-                filepath = action["filepath"]
-                bucket = action.get("bucket")
-                reason = action.get("reason", "other")
-                if self._remove_image_from_metadata_backend(metadata_backend, filepath, bucket):
-                    removed_count += 1
-                    self._record_filter_stat(
-                        reason=reason,
-                        bucket=bucket,
-                        filepath=filepath,
-                        metadata_backend=metadata_backend,
-                        update_bucket_report=False,
-                    )
-
-            if removed_count > 0 or any(action.get("delete_from_backend") for action in actions):
-                metadata_backend.save_cache(enforce_constraints=False)
+                if removed_count > 0 or any(action.get("delete_from_backend") for action in actions):
+                    metadata_backend.save_cache(enforce_constraints=False)
             return True
         except Exception as exc:
             logger.error(
@@ -503,11 +495,6 @@ class VAECache(WebhookMixin):
                 exc,
             )
             return False
-        finally:
-            if original_read_only:
-                metadata_backend.aspect_ratio_bucket_indices = original_bucket_indices
-                metadata_backend.filtering_statistics = original_filtering_statistics
-                metadata_backend.read_only = original_read_only
 
     def _finalize_deferred_metadata_filters(self) -> None:
         actions = getattr(self, "_deferred_metadata_filter_actions", [])

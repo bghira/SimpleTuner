@@ -1,5 +1,6 @@
 import threading
 import unittest
+from unittest.mock import Mock
 
 import numpy as np
 from PIL import Image
@@ -13,6 +14,7 @@ from simpletuner.helpers.image_manipulation.nsfw_classifier import (
     parse_nsfw_model_specs,
     score_sum,
 )
+from simpletuner.helpers.metadata.backends.base import MetadataBackend
 
 
 class FakeClassifierStore:
@@ -71,8 +73,9 @@ class FakeAccelerator:
         self.waits += 1
 
 
-class FakeMetadataBackend:
+class FakeMetadataBackend(MetadataBackend):
     def __init__(self):
+        self.read_only = False
         self.filtering_statistics = None
         self.bucket_report = None
         self.removed = []
@@ -85,8 +88,12 @@ class FakeMetadataBackend:
         self.saved = True
 
 
-class FakeReadOnlyMetadataBackend:
+class FakeReadOnlyMetadataBackend(MetadataBackend):
     def __init__(self, split_cache, unsplit_cache):
+        self.id = "nsfw-fixture"
+        self.cache_file = "membership.json"
+        self.data_backend = Mock()
+        self.data_backend.exists.return_value = True
         self.aspect_ratio_bucket_indices = {key: list(value) for key, value in split_cache.items()}
         self.unsplit_cache = {key: list(value) for key, value in unsplit_cache.items()}
         self.saved_cache = None
@@ -247,6 +254,7 @@ class VaeNsfwFilterTest(unittest.TestCase):
             split_cache={"1.0": [bad]},
             unsplit_cache={"1.0": ["good.png", bad], "2.0": ["other.png"]},
         )
+        split_cache = vae.metadata_backend.aspect_ratio_bucket_indices
         vae._queue_metadata_filter_action(
             filepath=bad,
             bucket="1.0",
@@ -256,10 +264,26 @@ class VaeNsfwFilterTest(unittest.TestCase):
 
         vae._finalize_deferred_metadata_filters()
 
-        self.assertEqual(vae.metadata_backend.aspect_ratio_bucket_indices, {"1.0": [bad]})
+        self.assertIs(vae.metadata_backend.aspect_ratio_bucket_indices, split_cache)
+        self.assertEqual(split_cache, {"1.0": [bad]})
         self.assertEqual(vae.metadata_backend.saved_cache, {"1.0": ["good.png"], "2.0": ["other.png"]})
         self.assertEqual(vae.image_data_backend.deleted, [bad])
         self.assertEqual(vae._nsfw_scan_report["deleted_images"], 1)
+
+    def test_missing_unsplit_membership_prevents_source_deletion(self):
+        bad = "bad.png"
+        vae = make_vae_for_nsfw_filter({}, rejected_paths=set(), delete_nsfw_images=True)
+        backend = FakeReadOnlyMetadataBackend(split_cache={"1.0": [bad]}, unsplit_cache={})
+        backend.data_backend.exists.return_value = False
+        vae.metadata_backend = backend
+        vae._queue_metadata_filter_action(filepath=bad, bucket="1.0", reason="nsfw", delete_from_backend=True)
+
+        vae._finalize_deferred_metadata_filters()
+
+        self.assertEqual(backend.aspect_ratio_bucket_indices, {"1.0": [bad]})
+        self.assertTrue(backend.read_only)
+        self.assertIsNone(backend.saved_cache)
+        self.assertEqual(vae.image_data_backend.deleted, [])
 
     def test_eval_dataset_type_is_not_scanned_even_when_sample_types_all(self):
         vae = VAECache.__new__(VAECache)
