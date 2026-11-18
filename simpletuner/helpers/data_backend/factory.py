@@ -3782,6 +3782,7 @@ class FactoryRegistry:
             nsfw_check_video_frame_selection=getattr(self.args, "nsfw_check_video_frame_selection", "uniform"),
             nsfw_check_video_min_flagged_frames=getattr(self.args, "nsfw_check_video_min_flagged_frames", 1),
             delete_nsfw_images=backend.get("delete_nsfw_images", getattr(self.args, "delete_nsfw_images", False)),
+            cache_inventory_dir=getattr(self.args, "output_dir", None),
         )
         init_backend["vaecache"].set_webhook_handler(StateTracker.get_webhook_handler())
 

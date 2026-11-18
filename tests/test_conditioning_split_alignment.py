@@ -118,7 +118,6 @@ class TestConditioningSplitAlignment(unittest.TestCase):
             os.environ["SIMPLETUNER_SHUFFLE_BUCKETS"] = self._previous_shuffle
         StateTracker.clear_data_backends()
         StateTracker.all_image_files = {}
-        StateTracker.all_vae_cache_files = {}
 
     def _init_state(
         self,

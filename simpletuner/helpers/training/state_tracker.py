@@ -47,7 +47,6 @@ class StateTracker:
 
     ## Caches
     all_image_files = {}
-    all_vae_cache_files = {}
 
     ## Backend entities for retrieval
     default_text_embed_cache = None
@@ -625,31 +624,6 @@ class StateTracker:
     @classmethod
     def get_dataset_schedules(cls):
         return {k: v.copy() for k, v in cls.dataset_schedule.items()}
-
-    @classmethod
-    def set_vae_cache_files(cls, raw_file_list: list, data_backend_id: str):
-        if cls.all_vae_cache_files.get(data_backend_id) is not None:
-            cls.all_vae_cache_files[data_backend_id].clear()
-        else:
-            cls.all_vae_cache_files[data_backend_id] = {}
-        for entry in raw_file_list or []:
-            if isinstance(entry, (str, Path)):
-                files = [str(entry)]
-            else:
-                _, _, files = entry
-            for image in files:
-                cls.all_vae_cache_files[data_backend_id][str(image)] = False
-        cls._save_to_disk(
-            "all_vae_cache_files_{}".format(data_backend_id),
-            cls.all_vae_cache_files[data_backend_id],
-        )
-        logger.debug(f"set_vae_cache_files found {len(cls.all_vae_cache_files[data_backend_id])} images.")
-
-    @classmethod
-    def get_vae_cache_files(cls: list, data_backend_id: str, retry_limit: int = 0):
-        if data_backend_id not in cls.all_vae_cache_files or cls.all_vae_cache_files.get(data_backend_id) is None:
-            cls.all_vae_cache_files[data_backend_id] = cls._load_from_disk("all_vae_cache_files_{}".format(data_backend_id))
-        return cls.all_vae_cache_files[data_backend_id] or {}
 
     @classmethod
     def get_validation_sample_images(cls):

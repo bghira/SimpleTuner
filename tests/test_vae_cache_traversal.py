@@ -1,8 +1,11 @@
 import copy
+import json
 import os
 import threading
 import unittest
+from pathlib import Path
 from queue import Queue
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -86,6 +89,28 @@ class TestVaeCacheTraversal(unittest.TestCase):
         torch.testing.assert_close(batched[1:2], single, rtol=0, atol=0)
         self.assertFalse(torch.equal(batched[0], batched[1]))
         self.assertTrue(torch.equal(rng, torch.get_rng_state()))
+
+    def test_legacy_artifact_inventory_round_trips_and_deletes_storage_keys(self):
+        with TemporaryDirectory() as directory:
+            cache = VAECache.__new__(VAECache)
+            cache.id = "artifacts"
+            cache.cache_dir = "latents"
+            cache.cache_data_backend = Mock()
+            cache.cache_data_backend.iter_file_keys.return_value = iter(["latents/old.pt", "latents/new.pt"])
+            cache._artifact_file_keys = None
+            cache._artifact_inventory = Path(directory) / "all_vae_cache_files_artifacts.json"
+            cache.max_workers = 1
+            cache.write_batch_size = 1
+            self.assertEqual(cache._read_artifact_files(), {})
+            self.assertEqual(cache._refresh_artifact_files(), {"latents/old.pt": False, "latents/new.pt": False})
+            cache._artifact_file_keys = None
+            self.assertEqual(cache._read_artifact_files(), json.loads(cache._artifact_inventory.read_text()))
+            cache.clear_cache()
+            self.assertEqual(
+                [call.args[0] for call in cache.cache_data_backend.delete.call_args_list],
+                ["latents/old.pt", "latents/new.pt"],
+            )
+            self.assertEqual(json.loads(cache._artifact_inventory.read_text()), {})
 
     def test_cache_scan_streams_keys_from_the_bound_artifact_store(self):
         cache = VAECache.__new__(VAECache)

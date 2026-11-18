@@ -153,8 +153,8 @@ class TestVaeCache(unittest.TestCase):
             patch(
                 "simpletuner.helpers.caching.vae.StateTracker.set_image_files", return_value=["/data/reference/sample.mp4"]
             ),
-            patch("simpletuner.helpers.caching.vae.StateTracker.get_vae_cache_files", return_value=None),
-            patch("simpletuner.helpers.caching.vae.StateTracker.set_vae_cache_files", return_value=[]),
+            patch.object(vae_cache, "_read_artifact_files", return_value=None),
+            patch.object(vae_cache, "_refresh_artifact_files", return_value=[]),
         ):
             files = vae_cache.discover_all_files()
 
@@ -338,16 +338,12 @@ class TestVaeCacheAudio(unittest.TestCase):
         ]
         self.assertEqual(encoded_shapes, [[(2, 100), (2, 100)], [(2, 120)]])
 
-    @patch("simpletuner.helpers.caching.vae.StateTracker.set_vae_cache_files")
-    @patch("simpletuner.helpers.caching.vae.StateTracker.get_vae_cache_files", return_value=[])
     @patch("simpletuner.helpers.caching.vae.StateTracker.set_image_files", return_value={})
     @patch("simpletuner.helpers.caching.vae.StateTracker.get_image_files", return_value=None)
     def test_discover_all_files_audio_extensions(
         self,
         mock_get_image_files,
         mock_set_image_files,
-        mock_get_vae_cache_files,
-        mock_set_vae_cache_files,
     ):
         image_backend = MagicMock()
         image_backend.id = "audio-cache"
@@ -383,8 +379,7 @@ class TestVaeCacheAudio(unittest.TestCase):
         cache_backend.create_directory.assert_called_once()
         mock_get_image_files.assert_called_once_with(data_backend_id="audio-cache")
         mock_set_image_files.assert_called_once()
-        mock_get_vae_cache_files.assert_called_once_with(data_backend_id="audio-cache")
-        mock_set_vae_cache_files.assert_called_once()
+        cache_backend.iter_file_keys.assert_called_once_with(["pt"], vae_cache.cache_dir)
 
     def test_audio_model_foundation_encode_with_vae(self):
         class DummyVAE:

@@ -1,3 +1,4 @@
+import fcntl
 import json
 import logging
 import os
@@ -151,6 +152,7 @@ class VAECache(WebhookMixin):
         nsfw_check_video_frame_selection: str = "uniform",
         nsfw_check_video_min_flagged_frames: int = 1,
         delete_nsfw_images: bool = False,
+        cache_inventory_dir: str | None = None,
     ):
         self.id = id
         self.dataset_type_enum = ensure_dataset_type(dataset_type, default=DatasetType.IMAGE)
@@ -163,6 +165,10 @@ class VAECache(WebhookMixin):
             raise ValueError(f"VAECache received incorrect image_data_backend: {image_data_backend}")
         self.image_data_backend = image_data_backend
         self.cache_data_backend = cache_data_backend if cache_data_backend is not None else image_data_backend
+        self._artifact_file_keys = None
+        self._artifact_inventory = (
+            Path(cache_inventory_dir) / f"all_vae_cache_files_{id}.json" if cache_inventory_dir is not None else None
+        )
         self.vae_path_to_image_path = {}
         self.hash_filenames = hash_filenames
         self.vae = vae
@@ -905,18 +911,35 @@ class VAECache(WebhookMixin):
             data_backend_id=self.id,
         )
         logger.debug(f"Checking {self.cache_dir=}")
-        (
-            StateTracker.get_vae_cache_files(data_backend_id=self.id)
-            or StateTracker.set_vae_cache_files(
-                self.cache_data_backend.list_files(
-                    instance_data_dir=self.cache_dir,
-                    file_extensions=["pt"],
-                ),
-                data_backend_id=self.id,
-            )
-        )
+        if not self._read_artifact_files():
+            self._refresh_artifact_files()
         self.debug_log(f"VAECache discover_all_files found {len(all_image_files)} images")
         return all_image_files
+
+    def _read_artifact_files(self):
+        if self._artifact_file_keys is None and self._artifact_inventory is not None:
+            try:
+                with self._artifact_inventory.open(encoding="utf-8") as source:
+                    fcntl.flock(source, fcntl.LOCK_SH)
+                    self._artifact_file_keys = json.load(source)
+            except FileNotFoundError:
+                return {}
+            except (OSError, ValueError) as exc:
+                logger.warning("Could not read VAE cache inventory for %s: %s", self.id, exc)
+        return self._artifact_file_keys or {}
+
+    def _publish_artifact_files(self, keys):
+        self._artifact_file_keys = dict.fromkeys(map(str, keys), False)
+        if self._artifact_inventory is not None:
+            self._artifact_inventory.parent.mkdir(parents=True, exist_ok=True)
+            with self._artifact_inventory.open("a", encoding="utf-8") as target:
+                fcntl.flock(target, fcntl.LOCK_EX)
+                target.truncate(0)
+                json.dump(self._artifact_file_keys, target)
+        return self._artifact_file_keys
+
+    def _refresh_artifact_files(self):
+        return self._publish_artifact_files(self.cache_data_backend.iter_file_keys(["pt"], self.cache_dir))
 
     def init_vae(self):
         if StateTracker.get_args().model_family == "sana":
@@ -942,17 +965,10 @@ class VAECache(WebhookMixin):
     def rebuild_cache(self):
         self.debug_log("Rebuilding cache.")
         if self.accelerator.is_local_main_process:
-            self.debug_log("Updating StateTracker with new VAE cache entry list.")
-            StateTracker.set_vae_cache_files(
-                self.cache_data_backend.list_files(
-                    instance_data_dir=self.cache_dir,
-                    file_extensions=["pt"],
-                ),
-                data_backend_id=self.id,
-            )
+            self._refresh_artifact_files()
+            self.clear_cache()
         self.accelerator.wait_for_everyone()
-        self.debug_log("-> Clearing cache objects")
-        self.clear_cache()
+        self._artifact_file_keys = None
         self.debug_log("-> Split tasks between GPU(s)")
         self.discover_unprocessed_files()
         self.debug_log("-> Load VAE")
@@ -960,50 +976,38 @@ class VAECache(WebhookMixin):
         if not self.vae_cache_ondemand:
             self.debug_log("-> Process VAE cache")
             self.process_buckets()
-            if self.accelerator.is_local_main_process:
-                self.debug_log("Updating StateTracker with new VAE cache entry list.")
-                StateTracker.set_vae_cache_files(
-                    self.cache_data_backend.list_files(
-                        instance_data_dir=self.cache_dir,
-                        file_extensions=["pt"],
-                    ),
-                    data_backend_id=self.id,
-                )
-            self.accelerator.wait_for_everyone()
         self.debug_log("-> Completed cache rebuild")
 
     def clear_cache(self):
         # can't simply clear directory since it might be mixed with image samples (s3 case)
-        futures = []
-        all_cache_files = StateTracker.get_vae_cache_files(data_backend_id=self.id)
+        def delete(key):
+            try:
+                self.cache_data_backend.delete(key)
+            except Exception as exc:
+                logger.warning("Could not delete VAE cache entry %s: %s", key, exc)
+
+        keys = self._read_artifact_files()
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            for filename in all_cache_files:
-                full_path = os.path.join(self.cache_dir, filename)
-                self.debug_log(f"Would delete: {full_path}")
-                futures.append(executor.submit(self.cache_data_backend.delete, full_path))
-            for future in tqdm(
-                as_completed(futures),
-                total=len(futures),
+            for batch in tqdm(
+                batched(keys, self.write_batch_size),
+                total=(len(keys) + self.write_batch_size - 1) // self.write_batch_size,
                 desc=f"Deleting files for backend {self.id}",
                 position=get_rank(),
                 ncols=125,
                 leave=False,
             ):
-                try:
-                    future.result()
-                except Exception as e:
-                    logger.debug(f"Error deleting file {filename}", e)
-
-        StateTracker.set_vae_cache_files([], data_backend_id=self.id)
+                for _ in executor.map(delete, batch):
+                    pass
+        self._publish_artifact_files(())
 
     def _list_cached_images(self):
-        pt_files = StateTracker.get_vae_cache_files(data_backend_id=self.id)
+        pt_files = self._read_artifact_files()
         results = {os.path.splitext(f)[0] for f in pt_files}
         return results
 
     def discover_unprocessed_files(self):
         all_image_files = set(StateTracker.get_image_files(data_backend_id=self.id))
-        existing_cache_files = set(StateTracker.get_vae_cache_files(data_backend_id=self.id))
+        existing_cache_files = self._read_artifact_files()
         already_cached_images = []
         for cache_file in existing_cache_files:
             try:
@@ -2340,14 +2344,10 @@ class VAECache(WebhookMixin):
         self._finalize_deferred_metadata_filters()
         self._write_nsfw_scan_report()
         if self.accelerator.is_local_main_process:
-            StateTracker.set_vae_cache_files(
-                self.cache_data_backend.list_files(
-                    instance_data_dir=self.cache_dir,
-                    file_extensions=["pt"],
-                ),
-                data_backend_id=self.id,
-            )
+            self._refresh_artifact_files()
         self.accelerator.wait_for_everyone()
+        if not self.accelerator.is_local_main_process:
+            self._artifact_file_keys = None
         if self.webhook_handler is not None:
             event = lifecycle_stage_event(
                 key="init_vae_cache",
