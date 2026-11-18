@@ -48,6 +48,19 @@ class _MinimalHuggingfaceMetadataBackend(HuggingfaceMetadataBackend):
 
 
 class HuggingfaceMetadataBackendTests(unittest.TestCase):
+    def test_cached_membership_stream_stays_pinned_when_the_file_is_replaced(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = HuggingfaceDatasetsBackend(None, "arrow", "test", cache_dir=directory)
+            source.write("membership.json", '{"version":1}')
+            with (
+                patch.object(source, "read", side_effect=AssertionError("membership materialized")),
+                source.open_read_stream("membership.json") as pinned,
+            ):
+                source.write("membership.json", '{"version":2}')
+                self.assertEqual(pinned.read(), b'{"version":1}')
+                with source.open_read_stream("membership.json") as latest:
+                    self.assertEqual(latest.read(), b'{"version":2}')
+
     def test_caption_lookup_projects_columns_and_preserves_filtered_row_order(self):
         source = HuggingfaceDatasetsBackend(None, "test", "test")
         source.dataset = Dataset.from_list(

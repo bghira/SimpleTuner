@@ -11,6 +11,7 @@ from typing import Any, BinaryIO, Dict, Optional, Union
 
 import numpy as np
 import torch
+from atomicwrites import atomic_write
 from PIL import Image
 
 try:
@@ -502,45 +503,39 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
             auto_load=False,
         )
 
+    _CACHE_EXTENSIONS = (".json", ".pt", ".msgpack", ".safetensors")
+
+    def _scoped_cache_file(self, filepath):
+        path = Path(filepath)
+        if path.suffix == ".json":
+            folder = "huggingface_metadata"
+        elif path.suffix in {".pt", ".safetensors"}:
+            folder = "vae"
+        else:
+            folder = "cache"
+        return Path(self.cache_dir) / folder / self.id / path.name
+
+    def _existing_cache_file(self, filepath):
+        path = Path(filepath)
+        if not path.exists() and self.cache_dir:
+            return self._scoped_cache_file(path)
+        return path
+
+    def open_read_stream(self, identifier):
+        return self._existing_cache_file(identifier).open("rb")
+
     def read(self, location, as_byteIO: bool = False):
         if isinstance(location, Path):
             location = str(location)
 
-        # Handle cache files (.json, .pt, etc.) - these should be read from local filesystem
-        cache_extensions = [".json", ".pt", ".msgpack", ".safetensors"]
-        if any(location.endswith(ext) for ext in cache_extensions):
-            # Try location as-is first (in case it's already a full path)
-            location_path = Path(location)
-            if location_path.exists():
-                with open(location_path, "rb") as f:
-                    data = f.read()
-                if as_byteIO:
-                    return BytesIO(data)
-                return data
-
-            # Otherwise, check standard cache directories based on file type
-            if hasattr(self, "cache_dir") and self.cache_dir:
-                filename = Path(location).name
-
-                # Determine cache directory based on file type (matching write logic)
-                if location.endswith(".json"):
-                    cache_path = Path(self.cache_dir) / "huggingface_metadata" / self.id / filename
-                elif any(location.endswith(ext) for ext in [".pt", ".safetensors"]):
-                    cache_path = Path(self.cache_dir) / "vae" / self.id / filename
-                else:
-                    cache_path = Path(self.cache_dir) / "cache" / self.id / filename
-
-                if cache_path.exists():
-                    with open(cache_path, "rb") as f:
-                        data = f.read()
-                    if as_byteIO:
-                        return BytesIO(data)
-                    return data
-                else:
-                    logger.warning(f"Could not read from location: {cache_path}")
-
-            logger.error(f"Cache file not found: {location}")
-            return None
+        if location.endswith(self._CACHE_EXTENSIONS):
+            try:
+                with self.open_read_stream(location) as stream:
+                    data = stream.read()
+            except FileNotFoundError:
+                logger.error("Cache file not found: %s", location)
+                return None
+            return BytesIO(data) if as_byteIO else data
 
         # Handle virtual dataset files (the existing logic)
         self._ensure_dataset_loaded()
@@ -790,32 +785,13 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         if isinstance(filepath, Path):
             filepath = str(filepath)
 
-        # Allow writing cache files
-        cache_extensions = [".json", ".pt", ".msgpack", ".safetensors"]
-        if any(filepath.endswith(ext) for ext in cache_extensions):
-            # Determine cache directory based on file path
-            filepath_path = Path(filepath)
-
-            # If it's already an absolute path with a directory, use it
-            if filepath_path.is_absolute() and filepath_path.parent.exists():
-                cache_path = filepath_path
-            else:
-                # Otherwise, create a cache directory structure
-                if not hasattr(self, "cache_dir") or not self.cache_dir:
+        if filepath.endswith(self._CACHE_EXTENSIONS):
+            cache_path = Path(filepath)
+            if not cache_path.is_absolute() or not cache_path.parent.exists():
+                if not self.cache_dir:
                     raise ValueError(f"Cannot write cache file {filepath} - no cache_dir configured for HuggingFace backend")
-
-                # Determine subdirectory based on file type
-                if filepath.endswith(".json"):
-                    cache_subdir = Path(self.cache_dir) / "huggingface_metadata" / self.id
-                elif any(filepath.endswith(ext) for ext in [".pt", ".safetensors"]):
-                    # VAE cache files
-                    cache_subdir = Path(self.cache_dir) / "vae" / self.id
-                else:
-                    # Other cache files
-                    cache_subdir = Path(self.cache_dir) / "cache" / self.id
-
-                cache_subdir.mkdir(parents=True, exist_ok=True)
-                cache_path = cache_subdir / Path(filepath).name
+                cache_path = self._scoped_cache_file(cache_path)
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
 
             # Write the file
             if filepath.endswith(".json"):
@@ -826,11 +802,11 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
                 elif not isinstance(data, str):
                     data = str(data)
 
-                with open(cache_path, "w") as f:
+                with atomic_write(cache_path, mode="w", encoding="utf-8", overwrite=True) as f:
                     f.write(data)
             else:
                 # Binary data
-                with open(cache_path, "wb") as f:
+                with atomic_write(cache_path, mode="wb", overwrite=True) as f:
                     if isinstance(data, bytes):
                         f.write(data)
                     elif hasattr(data, "save"):
@@ -851,30 +827,8 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         if isinstance(filepath, Path):
             filepath = str(filepath)
 
-        # Check for cache files first
-        cache_extensions = [".json", ".pt", ".msgpack", ".safetensors"]
-        if any(filepath.endswith(ext) for ext in cache_extensions):
-            # Check if it's already a full path
-            filepath_path = Path(filepath)
-            if filepath_path.exists():
-                return True
-
-            # Check standard cache directories based on file type
-            if hasattr(self, "cache_dir") and self.cache_dir:
-                filename = Path(filepath).name
-
-                # Determine cache directory based on file type (matching write logic)
-                if filepath.endswith(".json"):
-                    cache_path = Path(self.cache_dir) / "huggingface_metadata" / self.id / filename
-                elif any(filepath.endswith(ext) for ext in [".pt", ".safetensors"]):
-                    cache_path = Path(self.cache_dir) / "vae" / self.id / filename
-                else:
-                    cache_path = Path(self.cache_dir) / "cache" / self.id / filename
-
-                if cache_path.exists():
-                    return True
-
-            return False
+        if filepath.endswith(self._CACHE_EXTENSIONS):
+            return self._existing_cache_file(filepath).exists()
 
         # For virtual files, check index
         self._ensure_dataset_loaded()
