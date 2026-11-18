@@ -67,6 +67,26 @@ class TestWebshartParquetBackend(unittest.TestCase):
         self.assertEqual(runtime.count_source_rows(exclude_null_images=True), 2)
         self.assertEqual([row["sample_idx"] for row in self.backend.list_samples_in_shard(0)], [0, 2])
 
+    def test_capture_catalogue_uses_the_configured_metadata_cache(self):
+        if not getattr(type(self.backend.dataset), "supports_catalogue_cache", False):
+            self.skipTest("installed Webshart has no shared capture catalogue")
+        self._publish_capture_manifest()
+        metadata_cache = self.root / "shared-metadata"
+        datasets = [
+            WebshartDataBackend(
+                None,
+                name,
+                str(self.source),
+                format="parquet",
+                manifest="capture.json",
+                cache_dir=str(self.root / name),
+                metadata_cache_dir=str(metadata_cache),
+            )
+            for name in ("global-schedule", "shard-local-schedule")
+        ]
+        self.assertEqual(datasets[0].dataset.fingerprint, datasets[1].dataset.fingerprint)
+        self.assertEqual(len(list(metadata_cache.glob("capture-catalogue-*.sqlite3"))), 1)
+
     def test_filtered_rows_keep_physical_identity_captions_and_pixels(self):
         entries = self.backend.list_samples_in_shard(0)
         self.assertEqual([e["sample_idx"] for e in entries], [0, 2])

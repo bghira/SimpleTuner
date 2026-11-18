@@ -131,6 +131,11 @@ class WebshartDataBackend(BaseDataBackend):
         discovery = {}
         if self.format == "parquet":
             discovery = {"format": "parquet", "manifest": self.manifest, "metadata_cache_size": 8}
+            if (
+                self.manifest is not None
+                and getattr(self.webshart.ParquetDataset, "supports_catalogue_cache", False) is True
+            ):
+                discovery["catalogue_cache_dir"] = self.metadata_cache_dir
             discovery.update({("caption_column" if k == "captions" else f"{k}_column"): v for k, v in self.columns.items()})
             if self.source.startswith("s3://"):
                 discovery["s3_options"] = {
