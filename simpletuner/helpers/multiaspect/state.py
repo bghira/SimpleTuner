@@ -3,6 +3,8 @@ import logging
 import os
 from multiprocessing.managers import DictProxy
 
+from atomicwrites import atomic_write
+
 logger = logging.getLogger("BucketStateManager")
 from simpletuner.helpers.training.multi_process import should_log
 
@@ -10,6 +12,13 @@ if should_log():
     logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 else:
     logger.setLevel("ERROR")
+
+
+class _SamplerStateEncoder(json.JSONEncoder):
+    def default(self, value):
+        if isinstance(value, DictProxy):
+            return dict(value)
+        return super().default(value)
 
 
 class BucketStateManager:
@@ -36,24 +45,13 @@ class BucketStateManager:
         with open(state_path, "w") as f:
             json.dump(seen_images, f)
 
-    def deep_convert_dict(self, d):
-        if isinstance(d, dict):
-            return {key: self.deep_convert_dict(value) for key, value in d.items()}
-        elif isinstance(d, list):
-            return [self.deep_convert_dict(value) for value in d]
-        elif isinstance(d, DictProxy):
-            return self.deep_convert_dict(dict(d))
-        else:
-            return d
-
     def save_state(self, state: dict, state_path: str):
         if state_path is None:
             raise ValueError("state_path must be specified")
         state_path = self.mangle_state_path(state_path)
         logger.debug(f"Saving trainer state to {state_path}")
-        final_state = self.deep_convert_dict(state)
-        with open(state_path, "w") as f:
-            json.dump(final_state, f)
+        with atomic_write(state_path, overwrite=True) as file:
+            json.dump(state, file, cls=_SamplerStateEncoder)
 
     def load_state(self, state_path: str):
         if state_path is None:

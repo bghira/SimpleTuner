@@ -59,6 +59,18 @@ class SamplerURIPathTests(unittest.TestCase):
                 sampler.data_backend.read_image.assert_called_once_with(canonical)
 
 
+class SamplerStatePublicationTests(unittest.TestCase):
+    def test_failed_checkpoint_write_preserves_previous_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / "checkpoint.json")
+            manager = BucketStateManager("images")
+            previous = {"seen_images": {"image.jpg": 2}}
+            manager.save_state(previous, path)
+            with self.assertRaises(TypeError):
+                manager.save_state({"seen_images": {"image.jpg": 3}, "invalid": object()}, path)
+            self.assertEqual(manager.load_state(path), previous)
+
+
 class TestMultiAspectSampler(unittest.TestCase):
     def setUp(self):
         self.process_state = PartialState()
