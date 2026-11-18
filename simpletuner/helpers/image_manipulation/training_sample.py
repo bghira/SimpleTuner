@@ -53,7 +53,7 @@ class TrainingSample:
         self.batch_processor = BatchedTrainingSamples()
         if model is None and geometry is None:
             self.model = StateTracker.get_model()
-        if self.model is not None:
+        if self.model is not None and (image is not None or geometry is None):
             self.transforms = self.model.get_transforms()
         self.image = image
         self.target_size = None
@@ -414,19 +414,23 @@ class TrainingSample:
             - crop_coordinates (tuple)
             - aspect_ratio (float)
         """
-        self.save_debug_image(f"images/{time.time()}-0-original.png")
+        has_pixels = self.image is not None
+        if has_pixels:
+            self.save_debug_image(f"images/{time.time()}-0-original.png")
         self.crop()
-        self.save_debug_image(f"images/{time.time()}-1-cropped.png")
+        if has_pixels:
+            self.save_debug_image(f"images/{time.time()}-1-cropped.png")
         if not self.crop_enabled:
-            self.save_debug_image(f"images/{time.time()}-1b-nocrop-resize.png")
+            if has_pixels:
+                self.save_debug_image(f"images/{time.time()}-1b-nocrop-resize.png")
             self.resize()
-            self.save_debug_image(f"images/{time.time()}-2-final-output.png")
+            if has_pixels:
+                self.save_debug_image(f"images/{time.time()}-2-final-output.png")
 
         image = self.image
-        if return_tensor and self.transforms is not None:
+        if has_pixels and return_tensor and self.transforms is not None:
             # Return normalised tensor.
             image = self.transforms(image)
-        webhook_handler = StateTracker.get_webhook_handler()
 
         # For square crops, ensure aspect ratio is exactly 1.0
         final_aspect_ratio = self.aspect_ratio
@@ -442,7 +446,7 @@ class TrainingSample:
             target_size=self.target_size,
             intermediary_size=self.intermediary_size,
         )
-        if webhook_handler:
+        if has_pixels and (webhook_handler := StateTracker.get_webhook_handler()):
             # Send the debug message with the image using send() (following validation pattern)
             webhook_handler.send(
                 message=f"Debug info for prepared sample, {str(prepared_sample)}",
@@ -732,7 +736,8 @@ class TrainingSample:
         if not prepared:
             self.calculate_target_size()
         self._downsample_before_crop()
-        self.save_debug_image(f"images/{time.time()}-0.5-downsampled.png")
+        if self.image is not None:
+            self.save_debug_image(f"images/{time.time()}-0.5-downsampled.png")
 
         if prepared and self.image is not None and self.crop_style != "face":
             return self._apply_prepared_crop()

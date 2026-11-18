@@ -437,6 +437,7 @@ class TestWebshartParquetBackend(unittest.TestCase):
                 patch.object(
                     StateTracker, "set_resolution_by_aspect", side_effect=AssertionError("wrote global aspect memo")
                 ),
+                patch.object(StateTracker, "get_webhook_handler", side_effect=AssertionError("geometry webhook")),
             ):
                 for recipe, target in (
                     (aligned_64, (768, 1408)),
