@@ -10,6 +10,7 @@ import torch
 import torch.nn.functional as F
 
 from simpletuner.helpers.training.grounding.types import GroundingBatch
+from simpletuner.helpers.utils.pathing import normalize_data_path
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,7 @@ class GroundingCollate:
     def build_batch(
         self,
         examples: list[dict],
-        data_backend_id: str,
+        dataset_root: str | None,
         text_embed_cache,
         grounding_image_cache=None,
         num_frames: int = 1,
@@ -38,8 +39,6 @@ class GroundingCollate:
 
         Returns ``None`` if no samples in the batch have grounding annotations.
         """
-        from simpletuner.helpers.training.state_tracker import StateTracker
-
         batch_size = len(examples)
         any_has_grounding = False
         per_sample_entities: list[list[dict]] = []
@@ -96,7 +95,7 @@ class GroundingCollate:
                     sample_masks.append(mask)
 
                     # Retrieve entity text embedding
-                    embed = self._get_entity_embed(example, ent_idx, text_embed_cache, data_backend_id)
+                    embed = self._get_entity_embed(example, ent_idx, text_embed_cache, dataset_root)
                     sample_text_embeds.append(embed)
 
                     # Retrieve entity image embedding if cache is available
@@ -198,14 +197,10 @@ class GroundingCollate:
         example: dict,
         entity_idx: int,
         text_embed_cache,
-        data_backend_id: str,
+        dataset_root: str | None,
     ) -> torch.Tensor:
         """Retrieve a pooled text embedding for a single entity label."""
-        from simpletuner.helpers.training.state_tracker import StateTracker
-        from simpletuner.helpers.utils.pathing import normalize_data_path
-
         image_path = example.get("image_path", "")
-        dataset_root = StateTracker.get_data_backend(data_backend_id).get("instance_data_dir")
         normalized_id = normalize_data_path(str(image_path), dataset_root)
         entity_key = f"{normalized_id}__bbox_{entity_idx}"
         entities = example.get("bbox_entities") or []

@@ -2166,30 +2166,28 @@ class FactoryRegistry:
         device = str(self.accelerator.device) if self.accelerator else "cpu"
         feature_backend = Florence2FeatureBackend(model_name_or_path=grounding_model_path, device=device)
 
-        for backend in backends_needing_cache:
-            source_id = backend["id"]
-            instance_data_dir = backend.get("instance_data_dir", "")
-            output_dir = getattr(self.args, "output_dir", "output")
-            cache_dir = os.path.join(output_dir, "cache", "grounding_image_embeds", source_id)
+        try:
+            for backend in backends_needing_cache:
+                source_id = backend["id"]
+                dataset = StateTracker.datasets.get(source_id)
+                if dataset is None:
+                    continue
+                output_dir = getattr(self.args, "output_dir", "output")
+                cache_dir = os.path.join(output_dir, "cache", "grounding_image_embeds", source_id)
+                instance_data_dir = (
+                    dataset.metadata_backend.instance_data_dir if dataset.data_backend.type == "local" else ""
+                )
+                cache = GroundingImageEmbedCache(feature_backend, cache_dir, instance_data_dir=instance_data_dir)
 
-            cache = GroundingImageEmbedCache(
-                feature_backend=feature_backend,
-                cache_dir=cache_dir,
-                instance_data_dir=instance_data_dir,
-            )
+                if self.accelerator.is_local_main_process:
+                    cache.process_all(dataset)
+                if self._is_multi_process():
+                    self.accelerator.wait_for_everyone()
 
-            init_backend = StateTracker.get_data_backend(source_id) if source_id in StateTracker.data_backends else None
-            if init_backend is not None:
-                metadata_backend = init_backend.get("metadata_backend")
-                data_backend_obj = init_backend.get("data_backend")
-                if metadata_backend and data_backend_obj:
-                    with self.accelerator.main_process_first():
-                        cache.process_all(metadata_backend, data_backend_obj)
-
-            StateTracker.set_grounding_image_embed_cache(source_id, cache)
-            info_log(f"(id={source_id}) Grounding image embed cache configured at {cache_dir}")
-
-        feature_backend.unload()
+                dataset.grounding_image_embed_cache = cache
+                info_log(f"(id={source_id}) Grounding image embed cache configured at {cache_dir}")
+        finally:
+            feature_backend.unload()
 
     def process_conditioning_datasets(self, data_backend_config: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Process auto-conditioning configurations and generate conditioning datasets."""

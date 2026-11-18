@@ -68,9 +68,6 @@ class StateTracker:
     distillation_method: Optional[str] = None
     distiller_profile: DistillerRequirementProfile = EMPTY_PROFILE
 
-    # Per-backend grounding image embed caches (keyed by data_backend_id)
-    _grounding_image_embed_caches: dict = {}
-
     # for schedulefree
     last_lr = 0.0
 
@@ -631,14 +628,6 @@ class StateTracker:
         if data_backend_id in cls.datasets:
             cls.datasets[data_backend_id].conditioning_datasets = tuple(cls.datasets[x] for x in conditioning_backend_ids)
         cls.data_backends[data_backend_id]["conditioning_data"] = [cls.data_backends[x] for x in conditioning_backend_ids]
-
-    @classmethod
-    def set_grounding_image_embed_cache(cls, data_backend_id: str, cache):
-        cls._grounding_image_embed_caches[data_backend_id] = cache
-
-    @classmethod
-    def get_grounding_image_embed_cache(cls, data_backend_id: str):
-        return cls._grounding_image_embed_caches.get(data_backend_id)
 
     @classmethod
     def set_s2v_datasets(cls, data_backend_id: str, s2v_backend_ids: list[str]):

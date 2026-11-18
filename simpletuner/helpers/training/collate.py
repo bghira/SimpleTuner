@@ -1302,7 +1302,7 @@ def collate_fn(batch, *, dataset=None):
             raise ValueError("Grounding annotations require a text embedding cache.")
         from simpletuner.helpers.training.grounding.collate import GroundingCollate
 
-        grounding_image_cache = StateTracker.get_grounding_image_embed_cache(data_backend_id)
+        grounding_image_cache = dataset.grounding_image_embed_cache if dataset is not None else None
         grounding_collate = GroundingCollate(
             max_entities=max_grounding_entities,
             vae_scale_factor=model.vae_output_scaling_factor if hasattr(model, "vae_output_scaling_factor") else 8,
@@ -1313,7 +1313,9 @@ def collate_fn(batch, *, dataset=None):
             grounding_num_frames = latent_batch.shape[2]
         grounding_batch = grounding_collate.build_batch(
             examples=examples,
-            data_backend_id=data_backend_id,
+            dataset_root=(
+                dataset.metadata_backend.instance_data_dir if dataset is not None else data_backend.get("instance_data_dir")
+            ),
             text_embed_cache=text_embed_cache,
             grounding_image_cache=grounding_image_cache,
             num_frames=grounding_num_frames,

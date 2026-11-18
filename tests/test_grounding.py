@@ -368,15 +368,6 @@ class TestGroundingCollateBuildBatch(unittest.TestCase):
 
         return _MockCache()
 
-    def _patch_state_tracker(self):
-        """Register a fake data backend so _get_entity_embed doesn't crash."""
-        from unittest.mock import patch
-
-        return patch(
-            "simpletuner.helpers.training.state_tracker.StateTracker.get_data_backend",
-            return_value={"instance_data_dir": "/fake"},
-        )
-
     def test_build_batch_reads_bbox_entities_from_top_level(self):
         """bbox_entities should be read from the top-level example dict,
         not from a nested 'image_metadata' key."""
@@ -391,12 +382,11 @@ class TestGroundingCollateBuildBatch(unittest.TestCase):
             }
         ]
         cache = self._make_mock_text_embed_cache()
-        with self._patch_state_tracker():
-            result = collate.build_batch(
-                examples=examples,
-                data_backend_id="test",
-                text_embed_cache=cache,
-            )
+        result = collate.build_batch(
+            examples=examples,
+            dataset_root="/fake",
+            text_embed_cache=cache,
+        )
         self.assertIsNotNone(result, "build_batch should return a GroundingBatch, not None")
         self.assertEqual(result.boxes.shape, (1, 2, 4))
         self.assertAlmostEqual(result.validity_mask[0, 0].item(), 1.0)
@@ -418,8 +408,7 @@ class TestGroundingCollateBuildBatch(unittest.TestCase):
                 "bbox_entities": [{"label": "cat", "bbox": [0.1, 0.1, 0.5, 0.5]}],
             }
         ]
-        with self._patch_state_tracker():
-            collate.build_batch(examples, "test", _SpyCache())
+        collate.build_batch(examples, "/fake", _SpyCache())
 
         self.assertEqual(captured_prompts, ["cat"])
 
@@ -433,12 +422,11 @@ class TestGroundingCollateBuildBatch(unittest.TestCase):
             }
         ]
         cache = self._make_mock_text_embed_cache()
-        with self._patch_state_tracker():
-            result = collate.build_batch(
-                examples=examples,
-                data_backend_id="test",
-                text_embed_cache=cache,
-            )
+        result = collate.build_batch(
+            examples=examples,
+            dataset_root="/fake",
+            text_embed_cache=cache,
+        )
         self.assertIsNone(result)
 
 

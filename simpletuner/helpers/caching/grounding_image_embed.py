@@ -7,7 +7,9 @@ import logging
 import os
 from typing import Optional
 
+import numpy as np
 import torch
+from atomicwrites import atomic_write
 from PIL import Image
 
 from simpletuner.helpers.training.grounding.feature_backend import GroundingFeatureBackend
@@ -41,6 +43,8 @@ class GroundingImageEmbedCache:
         return hashlib.sha256(image_path.encode()).hexdigest()[:16]
 
     def _cache_path(self, image_path: str, entity_idx: int) -> str:
+        if self.instance_data_dir and not os.path.isabs(image_path):
+            image_path = os.path.join(self.instance_data_dir, image_path)
         h = self._hash_path(image_path)
         return os.path.join(self.cache_dir, f"{h}__bbox_{entity_idx}.pt")
 
@@ -55,7 +59,7 @@ class GroundingImageEmbedCache:
     def embed_dim(self) -> int:
         return self.feature_backend.embed_dim
 
-    def process_image(self, image_path: str, bbox_entities: list[dict]) -> list[torch.Tensor]:
+    def process_image(self, image_path: str, bbox_entities: list[dict], *, image=None) -> list[torch.Tensor]:
         """Crop, encode, and cache embeddings for all entities in one image.
 
         Returns the list of embedding tensors (one per entity).
@@ -72,7 +76,14 @@ class GroundingImageEmbedCache:
                 continue
 
             if img is None:
-                img = Image.open(image_path).convert("RGB")
+                if image is None:
+                    with Image.open(os.path.join(self.instance_data_dir, image_path)) as source:
+                        img = source.convert("RGB")
+                else:
+                    first_frame = (
+                        Image.fromarray(image[0] if image.ndim == 4 else image) if isinstance(image, np.ndarray) else image
+                    )
+                    img = first_frame.convert("RGB")
 
             bbox = entity.get("bbox", [0, 0, 1, 1])
             x1, y1, x2, y2 = bbox
@@ -98,41 +109,31 @@ class GroundingImageEmbedCache:
             for i, idx in enumerate(uncached_indices):
                 emb = embeddings[i]
                 cache_path = self._cache_path(image_path, idx)
-                torch.save(emb, cache_path)
+                with atomic_write(cache_path, mode="wb", overwrite=True) as stream:
+                    torch.save(emb, stream)
                 results[idx] = emb
 
         return results
 
-    def process_all(self, metadata_backend, data_backend) -> int:
-        """Process all images with bbox annotations that aren't yet cached.
-
-        Returns the number of newly processed images.
-        """
+    def process_all(self, dataset, *, batch_size=32) -> int:
+        """Prepare features for accepted samples with entity annotations."""
         count = 0
-        image_paths = metadata_backend.get_all_image_paths() if hasattr(metadata_backend, "get_all_image_paths") else []
-        for image_path in image_paths:
-            image_path_str = str(image_path)
-            meta = metadata_backend.get_metadata_by_filepath(image_path_str)
-            if not isinstance(meta, dict):
+        for _, refs in dataset.iter_preparation_batches(batch_size=batch_size):
+            pending = {}
+            for record in dataset.read_samples(refs):
+                entities = record.get("bbox_entities")
+                if not entities:
+                    continue
+                ref = record["image_path"]
+                if any(not os.path.isfile(self._cache_path(ref, index)) for index in range(len(entities))):
+                    pending[ref] = entities
+            if not pending:
                 continue
-            bbox_entities = meta.get("bbox_entities")
-            if not bbox_entities:
-                continue
-            # Check if all entities are already cached
-            all_cached = all(self.retrieve(image_path_str, idx) is not None for idx in range(len(bbox_entities)))
-            if all_cached:
-                continue
-
-            full_path = image_path_str
-            if not os.path.isabs(full_path) and self.instance_data_dir:
-                full_path = os.path.join(self.instance_data_dir, full_path)
-            if not os.path.exists(full_path):
-                logger.debug(f"Image not found for grounding embed cache: {full_path}")
-                continue
-
-            self.process_image(full_path, bbox_entities)
-            count += 1
+            for record in dataset.read_samples(tuple(pending), fields=("image",)):
+                ref = record["image_path"]
+                self.process_image(ref, pending[ref], image=record["image"])
+                count += 1
 
         if count:
-            logger.info(f"Grounding image embed cache: processed {count} images")
+            logger.info("Grounding image embed cache: processed %d images", count)
         return count

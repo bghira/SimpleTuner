@@ -33,6 +33,7 @@ class DatasetRuntime:
         self.conditioning_datasets = ()
         self.audio_datasets = ()
         self.conditioning_image_embed_cache = None
+        self.grounding_image_embed_cache = None
         self.config = {
             "dataset_type": "image",
             "caption_strategy": "filename",
