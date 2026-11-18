@@ -27,6 +27,7 @@ from simpletuner.helpers.models.boogu_image.schedulers.scheduling_flow_match_eul
 from simpletuner.helpers.models.boogu_image.transformer import BooguImageTransformer2DModel
 from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
 from simpletuner.helpers.models.flux.model import Flux
+from simpletuner.helpers.models.prompt_upsampling import load_prompt_images
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager
 
@@ -285,13 +286,7 @@ class BooguImage(ImageModelFoundation):
         data_backend_id = context.get("data_backend_id") if isinstance(context, dict) else None
         if not image_path or not data_backend_id:
             raise ValueError("Boogu edit prompt image context must include conditioning pixels or image backend metadata.")
-        from simpletuner.helpers.training.state_tracker import StateTracker
-
-        backend_entry = StateTracker.get_data_backend(data_backend_id)
-        data_backend = backend_entry.get("data_backend") if backend_entry else None
-        if data_backend is None:
-            raise ValueError(f"Unable to resolve data backend '{data_backend_id}' for Boogu edit prompt context.")
-        image = data_backend.read_image(image_path)
+        image = load_prompt_images([image_path], [data_backend_id])[0]
         if isinstance(image, Image.Image):
             return image.convert("RGB")
         if isinstance(image, np.ndarray):

@@ -154,6 +154,13 @@ class DatasetRuntime:
             return self.epoch_provider.open_validation()
         return ValidationCursor(self.metadata_backend.iter_validation_cycles)
 
+    def read_sample_images(self, sample_refs, *, allow_missing=False):
+        refs = list(sample_refs)
+        if not refs:
+            return []
+        paths, images = self.data_backend.read_image_batch(refs)
+        return list(ordered_sample_payloads(self.id, refs, zip(paths, images, strict=True), allow_missing=allow_missing))
+
     def read_samples(self, sample_refs: Sequence[str], *, fields=("metadata",)) -> list[dict[str, Any]]:
         """Read a batch of occurrence records with the requested metadata, image or caption."""
         fields = frozenset(fields)
@@ -161,9 +168,8 @@ class DatasetRuntime:
         if unknown:
             raise ValueError(f"Unknown sample fields: {sorted(unknown)}")
         payloads = None
-        if sample_refs and "image" in fields:
-            paths, images = self.data_backend.read_image_batch(list(sample_refs))
-            payloads = ordered_sample_payloads(self.id, sample_refs, zip(paths, images, strict=True))
+        if "image" in fields:
+            payloads = iter(self.read_sample_images(sample_refs))
         captions = iter(self.resolve_captions(sample_refs)) if "caption" in fields else None
         records = []
         if "metadata" not in fields:

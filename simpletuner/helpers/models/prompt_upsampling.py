@@ -4,6 +4,7 @@ import hashlib
 import json
 import math
 from abc import ABC, abstractmethod
+from collections import defaultdict
 from dataclasses import dataclass
 
 import torch
@@ -26,6 +27,22 @@ class PromptUpsampler(ABC):
         """Return one rewritten prompt for each image-generation request."""
 
 
+def load_prompt_images(paths, dataset_ids, *, allow_missing=False):
+    if len(paths) != len(dataset_ids):
+        raise ValueError("Reference image paths and backend IDs must have equal lengths.")
+    grouped = defaultdict(list)
+    for position, (path, dataset_id) in enumerate(zip(paths, dataset_ids, strict=True)):
+        grouped[dataset_id].append((position, path))
+
+    images = [None] * len(paths)
+    for dataset_id, requests in grouped.items():
+        dataset = StateTracker.get_dataset(dataset_id)
+        selected = dataset.read_sample_images([path for _, path in requests], allow_missing=allow_missing)
+        for (position, _), image in zip(requests, selected, strict=True):
+            images[position] = image
+    return images
+
+
 def reference_images_from_context(context: dict) -> tuple[Image.Image, ...]:
     images = context.get("reference_images")
     if images is not None:
@@ -36,13 +53,7 @@ def reference_images_from_context(context: dict) -> tuple[Image.Image, ...]:
     if pixels is None:
         paths = context.get("image_paths")
         if paths:
-            backend_ids = context["data_backend_ids"]
-            if len(paths) != len(backend_ids):
-                raise ValueError("Reference image paths and backend IDs must have equal lengths.")
-            return tuple(
-                StateTracker.get_data_backend(backend_id)["data_backend"].read_image(path).convert("RGB")
-                for path, backend_id in zip(paths, backend_ids)
-            )
+            return tuple(image.convert("RGB") for image in load_prompt_images(paths, context["data_backend_ids"]))
 
         return ()
     if torch.is_tensor(pixels):

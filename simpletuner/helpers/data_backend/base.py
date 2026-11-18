@@ -11,14 +11,14 @@ import torch
 from simpletuner.helpers.data_backend.source_inventory import SourceFileInventory
 
 
-def ordered_sample_payloads(dataset_id, refs, returned):
+def ordered_sample_payloads(dataset_id, refs, returned, *, allow_missing=False):
     """Associate bounded provider results with the requested occurrences."""
     payloads = defaultdict(deque)
     for ref, payload in returned:
         payloads[ref].append(payload)
     for ref in refs:
         payload = payloads[ref].popleft() if payloads[ref] else None
-        if payload is None:
+        if payload is None and not allow_missing:
             raise OSError(f"Dataset {dataset_id} could not read the requested image {ref}")
         yield payload
 

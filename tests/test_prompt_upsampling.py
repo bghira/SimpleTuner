@@ -72,17 +72,24 @@ class PromptUpsamplingTests(unittest.TestCase):
         self.assertIsNone(model.text_embed_cache_context_key({}))
 
     def test_edit_reference_paths_use_the_selected_backends_and_keep_order(self):
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+
         red = Image.new("RGB", (32, 16), "red")
         blue = Image.new("RGB", (16, 48), "blue")
-        backends = {
-            "first": {"data_backend": SimpleNamespace(read_image=Mock(return_value=red))},
-            "second": {"data_backend": SimpleNamespace(read_image=Mock(return_value=blue))},
+        datasets = {
+            "first": DatasetRuntime(
+                "first", Mock(**{"read_image_batch.return_value": (["a.png", "a.png"], [red, red])}), None, {}
+            ),
+            "second": DatasetRuntime("second", Mock(**{"read_image_batch.return_value": (["b.png"], [blue])}), None, {}),
         }
-        context = {"image_paths": ["a.png", "b.png"], "data_backend_ids": ["first", "second"]}
-        with patch("simpletuner.helpers.models.prompt_upsampling.StateTracker.get_data_backend", side_effect=backends.get):
+        context = {"image_paths": ["a.png", "b.png", "a.png"], "data_backend_ids": ["first", "second", "first"]}
+        with patch(
+            "simpletuner.helpers.models.prompt_upsampling.StateTracker.get_dataset", side_effect=datasets.__getitem__
+        ):
             images = reference_images_from_context(context)
-        self.assertEqual([image.size for image in images], [(32, 16), (16, 48)])
-        backends["second"]["data_backend"].read_image.assert_called_once_with("b.png")
+        self.assertEqual([image.size for image in images], [(32, 16), (16, 48), (32, 16)])
+        datasets["first"].data_backend.read_image_batch.assert_called_once_with(["a.png", "a.png"])
+        datasets["second"].data_backend.read_image_batch.assert_called_once_with(["b.png"])
         self.assertFalse(reference_images_from_context({"image_path": "target.png", "data_backend_id": "target"}))
 
     def test_ragged_validation_images_preserve_colors_and_sizes(self):
