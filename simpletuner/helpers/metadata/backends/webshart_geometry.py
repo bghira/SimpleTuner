@@ -28,18 +28,24 @@ class GeometryLookup:
         return self._decode_record(row[0]) if row is not None else None
 
     def get_metadata_batch(self, refs):
+        return [self._decode_record(record) if record is not None else None for record in self._lookup_batch(refs, "record")]
+
+    def bucket_batch(self, refs):
+        return self._lookup_batch(refs, "bucket")
+
+    def _lookup_batch(self, refs, column):
         keys = [str(ref) for ref in refs]
         records = {}
         limit = self.connection.getlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER)
         for chunk in batched(dict.fromkeys(keys), limit):
             placeholders = ",".join("?" for _ in chunk)
-            rows = self.connection.execute(f"SELECT ref, record FROM geometry WHERE ref IN ({placeholders})", chunk)
-            records.update((ref, self._decode_record(record)) for ref, record in rows)
+            rows = self.connection.execute(f"SELECT ref, {column} FROM geometry WHERE ref IN ({placeholders})", chunk)
+            records.update(rows)
         return [records.get(ref) for ref in keys]
 
     @staticmethod
     def _decode_record(record):
-        return json.loads(zlib.decompress(record) if isinstance(record, bytes) else record)
+        return None if record is None else json.loads(zlib.decompress(record) if isinstance(record, bytes) else record)
 
     def locate_ref(self, ref):
         return self.connection.execute("SELECT bucket,ordinal FROM geometry WHERE ref=?", (ref,)).fetchone()
@@ -85,7 +91,7 @@ class PartitionedGeometryLookup(GeometryLookup):
     def get_metadata_by_filepath(self, filepath):
         return self.get_metadata_batch((filepath,))[0]
 
-    def get_metadata_batch(self, refs):
+    def _lookup_batch(self, refs, column):
         groups = defaultdict(list)
         result = []
         for ref in refs:
@@ -95,7 +101,7 @@ class PartitionedGeometryLookup(GeometryLookup):
             digest = self._digest(partition)
             if digest is not None:
                 with closing(read_snapshot(self.metadata_file, digest)) as db:
-                    records = GeometryLookup(db).get_metadata_batch(ref for _, ref in group)
+                    records = GeometryLookup(db)._lookup_batch((ref for _, ref in group), column)
                 for (position, _), record in zip(group, records, strict=True):
                     result[position] = record
         return result
@@ -199,7 +205,7 @@ class PreparedGeometry:
     def __init__(self, db):
         self.db = db
         db.execute(
-            "CREATE TABLE geometry(ref TEXT NOT NULL UNIQUE, record BLOB NOT NULL, bucket TEXT NOT NULL, ordinal INTEGER NOT NULL)"
+            "CREATE TABLE geometry(ref TEXT NOT NULL UNIQUE, record BLOB, bucket TEXT NOT NULL, ordinal INTEGER NOT NULL)"
         )
         db.execute(
             "CREATE TABLE runs(shard INTEGER NOT NULL, bucket TEXT NOT NULL, start INTEGER NOT NULL, n INTEGER NOT NULL)"
@@ -215,8 +221,9 @@ class PreparedGeometry:
 
     def add(self, bucket, ref, metadata, *, shard=None):
         ordinal = self.counts.get(bucket, 0)
-        record = json.dumps(metadata, separators=(",", ":"))
-        self.db.execute("INSERT INTO geometry VALUES (?,?,?,?)", (ref, zlib.compress(record.encode(), 1), bucket, ordinal))
+        record = json.dumps(metadata, separators=(",", ":")) if metadata is not None else None
+        packed = zlib.compress(record.encode(), 1) if record is not None else None
+        self.db.execute("INSERT INTO geometry VALUES (?,?,?,?)", (ref, packed, bucket, ordinal))
         self.digest.update(json.dumps([bucket, ref, record, shard], separators=(",", ":")).encode())
         self.counts[bucket] = ordinal + 1
         if shard is not None:
@@ -355,20 +362,38 @@ def geometry_lookup(publication, header, db):
     return PartitionedGeometryLookup(db, metadata_file, shards_per_partition)
 
 
+class AcceptedGeometry:
+    def __init__(self, lookup, counts, excluded):
+        self.lookup = lookup
+        self.counts = counts
+        self.excluded = excluded
+
+    def __call__(self, ref):
+        location = self.lookup.locate_ref(ref)
+        if location is None or not self.counts.get(location[0]):
+            return False
+        return (
+            self.excluded is None or self.excluded.execute("SELECT 1 FROM exclusions WHERE ref=?", (ref,)).fetchone() is None
+        )
+
+    def batch(self, refs):
+        buckets = self.lookup.bucket_batch(refs)
+        rejected = set()
+        if self.excluded is not None:
+            limit = self.excluded.getlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER)
+            for chunk in batched(dict.fromkeys(refs), limit):
+                placeholders = ",".join("?" for _ in chunk)
+                rows = self.excluded.execute(f"SELECT ref FROM exclusions WHERE ref IN ({placeholders})", chunk)
+                rejected.update(ref for (ref,) in rows)
+        return [bool(self.counts.get(bucket)) and ref not in rejected for ref, bucket in zip(refs, buckets, strict=True)]
+
+
 def accepted_geometry_predicate(lookup, publication, header, stack):
     from .webshart_exclusions import exclusion_path
 
     revision = header.get("exclusion_revision")
     excluded = stack.enter_context(closing(_read_index(exclusion_path(publication, revision)))) if revision else None
-    counts = header["bucket_counts"]
-
-    def contains(ref):
-        location = lookup.locate_ref(ref)
-        if location is None or not counts.get(location[0]):
-            return False
-        return excluded is None or excluded.execute("SELECT 1 FROM exclusions WHERE ref=?", (ref,)).fetchone() is None
-
-    return contains
+    return AcceptedGeometry(lookup, header["bucket_counts"], excluded)
 
 
 @contextmanager
