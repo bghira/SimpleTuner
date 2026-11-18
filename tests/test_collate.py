@@ -228,10 +228,12 @@ class CollateFunctionTests(unittest.TestCase):
             for backend_id in ("first", "second")
         ]
         from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+        from simpletuner.helpers.metadata.backends.base import MetadataBackend
 
         for entry in references:
+            metadata = MetadataBackend.__new__(MetadataBackend)
             runtime = DatasetRuntime(
-                entry["id"], entry["data_backend"], None, {**entry["config"], "caption_strategy": "textfile"}
+                entry["id"], entry["data_backend"], metadata, {**entry["config"], "caption_strategy": "textfile"}
             )
             runtime.resolve_caption = MagicMock()
             entry["dataset_runtime"] = runtime
