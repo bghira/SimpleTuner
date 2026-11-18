@@ -221,7 +221,7 @@ O treino LoRA do Qwen Image 2.1 carrega por padrão o [assistente v3](https://hu
 
 Use este como único método de destilação; não há suporte para combiná-lo com outros destiladores.
 
-Datasets de legendas aceitam `dataloader_prefetch: true` quando todos os datasets de treinamento salvam no checkpoint a posição dos lotes consumidos. Datasets de legendas e o agendamento nativo do Webshart são compatíveis com esse modo. A retomada rejeita mudanças nos identificadores/textos, lote, repetições, embaralhamento, semente, acumulação ou configuração distribuída. Os checkpoints do auxiliar também rejeitam mudanças na semente de geração, na lista de resoluções ou no número de passos de inferência do professor.
+Datasets de legendas aceitam `dataloader_prefetch: true` quando todos os datasets de treinamento salvam no checkpoint a posição dos lotes consumidos. Isso inclui datasets de legendas, o agendamento nativo do Webshart e os amostradores de imagem, vídeo e áudio que salvam a posição dos lotes consumidos. A retomada rejeita mudanças nos identificadores/textos, lote, repetições, embaralhamento, semente, acumulação ou configuração distribuída. Os checkpoints do auxiliar também rejeitam mudanças na semente de geração, na lista de resoluções ou no número de passos de inferência do professor.
 
 <a id="assistant-lora-multires"></a>
 

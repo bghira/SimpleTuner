@@ -221,7 +221,7 @@ El entrenamiento LoRA de Qwen Image 2.1 carga por defecto el [asistente v3](http
 
 Usa este como único método de destilación; no se admite combinarlo con otros destiladores.
 
-Los datasets de descripciones admiten `dataloader_prefetch: true` cuando todos los datasets de entrenamiento guardan en el checkpoint la posición consumida. Este modo admite datasets de descripciones y la planificación nativa de Webshart. La reanudación rechaza cambios en identidades/textos, lote, repeticiones, mezcla, semilla, acumulación o distribución. Los checkpoints del auxiliar también rechazan cambios en la semilla de generación, la lista de resoluciones o los pasos de inferencia del profesor.
+Los datasets de descripciones admiten `dataloader_prefetch: true` cuando todos los datasets de entrenamiento guardan en el checkpoint la posición consumida. Esto incluye los datasets de descripciones, la planificación nativa de Webshart y los muestreadores de imagen, vídeo y audio que guardan la posición consumida. La reanudación rechaza cambios en identidades/textos, lote, repeticiones, mezcla, semilla, acumulación o distribución. Los checkpoints del auxiliar también rechazan cambios en la semilla de generación, la lista de resoluciones o los pasos de inferencia del profesor.
 
 <a id="assistant-lora-multires"></a>
 

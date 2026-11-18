@@ -3222,7 +3222,7 @@ options:
 
 Select `--distillation_method=assistant_lora` to train a positive assistant adapter on fresh, adapter-disabled base-model generations from caption datasets. Initial support is Qwen Image 2.1. `distillation_config.assistant_lora` accepts `num_inference_steps` (40), `resolutions` (`[[1024, 1024]]`, width then height; multiples of 32) and `seed` (42). Cached text embeddings are required; terminal latents are not cached. See the [Qwen guide](quickstart/QWEN_IMAGE_2-1.md).
 
-Caption datasets support `dataloader_prefetch: true` when every training dataset checkpoints its consumed position. Caption datasets and native Webshart schedules support this mode. Resume rejects changes to caption identities/text, batch size, repeats, shuffle, seed, accumulation or distributed layout. Assistant checkpoints also reject changes to the generation seed, resolution list or teacher inference-step count.
+Caption datasets support `dataloader_prefetch: true` when every training dataset checkpoints its consumed position. This includes caption datasets, native Webshart schedules, and legacy image, video, and audio samplers that save consumed progress. Resume rejects changes to caption identities/text, batch size, repeats, shuffle, seed, accumulation or distributed layout. Assistant checkpoints also reject changes to the generation seed, resolution list or teacher inference-step count.
 
 Assistant LoRA and AnyFlow temporarily raise Dynamo’s per-code compile-cache limit to at least 32 for teacher, training and validation variants. A higher user limit is preserved; the original limit is restored on exit, including errors.
 
