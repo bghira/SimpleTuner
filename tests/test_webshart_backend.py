@@ -309,6 +309,14 @@ class TestWebshartDataBackend(unittest.TestCase):
 
 
 class TestWebshartMetadataCaptionFiltering(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(
+            patch(
+                "simpletuner.helpers.metadata.backends.webshart.StateTracker.get_args",
+                return_value=SimpleNamespace(only_instance_prompt=False),
+            )
+        )
+
     def _build_backend(self, entries):
         backend = WebshartMetadataBackend.__new__(WebshartMetadataBackend)
         backend.id = "test-backend"
