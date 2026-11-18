@@ -160,6 +160,10 @@ class DatasetRuntime:
             "conditioning_sampling": getattr(args, "conditioning_multidataset_sampling", "combined"),
             "caption_dropout": getattr(args, "caption_dropout_probability", None),
         }
+        if not self.uses_native_schedule:
+            revision = self.describe().source_revision
+            if isinstance(revision, str):
+                inputs["source_revision"] = revision
         serialized = json.dumps(make_public_config_serializable(inputs), sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(serialized.encode()).hexdigest()
 

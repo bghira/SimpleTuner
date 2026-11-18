@@ -124,6 +124,7 @@ class HuggingfaceMetadataBackendTests(unittest.TestCase):
         provider.data_backend = source
         provider.id = source.id
         provider.read_only = False
+        provider.bucket_report = None
         provider.aspect_ratio_bucket_indices = {"square": ["3.jpg", "1.jpg"], "wide": ["0.jpg", "2.jpg"]}
         with provider.open_preparation_view(worker=0, workers=3) as first:
             self.assertEqual(list(first), ["1.jpg", "0.jpg"])
@@ -155,6 +156,25 @@ class HuggingfaceMetadataBackendTests(unittest.TestCase):
             source.write(provider.cache_file, {"aspect_ratio_bucket_indices": {"square": ["3.jpg"]}})
             self.assertEqual(list(provider.iter_preparation_batches(2, 3, 2)), [("square", ("3.jpg",))])
             self.assertNotEqual(provider._sharded_preparation_index().directory, index.directory)
+
+            source.write(
+                provider.cache_file,
+                {"source_revision": source.dataset._fingerprint, "aspect_ratio_bucket_indices": {"square": ["3.jpg"]}},
+            )
+            from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+
+            runtime = DatasetRuntime(source.id, source, provider, {})
+            revision = runtime.occurrence_revision(None)
+            source.dataset = Dataset.from_dict({"number": [9, 10, 11, 12]})
+            self.assertNotEqual(runtime.occurrence_revision(None), revision)
+            with self.assertRaisesRegex(ValueError, "different source revision"):
+                list(provider.iter_preparation_batches(2, 3, 2))
+            provider.metadata_semaphor = threading.Semaphore()
+            provider.image_metadata = {"3.jpg": {"original_size": [8, 8]}}
+            provider.reload_cache()
+            provider.load_image_metadata()
+            self.assertEqual(provider.aspect_ratio_bucket_indices, {})
+            self.assertEqual(provider.image_metadata, {})
 
     def test_preparation_scan_uses_the_same_sample_cap_as_discovery(self):
         rows = Dataset.from_dict({"width": [512] * 18, "height": [256] * 18})

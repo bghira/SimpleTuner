@@ -1369,6 +1369,9 @@ class MetadataBackend:
     def close(self):
         """Release provider resources scoped to this dataset."""
 
+    def _source_revision(self):
+        return None
+
     def iter_validation_cycles(self):
         ordered = sorted(chain.from_iterable(self.aspect_ratio_bucket_indices.values()))
         while True:
@@ -1384,7 +1387,7 @@ class MetadataBackend:
         except FileNotFoundError as exc:
             raise ValueError("Scan the dataset to publish accepted membership before using a split dataset.") from exc
         with stream as source:
-            yield read_bucket_groups(source)
+            yield read_bucket_groups(source, source_revision=self._source_revision())
 
     def _preparation_ownership(self, worker, workers):
         positions = count()
@@ -1421,7 +1424,9 @@ class MetadataBackend:
             source, _ = self._preparation_source
             return DatasetDescription(accepted_samples=source.describe().accepted_samples)
         summaries = getattr(self.bucket_report, "bucket_summaries", {}) if self.bucket_report else {}
-        return DatasetDescription(accepted_samples=summaries.get("post_refresh", {}).get("total_samples"))
+        return DatasetDescription(
+            source_revision=self._source_revision(), accepted_samples=summaries.get("post_refresh", {}).get("total_samples")
+        )
 
     @property
     def view_revision(self):

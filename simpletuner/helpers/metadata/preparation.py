@@ -57,16 +57,16 @@ class ShardedPreparationIndex:
             root.mkdir(parents=True, exist_ok=True)
             with FileLock(str(root / f"{revision}.lock")):
                 if not directory.is_dir():
-                    cls._publish(source, directory, partition_for)
+                    cls._publish(source, directory, partition_for, source_revision)
         return cls(directory, len(partition_sizes), int((directory / "count").read_text(encoding="utf-8")))
 
     @staticmethod
-    def _publish(source, destination, partition_for):
+    def _publish(source, destination, partition_for, source_revision):
         with TemporaryDirectory(dir=destination.parent) as temporary:
             staging = Path(temporary) / "membership"
             staging.mkdir()
             count = 0
-            for bucket, refs in read_bucket_groups(source):
+            for bucket, refs in read_bucket_groups(source, source_revision=source_revision):
                 for batch in batched(refs, 2048):
                     groups = defaultdict(list)
                     for ref in batch:
@@ -111,11 +111,13 @@ def bucket_groups_from_events(events):
             pass
 
 
-def read_bucket_groups(source):
+def read_bucket_groups(source, *, source_revision=None):
     import ijson
 
     events = iter(ijson.parse(source))
-    for prefix, event, _ in events:
+    for prefix, event, value in events:
+        if prefix == "source_revision" and event == "string" and source_revision is not None and value != source_revision:
+            raise ValueError("Cached membership belongs to a different source revision. Scan the dataset again.")
         if prefix == "aspect_ratio_bucket_indices" and event == "start_map":
             yield from bucket_groups_from_events(events)
             return

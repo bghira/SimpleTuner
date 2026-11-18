@@ -317,7 +317,11 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             return None
         return value or None
 
+    def _source_revision(self):
+        return getattr(getattr(self.data_backend, "dataset", None), "_fingerprint", None)
+
     def reload_cache(self, set_config: bool = True):
+        self._stale_geometry = False
         if self.data_backend.exists(self.cache_file):
             try:
                 cache_data_raw = self.data_backend.read(self.cache_file)
@@ -326,7 +330,11 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             except Exception as e:
                 logger.warning(f"Error loading aspect ratio bucket cache, creating new one: {e}")
                 cache_data = {}
-            self.aspect_ratio_bucket_indices = cache_data.get("aspect_ratio_bucket_indices", {})
+            stored_revision = cache_data.get("source_revision")
+            self._stale_geometry = stored_revision is not None and stored_revision != self._source_revision()
+            self.aspect_ratio_bucket_indices = (
+                {} if self._stale_geometry else cache_data.get("aspect_ratio_bucket_indices", {})
+            )
             if set_config:
                 self.config = cache_data.get("config", {})
             # Load filtering statistics if present
@@ -348,6 +356,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             key: [str(path) for path in value] for key, value in self.aspect_ratio_bucket_indices.items()
         }
         cache_data = {
+            "source_revision": self._source_revision(),
             "config": self.active_dataset_config,
             "aspect_ratio_bucket_indices": aspect_ratio_bucket_indices_str,
         }
@@ -356,6 +365,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             cache_data["filtering_statistics"] = self.filtering_statistics
         cache_data_str = json.dumps(cache_data)
         self.data_backend.write(self.cache_file, cache_data_str)
+        self._stale_geometry = False
         logger.debug("Aspect ratio cache saved.")
 
     def save_image_metadata(self):
@@ -367,6 +377,11 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         logger.debug(f"Metadata file saved to {full_metadata_path}")
 
     def load_image_metadata(self):
+        if getattr(self, "_stale_geometry", False):
+            with self.metadata_semaphor:
+                self.image_metadata = {}
+                self.image_metadata_loaded = False
+            return
         full_metadata_path = self.metadata_file
         if not str(self.metadata_file).endswith(".json"):
             full_metadata_path = f"{self.metadata_file}_{self.id}.json"
