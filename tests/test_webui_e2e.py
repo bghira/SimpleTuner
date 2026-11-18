@@ -2424,8 +2424,107 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
             WebDriverWait(driver, 5).until(
                 lambda d: d.execute_script("return Alpine.store('trainer').hasUnsavedChanges === true;")
             )
+            datasets_tab.save_datasets()
+            persisted = next(d for d in json.loads(config_path.read_text(encoding="utf-8")) if d["id"] == "webshart-parquet")
+            self.assertEqual(persisted["webshart"], {"format": "tar", "caption_key": "original"})
 
         self.for_each_browser("test_webshart_parquet_settings_edit_and_save", scenario)
+
+    def _seed_webshart_dataset(self, dataset_id: str, webshart: dict):
+        self.seed_defaults()
+        config_path = self.config_dir / "default" / "multidatabackend.json"
+        config_path.write_text(
+            json.dumps(
+                [
+                    {
+                        "id": dataset_id,
+                        "type": "webshart",
+                        "dataset_type": "image",
+                        "source": "org/dataset",
+                        "caption_strategy": "webshart",
+                        "metadata_backend": "webshart",
+                        "webshart": webshart,
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+        return config_path
+
+    def _open_dataset_storage_tab(self, driver, dataset_id: str):
+        """Load the trainer page and return a function that selects one of the dataset's tabs."""
+        trainer_page = self._trainer_page(driver)
+        trainer_page.navigate_to_trainer()
+        self.dismiss_onboarding(driver)
+        trainer_page.switch_to_datasets_tab()
+        trainer_page.wait_for_tab("datasets")
+        driver.execute_script(
+            """
+            const dismiss = document.querySelector('#datasets-tab-content .hero-dismiss-btn');
+            if (dismiss) dismiss.click();
+            const toggle = document.querySelector(`[data-dataset-id="${arguments[0]}"] .list-item-toggle`);
+            if (toggle.getAttribute('aria-expanded') !== 'true') toggle.click();
+        """,
+            dataset_id,
+        )
+
+        def select_tab(name):
+            driver.execute_script(
+                """
+                const item = document.querySelector(`[data-dataset-id="${arguments[0]}"]`).closest('.dataset-list-item-wrapper');
+                [...item.querySelectorAll('button')].find(button => button.textContent.trim() === arguments[1]).click();
+            """,
+                dataset_id,
+                name,
+            )
+
+        select_tab("Storage")
+        return select_tab
+
+    @staticmethod
+    def _visible(driver, css: str):
+        selector = (By.CSS_SELECTOR, f".dataset-list-item-expanded {css}")
+        return WebDriverWait(driver, 10).until(
+            lambda d: next((element for element in d.find_elements(*selector) if element.is_displayed()), False)
+        )
+
+    @staticmethod
+    def _wait_for_unsaved_changes(driver, expected: bool):
+        WebDriverWait(driver, 5).until(
+            lambda d: d.execute_script("return Alpine.store('trainer').hasUnsavedChanges === arguments[0];", expected)
+        )
+
+    def test_webshart_settings_written_by_hand_survive_a_save(self) -> None:
+        written_by_hand = {
+            "cache_dir": "cache/webshart/by-hand",
+            "shard_cache_gb": 10,
+            "parallel_downloads": 2,
+            "optimize_captions": True,
+            "shuffle_window": 4,
+        }
+        config_path = self._seed_webshart_dataset("webshart-by-hand", written_by_hand)
+
+        def scenario(driver, _browser):
+            datasets_tab = DatasetsTab(driver, base_url=self.base_url)
+            self._open_dataset_storage_tab(driver, "webshart-by-hand")
+            for css, shown in [
+                (".webshart-cache-dir", "cache/webshart/by-hand"),
+                (".webshart-shard-cache-gb", "10"),
+                (".webshart-parallel-downloads", "2"),
+            ]:
+                with self.subTest(field=css):
+                    self.assertEqual(self._visible(driver, css).get_attribute("value"), shown)
+
+            source = self._visible(driver, '[x-model="editingDataset.source"]')
+            source.clear()
+            source.send_keys("org/another-dataset", Keys.TAB)
+            self._wait_for_unsaved_changes(driver, True)
+            datasets_tab.save_datasets()
+            saved = next(d for d in json.loads(config_path.read_text(encoding="utf-8")) if d["id"] == "webshart-by-hand")
+            self.assertEqual(saved["source"], "org/another-dataset")
+            self.assertEqual(saved["webshart"], written_by_hand)
+
+        self.for_each_browser("test_webshart_settings_written_by_hand_survive_a_save", scenario)
 
     def test_view_mode_toggle(self) -> None:
         """Test switching between list and grid view modes."""

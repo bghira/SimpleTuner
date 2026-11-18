@@ -323,7 +323,7 @@
             <div class="col-md-4">
                 <label class="form-label small">Cache Directory <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#webshart-datasets') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <textarea rows="1"
-                          class="form-control form-control-sm resizable-path"
+                          class="form-control form-control-sm resizable-path webshart-cache-dir"
                           x-model="editingDataset.cache_dir"
                           @input="touchConnectionField(editingDataset)"
                           placeholder="cache/webshart/my-dataset"></textarea>
@@ -331,7 +331,7 @@
             <div class="col-md-4">
                 <label class="form-label small">Shard Cache GB</label>
                 <input type="number"
-                       class="form-control form-control-sm"
+                       class="form-control form-control-sm webshart-shard-cache-gb"
                        min="0"
                        step="1"
                        x-model.number.lazy="editingDataset.shard_cache_gb"
@@ -341,7 +341,7 @@
             <div class="col-md-4">
                 <label class="form-label small">Parallel Downloads</label>
                 <input type="number"
-                       class="form-control form-control-sm"
+                       class="form-control form-control-sm webshart-parallel-downloads"
                        min="1"
                        step="1"
                        x-model.number.lazy="editingDataset.parallel_downloads"

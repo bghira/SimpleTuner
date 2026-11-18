@@ -1832,6 +1832,11 @@ function trainerComponent() {
                 if (dataset.metadata_backend !== 'webshart') {
                     dataset.metadata_backend = 'webshart';
                 }
+                ['cache_dir', 'shard_cache_gb', 'parallel_downloads'].forEach((key) => {
+                    if (dataset.webshart?.[key] !== undefined) {
+                        dataset[key] = dataset.webshart[key];
+                    }
+                });
             }
 
             const repeats = this._coerceInt(dataset.repeats);
@@ -3088,36 +3093,32 @@ function trainerComponent() {
                     const cacheDir = this._coerceString(dataset.cache_dir);
                     const shardCacheGb = this._coerceFloat(dataset.shard_cache_gb);
                     const parallelDownloads = this._coerceInt(dataset.parallel_downloads);
-                    const webshart = {};
+                    const webshart = this.sanitizeValueForSave(dataset.webshart) || {};
+                    const setWebshart = (key, value, keep) => {
+                        if (keep) {
+                            webshart[key] = value;
+                        } else {
+                            delete webshart[key];
+                        }
+                    };
                     const format = this._coerceString(dataset.webshart?.format);
-                    if (format) webshart.format = format;
-                    if (format === 'parquet') {
-                        const manifest = this._coerceString(dataset.webshart?.manifest);
-                        if (manifest) webshart.manifest = manifest;
-                        const columns = {};
-                        ['image', 'captions', 'width', 'height'].forEach(key => {
-                            const value = this._coerceString(dataset.webshart?.columns?.[key]);
-                            if (value) columns[key] = value;
-                        });
-                        if (Object.keys(columns).length) webshart.columns = columns;
-                    }
+                    setWebshart('format', format, Boolean(format));
+                    const manifest = this._coerceString(dataset.webshart?.manifest);
+                    setWebshart('manifest', manifest, format === 'parquet' && Boolean(manifest));
+                    const columns = {};
+                    ['image', 'captions', 'width', 'height'].forEach(key => {
+                        const value = this._coerceString(dataset.webshart?.columns?.[key]);
+                        if (value) columns[key] = value;
+                    });
+                    setWebshart('columns', columns, format === 'parquet' && Object.keys(columns).length > 0);
                     ['aws_region_name', 'aws_endpoint_url', 'aws_access_key_id', 'aws_secret_access_key', 'aws_session_token'].forEach(assignWebshart);
                     const connections = this._coerceInt(dataset.aws_max_pool_connections);
                     if (Number.isFinite(connections)) cleaned.aws_max_pool_connections = connections;
                     else delete cleaned.aws_max_pool_connections;
 
-                    if (dataset.webshart?.caption_key !== undefined) {
-                        webshart.caption_key = this.sanitizeValueForSave(dataset.webshart.caption_key);
-                    }
-                    if (cacheDir) {
-                        webshart.cache_dir = cacheDir;
-                    }
-                    if (Number.isFinite(shardCacheGb)) {
-                        webshart.shard_cache_gb = shardCacheGb;
-                    }
-                    if (Number.isFinite(parallelDownloads)) {
-                        webshart.parallel_downloads = parallelDownloads;
-                    }
+                    setWebshart('cache_dir', cacheDir, Boolean(cacheDir));
+                    setWebshart('shard_cache_gb', shardCacheGb, Number.isFinite(shardCacheGb));
+                    setWebshart('parallel_downloads', parallelDownloads, Number.isFinite(parallelDownloads));
                     if (Object.keys(webshart).length > 0) {
                         cleaned.webshart = webshart;
                     } else {

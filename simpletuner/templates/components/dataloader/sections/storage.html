@@ -285,14 +285,14 @@
                         <div class="row g-3 mt-3">
                             <div class="col-md-4">
                                 <label class="form-label">Cache Directory</label>
-                                <input type="text" class="form-control form-control-sm"
+                                <input type="text" class="form-control form-control-sm webshart-cache-dir"
                                        x-model="dataset.cache_dir"
                                        @input="touchConnectionField(dataset)"
                                        placeholder="cache/webshart/my-dataset">
                             </div>
                             <div class="col-md-4">
                                 <label class="form-label">Shard Cache GB</label>
-                                <input type="number" class="form-control form-control-sm"
+                                <input type="number" class="form-control form-control-sm webshart-shard-cache-gb"
                                        min="0"
                                        step="1"
                                        x-model.number.lazy="dataset.shard_cache_gb"
@@ -301,7 +301,7 @@
                             </div>
                             <div class="col-md-4">
                                 <label class="form-label">Parallel Downloads</label>
-                                <input type="number" class="form-control form-control-sm"
+                                <input type="number" class="form-control form-control-sm webshart-parallel-downloads"
                                        min="1"
                                        step="1"
                                        x-model.number.lazy="dataset.parallel_downloads"
