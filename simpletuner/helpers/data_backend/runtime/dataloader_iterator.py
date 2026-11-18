@@ -53,7 +53,7 @@ def _selection_generator(step: int) -> torch.Generator:
     return generator
 
 
-def select_dataloader_index(step: int, backends: Dict[str, Any]) -> Optional[str]:
+def select_dataloader_index(step: int, backends: Dict[str, Any], *, mixer=None) -> Optional[str]:
     if not backends:
         raise ValueError("No data backends available for selection.")
 
@@ -62,7 +62,7 @@ def select_dataloader_index(step: int, backends: Dict[str, Any]) -> Optional[str
     inactive_ids = []
     for backend_id in sorted(backends):
         backend = backends[backend_id]
-        weight = get_backend_weight(backend_id, backend, step)
+        weight = get_backend_weight(backend_id, backend, step, mixer=mixer)
         if weight <= 0:
             inactive_ids.append(backend_id)
             continue
@@ -73,7 +73,8 @@ def select_dataloader_index(step: int, backends: Dict[str, Any]) -> Optional[str
         # No active datasets available for sampling
         # Check if any datasets have been exhausted - if so, this is a normal epoch end
         # If no datasets have been exhausted, this is a misconfiguration error
-        if StateTracker.exhausted_backends:
+        exhausted = StateTracker.exhausted_backends if mixer is None else mixer.dataset_ids.difference(backends)
+        if exhausted:
             return None
         try:
             next_step = (StateTracker.get_global_step() or 0) + 1
@@ -97,7 +98,7 @@ def select_dataloader_index(step: int, backends: Dict[str, Any]) -> Optional[str
     return chosen_backend_id
 
 
-def get_backend_weight(backend_id: str, backend: Any, step: int) -> float:
+def get_backend_weight(backend_id: str, backend: Any, step: int, *, mixer=None) -> float:
     if isinstance(backend, dict):
         backend_config = backend
     else:
@@ -111,8 +112,10 @@ def get_backend_weight(backend_id: str, backend: Any, step: int) -> float:
     if not isinstance(sampling_method, str):
         sampling_method = "uniform"
 
-    epoch = StateTracker.get_epoch()
-    is_active, _ = dataset_is_active(backend_id, backend_config, step_hint=step, epoch_hint=epoch)
+    epoch = StateTracker.get_epoch() if mixer is None else mixer.epoch
+    is_active, _ = dataset_is_active(
+        backend_id, backend_config, step_hint=step, epoch_hint=epoch, update_state=mixer is None
+    )
     if not is_active:
         return 0.0
 
@@ -227,7 +230,7 @@ class ScaledDatasetSampler:
         # Fixed order with empty groups removed.
         return [phase for phase in ("positive", "negative", "neutral") if self._groups.get(phase)]
 
-    def _choose_from_group(self, group: str, step: int, backends: Dict[str, Any]) -> Optional[str]:
+    def _choose_from_group(self, group: str, step: int, backends: Dict[str, Any], *, mixer=None) -> Optional[str]:
         backend_ids = [backend_id for backend_id in self._groups.get(group, []) if backend_id in backends]
         if not backend_ids:
             return None
@@ -235,7 +238,7 @@ class ScaledDatasetSampler:
         filtered_ids: list[str] = []
         for backend_id in backend_ids:
             try:
-                weight = get_backend_weight(backend_id, backends[backend_id], step)
+                weight = get_backend_weight(backend_id, backends[backend_id], step, mixer=mixer)
             except Exception:
                 weight = 0.0
             if weight <= 0:
@@ -252,7 +255,7 @@ class ScaledDatasetSampler:
         chosen_index = torch.multinomial(weights_tensor, 1, generator=_selection_generator(step)).item()
         return filtered_ids[chosen_index]
 
-    def next_backend_id(self, step: int, backends: Dict[str, Any]) -> Optional[str]:
+    def next_backend_id(self, step: int, backends: Dict[str, Any], *, mixer=None) -> Optional[str]:
         """
         Return the next backend id following the fixed positive -> negative -> neutral cycle.
         """
@@ -262,7 +265,7 @@ class ScaledDatasetSampler:
         attempts = 0
         while attempts < len(phases):
             phase = phases[self._phase_index % len(phases)]
-            candidate = self._choose_from_group(phase, step, backends)
+            candidate = self._choose_from_group(phase, step, backends, mixer=mixer)
             self._phase_index = (self._phase_index + 1) % len(phases)
             if candidate is not None:
                 return candidate
@@ -353,9 +356,9 @@ def random_dataloader_iterator(
             sampler.rebuild(backends)
         chosen_backend_id = None
         if sampler and sampler.has_scaled_groups():
-            chosen_backend_id = sampler.next_backend_id(step, backends)
+            chosen_backend_id = sampler.next_backend_id(step, backends, mixer=mixer)
         if chosen_backend_id is None:
-            chosen_backend_id = select_dataloader_index(step, backends)
+            chosen_backend_id = select_dataloader_index(step, backends, mixer=mixer)
         if chosen_backend_id is None:
             # No active backends available - signal epoch end
             logger.info(
@@ -363,8 +366,9 @@ def random_dataloader_iterator(
                 "This may happen when datasets with start_epoch/start_step are waiting to become active. "
                 "Ending epoch early."
             )
-            StateTracker.clear_exhausted_buckets()
-            _SCALED_SAMPLERS.pop(id(backends), None)
+            if mixer is None:
+                StateTracker.clear_exhausted_buckets()
+                _SCALED_SAMPLERS.pop(id(backends), None)
             return False
         backend = backends.get(chosen_backend_id)
         if backend is None:
@@ -394,17 +398,14 @@ def random_dataloader_iterator(
                     f"Dataset (name={chosen_backend_id}) is now sampling its {StateTracker.get_repeats(chosen_backend_id)} repeat out of {repeats} total allowed."
                 )
                 continue
-            logger.debug(
-                f"Dataset (name={chosen_backend_id}) is now exhausted after {StateTracker.get_repeats(chosen_backend_id)} repeat(s). Removing from list."
-            )
             del backends[chosen_backend_id]
-            StateTracker.backend_exhausted(chosen_backend_id)
-            StateTracker.set_repeats(data_backend_id=chosen_backend_id, repeats=0)
+            if mixer is None:
+                StateTracker.backend_exhausted(chosen_backend_id)
+                StateTracker.set_repeats(data_backend_id=chosen_backend_id, repeats=0)
+            logger.debug("Dataset %s exhausted its schedule.", chosen_backend_id)
             if sampler:
                 sampler.remove_backend(chosen_backend_id)
-        finally:
-            if not backends:
-                logger.debug("All dataloaders exhausted. Moving to next epoch in main training loop.")
-                StateTracker.clear_exhausted_buckets()
-                _SCALED_SAMPLERS.pop(id(backends), None)
-                return False
+    if mixer is None:
+        StateTracker.clear_exhausted_buckets()
+        _SCALED_SAMPLERS.pop(id(backends), None)
+    return False

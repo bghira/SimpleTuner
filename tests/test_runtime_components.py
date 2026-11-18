@@ -68,6 +68,9 @@ class TestDatasetMixer(unittest.TestCase):
             batches = [fetcher.next_response(19 + i) for i in range(8)]
             self.assertFalse(fetcher.next_response(27))
             self.assertEqual(backends, {})
+            self.assertEqual(StateTracker.dataset_schedule, {})
+            self.assertEqual(StateTracker.repeats, {})
+            self.assertEqual(StateTracker.exhausted_backends, [])
             for split in (1, 4, 6):
                 frontier = batches[split - 1]["dataset_mixer_state"]
                 StateTracker.consumed_dataset_mixer = frontier
@@ -509,7 +512,7 @@ class TestDataloaderIterator(unittest.TestCase):
         result = random_dataloader_iterator(step=100, backends=backends)
 
         # Verify select_dataloader_index was called correctly
-        mock_select.assert_called_once_with(100, backends)
+        mock_select.assert_called_once_with(100, backends, mixer=None)
 
         # Verify get_data_loader was called
         self.mock_backend1.get_data_loader.assert_called_once()
@@ -537,7 +540,7 @@ class TestDataloaderIterator(unittest.TestCase):
         result = random_dataloader_iterator(step=200, backends=backends)
 
         # Verify select_dataloader_index was called correctly
-        mock_select.assert_called_once_with(200, backends)
+        mock_select.assert_called_once_with(200, backends, mixer=None)
 
         # Verify correct backend's get_data_loader was called
         self.mock_backend2.get_data_loader.assert_called_once()

@@ -7346,6 +7346,12 @@ class Trainer:
 
                 if mixer_state is not None:
                     StateTracker.consumed_dataset_mixer = mixer_state
+                    StateTracker.set_exhausted_backends(mixer_state["exhausted_backends"].copy())
+                    used_dataset_id = prepared_batch["data_backend_id"]
+                    if not (StateTracker.get_dataset_schedule(used_dataset_id) or {}).get("reached", False):
+                        StateTracker.mark_dataset_schedule_reached(
+                            used_dataset_id, epoch=epoch, step=self.state["global_step"] + 1
+                        )
                 if continuation_dataset is not None:
                     continuation_dataset.acknowledge_batch(continuation)
 

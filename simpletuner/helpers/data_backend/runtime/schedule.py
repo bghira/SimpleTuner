@@ -114,6 +114,14 @@ def dataset_is_active(
 
     is_active = has_started and not_ended_by_epoch and not_ended_by_step
 
+    if not update_state:
+        return is_active, {
+            "start_epoch": start_epoch,
+            "start_step": start_step,
+            "end_epoch": end_epoch,
+            "end_step": end_step,
+        }
+
     schedule_state = StateTracker.get_dataset_schedule(backend_id)
     if not schedule_state:
         StateTracker.set_dataset_schedule(
@@ -125,7 +133,7 @@ def dataset_is_active(
         )
         schedule_state = StateTracker.get_dataset_schedule(backend_id)
 
-    if is_active and update_state and not schedule_state.get("reached", False):
+    if is_active and not schedule_state.get("reached", False):
         StateTracker.mark_dataset_schedule_reached(
             backend_id,
             epoch=current_epoch,
