@@ -2741,7 +2741,7 @@ class Trainer:
                 )
             )
             distiller_profile = self._resolve_distiller_profile()
-            configure_multi_databackend(
+            configured_backends = configure_multi_databackend(
                 self.config,
                 accelerator=self.accelerator,
                 text_encoders=self.model.text_encoders,
@@ -2749,6 +2749,9 @@ class Trainer:
                 model=self.model,
                 distiller_profile=distiller_profile,
                 distillation_method=getattr(self.config, "distillation_method", None),
+            )
+            self._distillation_caches = tuple(
+                backend["distillation_cache"] for backend in configured_backends["distillation_cache_backends"].values()
             )
             self._emit_event(
                 lifecycle_stage_event(
@@ -3697,7 +3700,7 @@ class Trainer:
 
             if self.distiller:
                 logger.info(f"Successfully initialized {self.config.distillation_method.upper()} distiller")
-                self.distillation_artifacts = run_distillation_cache_generation(self.distiller)
+                self.distillation_artifacts = run_distillation_cache_generation(self.distiller, self._distillation_caches)
         except Exception as e:
             logger.error(f"Failed to initialize distillation: {e}")
             raise

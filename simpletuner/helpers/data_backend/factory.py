@@ -2640,10 +2640,10 @@ class FactoryRegistry:
                 data_backend=init_backend["data_backend"],
                 cache_dir=cache_dir,
                 distillation_type=init_backend["distillation_type"],
+                config=init_backend["config"],
             )
             init_backend["distillation_cache"].set_webhook_handler(StateTracker.get_webhook_handler())
 
-            StateTracker.register_data_backend(init_backend)
             self.distillation_cache_backends[init_backend["id"]] = init_backend
 
         self.metrics["backend_counts"]["distillation_cache"] = len(self.distillation_cache_backends)
@@ -4598,7 +4598,9 @@ def get_huggingface_backend(
     )
 
 
-def run_distillation_cache_generation(distiller: Optional[DistillationBase]) -> DistillationArtifactCycle | None:
+def run_distillation_cache_generation(
+    distiller: Optional[DistillationBase], caches: tuple[DistillationCache, ...]
+) -> DistillationArtifactCycle | None:
     """Prepare and bind the matching artifact stores for distillation."""
     if distiller is None or not hasattr(distiller, "requires_distillation_cache"):
         return
@@ -4618,38 +4620,20 @@ def run_distillation_cache_generation(distiller: Optional[DistillationBase]) -> 
     if hasattr(distiller, "get_required_distillation_cache_type"):
         required_type = distiller.get_required_distillation_cache_type()
 
-    distillation_backends = StateTracker.get_data_backends(
-        _type="distillation_cache",
-        _types=["distillation_cache"],
-    )
-
-    if not distillation_backends:
+    if not caches:
         raise ValueError("Distillation method requires a distillation_cache dataset but none were configured.")
 
-    selected_backends = {}
-    for backend_id, backend in distillation_backends.items():
-        backend_type = backend.get("distillation_type") or backend.get("config", {}).get("distillation_type")
-        if required_type and backend_type != required_type:
-            continue
-        selected_backends[backend_id] = backend
-
-    if required_type and not selected_backends:
+    selected = [cache for cache in caches if not required_type or cache.distillation_type == required_type]
+    if not selected:
         raise ValueError(
             f"Distillation method requested cache type '{required_type}' but no matching distillation_cache dataset was provided."
         )
 
-    targets = selected_backends if selected_backends else distillation_backends
+    if callable(generate):
+        for cache in selected:
+            generate(cache, backend_config=cache.config)
 
-    caches = []
-    for backend_id, backend in targets.items():
-        cache = backend.get("distillation_cache")
-        if cache is None:
-            raise ValueError(f"Distillation cache backend '{backend_id}' is missing its cache instance.")
-        if callable(generate):
-            generate(cache, backend_config=backend.get("config", {}))
-        caches.append(cache)
-
-    cycle = DistillationArtifactCycle(caches)
+    cycle = DistillationArtifactCycle(selected)
     distiller.bind_artifact_cycle(cycle)
     return cycle
 

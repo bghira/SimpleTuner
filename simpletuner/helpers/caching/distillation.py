@@ -21,11 +21,12 @@ else:
 class DistillationCache(WebhookMixin):
     """Generic storage helper for deterministic ODE pair artifacts."""
 
-    def __init__(self, id: str, data_backend, cache_dir: str, distillation_type: str = "generic"):
+    def __init__(self, id: str, data_backend, cache_dir: str, distillation_type: str = "generic", *, config=None):
         self.id = id
         self.data_backend = data_backend
         self.cache_dir = cache_dir or ""
         self.distillation_type = distillation_type or "generic"
+        self.config = dict(config or {})
         self.rank_info = rank_info()
         self.webhook_handler = None
 

@@ -305,18 +305,9 @@ class TestRunDistillationCacheGeneration(unittest.TestCase):
         provider = MagicMock()
         distiller.get_ode_generator_provider.return_value = provider
 
-        cache = MagicMock()
-        backend_map = {
-            "ode-cache-1": {
-                "distillation_type": "self_forcing",
-                "distillation_cache": cache,
-                "config": {"distillation_type": "self_forcing"},
-            }
-        }
-
-        with patch("simpletuner.helpers.data_backend.factory.StateTracker") as mock_state_tracker:
-            mock_state_tracker.get_data_backends.return_value = backend_map
-            cycle = run_distillation_cache_generation(distiller)
+        cache = MagicMock(distillation_type="self_forcing", config={"distillation_type": "self_forcing"})
+        other = MagicMock(distillation_type="other")
+        cycle = run_distillation_cache_generation(distiller, (other, cache))
 
         provider.generate.assert_called_once_with(cache, backend_config={"distillation_type": "self_forcing"})
         self.assertEqual(cycle.caches, (cache,))
@@ -328,15 +319,5 @@ class TestRunDistillationCacheGeneration(unittest.TestCase):
         distiller.get_required_distillation_cache_type.return_value = "expected"
         distiller.get_ode_generator_provider.return_value = MagicMock()
 
-        backend_map = {
-            "ode-cache-1": {
-                "distillation_type": "other",
-                "distillation_cache": MagicMock(),
-                "config": {},
-            }
-        }
-
-        with patch("simpletuner.helpers.data_backend.factory.StateTracker") as mock_state_tracker:
-            mock_state_tracker.get_data_backends.return_value = backend_map
-            with self.assertRaises(ValueError):
-                run_distillation_cache_generation(distiller)
+        with self.assertRaisesRegex(ValueError, "no matching distillation_cache"):
+            run_distillation_cache_generation(distiller, (MagicMock(distillation_type="other"),))
