@@ -23,6 +23,16 @@ def shuffle_window(config: Mapping[str, Any]) -> int | None:
     return (config.get("webshart") or {}).get("shuffle_window")
 
 
+def preparation_refusal(config: Mapping[str, Any]) -> str | None:
+    """Why a dataset has nothing to scan or cache ahead of training, or None when it has."""
+    if shuffle_window(config) is None:
+        return None
+    return (
+        f"(id={config.get('id')}) This dataset sets webshart.shuffle_window: its shards are indexed as training opens"
+        " them and its latents and text embeds are encoded on demand, so it has nothing to scan or cache beforehand."
+    )
+
+
 def image_context_dropout_record(model, args, key: str, metadata: dict[str, Any]) -> dict[str, Any] | None:
     """The empty-caption record a model that keeps image context in dropped captions caches beside a caption."""
     from simpletuner.helpers.distillation.factory import DistillerFactory

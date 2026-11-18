@@ -244,7 +244,13 @@ class CacheJobService:
         global_config: Dict[str, Any],
     ) -> str:
         """Start a background cache job for a single dataset. Returns job_id."""
+        from simpletuner.helpers.data_backend.dataset_runtime import preparation_refusal
+
         from .dataset_scan_service import get_scan_service
+
+        refusal = preparation_refusal(dataset_config)
+        if refusal is not None:
+            raise ValueError(refusal)
 
         if get_scan_service().get_active_status():
             raise RuntimeError("A metadata scan is in progress. Wait for it to finish first.")

@@ -526,6 +526,8 @@ async def start_dataset_scan(request: ScanRequest, _user: User = Depends(get_cur
             clear_vae_cache=request.clear_vae_cache,
             clear_conditioning_cache=request.clear_conditioning_cache,
         )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(status_code=409, detail=str(e))
     return {"job_id": job_id, "dataset_id": request.dataset_id}
@@ -534,12 +536,18 @@ async def start_dataset_scan(request: ScanRequest, _user: User = Depends(get_cur
 @router.post("/scan/all")
 async def start_scan_all(request: ScanAllRequest, _user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Queue all browsable datasets for sequential scanning."""
+    from simpletuner.helpers.data_backend.dataset_runtime import preparation_refusal
+
     try:
         datasets = _load_plan()
     except ValueError:
         raise HTTPException(status_code=404, detail="No dataset plan found")
 
-    browsable = [ds for ds in datasets if str(ds.get("dataset_type", "")).lower() not in ("text_embeds", "image_embeds")]
+    browsable = [
+        ds
+        for ds in datasets
+        if str(ds.get("dataset_type", "")).lower() not in ("text_embeds", "image_embeds") and preparation_refusal(ds) is None
+    ]
     if not browsable:
         raise HTTPException(status_code=400, detail="No scannable datasets in plan")
 
@@ -622,6 +630,8 @@ async def start_cache_job(request: CacheStartRequest, _user: User = Depends(get_
             config,
             global_config,
         )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(status_code=409, detail=str(e))
     return {"job_id": job_id, "dataset_id": request.dataset_id, "cache_type": request.cache_type}

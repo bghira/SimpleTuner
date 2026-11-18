@@ -296,6 +296,11 @@ class DatasetScanService:
         clear_conditioning_cache: bool = False,
     ) -> str:
         """Start a background scan for a single dataset. Returns job_id."""
+        from simpletuner.helpers.data_backend.dataset_runtime import preparation_refusal
+
+        refusal = preparation_refusal(dataset_config)
+        if refusal is not None:
+            raise ValueError(refusal)
         # Prevent scanning while a cache job is active
         try:
             from .cache_job_service import get_cache_service
