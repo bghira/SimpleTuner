@@ -490,6 +490,22 @@ class TestProcessLifecycle(ProcessKeeperTestCase):
         called_env = mock_popen.call_args.kwargs.get("env") or {}
         self.assertEqual(called_env.get("SIMPLETUNER_PARENT_PID"), str(os.getpid()))
 
+    @patch("simpletuner.simpletuner_sdk.process_keeper.subprocess.Popen")
+    def test_subprocess_env_drops_the_servers_skip_torch_flag(self, mock_popen):
+        job_id = "test_skip_torch_env"
+        self.test_jobs.append(job_id)
+        mock_popen.return_value = MagicMock(stdout=None, stderr=None, stdin=None, pid=12345, returncode=0)
+        mock_popen.return_value.poll.return_value = 0
+
+        process = TrainerProcess(job_id)
+        self.addCleanup(process._cleanup_resources)
+        with patch.dict(os.environ, {"SIMPLETUNER_SKIP_TORCH": "1", "SIMPLETUNER_KEPT": "1"}):
+            process.start(simple_task, {})
+
+        called_env = mock_popen.call_args.kwargs["env"]
+        self.assertEqual(called_env.get("SIMPLETUNER_KEPT"), "1")
+        self.assertNotIn("SIMPLETUNER_SKIP_TORCH", called_env)
+
 
 class TestProcessCommunication(ProcessKeeperTestCase):
 
