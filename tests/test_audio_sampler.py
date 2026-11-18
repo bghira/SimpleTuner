@@ -16,7 +16,7 @@ class TestAudioSampler(unittest.TestCase):
         self.mock_tracker.get_conditioning_datasets.return_value = []
 
         # Mock Metadata Backend
-        self.mock_metadata = MagicMock()
+        self.mock_metadata = MagicMock(epoch_provider=None)
         self.mock_metadata.id = "test_backend"
         self.mock_metadata.aspect_ratio_bucket_indices = {"10s": ["a.wav", "b.wav"], "20s": ["c.wav"]}
         self.mock_metadata.seen_images = {}
@@ -33,6 +33,9 @@ class TestAudioSampler(unittest.TestCase):
             return {}
 
         self.mock_metadata.get_metadata_by_filepath.side_effect = get_metadata
+        self.mock_metadata.get_metadata_batch.side_effect = lambda refs: (
+            self.mock_metadata.get_metadata_by_filepath(ref) for ref in refs
+        )
 
         # Mock Data Backend
         self.mock_data = MagicMock()

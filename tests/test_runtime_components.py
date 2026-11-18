@@ -23,6 +23,70 @@ from simpletuner.helpers.data_backend.runtime import dataloader_iterator as data
 from simpletuner.helpers.data_backend.runtime import get_backend_weight, random_dataloader_iterator, select_dataloader_index
 
 
+class TestDatasetMixer(unittest.TestCase):
+    def test_resume_uses_consumed_phase_and_exhaustion_with_prefetch(self):
+        import json
+        import tempfile
+        from pathlib import Path
+
+        from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        configs = {"a": {"slider_strength": 1}, "b": {"slider_strength": -1}, "c": {}}
+        configs = {name: {**config, "webshart": {"sampling_policy": "global"}} for name, config in configs.items()}
+
+        class Loader:
+            def __init__(self, name, left):
+                self.name, self.left, self.config = name, left, configs[name]
+
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                if not self.left:
+                    raise MultiDatasetExhausted()
+                self.left -= 1
+                return {"name": self.name}
+
+        def loaders(counts):
+            return {name: Loader(name, count) for name, count in counts.items()}
+
+        with (
+            patch.object(StateTracker, "args", SimpleNamespace(seed=42, gradient_accumulation_steps=2)),
+            patch.object(StateTracker, "data_backends", {k: {"config": v} for k, v in configs.items()}),
+            patch.object(StateTracker, "repeats", {}),
+            patch.object(StateTracker, "exhausted_backends", []),
+            patch.object(StateTracker, "consumed_dataset_mixer", None),
+            patch.object(StateTracker, "dataset_schedule", {}),
+            tempfile.TemporaryDirectory() as directory,
+        ):
+            initial = {"a": 1, "b": 4, "c": 3}
+            backends = loaders(initial)
+            mixer = dataloader_module.DatasetMixer(backends, 1, 18)
+            fetcher = BatchFetcher(step=18, max_size=10, datasets=backends, mixer=mixer)
+            fetcher.fetch_responses()
+            batches = [fetcher.next_response(19 + i) for i in range(8)]
+            self.assertFalse(fetcher.next_response(27))
+            self.assertEqual(backends, {})
+            for split in (1, 4, 6):
+                frontier = batches[split - 1]["dataset_mixer_state"]
+                StateTracker.consumed_dataset_mixer = frontier
+                path = Path(directory) / "state.json"
+                StateTracker.save_training_state(path)
+                saved = json.loads(path.read_text())
+                self.assertEqual(saved["exhausted_backends"], frontier["exhausted_backends"])
+                remaining = {
+                    name: count - sum(b["name"] == name for b in batches[:split]) for name, count in initial.items()
+                }
+                restored = loaders(remaining)
+                resumed = dataloader_module.DatasetMixer(restored, 1, 999, saved["dataset_mixer"])
+                tail = [random_dataloader_iterator(999, restored, mixer=resumed) for _ in range(8 - split)]
+                self.assertEqual(tail, batches[split:])
+            configs["b"]["probability"] = 0.01
+            with self.assertRaisesRegex(ValueError, "weights"):
+                dataloader_module.DatasetMixer(loaders(initial), 1, 0, frontier)
+
+
 class TestBatchFetcher(unittest.TestCase):
     """Test the BatchFetcher class for background data loading"""
 
@@ -271,6 +335,23 @@ class TestBatchFetcher(unittest.TestCase):
         except Exception as e:
             self.fail(f"fetch_responses raised an exception: {e}")
 
+    def test_prefetch_drains_ready_batch_then_surfaces_source_failure(self):
+        for failure in (OSError("R2 read failed"), ValueError("source revision changed"), StopIteration()):
+            with (
+                self.subTest(failure=failure),
+                patch.object(batch_fetcher_module, "random_dataloader_iterator", side_effect=[{"batch": 1}, failure]),
+            ):
+                fetcher = BatchFetcher(step=0, max_size=2, datasets=self.datasets)
+                thread = fetcher.start_fetching()
+                thread.join(timeout=2)
+                self.assertFalse(thread.is_alive())
+                self.assertEqual(fetcher.next_response(1), {"batch": 1})
+                if isinstance(failure, StopIteration):
+                    self.assertIs(fetcher.next_response(2), False)
+                else:
+                    with self.assertRaisesRegex(type(failure), str(failure)):
+                        fetcher.next_response(2)
+
     def test_queue_properties(self):
         """Test that queue has correct properties"""
         fetcher = BatchFetcher(step=100, max_size=7, datasets=self.datasets)
@@ -517,6 +598,30 @@ class TestDataloaderIterator(unittest.TestCase):
 
         self.assertEqual(results, ["positive_loader", "negative_loader", "neutral_loader"])
         mock_select.assert_not_called()
+
+    @patch("simpletuner.helpers.data_backend.runtime.dataloader_iterator.StateTracker")
+    @patch("simpletuner.helpers.data_backend.runtime.dataloader_iterator.select_dataloader_index", return_value="dataset")
+    def test_repeats_belong_to_the_provider_schedule_when_present(self, mock_select, mock_state_tracker):
+        from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
+
+        mock_state_tracker.get_repeats.return_value = 0
+        for uses_schedule in (True, False):
+            with self.subTest(uses_schedule=uses_schedule):
+                mock_state_tracker.reset_mock()
+                get_batch = Mock(side_effect=[MultiDatasetExhausted(), {"batch": "repeat"}])
+                runtime = SimpleNamespace(
+                    config={"repeats": 1}, uses_native_schedule=uses_schedule, get_data_loader=get_batch
+                )
+                backends = {"dataset": runtime}
+                result = random_dataloader_iterator(1, backends, update_epoch_step=False)
+                if uses_schedule:
+                    self.assertIs(result, False)
+                    self.assertEqual(backends, {})
+                    get_batch.assert_called_once()
+                    mock_state_tracker.increment_repeats.assert_not_called()
+                else:
+                    self.assertEqual(result, {"batch": "repeat"})
+                    mock_state_tracker.increment_repeats.assert_called_once_with("dataset")
 
 
 class TestRuntimeIntegration(unittest.TestCase):

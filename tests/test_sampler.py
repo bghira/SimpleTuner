@@ -64,7 +64,10 @@ class TestMultiAspectSampler(unittest.TestCase):
         self.process_state = PartialState()
         self.accelerator = MagicMock(num_processes=1, process_index=0)
         self.accelerator.log = MagicMock()
-        self.metadata_backend = Mock(spec=DiscoveryMetadataBackend)
+        self.metadata_backend = Mock(spec=DiscoveryMetadataBackend, epoch_provider=None)
+        self.metadata_backend.get_metadata_batch.side_effect = lambda refs: MetadataBackend.get_metadata_batch(
+            self.metadata_backend, refs
+        )
         self.metadata_backend.id = "foo"
         self.metadata_backend.aspect_ratio_bucket_indices = {
             "1.0": ["image1", "image2", "image3", "image4"],
@@ -89,6 +92,15 @@ class TestMultiAspectSampler(unittest.TestCase):
 
     def test_len(self):
         self.assertEqual(len(self.sampler), 2)
+
+    def test_len_counts_partial_batches_separately_for_each_bucket_and_repeat(self):
+        self.metadata_backend.aspect_ratio_bucket_indices = {
+            "1.0": ["image1", "image2", "image3"],
+            "1.5": ["image4", "image5", "image6"],
+            "2.0": [],
+        }
+        self.sampler.dataset_runtime.config["repeats"] = 1
+        self.assertEqual(len(self.sampler), 8)
 
     def test_model_card_video_overview_honors_sample_cap_and_nested_video_config(self):
         sampler = object.__new__(MultiAspectSampler)
@@ -276,7 +288,9 @@ class TestMultiAspectSampler(unittest.TestCase):
 
         sampler.data_backend = SimpleNamespace(read_image=read_image)
         sampler.metadata_backend.get_metadata_by_filepath = lambda path: metadata if path == "/conditioning/11.png" else None
-        sampler.dataset_runtime = DatasetRuntime("conditioning", sampler.data_backend, sampler.metadata_backend, {})
+        sampler.metadata_backend.get_metadata_batch = lambda refs: MetadataBackend.get_metadata_batch(
+            sampler.metadata_backend, refs
+        )
         backend_config = {
             "conditioning_config": {"type": "i2v_first_frame"},
             "crop": False,
@@ -285,6 +299,9 @@ class TestMultiAspectSampler(unittest.TestCase):
             "resolution_type": "pixel",
         }
 
+        sampler.dataset_runtime = DatasetRuntime(
+            "conditioning", sampler.data_backend, sampler.metadata_backend, backend_config
+        )
         with (
             patch.object(StateTracker, "get_data_backend_config", return_value=backend_config),
             patch.object(StateTracker, "get_model", return_value=None),
@@ -322,7 +339,8 @@ class TestMultiAspectSampler(unittest.TestCase):
                     os.makedirs(os.path.dirname(mask_path), exist_ok=True)
                     Image.new("RGB", (8, 8), color=(image_idx * 255,) * 3).save(mask_path)
 
-                conditioning_metadata = Mock(spec=DiscoveryMetadataBackend)
+                conditioning_metadata = Mock(spec=DiscoveryMetadataBackend, epoch_provider=None)
+                conditioning_metadata.get_metadata_batch.side_effect = lambda refs: (metadata for _ in refs)
                 conditioning_metadata.id = conditioning_id
                 conditioning_metadata.instance_data_dir = conditioning_dir
                 conditioning_metadata.aspect_ratio_bucket_indices = {}
@@ -336,14 +354,15 @@ class TestMultiAspectSampler(unittest.TestCase):
                     model=None,
                     conditioning_type="mask",
                 )
-                conditioning_datasets.append({"id": conditioning_id, "sampler": conditioning_sampler})
+                conditioning_sampler.dataset_runtime.sampler = conditioning_sampler
+                conditioning_datasets.append(conditioning_sampler.dataset_runtime)
 
             for sampling_mode in ("random", "combined"):
                 for dataset_count in (1, 2):
                     with (
                         self.subTest(sampling_mode=sampling_mode, dataset_count=dataset_count),
                         patch.object(
-                            StateTracker, "get_conditioning_datasets", return_value=conditioning_datasets[:dataset_count]
+                            self.sampler.dataset_runtime, "conditioning_datasets", conditioning_datasets[:dataset_count]
                         ),
                         patch.object(
                             StateTracker,
@@ -368,6 +387,9 @@ class TestMultiAspectSampler(unittest.TestCase):
                             )
                             self.assertEqual(mask.image.getpixel((0, 0)), (mask_idx % len(samples) * 255,) * 3)
                             self.assertEqual(mask.conditioning_type, "mask")
+                            self.assertEqual(
+                                mask.training_sample_path(self.sampler.id), samples[mask_idx % len(samples)]["image_path"]
+                            )
                         self.sampler.logger.warning.assert_not_called()
 
     def test_load_states_with_matching_batch_size_restores_schedule_before_normalizing_legacy_seen_flags(self):
@@ -412,7 +434,7 @@ class TestMultiAspectSampler(unittest.TestCase):
 
         self.metadata_backend.aspect_ratio_bucket_indices = {"fresh": ["fresh.jpg"]}
         self.metadata_backend.seen_images = {"fresh.jpg": 1}
-        self.sampler._val_master_list = ["fresh.jpg"]
+        self.sampler.validation_cursor = MagicMock()
         self.sampler.buckets = ["fresh"]
         self.sampler.current_bucket = "fresh"
         self.sampler.exhausted_buckets = ["fresh-exhausted"]
@@ -433,7 +455,7 @@ class TestMultiAspectSampler(unittest.TestCase):
         )
         self.assertEqual(self.metadata_backend.aspect_ratio_bucket_indices, {"fresh": ["fresh.jpg"]})
         self.assertEqual(self.metadata_backend.seen_images, {"fresh.jpg": 1})
-        self.assertEqual(self.sampler._val_master_list, ["fresh.jpg"])
+        self.sampler.validation_cursor.close.assert_not_called()
         self.assertEqual(self.sampler.buckets, ["fresh"])
         self.assertEqual(self.sampler.current_bucket, "fresh")
         self.assertEqual(self.sampler.exhausted_buckets, ["fresh-exhausted"])
@@ -642,7 +664,7 @@ class TestSamplerResumeSchedule(unittest.TestCase):
         sampler.current_epoch = 1
         sampler.sample_type_strs = "images"
         sampler.logger = MagicMock()
-        sampler._val_master_list = []
+        sampler.validation_cursor = MagicMock()
         sampler.state_manager = BucketStateManager(backend.id)
         return sampler
 

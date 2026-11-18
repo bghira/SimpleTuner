@@ -1,5 +1,7 @@
 """Dataloader iterator functions for multi-backend sampling."""
 
+import hashlib
+import json
 import logging
 import os
 from typing import Any, Dict, Optional, Union
@@ -285,22 +287,70 @@ def _get_scaled_sampler(backends: Dict[str, Any]) -> Optional[ScaledDatasetSampl
     return sampler
 
 
+class DatasetMixer:
+    """Keep the fetched selection phase separate from the trainer's acknowledged frontier."""
+
+    def __init__(self, backends, epoch, step, saved=None):
+        self.sampler = ScaledDatasetSampler()
+        keys = (
+            "probability",
+            "slider_strength",
+            "start_epoch",
+            "end_epoch",
+            "start_step",
+            "end_step",
+            "disable_after_epoch_step",
+        )
+        settings = {name: {key: dataset.config.get(key) for key in keys} for name, dataset in backends.items()}
+        args = StateTracker.get_args()
+        identity = [settings, args.seed, getattr(args, "data_backend_sampling", "uniform")]
+        self.revision = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+        self.epoch = epoch
+        self.step = step
+        self.dataset_ids = set(backends)
+        if saved is not None:
+            if saved["version"] != 1 or saved["revision"] != self.revision or saved["epoch"] != epoch:
+                raise ValueError("Dataset mixing resume requires the same datasets, epoch, weights and sampling settings.")
+            self.step = saved["step"]
+            for name in saved["exhausted_backends"]:
+                del backends[name]
+            self.sampler.rebuild(backends)
+            self.sampler._phase_index = saved["phase"]
+
+    def state_dict(self, backends):
+        return {
+            "version": 1,
+            "revision": self.revision,
+            "epoch": self.epoch,
+            "step": self.step,
+            "phase": self.sampler._phase_index,
+            "exhausted_backends": sorted(self.dataset_ids.difference(backends)),
+        }
+
+
 def random_dataloader_iterator(
     step: int,
     backends: Dict[str, Any],
     *,
     update_epoch_step: bool = True,
+    mixer: Optional[DatasetMixer] = None,
 ) -> Union[Any, bool]:
     if not backends:
         raise ValueError("No data backends provided to iterator.")
 
+    if mixer is not None:
+        step = mixer.step + 1
     prefetch_log_debug("Random dataloader iterator launched.")
     logger.debug(f"Backends to select from {backends}")
     while backends:
         if update_epoch_step:
             _set_epoch_step_for_training_step(step)
 
-        sampler = _get_scaled_sampler(backends)
+        if mixer is None:
+            sampler = _get_scaled_sampler(backends)
+        else:
+            sampler = mixer.sampler
+            sampler.rebuild(backends)
         chosen_backend_id = None
         if sampler and sampler.has_scaled_groups():
             chosen_backend_id = sampler.next_backend_id(step, backends)
@@ -322,13 +372,22 @@ def random_dataloader_iterator(
 
         try:
             if hasattr(backend, "get_data_loader"):
-                data_loader = backend.get_data_loader()
-                return data_loader
-
-            data_iterator = iter(backend)
-            return next(data_iterator)
+                batch = backend.get_data_loader()
+            else:
+                batch = next(iter(backend))
+            if mixer is not None:
+                mixer.step = step
+                batch["dataset_mixer_state"] = mixer.state_dict(backends)
+            return batch
         except MultiDatasetExhausted:
-            repeats = StateTracker.get_data_backend_config(chosen_backend_id).get("repeats", False)
+            config = getattr(backend, "config", None)
+            if not isinstance(config, dict):
+                config = StateTracker.get_data_backend_config(chosen_backend_id)
+            schedule_owns_repeats = (
+                getattr(backend, "uses_native_schedule", False) is True
+                or getattr(backend, "tracks_consumed_batches", False) is True
+            )
+            repeats = 0 if schedule_owns_repeats else config.get("repeats", False)
             if repeats and repeats > 0 and StateTracker.get_repeats(chosen_backend_id) < repeats:
                 StateTracker.increment_repeats(chosen_backend_id)
                 logger.debug(

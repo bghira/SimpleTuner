@@ -37,18 +37,6 @@ def prefetch_log_debug(message: str) -> None:
     prefetch_log.debug(f"{rank_info()} {message}")
 
 
-def _resolve_random_iterator():
-    if random_dataloader_iterator is not DEFAULT_RANDOM_ITERATOR:
-        return random_dataloader_iterator
-
-    try:
-        from simpletuner.helpers.data_backend import factory as factory_module
-
-        return getattr(factory_module, "random_dataloader_iterator", DEFAULT_RANDOM_ITERATOR)
-    except Exception:
-        return DEFAULT_RANDOM_ITERATOR
-
-
 class BatchFetcher:
     """Prefetch batches using the last consumed training step as the first schedule hint."""
 
@@ -59,12 +47,17 @@ class BatchFetcher:
         datasets: Optional[Dict[str, Any]] = None,
         device=None,
         device_prefetch_threshold_bytes: int = 0,
+        mixer=None,
     ) -> None:
         if DEFAULT_KEEP_RUNNING_PROPERTY is not None:
             type(self).keep_running = DEFAULT_KEEP_RUNNING_PROPERTY
         self.queue = queue.Queue(max_size)
         self.datasets = datasets or {}
+        self.mixer = mixer
+        self._thread = None
         self._keep_running = True
+        self._finished = threading.Event()
+        self._error = None
         self.step = step
         self._next_fetch_step = step
         self.device_prefetcher = None
@@ -78,40 +71,30 @@ class BatchFetcher:
 
     def start_fetching(self) -> threading.Thread:
         thread = threading.Thread(target=self.fetch_responses)
+        self._thread = thread
         thread.start()
         return thread
 
     def fetch_responses(self) -> None:
         """main loop for fetching responses in background thread"""
         prefetch_log_debug("Launching retrieval thread.")
-        iterator_fn = _resolve_random_iterator()
+        iterator_fn = random_dataloader_iterator
         try:
-            while True:
+            while not self._finished.is_set():
                 if self.queue.qsize() < self.queue.maxsize:
                     prefetch_log_debug(f"Queue size: {self.queue.qsize()}. Fetching more data.")
-                    try:
-                        if iterator_fn is DEFAULT_RANDOM_ITERATOR:
-                            item = iterator_fn(
-                                self._next_fetch_step,
-                                self.datasets,
-                                update_epoch_step=False,
-                            )
-                        else:
-                            item = iterator_fn(self._next_fetch_step, self.datasets)
-                    except ValueError:
-                        prefetch_log_debug("No datasets available during prefetch; stopping fetch thread.")
-                        self._keep_running = False
-                        break
-                    except StopIteration:
-                        prefetch_log_debug("Dataloader iterator signaled completion.")
-                        break
-                    except Exception as exc:
-                        logger.debug(f"BatchFetcher encountered exception: {exc}")
-                        break
+                    if self.mixer is not None:
+                        item = iterator_fn(self._next_fetch_step, self.datasets, update_epoch_step=False, mixer=self.mixer)
+                    elif iterator_fn is DEFAULT_RANDOM_ITERATOR:
+                        item = iterator_fn(self._next_fetch_step, self.datasets, update_epoch_step=False)
+                    else:
+                        item = iterator_fn(self._next_fetch_step, self.datasets)
                     if self.device_prefetcher is not None:
                         item = self.device_prefetcher.prefetch(item)
                     self.queue.put(item)
                     self._next_fetch_step += 1
+                    if item is False:
+                        break
                     if self.queue.qsize() >= self.queue.maxsize:
                         prefetch_log_debug("Completed fetching data. Queue is full.")
                         if threading.current_thread() is threading.main_thread():
@@ -123,19 +106,27 @@ class BatchFetcher:
                     time.sleep(0.5)
                 if not self.keep_running:
                     break
+        except StopIteration:
+            pass
+        except Exception as exc:
+            self._error = exc
         finally:
+            self._finished.set()
             if DEFAULT_KEEP_RUNNING_PROPERTY is not None:
                 type(self).keep_running = DEFAULT_KEEP_RUNNING_PROPERTY
             prefetch_log_debug("Exiting retrieval thread.")
 
     def next_response(self, step: int) -> Any:
         self.step = step
-        if self.queue.empty():
-            prefetch_log_debug("Queue is empty. Waiting for data.")
-        while self.queue.empty():
-            continue
-        prefetch_log_debug("Queue has data. Yielding next item.")
-        item = self.queue.get()
+        while True:
+            try:
+                item = self.queue.get(timeout=0.1)
+                break
+            except queue.Empty:
+                if self._finished.is_set() and self.queue.empty():
+                    if self._error is not None:
+                        raise self._error
+                    return False
         if self.device_prefetcher is not None:
             item = self.device_prefetcher.consume(item)
         _set_epoch_step_for_training_step(step)
@@ -143,6 +134,12 @@ class BatchFetcher:
 
     def stop_fetching(self) -> None:
         self._keep_running = False
+        self._finished.set()
+
+    def close(self) -> None:
+        self.stop_fetching()
+        if self._thread is not None and self._thread is not threading.current_thread():
+            self._thread.join()
 
     @property
     def keep_running(self) -> bool:
