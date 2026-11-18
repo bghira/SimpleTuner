@@ -17,6 +17,7 @@ from random import shuffle
 import numpy as np
 import torch
 import torch.nn.functional as F
+from diffusers.models.autoencoders.vae import DiagonalGaussianDistribution
 from numpy import str_ as numpy_str
 from PIL import Image
 from tqdm import tqdm
@@ -1241,6 +1242,17 @@ class VAECache(WebhookMixin):
             latents_uncached = normalize_ltx2_audio_latents(latents_uncached, self.vae)
         return latents_uncached
 
+    def _sample_latent_distribution(self, distribution, filenames):
+        if isinstance(distribution, DiagonalGaussianDistribution):
+            generators = []
+            for filename in filenames:
+                key = os.path.relpath(filename, self.cache_dir)
+                digest = sha256(f"vae-cache-posterior:{key}".encode()).digest()
+                seed = int.from_bytes(digest[:8], "big")
+                generators.append(torch.Generator(device="cpu").manual_seed(seed))
+            return distribution.sample(generator=generators)
+        return distribution.sample()
+
     def encode_images(self, images, filepaths, load_from_cache=True):
         # images must be same dimension
         # if load_from_cache=True and entry not found, throws exception
@@ -1340,7 +1352,9 @@ class VAECache(WebhookMixin):
                             dist_params = latents_uncached.latent_dist.parameters
                             for idx, fp in enumerate(debug_filepaths):
                                 self._log_audio_tensor_stats("audio_latents_dist", dist_params[idx], fp)
-                        latents_uncached = latents_uncached.latent_dist.sample()
+                        latents_uncached = self._sample_latent_distribution(
+                            latents_uncached.latent_dist, [full_filenames[i] for i in uncached_image_indices]
+                        )
                     elif hasattr(latents_uncached, "sample"):
                         latents_uncached = latents_uncached.sample()
                     if self.dataset_type_enum is DatasetType.AUDIO:

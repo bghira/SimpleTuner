@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import torch
+from diffusers.models.autoencoders.vae import DiagonalGaussianDistribution
 
 from simpletuner.helpers.caching.vae import VAECache
 from simpletuner.helpers.data_backend.base import BaseDataBackend
@@ -73,6 +74,18 @@ class TestVaeCacheTraversal(unittest.TestCase):
         with self.assertRaisesRegex(OSError, "Dataset ondemand could not read the requested image a"):
             cache.encode_images([None, None, None], ["a", "b", "a"])
         self.assertEqual(cache._process_images_in_batch.call_count, 1)
+
+    def test_latent_cache_samples_by_artifact_key_without_advancing_training_rng(self):
+        cache = VAECache.__new__(VAECache)
+        cache.cache_dir = "latents"
+        params = torch.zeros(2, 8, 4, 4)
+        rng = torch.get_rng_state().clone()
+        batched = cache._sample_latent_distribution(DiagonalGaussianDistribution(params), ["latents/a.pt", "latents/b.pt"])
+        cache.cache_dir = "another-store"
+        single = cache._sample_latent_distribution(DiagonalGaussianDistribution(params[:1]), ["another-store/b.pt"])
+        torch.testing.assert_close(batched[1:2], single, rtol=0, atol=0)
+        self.assertFalse(torch.equal(batched[0], batched[1]))
+        self.assertTrue(torch.equal(rng, torch.get_rng_state()))
 
     def test_cache_scan_streams_keys_from_the_bound_artifact_store(self):
         cache = VAECache.__new__(VAECache)
