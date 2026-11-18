@@ -73,7 +73,7 @@
 - `num_inference_steps`（默认 `40`）、`guidance_scale`（默认 `1.0`）、`seed`（默认 `0`）：推理设置。Qwen Image 将引导映射至 `true_cfg_scale`；大于一时使用空负面提示词，验证引导设置不会覆盖此值。
 - `output_dir`（可选）：默认 `cache_dir/generated-captions/<id>`。输出按配置指纹存储，重启时复用。指纹包含描述、推理设置、解析后的 Hub 修订版本及本地权重文件大小和修改时间。生成期间不要修改模型文件。描述、模型或推理设置变化会创建独立缓存，批量大小变化不会。
 
-生成时禁用适配器并使用基础模型，仅释放为预处理加载的变换器，不修改原始描述。生成需要单进程准备运行；多进程运行中的 `data_generator` 会在读取描述前被拒绝。分布式训练时，请将生成目录配置为普通 `image` 数据集，每个分辨率一个数据集，设置 `caption_strategy: "textfile"`、`crop: false`、`resolution_type: "pixel"`，并将 `resolution` 设为该桶的短边像素数。未使用生成器的描述数据集必须设置 `dataloader_prefetch=false`，以保存检查点中的采样器位置。修改描述列表、分辨率或数据集拓扑需要开始新的训练；复用生成缓存并不意味着此类检查点恢复兼容。
+生成时禁用适配器并使用基础模型，仅释放为预处理加载的变换器，不修改原始描述。生成需要单进程准备运行；多进程运行中的 `data_generator` 会在读取描述前被拒绝。分布式训练时，请将生成目录配置为普通 `image` 数据集，每个分辨率一个数据集，设置 `caption_strategy: "textfile"`、`crop: false`、`resolution_type: "pixel"`，并将 `resolution` 设为该桶的短边像素数。当所有训练数据集都在检查点中记录已消费批次的位置时，描述数据集可以使用 `dataloader_prefetch: true`。描述数据集和 Webshart 原生调度支持此模式。修改描述列表、分辨率或数据集拓扑需要开始新的训练；复用生成缓存并不意味着此类检查点恢复兼容。
 
 本地描述发现要求生成输出目录位于源 `instance_data_dir` 之外；目录重叠会在扫描前被拒绝。
 
@@ -132,6 +132,10 @@
 - **取值:** `true` | `false`
 - **说明:** 跳过完整的文本嵌入预计算。已有条目会从该缓存读取；缺失的嵌入会在训练或验证时编码并写入缓存。
 - **注记:** 分配到该 `text_embeds` 后端的所有图像或视频数据集都会继承此行为。如需为部分源数据集使用不同的缓存行为，请创建另一个 `text_embeds` 后端，并通过源数据集的 `text_embeds` 字段进行分配。
+
+### `text_cache_encode_only`
+
+在 `text_embeds` 后端启用此布尔选项可逐训练批次在线编码文本。编码器跳过嵌入文件的读写，包括已有条目。默认值为 `false`。预计算时请使用单独的可写 Local 或 AWS 文本嵌入后端。
 
 ### `text_cache_disable`
 
@@ -1064,6 +1068,8 @@ Grounding 流水线支持为每个实体添加边界框和遮罩标注，用于�
 
 - **仅适用于文本嵌入数据集。** 可以是 JSON 列表、txt 文件路径或 JSON 文档路径。过滤字符串可以是要从所有字幕中移除的普通词，也可以是正则表达式。另外还支持 sed 风格的 `s/search/replace/` 语法，用于在字幕中**替换**字符串而非删除。
 
+文本嵌入缓存打开时会读取过滤文件。过滤后的缓存键根据发送给编码器的文本生成。升级后，请重新生成启用了描述词过滤器的缓存。如果停用旧版本生成的缓存所用的过滤器，也请重新生成该缓存。
+
 #### 过滤列表示例
 
 完整示例见 [这里](/config/caption_filter_list.txt.example)。其中包含 BLIP（通用版）、LLaVA、CogVLM 常见的重复或负面字符串。
@@ -1420,6 +1426,8 @@ Webshart 数据集通过 `webshart` 包加载 WebDataset 风格的 tar shards。
 - `metadata` 可选，可指向包含 captions 的独立 metadata location。对于 `webshart/conceptual-captions-12m-webdataset-metadata` 这样的 Hugging Face metadata repo，传 repo id 即可；Webshart 会跟随 source shard 的 `data/` 等子目录布局。
 - `metadata_backend` 必须为 `webshart`；`caption_strategy` 应为 `webshart` 或 `instanceprompt`。
 - `webshart.cache_dir` 存储 SimpleTuner metadata 与 Webshart caches。`shard_cache_gb` 和 `parallel_downloads` 会传给 Webshart 的 shard cache；将 `shard_cache_gb` 设为 `0` 可禁用整 shard cache，并保留基于索引的 range reads。
+- 将 `webshart.sampling_policy` 设为 `global`，可在每个准备好的宽高比分桶内打乱样本顺序。设为 `shard_local` 时，每个训练轮次会打乱分片顺序，并优先从当前分片组成批次，减少 DataComp 等远程数据集的分片缓存换入换出。两种策略使用相同的已接受样本。末尾不足一个批次时，按分桶和并行配置补齐或丢弃。省略此字段可保留现有采样器。选择原生策略前，请先扫描数据集并生成索引。
+- 选择原生策略会在磁盘上创建成员索引，请为已接受样本的几何信息和索引预留空间。原生 VAE 和条件图像缓存键包含源内容、预处理几何信息和编码器设置。更换模型权重或从旧采样器切换时可能需要重新生成这些图像缓存。文本嵌入键仍沿用原有格式。
 - `webshart.caption_key` 可用于选择字幕字段：单个键使用 `"long_caption"`，多个键使用 `["long_caption", "short_caption"]`，按列表顺序收集。键按字面名称匹配，依次检查样本的 JSON 元数据、索引元数据及两者 `captions` 字典中的命名条目；采用第一个包含该键的位置。字符串和列表值作为字幕候选，不会拼接成一个提示词。缺失或空值会被忽略；使用 `caption_strategy: "webshart"` 时，没有选中字幕的样本将被跳过，即使它有默认字幕或 `.txt` 伴随文件。省略此选项将保留默认查找方式。如果索引未包含 JSON 内容，则读取 JSON 伴随文件。字幕和分桶缓存按配置的键分别保存。在 WebUI 的 Webshart 设置中，每行输入一个键。 JSON 边车读取使用配置的 Webshart 分片缓存；字幕查询不会解码或实例化图像数据。
 - `webshart_optimize_captions`（另一拼写 `webshart_optimise_captions`；在 `webshart` 块内也接受 `optimize_captions`/`optimise_captions`）会在启动时探测 caption 布局，当 captions 位于 `.txt`/`.json` sidecar tar 成员中而不是 metadata 索引中时，将它们一次性合并进本地 Webshart metadata cache。若不启用，sidecar caption 数据集（例如 `laion/conceptual-captions-12m-webdataset`）在每次枚举 captions 时——启动、checkpoint、生成 model card——都要为每个样本付出一次 range read。metadata 中已内嵌 captions 的数据集会自动跳过合并。
 

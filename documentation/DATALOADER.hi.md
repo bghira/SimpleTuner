@@ -73,7 +73,7 @@
 - `num_inference_steps` (डिफ़ॉल्ट `40`), `guidance_scale` (`1.0`) और `seed` (`0`): इन्फ़रेंस सेटिंग। Qwen Image में गाइडेंस `true_cfg_scale` को जाती है; एक से अधिक मान खाली नेगेटिव प्रॉम्प्ट इस्तेमाल करते हैं। वैलिडेशन गाइडेंस इसे नहीं बदलती।
 - `output_dir` (वैकल्पिक): डिफ़ॉल्ट `cache_dir/generated-captions/<id>`। आउटपुट रेसिपी के फ़िंगरप्रिंट में सहेजे जाते हैं और पुनः शुरू करने पर इस्तेमाल होते हैं। इसमें कैप्शन, इन्फ़रेंस सेटिंग, हल किए गए Hub रिविज़न और स्थानीय वज़न फ़ाइलों के आकार/संशोधन समय शामिल हैं। जनरेशन के दौरान मॉडल फ़ाइलें न बदलें। कैप्शन, मॉडल या इन्फ़रेंस बदलने पर अलग कैश बनता है; बैच बदलने पर नहीं।
 
-जनरेशन बेस मॉडल पर अडैप्टर बंद करके होती है और केवल प्रीप्रोसेसिंग के लिए लोड किया गया ट्रांसफ़ॉर्मर मुक्त किया जाता है। मूल कैप्शन नहीं बदलते। जनरेशन के लिए एकल-प्रोसेस तैयारी रन आवश्यक है; कई प्रोसेस वाले `data_generator` रन कैप्शन पढ़ने से पहले अस्वीकृत होते हैं। वितरित प्रशिक्षण के लिए जनरेटेड डायरेक्टरी को सामान्य `image` डेटासेट बनाएं: हर रिज़ॉल्यूशन के लिए एक डेटासेट, `caption_strategy: "textfile"`, `crop: false`, `resolution_type: "pixel"` और `resolution` में उस बकेट की छोटी भुजा का आकार रखें। साधारण कैप्शन डेटासेट में सैंपलर की चेकपॉइंट स्थिति सुरक्षित रखने के लिए `dataloader_prefetch=false` आवश्यक है। कैप्शन सूची, रिज़ॉल्यूशन या डेटासेट टोपोलॉजी बदलने पर नया प्रशिक्षण शुरू करें; जनरेशन कैश का पुनः उपयोग ऐसे चेकपॉइंट रिज़्यूम को संगत नहीं बनाता।
+जनरेशन बेस मॉडल पर अडैप्टर बंद करके होती है और केवल प्रीप्रोसेसिंग के लिए लोड किया गया ट्रांसफ़ॉर्मर मुक्त किया जाता है। मूल कैप्शन नहीं बदलते। जनरेशन के लिए एकल-प्रोसेस तैयारी रन आवश्यक है; कई प्रोसेस वाले `data_generator` रन कैप्शन पढ़ने से पहले अस्वीकृत होते हैं। वितरित प्रशिक्षण के लिए जनरेटेड डायरेक्टरी को सामान्य `image` डेटासेट बनाएं: हर रिज़ॉल्यूशन के लिए एक डेटासेट, `caption_strategy: "textfile"`, `crop: false`, `resolution_type: "pixel"` और `resolution` में उस बकेट की छोटी भुजा का आकार रखें। कैप्शन डेटासेट `dataloader_prefetch: true` का समर्थन करते हैं जब सभी प्रशिक्षण डेटासेट चेकपॉइंट में उपयोग किए गए बैचों की स्थिति सहेजते हैं। कैप्शन डेटासेट और Webshart का नेटिव शेड्यूल इस मोड का समर्थन करते हैं। कैप्शन सूची, रिज़ॉल्यूशन या डेटासेट टोपोलॉजी बदलने पर नया प्रशिक्षण शुरू करें; जनरेशन कैश का पुनः उपयोग ऐसे चेकपॉइंट रिज़्यूम को संगत नहीं बनाता।
 
 स्थानीय कैप्शन खोज में जनरेटेड आउटपुट डायरेक्टरी स्रोत `instance_data_dir` के बाहर होनी चाहिए; ओवरलैप करने वाली डायरेक्टरी स्कैन से पहले अस्वीकृत होती हैं।
 
@@ -132,6 +132,10 @@
 - **Values:** `true` | `false`
 - **Description:** सभी text embeddings की pre-computation छोड़ देता है। मौजूदा entries इस cache से पढ़ी जाती हैं; missing embeddings training या validation के दौरान encode होकर cache में लिखी जाती हैं।
 - **Note:** इस `text_embeds` backend को assign किए गए सभी image या video datasets यही behavior अपनाते हैं। चुने हुए source datasets के लिए अलग behavior चाहिए तो दूसरा `text_embeds` backend बनाएँ और source dataset के `text_embeds` field से उसे assign करें।
+
+### `text_cache_encode_only`
+
+हर प्रशिक्षण बैच के लिए ऑनलाइन टेक्स्ट एन्कोडिंग चालू करने के लिए `text_embeds` बैकएंड पर यह विकल्प सेट करें। एन्कोडर मौजूदा एम्बेडिंग सहित एम्बेडिंग फ़ाइलों को पढ़ना और लिखना छोड़ देता है। डिफ़ॉल्ट मान `false` है। पहले से एम्बेडिंग तैयार करने के लिए अलग, लिखने योग्य Local या AWS बैकएंड का उपयोग करें।
 
 ### `text_cache_disable`
 
@@ -1065,6 +1069,8 @@ Supported filters:
 
 - **केवल text embed datasets के लिए।** यह एक JSON सूची, txt फ़ाइल का path, या JSON document का path हो सकता है। Filter strings simple terms हो सकते हैं जिन्हें सभी captions से हटाया जाए, या वे regular expressions हो सकते हैं। इसके अतिरिक्त, sed‑style `s/search/replace/` entries captions में strings को हटाने की बजाय _replace_ करने के लिए उपयोग की जा सकती हैं।
 
+टेक्स्ट एम्बेडिंग कैश खुलने पर फ़िल्टर फ़ाइलें पढ़ी जाती हैं। फ़िल्टर की गई कैश कुंजियाँ एन्कोडर को भेजे गए टेक्स्ट पर आधारित होती हैं। अपग्रेड करने के बाद, कैप्शन फ़िल्टर वाले कैश के एम्बेडिंग फिर से बनाएँ। अगर आप किसी पुराने रिलीज़ में बनाए गए कैश के फ़िल्टर बंद करते हैं, तो उस कैश को भी फिर से बनाएँ।
+
 #### Example filter list
 
 पूरा उदाहरण [यहाँ](/config/caption_filter_list.txt.example) उपलब्ध है। इसमें BLIP (all common variety), LLaVA, और CogVLM द्वारा लौटाई गई सामान्य repetitive और negative strings होती हैं।
@@ -1422,6 +1428,8 @@ Webshart datasets `webshart` package के जरिए WebDataset-style tar sh
 - `metadata` optional है और captions वाले separate metadata location को point कर सकता है। `webshart/conceptual-captions-12m-webdataset-metadata` जैसे Hugging Face metadata repos के लिए repo id दें; Webshart source shard के `data/` जैसे subfolder layout को follow करता है।
 - `metadata_backend` को `webshart` होना चाहिए; `caption_strategy` `webshart` या `instanceprompt` हो सकता है।
 - `webshart.cache_dir` SimpleTuner metadata और Webshart caches store करता है। `shard_cache_gb` और `parallel_downloads` Webshart shard cache को pass किए जाते हैं; whole-shard caching disable करने और indexed range reads बनाए रखने के लिए `shard_cache_gb` को `0` सेट करें।
+- हर तैयार आस्पेक्ट बकेट के सैंपल मिलाने के लिए `webshart.sampling_policy` को `global` रखें। `shard_local` हर एपॉक में शार्ड का क्रम बदलता है और मौजूदा शार्ड से बैच भरता है। इससे DataComp जैसे रिमोट डेटासेट के शार्ड कैश में बार-बार फ़ाइलें बदलने की ज़रूरत घटती है। दोनों नीतियाँ उन्हीं स्वीकृत सैंपल का उपयोग करती हैं। अंतिम अधूरे बैच की पैडिंग या कटौती बकेट और समानांतर लेआउट पर निर्भर करती है। मौजूदा सैंपलर रखने के लिए विकल्प छोड़ दें। नेटिव नीति चुनने से पहले स्कैन चलाकर इंडेक्स तैयार करें।
+- नेटिव नीति स्वीकृत नमूनों का इंडेक्स डिस्क पर बनाती है। इंडेक्स और नमूनों की ज्यामिति के लिए जगह रखें। नेटिव VAE और कंडीशनिंग इमेज की कैश कुंजियों में स्रोत की सामग्री, तैयार ज्यामिति और एन्कोडर की सेटिंग शामिल होती हैं। मॉडल वज़न बदलने या पुराने सैंपलर से माइग्रेट करने पर ये इमेज आर्टिफ़ैक्ट दोबारा बनाने पड़ सकते हैं। कैप्शन एम्बेडिंग की कुंजियों का फ़ॉर्मैट पहले जैसा रहता है।
 - `webshart.caption_key` से caption फ़ील्ड चुन सकते हैं: एक कुंजी के लिए `"long_caption"` या कई कुंजियों को क्रम से लेने के लिए `["long_caption", "short_caption"]` दें। कुंजियाँ सीधे नाम के रूप में मिलाई जाती हैं: पहले sample के JSON metadata में, फिर indexed metadata में, और अंत में उनके `captions` dictionaries की नामित entries में। कुंजी जिस पहले स्थान पर मिलती है, वही उपयोग होता है। String और list के मान अलग caption विकल्प बनते हैं, एक prompt में जोड़े नहीं जाते। अनुपस्थित या खाली मान छोड़ दिए जाते हैं; `caption_strategy: "webshart"` के साथ चुने हुए captions न होने पर sample छोड़ दिया जाता है, भले ही उसमें default caption या `.txt` sidecar हो। यह विकल्प न देने पर default lookup बना रहता है। JSON सामग्री index में न होने पर JSON sidecar पढ़ा जाता है। Caption और bucket caches चुनी गई कुंजियों के अनुसार अलग रखे जाते हैं। WebUI की Webshart settings में हर पंक्ति पर एक कुंजी लिखें। JSON sidecar पढ़ने के लिए configured Webshart shard cache इस्तेमाल होता है; caption lookup image payload को decode या materialize नहीं करता।
 - `webshart_optimize_captions` (alternate spelling `webshart_optimise_captions`; `webshart` block के अंदर `optimize_captions`/`optimise_captions` भी accepted हैं) startup पर caption layout probe करता है और, जब captions metadata index की बजाय `.txt`/`.json` sidecar tar members में हों, उन्हें एक बार local Webshart metadata cache में fold कर देता है। इसके बिना, sidecar-caption datasets (जैसे `laion/conceptual-captions-12m-webdataset`) को हर बार captions enumerate होने पर — startup, checkpointing और model card generation में — प्रति sample एक range read की कीमत चुकानी पड़ती है। जिन datasets की metadata में captions पहले से embedded हैं, वे coalescing अपने आप skip कर देते हैं।
 
