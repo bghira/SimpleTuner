@@ -449,9 +449,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 with (
                     patch("simpletuner.helpers.data_backend.factory.move_text_encoders"),
                     patch("simpletuner.helpers.data_backend.factory.StateTracker.set_data_backend_config"),
-                    patch(
-                        "simpletuner.helpers.prompts.PromptHandler.get_all_captions", side_effect=AssertionError("inventory")
-                    ),
+                    patch.object(backend.source_files, "read", side_effect=AssertionError("source inventory")),
                 ):
                     for rank in range(4):
                         factory.accelerator.process_index = rank
@@ -1461,11 +1459,6 @@ class TestFactoryEdgeCases(unittest.TestCase):
         mock_sampler_instance = MagicMock()
         mock_sampler_instance.caption_strategy = "filename"
         mock_sampler.return_value = mock_sampler_instance
-
-        prompt_handler_patcher = patch("simpletuner.helpers.prompts.PromptHandler")
-        mock_prompt = prompt_handler_patcher.start()
-        self.addCleanup(prompt_handler_patcher.stop)
-        mock_prompt.get_all_captions.return_value = (["caption1"], [])
 
     def test_empty_dataset_validation_training(self):
         """Test that training datasets with no usable samples raise an error."""

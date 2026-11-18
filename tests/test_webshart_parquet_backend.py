@@ -1587,7 +1587,7 @@ class TestWebshartParquetBackend(unittest.TestCase):
                 text_embed_cache=cache,
             )
             with (
-                patch("simpletuner.helpers.prompts.PromptHandler.get_all_captions", side_effect=AssertionError("inventory")),
+                patch.object(self.backend.source_files, "read", side_effect=AssertionError("source inventory")),
                 patch.object(StateTracker, "set_data_backend_config"),
             ):
                 for deferred in (False, True):
