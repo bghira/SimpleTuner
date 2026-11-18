@@ -3222,7 +3222,7 @@ options:
 
 Select `--distillation_method=assistant_lora` to train a positive assistant adapter on fresh, adapter-disabled base-model generations from caption datasets. Initial support is Qwen Image 2.1. `distillation_config.assistant_lora` accepts `num_inference_steps` (40), `resolutions` (`[[1024, 1024]]`, width then height; multiples of 32) and `seed` (42). Cached text embeddings are required; terminal latents are not cached. See the [Qwen guide](quickstart/QWEN_IMAGE_2-1.md).
 
-Resume rejects changes to caption identities/text, batch size, repeats, shuffle, seed, accumulation or distributed layout. Assistant checkpoints also reject changes to the generation seed, resolution list or teacher inference-step count.
+A resumed run keeps the caption order and shuffle seed saved in the checkpoint. Changing `repeats` or the number of processes stops the resume, as does changing the batch size unless `--i_know_what_i_am_doing` is set. If the number of captions has changed, the epoch in progress starts over; edited caption text is not detected. Other changes, such as gradient accumulation, are not checked; resume with the same settings. Assistant checkpoints also reject changes to the generation seed, resolution list or teacher inference-step count.
 
 Assistant LoRA and AnyFlow temporarily raise Dynamo’s per-code compile-cache limit to at least 32 for teacher, training and validation variants. A higher user limit is preserved; the original limit is restored on exit, including errors.
 

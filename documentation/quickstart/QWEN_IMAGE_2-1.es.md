@@ -221,7 +221,7 @@ El entrenamiento LoRA de Qwen Image 2.1 carga por defecto el [asistente v3](http
 
 Usa este como único método de destilación; no se admite combinarlo con otros destiladores.
 
-La reanudación rechaza cambios en identidades/textos, lote, repeticiones, mezcla, semilla, acumulación o distribución. Los checkpoints del auxiliar también rechazan cambios en la semilla de generación, la lista de resoluciones o los pasos de inferencia del profesor.
+Al reanudar se conservan el orden de las descripciones y la semilla de mezcla guardados en el checkpoint. Cambiar `repeats` o el número de procesos detiene la reanudación, igual que cambiar el tamaño de lote salvo con `--i_know_what_i_am_doing`. Si cambió el número de descripciones, la época en curso empieza de nuevo; no se detecta el texto editado. Otros cambios, como la acumulación de gradientes, no se comprueban; reanuda con la misma configuración. Los checkpoints del auxiliar también rechazan cambios en la semilla de generación, la lista de resoluciones o los pasos de inferencia del profesor.
 
 <a id="assistant-lora-multires"></a>
 

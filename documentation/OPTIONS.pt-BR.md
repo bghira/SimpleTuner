@@ -3192,7 +3192,7 @@ options:
 
 `--distillation_method=assistant_lora` treina um adaptador auxiliar positivo com novas gerações do modelo base, desativando o adaptador e usando datasets de legendas. O suporte inicial é Qwen Image 2.1. `distillation_config.assistant_lora` aceita `num_inference_steps` (40), `resolutions` (`[[1024, 1024]]`, largura e altura, múltiplos de 32) e `seed` (42). Exige embeddings de texto pré-calculados; não armazena latentes finais. Consulte o [guia do Qwen](quickstart/QWEN_IMAGE_2-1.pt-BR.md).
 
-A retomada rejeita mudanças nos identificadores/textos, lote, repetições, embaralhamento, semente, acumulação ou configuração distribuída. Os checkpoints do auxiliar também rejeitam mudanças na semente de geração, na lista de resoluções ou no número de passos de inferência do professor.
+A retomada mantém a ordem das legendas e a semente de embaralhamento salvas no checkpoint. Mudar `repeats` ou o número de processos interrompe a retomada, assim como mudar o tamanho do lote, a menos que `--i_know_what_i_am_doing` esteja definido. Se o número de legendas mudou, a época em andamento recomeça; texto editado não é detectado. Outras mudanças, como a acumulação de gradientes, não são verificadas; retome com as mesmas configurações. Os checkpoints do auxiliar também rejeitam mudanças na semente de geração, na lista de resoluções ou no número de passos de inferência do professor.
 
 Assistant LoRA e AnyFlow elevam temporariamente o limite do cache de compilação Dynamo por código para pelo menos 32, acomodando variantes do professor, treino e validação. Um limite maior do usuário é preservado; o original é restaurado ao sair, inclusive após erros.
 

@@ -221,7 +221,7 @@ Qwen Image 2.1 LoRA training now loads [training assistant v3](https://huggingfa
 
 Use this as the sole distillation method; composition with other distillers is not supported.
 
-Resume rejects changes to caption identities/text, batch size, repeats, shuffle, seed, accumulation or distributed layout. Assistant checkpoints also reject changes to the generation seed, resolution list or teacher inference-step count.
+A resumed run keeps the caption order and shuffle seed saved in the checkpoint. Changing `repeats` or the number of processes stops the resume, as does changing the batch size unless `--i_know_what_i_am_doing` is set. If the number of captions has changed, the epoch in progress starts over; edited caption text is not detected. Other changes, such as gradient accumulation, are not checked; resume with the same settings. Assistant checkpoints also reject changes to the generation seed, resolution list or teacher inference-step count.
 
 <a id="assistant-lora-multires"></a>
 

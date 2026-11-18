@@ -221,7 +221,7 @@ O treino LoRA do Qwen Image 2.1 carrega por padrão o [assistente v3](https://hu
 
 Use este como único método de destilação; não há suporte para combiná-lo com outros destiladores.
 
-A retomada rejeita mudanças nos identificadores/textos, lote, repetições, embaralhamento, semente, acumulação ou configuração distribuída. Os checkpoints do auxiliar também rejeitam mudanças na semente de geração, na lista de resoluções ou no número de passos de inferência do professor.
+A retomada mantém a ordem das legendas e a semente de embaralhamento salvas no checkpoint. Mudar `repeats` ou o número de processos interrompe a retomada, assim como mudar o tamanho do lote, a menos que `--i_know_what_i_am_doing` esteja definido. Se o número de legendas mudou, a época em andamento recomeça; texto editado não é detectado. Outras mudanças, como a acumulação de gradientes, não são verificadas; retome com as mesmas configurações. Os checkpoints do auxiliar também rejeitam mudanças na semente de geração, na lista de resoluções ou no número de passos de inferência do professor.
 
 <a id="assistant-lora-multires"></a>
 
