@@ -448,11 +448,9 @@ class CaptionGeneratorConfigTests(unittest.TestCase):
         factory.accelerator = SimpleNamespace(is_main_process=True, wait_for_everyone=MagicMock())
         record = CaptionRecord("one", "a fox", "prompts")
 
-        def build_caption(backend):
-            StateTracker.set_data_backend_config(backend["id"], dict(backend))
-            return {"metadata_backend": SimpleNamespace(iter_records=lambda: iter([record]))}
-
-        factory._build_caption_backend = MagicMock(side_effect=build_caption)
+        factory._build_caption_backend = MagicMock(
+            return_value={"metadata_backend": SimpleNamespace(iter_records=lambda: iter([record]))}
+        )
         config = [
             {
                 "id": "prompts",
@@ -464,11 +462,11 @@ class CaptionGeneratorConfigTests(unittest.TestCase):
         ]
         with (
             patch("simpletuner.helpers.data_backend.caption_generator.CaptionImageGenerator") as generator,
-            patch.object(StateTracker, "data_backends", {}),
+            patch.object(StateTracker, "data_backends", {"prompts": {"config": {"resolution": 128}}}),
         ):
             generator.return_value.bucket_directories.return_value = {"512x512": "cache/a", "768x1024": "cache/b"}
             factory._materialize_caption_generators(config)
-            self.assertNotIn("prompts", StateTracker.data_backends)
+            self.assertEqual(StateTracker.data_backends, {"prompts": {"config": {"resolution": 128}}})
         generator.return_value.generate.assert_called_once_with()
         self.assertEqual([entry["dataset_type"] for entry in config], ["image", "image"])
         self.assertEqual([entry["id"] for entry in config], ["prompts-generated-512x512", "prompts-generated-768x1024"])

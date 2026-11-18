@@ -3976,8 +3976,6 @@ class FactoryRegistry:
         config.validate(vars(self.args))
 
         init_backend = init_backend_config(backend, self.args, self.accelerator)
-        dataset_type_enum = ensure_dataset_type(init_backend.get("dataset_type"), default=DatasetType.IMAGE)
-        StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
 
         built_backend = build_backend_from_config(config, self.accelerator, vars(self.args))
         init_backend["data_backend"] = built_backend["data_backend"]
@@ -4078,15 +4076,12 @@ class FactoryRegistry:
             ):
                 raise ValueError("data_generator.output_dir must be outside instance_data_dir for a local caption source.")
             caption_backend = self._build_caption_backend(backend)
-            try:
-                generator = CaptionImageGenerator(
-                    self.model, config.data_generator, caption_backend["metadata_backend"].iter_records, output_dir
-                )
-                generator.generate()
-                bucket_directories = generator.bucket_directories()
-                generated_configs.extend(generated_image_backend_configs(backend, bucket_directories))
-            finally:
-                StateTracker.data_backends.pop(backend["id"])
+            generator = CaptionImageGenerator(
+                self.model, config.data_generator, caption_backend["metadata_backend"].iter_records, output_dir
+            )
+            generator.generate()
+            bucket_directories = generator.bucket_directories()
+            generated_configs.extend(generated_image_backend_configs(backend, bucket_directories))
         data_backend_config[:] = generated_configs
 
     def _should_skip_caption_discovery(self, backend: Dict[str, Any]) -> bool:
