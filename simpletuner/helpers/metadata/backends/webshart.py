@@ -1,7 +1,6 @@
 import json
 import logging
 import os
-import random
 import shutil
 import sqlite3
 import subprocess
@@ -11,7 +10,6 @@ from collections import deque
 from concurrent.futures import CancelledError, ThreadPoolExecutor
 from contextlib import ExitStack, closing, contextmanager, nullcontext
 from copy import deepcopy
-from dataclasses import dataclass
 from hashlib import file_digest, sha256
 from itertools import batched, chain, islice
 from pathlib import Path
@@ -46,6 +44,11 @@ from simpletuner.helpers.metadata.backends.webshart_membership import (
     MembershipPages,
     publish_indexed_membership,
 )
+from simpletuner.helpers.metadata.backends.webshart_transforms import (
+    PreparationGeometry,
+    WebshartTransforms,
+    prepared_fields,
+)
 from simpletuner.helpers.metadata.preparation import DatasetDescription, PreparationView, bucket_groups_from_events
 from simpletuner.helpers.multiaspect.image import ImageGeometry, MultiaspectImage
 from simpletuner.helpers.prompts import CaptionNotFoundError
@@ -65,21 +68,6 @@ def _empty_filtering_statistics():
         "total_processed": 0,
         "skipped": {"already_exists": 0, "metadata_missing": 0, "caption_missing": 0, "too_small": 0, "error": 0},
     }
-
-
-@dataclass(frozen=True)
-class PreparationGeometry:
-    config: dict
-    sizing: ImageGeometry
-    seed: int
-    model: Any
-
-    def rng_for(self, ref):
-        if self.config.get("crop") and (
-            self.config.get("crop_style", "random") in {"random", "face"} or self.config.get("crop_aspect") == "random"
-        ):
-            return random.Random(f"{self.seed}:{ref}")
-        return None
 
 
 class WebshartMetadataBackend(MetadataBackend):
@@ -161,6 +149,8 @@ class WebshartMetadataBackend(MetadataBackend):
         self._published = None
         self._schedule_padding = None
         self._stored_geometry_digest = None
+        self._transforms = None
+        self._writing_transforms = None
         with context:
             if self.native_policy or not preparation_only:
                 self.reload_cache(set_config=not preparation_only)
@@ -201,6 +191,10 @@ class WebshartMetadataBackend(MetadataBackend):
                         if pages.header.get("source_pins"):
                             with ExitStack() as stack:
                                 self._lookup = self._open_geometry(stack, self._published, self._geometry_digest)
+                                if settings := pages.header.get("transform_cache_recipe"):
+                                    self._transforms = stack.enter_context(
+                                        closing(self._open_transforms(settings, self._lookup.shard_revision))
+                                    )
                                 self.data_backend.dataset.bind_source_revisions(self._lookup.shard_revision)
                                 self._snapshot = stack.pop_all()
                         self.filtering_statistics = pages.header.get("filtering_statistics")
@@ -227,6 +221,7 @@ class WebshartMetadataBackend(MetadataBackend):
 
     def close(self):
         self._accepted_geometry = None
+        self._transforms = None
         if self._snapshot is not None:
             if self._published.get("source_pins"):
                 self.data_backend.dataset.bind_source_revisions(None)
@@ -395,7 +390,7 @@ class WebshartMetadataBackend(MetadataBackend):
                 refs = pages.partition(worker, workers)
                 expected_digest = pages.header.get("geometry_sha256")
             lookup = self
-            if expected_digest is not None or self.data_backend.exists(self.metadata_file):
+            if self._transforms is None and (expected_digest is not None or self.data_backend.exists(self.metadata_file)):
                 lookup = self._open_geometry(stack, pages.header if pages else {}, expected_digest)
             yield PreparationView(refs, lookup)
 
@@ -451,18 +446,20 @@ class WebshartMetadataBackend(MetadataBackend):
             raise ValueError("Scan this Webshart dataset before resolving related samples.")
         if self._published.get("geometry_format") != "sqlite-v1":
             return True
+        return self._membership_contains()(self.data_backend.normalize_sample_id(ref))
+
+    def _membership_contains(self):
         lookup = self._geometry_lookup()
         if self._accepted_geometry is None:
             publication = self.data_backend._cache_path(self.cache_file)
             self._accepted_geometry = accepted_geometry_predicate(lookup, publication, self._published, self._snapshot)
-        return self._accepted_geometry(self.data_backend.normalize_sample_id(ref))
+        return self._accepted_geometry
 
     def get_metadata_by_filepath(self, filepath):
         if not self.native_policy or self._published is None:
             return super().get_metadata_by_filepath(filepath)
-        lookup = self._geometry_lookup()
-        for ref in filepath if isinstance(filepath, (tuple, list)) else (filepath,):
-            record = lookup.get_metadata_by_filepath(self.data_backend.normalize_sample_id(ref))
+        refs = filepath if isinstance(filepath, (tuple, list)) else (filepath,)
+        for record in self.get_metadata_batch(refs):
             if record is not None:
                 return record
         return None
@@ -477,7 +474,41 @@ class WebshartMetadataBackend(MetadataBackend):
     def get_metadata_batch(self, refs):
         if not self.native_policy or self._published is None:
             return super().get_metadata_batch(refs)
-        return self._geometry_lookup().get_metadata_batch(self.data_backend.normalize_sample_id(ref) for ref in refs)
+        refs = [self.data_backend.normalize_sample_id(ref) for ref in refs]
+        if self._transforms is None:
+            return self._geometry_lookup().get_metadata_batch(refs)
+        accepted = self._membership_contains().batch(refs)
+        records = iter(self._transforms.read_batch([ref for ref, include in zip(refs, accepted, strict=True) if include]))
+        return [next(records) if include else None for include in accepted]
+
+    def _open_transforms(self, settings, shard_revision):
+        return WebshartTransforms(self.data_backend, settings, shard_revision)
+
+    def enqueue_prepared_metadata(self, records):
+        transforms = self._writing_transforms or self._transforms
+        if transforms is None:
+            super().enqueue_prepared_metadata(records)
+        else:
+            transforms.enqueue(records)
+
+    def flush_prepared_metadata(self):
+        transforms = self._writing_transforms or self._transforms
+        if transforms is None:
+            super().flush_prepared_metadata()
+        else:
+            transforms.flush()
+
+    @contextmanager
+    def _prepare_transforms(self, settings):
+        if settings is None:
+            yield
+            return
+        self._writing_transforms = self._open_transforms(settings, self.data_backend.dataset.source_revision_for_shard)
+        try:
+            yield
+        finally:
+            transforms, self._writing_transforms = self._writing_transforms, None
+            transforms.close()
 
     @staticmethod
     def _component_digest(digest, locator, folders, revision, processor=False):
@@ -793,26 +824,18 @@ class WebshartMetadataBackend(MetadataBackend):
         config = recipe.config if recipe is not None else self.active_dataset_config
         if not self.meets_resolution_requirements(image_metadata=sample_metadata, dataset_config=config):
             return None
-        training_sample = TrainingSample(
-            image=None,
-            data_backend_id=self.id,
-            image_metadata=sample_metadata,
-            image_path=sample_path,
-            model=recipe.model if recipe is not None else None,
-            data_backend_config=config,
-            geometry=recipe.sizing if recipe is not None else None,
-            rng=recipe.rng_for(sample_path) if recipe is not None else None,
-        )
-        prepared_sample = training_sample.prepare()
-        aspect_ratio = float(prepared_sample.aspect_ratio)
-        sample_metadata.update(
-            {
-                "aspect_ratio": aspect_ratio,
-                "intermediary_size": prepared_sample.intermediary_size,
-                "crop_coordinates": prepared_sample.crop_coordinates,
-                "target_size": prepared_sample.target_size,
-            }
-        )
+        if recipe is not None:
+            prepared_sample = recipe.prepare(self.id, sample_path, sample_metadata)
+        else:
+            prepared_sample = TrainingSample(
+                image=None,
+                data_backend_id=self.id,
+                image_metadata=sample_metadata,
+                image_path=sample_path,
+                data_backend_config=config,
+            ).prepare()
+        sample_metadata.update(prepared_fields(prepared_sample))
+        aspect_ratio = sample_metadata["aspect_ratio"]
         if self.dataset_type is DatasetType.VIDEO and self.bucket_strategy == "resolution_frames":
             target_width, target_height = prepared_sample.target_size
             bucket_key, rounded_frames = self._compute_video_bucket(
@@ -888,14 +911,14 @@ class WebshartMetadataBackend(MetadataBackend):
         last_save_time = time.time()
         for key, ref, record in self._scan_rows(existing_files, statistics, require_captions, progress_callback):
             self.aspect_ratio_bucket_indices.setdefault(key, []).append(ref)
-            self.set_metadata_by_filepath(ref, record, update_json=False)
+            self.enqueue_prepared_metadata({ref: record})
             if time.time() - last_save_time >= self.metadata_update_interval:
+                self.flush_prepared_metadata()
                 self.save_cache(enforce_constraints=False, scan_in_progress=True)
-                self.save_image_metadata()
                 last_save_time = time.time()
 
         self.filtering_statistics = statistics
-        self.save_image_metadata()
+        self.flush_prepared_metadata()
         self.save_cache(enforce_constraints=True)
         self._sync_image_files_with_buckets()
         if self.bucket_report:
@@ -1036,13 +1059,23 @@ class WebshartMetadataBackend(MetadataBackend):
     def _write_native_geometry(self, writer, rows, exclusions):
         pinned_shard = None
         pin_source = self.data_backend.format == "parquet"
+        prepared = {}
         for bucket, ref, record in rows:
             shard = record["webshart"]["shard_idx"]
             if pin_source and shard != pinned_shard:
                 writer.pin_shard(shard, self.data_backend.dataset.source_revision_for_shard(shard))
                 pinned_shard = shard
             if exclusions is None or exclusions.execute("SELECT 1 FROM exclusions WHERE ref=?", (ref,)).fetchone() is None:
-                writer.add(bucket, ref, record, shard=shard)
+                if self._writing_transforms is None:
+                    writer.add(bucket, ref, record, shard=shard)
+                else:
+                    writer.add(bucket, ref, None, shard=shard)
+                    prepared[ref] = record
+                    if len(prepared) >= 128:
+                        self.enqueue_prepared_metadata(prepared)
+                        prepared = {}
+        if prepared:
+            self.enqueue_prepared_metadata(prepared)
 
     def _partition_cache_path(self, root, indices, rules, exclusions):
         if self.max_num_samples is not None or self.dataset_type is DatasetType.VIDEO:
@@ -1195,7 +1228,17 @@ class WebshartMetadataBackend(MetadataBackend):
         )
         shards_per_partition = self.data_backend.prepared_partition_shards
         recipe = self._geometry_recipe(config)
+        supports_transform_cache = (
+            self.data_backend.format == "parquet"
+            and self.dataset_type is not DatasetType.VIDEO
+            and (not config.get("crop") or config.get("crop_style") != "face")
+            and getattr(self.data_backend.webshart, "TransformCache", None) is not None
+            and (refresh or self._published is None or self._published.get("transform_cache_recipe"))
+        )
+        transform_settings = recipe.cache_settings() if supports_transform_cache else None
         rules = {key: public_config.get(key) for key in geometry_keys}
+        if transform_settings is not None:
+            rules["transform_cache_recipe"] = transform_settings
         rules.update(require_captions=require_captions, caption_key=self.data_backend.caption_key)
         args = self.runtime_args
         rules.update(
@@ -1232,6 +1275,7 @@ class WebshartMetadataBackend(MetadataBackend):
             return
         path = self.data_backend._cache_path(self.metadata_file)
         with stage_geometry(path, shards_per_partition=shards_per_partition) as (writer, staging), ExitStack() as stack:
+            stack.enter_context(self._prepare_transforms(transform_settings))
             exclusion_file = None
             exclusion_info = {}
             if self._published and self._published.get("exclusion_revision"):
@@ -1250,6 +1294,8 @@ class WebshartMetadataBackend(MetadataBackend):
                 self._prepare_native_partitions(
                     writer, rules, statistics, require_captions, progress_callback, recipe, exclusion_file, refresh
                 )
+            if transform_settings is not None:
+                self.flush_prepared_metadata()
             counts = writer.finish()
             for key, size in list(counts.items()):
                 minimum_batch = 1 if self.dataset_type is DatasetType.EVAL else self.batch_size
@@ -1286,9 +1332,10 @@ class WebshartMetadataBackend(MetadataBackend):
                     writer.publish(path)
                 os.replace(staging, destination)
                 source = self._source_description()
-                view_revision = sha256(
-                    json.dumps([source.get("source_revision"), digest, counts], separators=(",", ":")).encode()
-                ).hexdigest()
+                revision_inputs = [source.get("source_revision"), digest, counts]
+                if transform_settings is not None:
+                    revision_inputs.append(json.dumps(transform_settings, sort_keys=True, separators=(",", ":")))
+                view_revision = sha256(json.dumps(revision_inputs, separators=(",", ":")).encode()).hexdigest()
                 publish_indexed_membership(
                     publication,
                     {
@@ -1297,6 +1344,7 @@ class WebshartMetadataBackend(MetadataBackend):
                         "view_revision": view_revision,
                         "bucket_counts": counts,
                         "geometry_format": "sqlite-v1",
+                        "transform_cache_recipe": transform_settings,
                         "geometry_partition_shards": shards_per_partition,
                         "geometry_name": path.name,
                         "source_pins": pin_source,

@@ -643,7 +643,17 @@ class DatasetViewerService:
             if Path(name).name != name:
                 raise ValueError("Invalid Webshart geometry filename.")
             with closing(read_snapshot(indices.parent / name, index.header["geometry_sha256"])) as db:
-                meta = geometry_lookup(indices, index.header, db).get_metadata_by_filepath(file_path)
+                lookup = geometry_lookup(indices, index.header, db)
+                if settings := index.header.get("transform_cache_recipe"):
+                    from simpletuner.helpers.metadata.backends.webshart_transforms import WebshartTransforms
+
+                    with (
+                        self._open_view_data_backend(dataset_config, current_revision) as source,
+                        closing(WebshartTransforms(source, settings, lookup.shard_revision)) as transforms,
+                    ):
+                        meta = transforms.read_batch([file_path])[0]
+                else:
+                    meta = lookup.get_metadata_by_filepath(file_path)
         else:
             cache_path = self._find_cache_file(dataset_config, "metadata")
             if cache_path is None:

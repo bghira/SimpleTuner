@@ -1,4 +1,5 @@
 import json
+import shutil
 import sqlite3
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -55,6 +56,81 @@ class TestWebshartParquetBackend(unittest.TestCase):
         self.backend = WebshartDataBackend(
             None, "parquet", str(source), format="parquet", cache_dir=str(self.root / "cache")
         )
+
+    def test_transform_cache_eviction_preserves_membership_and_recomputes_only_requested_rows(self):
+        from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBackend
+
+        if not hasattr(self.backend.webshart, "TransformCache"):
+            self.skipTest("Requires Webshart native transform cache support")
+        config = {
+            "webshart": {"sampling_policy": "shard_local"},
+            "caption_strategy": "webshart",
+            "resolution": 64,
+            "resolution_type": "pixel",
+            "crop": False,
+        }
+        args = SimpleNamespace(seed=5, aspect_bucket_alignment=8, aspect_bucket_rounding=2, disable_bucket_pruning=True)
+        provider = WebshartMetadataBackend(
+            id=self.backend.id,
+            instance_data_dir=self.backend.cache_dir,
+            cache_file=str(self.root / "buckets"),
+            metadata_file=str(self.root / "metadata"),
+            data_backend=self.backend,
+            accelerator=SimpleNamespace(num_processes=1, process_index=0),
+            batch_size=1,
+            resolution=64,
+            resolution_type="pixel",
+            runtime_args=args,
+            dataset_config=config,
+        )
+        self.addCleanup(provider.close)
+        with patch.object(self.backend.webshart, "TransformCache", None):
+            provider.compute_aspect_ratio_bucket_indices()
+        refs, _ = provider.read_page(limit=10)
+        self.assertEqual(len(refs), 2)
+        legacy_geometry = provider.get_metadata_batch(refs)
+        legacy_revision = provider.describe().view_revision
+        with patch.object(provider, "_scan_rows", side_effect=AssertionError("implicit migration")):
+            provider.compute_aspect_ratio_bucket_indices()
+        self.assertEqual(provider.describe().view_revision, legacy_revision)
+        provider.compute_aspect_ratio_bucket_indices(ignore_existing_cache=True)
+        self.assertEqual(provider.read_page(limit=10), (refs, 2))
+        self.assertEqual(provider.get_metadata_batch(refs), legacy_geometry)
+        missing = self.backend.sample_id(0, 1, "part.parquet/000000000001.jpg")
+        revision = provider.describe().view_revision
+        requests = [refs[1], missing, refs[1]]
+        with patch.object(self.backend.dataset, "read_metadata_rows", side_effect=AssertionError("warm projection")):
+            warm = provider.get_metadata_batch(requests)
+        self.assertIsNone(warm[1])
+        self.assertEqual(warm[0], warm[2])
+        self.assertIsNotNone(warm[0])
+        self.assertEqual(provider._geometry_lookup().get_metadata_batch(refs), [None, None])
+
+        provider.close()
+        shutil.rmtree(Path(self.backend.cache_dir) / ".webshart-transforms")
+        provider.reload_cache()
+        self.assertEqual(provider.describe().view_revision, revision)
+        self.assertEqual(provider.read_page(limit=10), (refs, 2))
+        project = self.backend.dataset.read_metadata_rows
+        with (
+            patch.object(self.backend.dataset, "read_metadata_rows", wraps=project) as read,
+            patch.object(self.backend, "read_image_batch", side_effect=AssertionError("image payload read")),
+        ):
+            self.assertEqual(provider.get_metadata_batch(requests), warm)
+            self.assertEqual(len(read.call_args_list), 1)
+            self.assertEqual(read.call_args.args, (0, [self.backend.parse_sample_id(refs[1]).sample_idx]))
+        provider.flush_prepared_metadata()
+        with patch.object(self.backend.dataset, "read_metadata_rows", side_effect=AssertionError("second projection")):
+            self.assertEqual(provider.get_metadata_batch(requests), warm)
+
+        provider.dataset_config.update(crop=True, crop_style="center", crop_aspect="square")
+        provider.compute_aspect_ratio_bucket_indices()
+        centered = provider._published
+        provider.dataset_config["crop_style"] = "random"
+        provider.compute_aspect_ratio_bucket_indices()
+        randomized = provider._published
+        self.assertEqual(centered["geometry_sha256"], randomized["geometry_sha256"])
+        self.assertNotEqual(centered["view_revision"], randomized["view_revision"])
 
     def test_prepared_geometry_reads_compact_and_existing_text_records(self):
         from simpletuner.helpers.metadata.backends.webshart_geometry import GeometryLookup, PreparedGeometry
