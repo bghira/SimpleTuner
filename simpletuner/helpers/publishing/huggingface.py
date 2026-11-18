@@ -36,7 +36,6 @@ class HubManager:
         self.repo_id = self._normalize_repo_id(raw_repo_id)
         self.hub_token = self._load_hub_token()
         self._hub_api = HfApi()
-        self.data_backends = StateTracker.get_data_backends(_types=["image", "video", "audio"])
         self._create_repo()
         self.validation_prompts = None
         self.validation_shortnames = None

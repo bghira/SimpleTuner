@@ -1,7 +1,9 @@
+from __future__ import annotations
+
 import json
 import logging
 import os
-from typing import Any, Optional, Union
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 import numpy as np
 import scipy.io.wavfile
@@ -15,6 +17,9 @@ from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_d
 from simpletuner.helpers.models.common import AudioModelFoundation, ModelFoundation
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.validation_images import save_image_with_validation_format
+
+if TYPE_CHECKING:
+    from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
@@ -653,11 +658,6 @@ def _extract_audio_format_hints(metadata_backend, config: dict) -> tuple[Optiona
     if metadata_backend is None:
         return sample_rate, num_channels
     entries = getattr(metadata_backend, "image_metadata", {}) or {}
-    if not entries and hasattr(metadata_backend, "get_metadata"):
-        try:
-            entries = metadata_backend.get_metadata() or {}
-        except Exception:
-            entries = {}
     first_entry = next(iter(entries.values()), None) if isinstance(entries, dict) else None
     if isinstance(first_entry, dict):
         sample_rate = sample_rate or first_entry.get("sample_rate")
@@ -665,24 +665,14 @@ def _extract_audio_format_hints(metadata_backend, config: dict) -> tuple[Optiona
     return sample_rate, num_channels
 
 
-def _audio_dataset_overview(dataset_id: str, dataset_backend: dict) -> str:
-    sampler = dataset_backend.get("sampler")
-    metadata_backend = dataset_backend.get("metadata_backend")
-    config = StateTracker.get_data_backend_config(dataset_id) or {}
-    lines = []
-    repeats = config.get("repeats", 0)
-    lines.append(f"- Repeats: {repeats}")
-    sample_count = None
-    if metadata_backend is not None:
-        try:
-            sample_count = len(getattr(metadata_backend, "image_metadata", {}) or {})
-        except Exception:
-            sample_count = None
-    if sample_count is None and sampler is not None:
-        try:
-            sample_count = len(sampler)
-        except Exception:
-            sample_count = None
+def _audio_dataset_overview(dataset: DatasetRuntime) -> str:
+    sampler = dataset.sampler
+    metadata_backend = dataset.metadata_backend
+    config = dataset.config
+    lines = [f"- Repeats: {config.get('repeats', 0)}"]
+    sample_count = dataset.describe().accepted_samples
+    if sample_count is None and metadata_backend is not None:
+        sample_count = len(metadata_backend.image_metadata)
     if sample_count is not None:
         lines.append(f"- Total number of audio files: {sample_count}")
     sample_rate, num_channels = _extract_audio_format_hints(metadata_backend, config)
@@ -709,17 +699,11 @@ def _audio_dataset_overview(dataset_id: str, dataset_backend: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _dataset_overview_for_model(model: ModelFoundation, dataset_id: str, dataset_backend: dict) -> str:
-    try:
-        dataset_type = ensure_dataset_type(dataset_backend.get("dataset_type"), default=DatasetType.IMAGE)
-    except Exception:
-        dataset_type = DatasetType.IMAGE
+def _dataset_overview_for_model(model: ModelFoundation, dataset: DatasetRuntime) -> str:
+    dataset_type = ensure_dataset_type(dataset.config["dataset_type"])
     if isinstance(model, AudioModelFoundation) and dataset_type is DatasetType.AUDIO:
-        return _audio_dataset_overview(dataset_id, dataset_backend)
-    sampler = dataset_backend.get("sampler")
-    if sampler is None:
-        return ""
-    return sampler.log_state(show_rank=False, alt_stats=True)
+        return _audio_dataset_overview(dataset)
+    return dataset.sampler.log_state(show_rank=False, alt_stats=True)
 
 
 def _normalize_validation_prompts(validation_prompts):
@@ -768,12 +752,10 @@ def save_model_card(
         optimizer_config = ""
     os.makedirs(assets_folder, exist_ok=True)
     datasets_str = ""
-    datasettypes = ["image", "video", "audio"]
-    data_backends = StateTracker.get_data_backends(_types=datasettypes)
-    for dataset_id, dataset_backend in data_backends.items():
-        if "sampler" in dataset_backend:
-            datasets_str += f"### {dataset_id}\n"
-            datasets_str += _dataset_overview_for_model(model, dataset_id, dataset_backend)
+    for dataset in StateTracker.get_datasets(DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.AUDIO).values():
+        if dataset.sampler is not None:
+            datasets_str += f"### {dataset.id}\n"
+            datasets_str += _dataset_overview_for_model(model, dataset)
     widget_str = ""
     idx = 0
     negative_prompt_text = str(args.validation_negative_prompt)

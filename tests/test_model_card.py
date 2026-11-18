@@ -129,16 +129,16 @@ class TestMetadataFunctions(unittest.TestCase):
         metadata_backend.aspect_ratio_bucket_indices = {"180s": ["0.wav"]}
         sampler = SimpleNamespace(is_regularisation_data=True, conditioning_type=None)
 
-        with patch(
-            "simpletuner.helpers.publishing.metadata.StateTracker.get_data_backend_config",
-            return_value={"repeats": 0},
-        ):
-            overview = _audio_dataset_overview(
-                "audio",
-                {"metadata_backend": metadata_backend, "sampler": sampler},
-            )
+        dataset = SimpleNamespace(
+            metadata_backend=metadata_backend,
+            sampler=sampler,
+            config={"repeats": 0},
+            describe=lambda: SimpleNamespace(accepted_samples=None),
+        )
+        overview = _audio_dataset_overview(dataset)
 
         metadata_backend.load_image_metadata.assert_not_called()
+        metadata_backend.get_metadata.assert_not_called()
         self.assertIn("Total number of audio files: 1", overview)
         self.assertIn("Sample rate: 44.1 kHz", overview)
         self.assertIn("Channels: 2", overview)
@@ -322,7 +322,7 @@ class TestMetadataFunctions(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             with (
                 patch("simpletuner.helpers.publishing.metadata.StateTracker.get_model_family", return_value="minimaxmusic"),
-                patch("simpletuner.helpers.publishing.metadata.StateTracker.get_data_backends", return_value={}),
+                patch("simpletuner.helpers.publishing.metadata.StateTracker.get_datasets", return_value={}),
                 patch("simpletuner.helpers.publishing.metadata.StateTracker.get_weight_dtype", return_value=torch.bfloat16),
                 patch(
                     "simpletuner.helpers.publishing.metadata.StateTracker.get_accelerator",
@@ -399,7 +399,7 @@ class TestMetadataFunctions(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             with (
                 patch("simpletuner.helpers.publishing.metadata.StateTracker.get_model_family", return_value="minimaxmusic"),
-                patch("simpletuner.helpers.publishing.metadata.StateTracker.get_data_backends", return_value={}),
+                patch("simpletuner.helpers.publishing.metadata.StateTracker.get_datasets", return_value={}),
                 patch("simpletuner.helpers.publishing.metadata.StateTracker.get_weight_dtype", return_value=torch.bfloat16),
                 patch(
                     "simpletuner.helpers.publishing.metadata.StateTracker.get_accelerator",
@@ -533,7 +533,7 @@ class TestMetadataFunctions(unittest.TestCase):
             return_value="sdxl",
         ):
             with patch(
-                "simpletuner.helpers.publishing.metadata.StateTracker.get_data_backends",
+                "simpletuner.helpers.publishing.metadata.StateTracker.get_datasets",
                 return_value={},
             ):
                 with patch(
@@ -599,7 +599,7 @@ class TestMetadataFunctions(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with (
                 patch("simpletuner.helpers.publishing.metadata.StateTracker.get_model_family", return_value="flux3_image"),
-                patch("simpletuner.helpers.publishing.metadata.StateTracker.get_data_backends", return_value={}),
+                patch("simpletuner.helpers.publishing.metadata.StateTracker.get_datasets", return_value={}),
                 patch("simpletuner.helpers.publishing.metadata.StateTracker.get_weight_dtype", return_value=torch.bfloat16),
                 patch(
                     "simpletuner.helpers.publishing.metadata.StateTracker.get_accelerator",
@@ -660,7 +660,7 @@ class TestMetadataFunctions(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             with (
                 patch("simpletuner.helpers.publishing.metadata.StateTracker.get_model_family", return_value="sdxl"),
-                patch("simpletuner.helpers.publishing.metadata.StateTracker.get_data_backends", return_value={}),
+                patch("simpletuner.helpers.publishing.metadata.StateTracker.get_datasets", return_value={}),
                 patch("simpletuner.helpers.publishing.metadata.StateTracker.get_weight_dtype", return_value=torch.bfloat16),
                 patch(
                     "simpletuner.helpers.publishing.metadata.StateTracker.get_accelerator",
@@ -745,7 +745,7 @@ class TestMetadataFunctions(unittest.TestCase):
             images["portrait"] *= 2
             with (
                 patch("simpletuner.helpers.publishing.metadata.StateTracker.get_model_family", return_value="sdxl"),
-                patch("simpletuner.helpers.publishing.metadata.StateTracker.get_data_backends", return_value={}),
+                patch("simpletuner.helpers.publishing.metadata.StateTracker.get_datasets", return_value={}),
                 patch("simpletuner.helpers.publishing.metadata.StateTracker.get_weight_dtype", return_value=torch.bfloat16),
                 patch(
                     "simpletuner.helpers.publishing.metadata.StateTracker.get_accelerator",
