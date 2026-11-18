@@ -1030,39 +1030,30 @@ class SaveHookManager:
         weights,
         output_dir,
         *,
-        is_main_process: bool,
         distributed_type: DistributedType,
     ):
-        temporary_dir = None
-        save_dir = None
         modelspec_metadata = self._build_modelspec_metadata(checkpoint_dir=output_dir)
 
-        if is_main_process:
-            temporary_dir = output_dir.replace("checkpoint", "temporary")
-            os.makedirs(temporary_dir, exist_ok=True)
+        temporary_dir = output_dir.replace("checkpoint", "temporary")
+        os.makedirs(temporary_dir, exist_ok=True)
 
-            if self.args.use_ema:
-                ema_model_path = os.path.join(temporary_dir, self.ema_model_subdir, "ema_model.pt")
-                logger.info(f"Saving EMA model to {ema_model_path}")
-                try:
-                    self.ema_model.save_state_dict(ema_model_path)
-                except Exception as e:
-                    logger.error(f"Error saving EMA model: {e}")
-                logger.info("Saving EMA safetensors variant.")
-                self.ema_model.save_pretrained(
-                    os.path.join(temporary_dir, self.ema_model_subdir),
-                    max_shard_size="10GB",
-                )
+        if self.args.use_ema:
+            ema_model_path = os.path.join(temporary_dir, self.ema_model_subdir, "ema_model.pt")
+            logger.info(f"Saving EMA model to {ema_model_path}")
+            try:
+                self.ema_model.save_state_dict(ema_model_path)
+            except Exception as e:
+                logger.error(f"Error saving EMA model: {e}")
+            logger.info("Saving EMA safetensors variant.")
+            self.ema_model.save_pretrained(
+                os.path.join(temporary_dir, self.ema_model_subdir),
+                max_shard_size="10GB",
+            )
 
-            sub_dir = "controlnet" if self.args.controlnet else self.model.MODEL_SUBFOLDER
-            save_dir = os.path.join(temporary_dir, sub_dir)
-            os.makedirs(save_dir, exist_ok=True)
+        sub_dir = "controlnet" if self.args.controlnet else self.model.MODEL_SUBFOLDER
+        save_dir = os.path.join(temporary_dir, sub_dir)
+        os.makedirs(save_dir, exist_ok=True)
         for idx, model in enumerate(models):
-            if not is_main_process:
-                if weights and len(weights) > 0:
-                    weights.pop(0)
-                continue
-
             state_dict = self._resolve_model_state_dict(model, weights)
 
             # ComfyUI: Add v_pred and ztsnr keys to the state_dict if applicable
@@ -1092,12 +1083,6 @@ class SaveHookManager:
                     self._save_sdnq_model_state(unwrapped_model, temporary_dir, model_name=model_name)
             finally:
                 del state_dict
-
-        if self.accelerator is not None and distributed_type is not None and distributed_type != DistributedType.NO:
-            self.accelerator.wait_for_everyone()
-
-        if not is_main_process:
-            return
 
         for item in os.listdir(temporary_dir):
             s = os.path.join(temporary_dir, item)
@@ -1166,7 +1151,6 @@ class SaveHookManager:
                     models=models,
                     weights=weights,
                     output_dir=output_dir,
-                    is_main_process=is_main_process,
                     distributed_type=distributed_type,
                 )
 

@@ -110,6 +110,36 @@ class SaveHookManagerTests(unittest.TestCase):
                 save_state, _ = self._run_save_model_hook(is_local_main_process)
                 self.assertEqual(save_state.call_count, 1)
 
+    def test_full_model_save_hook_has_no_main_rank_only_barrier(self):
+        manager = object.__new__(SaveHookManager)
+        manager.accelerator = SimpleNamespace(
+            distributed_type=DistributedType.MULTI_GPU,
+            is_main_process=True,
+            is_local_main_process=True,
+            wait_for_everyone=Mock(side_effect=AssertionError("main rank entered a collective")),
+        )
+        manager.args = SimpleNamespace(model_type="full", use_ema=False, controlnet=False)
+        manager.model = SimpleNamespace(MODEL_SUBFOLDER="unet")
+        manager.training_state_path = "training_state.json"
+        manager._offload_models_during_save = Mock(return_value=nullcontext())
+        manager._save_ema_state = Mock()
+        manager._is_fsdp2 = Mock(return_value=False)
+        manager._is_sdnq_model = Mock(return_value=False)
+        manager._build_modelspec_metadata = Mock(return_value={})
+        manager._resolve_model_state_dict = Mock(return_value={})
+        model = Mock()
+        model.save_pretrained.side_effect = lambda output, **kwargs: (Path(output) / "weights.safetensors").touch()
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch("simpletuner.helpers.training.save_hooks.StateTracker"),
+            patch("simpletuner.helpers.training.save_hooks.unwrap_model", return_value=model),
+            patch("simpletuner.helpers.training.save_hooks.merge_safetensors_files"),
+        ):
+            output = Path(directory) / "checkpoint-2"
+            output.mkdir()
+            manager.save_model_hook([model], [{}], str(output))
+            self.assertTrue((output / "unet" / "weights.safetensors").is_file())
+
     def _adapter_hook_manager(self, output_dir, is_main_process=True):
         lycoris_config_path = Path(output_dir) / "source_lycoris.json"
         lycoris_config_path.write_text(json.dumps({"algo": "lokr"}))
