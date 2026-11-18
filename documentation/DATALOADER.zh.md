@@ -137,6 +137,10 @@
 
 在 `text_embeds` 后端启用此布尔选项可逐训练批次在线编码文本。编码器跳过嵌入文件的读写，包括已有条目。默认值为 `false`。预计算时请使用单独的可写 Local 或 AWS 文本嵌入后端。
 
+### `text_cache_use_listing`
+
+在 AWS `text_embeds` 后端中，将 `text_cache_use_listing` 设置为 `true`，可在离线预处理之前为缓存前缀下的现有对象建立索引。这适用于缓存已基本填满的情况。列表会流式写入运行输出目录中的临时 SQLite 文件。共享输出目录的工作进程会复用同一存储的索引。列表中未出现的键会直接查询对象。请保留此前缀下的现有对象，直到预处理完成。默认值为 `false`。
+
 ### `text_cache_disable`
 
 - **仅适用于 `dataset_type=text_embeds`**

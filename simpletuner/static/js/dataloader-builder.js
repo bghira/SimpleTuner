@@ -268,6 +268,7 @@
                                  'only_instance_prompt', 'vae_cache_clear_each_epoch',
                                  'vae_cache_ondemand', 'vae_cache_disable',
                                  'text_cache_ondemand', 'text_cache_disable', 'text_cache_encode_only',
+                                 'text_cache_use_listing',
                                  'hash_filenames', 'preserve_data_backend_cache',
                                  'is_regularisation_data'];
 

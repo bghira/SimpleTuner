@@ -137,6 +137,10 @@ Na descoberta local de legendas, a saída gerada deve ficar fora do `instance_da
 
 Ative esta opção em um backend `text_embeds` para codificar o texto de cada lote durante o treinamento. O codificador ignora a leitura e a gravação dos arquivos de embeddings, inclusive entradas existentes. O padrão é `false`. Para pré-calcular embeddings, use outro backend Local ou AWS com permissão de gravação.
 
+### `text_cache_use_listing`
+
+Em um backend AWS `text_embeds`, defina `text_cache_use_listing` como `true` para indexar os objetos existentes no prefixo do cache antes do preparo offline. Isso é útil quando o cache já está quase completo. A listagem é gravada em fluxo em um arquivo SQLite temporário no diretório de saída da execução. Os processos que compartilham o diretório reutilizam um índice por armazenamento. As chaves ausentes na listagem são verificadas diretamente no armazenamento. Mantenha os objetos existentes nesse prefixo até o fim do preparo. O padrão é `false`.
+
 ### `text_cache_disable`
 
 - **Aplica-se apenas a `dataset_type=text_embeds`**

@@ -1362,6 +1362,9 @@ function dataloaderSectionComponent() {
         if (!dataset) {
             return;
         }
+        if (dataset.type !== 'aws') {
+            delete dataset.text_cache_use_listing;
+        }
         const previousStrategy = dataset.caption_strategy;
         const previousBackend = dataset.metadata_backend;
 

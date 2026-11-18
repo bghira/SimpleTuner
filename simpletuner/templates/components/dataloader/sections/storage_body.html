@@ -409,6 +409,19 @@
                 </div>
                 <div class="form-text small text-muted ps-4">Skip full text-cache pre-computation and encode cache misses during use.</div>
             </div>
+            <div class="col-md-6" x-show="editingDataset.dataset_type === 'text_embeds' && editingDataset.type === 'aws'">
+                <div class="form-check mt-2">
+                    <input class="form-check-input"
+                           type="checkbox"
+                           :id="'text-cache-listing-' + editingDataset.id"
+                           x-model="editingDataset.text_cache_use_listing"
+                           @change="markAsUnsaved()">
+                    <label class="form-check-label small" :for="'text-cache-listing-' + editingDataset.id">
+                        Index existing S3 embeddings before preparation
+                        <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#text_cache_use_listing') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a>
+                    </label>
+                </div>
+            </div>
             <div class="col-md-6" x-show="editingDataset.dataset_type === 'text_embeds'">
                 <div class="form-check mt-2">
                     <input class="form-check-input"

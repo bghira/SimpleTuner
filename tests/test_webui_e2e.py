@@ -2281,6 +2281,85 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
 
     MAX_BROWSERS = 1
 
+    def test_s3_text_cache_listing_saves_and_stays_bound_across_tabs(self) -> None:
+        self.seed_defaults()
+        config_path = self.config_dir / "default" / "multidatabackend.json"
+        config_path.write_text(
+            json.dumps(
+                [
+                    {"id": "images", "type": "local", "dataset_type": "image", "instance_data_dir": str(self.home_path)},
+                    {
+                        "id": "text-aws",
+                        "type": "aws",
+                        "dataset_type": "text_embeds",
+                        "default": True,
+                        "aws_bucket_name": "text-embeddings",
+                        "aws_data_prefix": "embeddings/",
+                        "aws_region_name": "us-east-1",
+                    },
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+            datasets_tab = DatasetsTab(driver, base_url=self.base_url)
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.switch_to_datasets_tab()
+            trainer_page.wait_for_tab("datasets")
+            driver.execute_script(
+                """
+                document.querySelector('#datasets-tab-content .hero-dismiss-btn')?.click();
+                const toggle = document.querySelector('[data-dataset-id="text-aws"] .list-item-toggle');
+                if (toggle.getAttribute('aria-expanded') !== 'true') toggle.click();
+                """
+            )
+
+            def open_tab(tab):
+                driver.execute_script(
+                    """
+                    const item = document.querySelector('[data-dataset-id="text-aws"]').closest('.dataset-list-item-wrapper');
+                    [...item.querySelectorAll('button')].find(button => button.textContent.trim() === arguments[0]).click();
+                    """,
+                    tab,
+                )
+
+            def visible_listing_control(d):
+                return next(
+                    (element for element in d.find_elements(By.ID, "text-cache-listing-text-aws") if element.is_displayed()),
+                    False,
+                )
+
+            def dirty(expected):
+                return WebDriverWait(driver, 5).until(
+                    lambda d: d.execute_script(
+                        "return Alpine.store('trainer').hasUnsavedChanges === arguments[0];", expected
+                    )
+                )
+
+            open_tab("Storage")
+            driver.execute_script("Alpine.store('trainer').hasUnsavedChanges = false;")
+            control = WebDriverWait(driver, 10).until(visible_listing_control)
+            self.assertFalse(control.is_selected())
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", control)
+            control.click()
+            dirty(True)
+            datasets_tab.save_datasets()
+            dirty(False)
+            saved = next(entry for entry in json.loads(config_path.read_text()) if entry["id"] == "text-aws")
+            self.assertIs(saved.get("text_cache_use_listing"), True)
+            open_tab("Basic")
+            open_tab("Storage")
+            control = WebDriverWait(driver, 10).until(visible_listing_control)
+            self.assertTrue(control.is_selected())
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", control)
+            control.click()
+            dirty(True)
+
+        self.for_each_browser("test_s3_text_cache_listing_saves_and_stays_bound_across_tabs", scenario)
+
     def test_webshart_caption_keys_edit_and_save(self) -> None:
         self.seed_defaults()
         config_path = self.config_dir / "default" / "multidatabackend.json"

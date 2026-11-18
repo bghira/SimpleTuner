@@ -137,6 +137,10 @@ For local caption discovery, the generated output directory must be outside the 
 
 Set this boolean on a `text_embeds` backend to encode each training batch online. The encoder skips embedding file reads and writes, including existing entries. The default is `false`. To precompute embeddings, use a separate writable Local or AWS text-embedding backend.
 
+### `text_cache_use_listing`
+
+On an AWS `text_embeds` backend, set `text_cache_use_listing` to `true` to index existing objects under the cache prefix before offline preparation. This is useful when the cache is mostly populated. The index streams the listing to a temporary SQLite file in the run output directory. Workers with a shared output directory reuse one index for the store. A direct object lookup checks keys missing from the listing. Keep existing objects under that prefix in place until preparation completes. The default is `false`.
+
 ### `text_cache_disable`
 
 - **Only applies to `dataset_type=text_embeds`**

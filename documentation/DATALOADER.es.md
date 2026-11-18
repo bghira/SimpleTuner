@@ -137,6 +137,10 @@ Para descubrir descripciones locales, la salida generada debe quedar fuera del `
 
 Activa esta opción en un backend `text_embeds` para codificar el texto de cada lote durante el entrenamiento. El codificador omite la lectura y escritura de archivos de embeddings, incluidas las entradas existentes. El valor predeterminado es `false`. Para el precálculo, usa otro backend Local o AWS con permiso de escritura.
 
+### `text_cache_use_listing`
+
+En un backend AWS `text_embeds`, establece `text_cache_use_listing` en `true` para indexar los objetos existentes bajo el prefijo de la caché antes de la preparación sin conexión. Es útil cuando la caché ya está casi completa. El índice guarda la lista por lotes en un archivo SQLite temporal en el directorio de salida de la ejecución. Los procesos que comparten el directorio reutilizan un índice para el almacenamiento. Las claves ausentes de la lista se comprueban con una consulta directa al objeto. Conserva los objetos existentes bajo ese prefijo hasta que termine la preparación. El valor predeterminado es `false`.
+
 ### `text_cache_disable`
 
 - **Solo aplica a `dataset_type=text_embeds`**
