@@ -1493,6 +1493,7 @@ Parquet のバケットキャッシュはカタログの指紋ごとに分離さ
 - `--max_train_steps` が指定されている。
 - `dataset_type` が `image` で、データセットに `conditioning_data` も `conditioning` もなく、`--eval_dataset_id` のデータセットでもない。
 - データセットに `vae_cache_ondemand` または `vae_cache_disable` が、その text embed バックエンドに `text_cache_ondemand` が設定されている。潜在表現と text embed は学習前にエンコードできません。
+- `crop_aspect: "random"` の場合は、`vae_cache_disable` または `--aspect_bucket_disable_rebuild` も設定されている。このデータセットはエポックごとにサンプルのサイズとクロップを選び直すため、前のエポックで保存した潜在表現とは一致しなくなります。
 - `max_num_samples`、`scan_for_errors`、`vae_cache_clear_each_epoch` が設定されていない。
 - モデルが条件付け画像の embed を必要としない。
 - データセットのシャード数がランク数以上である。

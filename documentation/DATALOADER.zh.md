@@ -1491,6 +1491,7 @@ Parquet 分桶缓存按目录指纹隔离。序列化工作进程会拒绝目录
 - 已设置 `--max_train_steps`。
 - `dataset_type` 为 `image`，数据集没有 `conditioning_data` 或 `conditioning`，并且不是 `--eval_dataset_id` 指定的数据集。
 - 数据集已设置 `vae_cache_ondemand` 或 `vae_cache_disable`，其 text embed 后端已设置 `text_cache_ondemand`。潜变量和 text embed 无法在训练前编码。
+- 使用 `crop_aspect: "random"` 时，还需设置 `vae_cache_disable` 或 `--aspect_bucket_disable_rebuild`。这样的数据集每个 epoch 都会为样本重新选择尺寸和裁剪，之前 epoch 保存的潜变量将不再与之匹配。
 - 未设置 `max_num_samples`、`scan_for_errors` 和 `vae_cache_clear_each_epoch`。
 - 模型不需要条件图像 embed。
 - 数据集的分片数不少于 rank 数。

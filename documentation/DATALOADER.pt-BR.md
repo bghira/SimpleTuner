@@ -1474,6 +1474,7 @@ O que exige. A configuração para com uma mensagem que nomeia o ajuste quando u
 - `--max_train_steps` está definido.
 - `dataset_type` é `image`, o dataset não tem `conditioning_data` nem `conditioning`, e não é o dataset de `--eval_dataset_id`.
 - `vae_cache_ondemand` ou `vae_cache_disable` está definido no dataset, e `text_cache_ondemand` no backend de text embeds dele. Latentes e text embeds não podem ser codificados antes do treinamento.
+- Com `crop_aspect: "random"`, `vae_cache_disable` também está definido, ou `--aspect_bucket_disable_rebuild`. Um dataset assim dá às amostras um tamanho e um recorte novos a cada época, que um latente guardado de uma época anterior não refletiria.
 - `max_num_samples`, `scan_for_errors` e `vae_cache_clear_each_epoch` não estão definidos.
 - O modelo não precisa de embeds de imagens de condicionamento.
 - O dataset tem pelo menos tantos shards quanto ranks.

@@ -1473,6 +1473,7 @@ Parquet bucket cache कैटलॉग fingerprint के अनुसार �
 - `--max_train_steps` सेट है।
 - `dataset_type` `image` है, डेटासेट में `conditioning_data` या `conditioning` नहीं है, और यह `--eval_dataset_id` वाला डेटासेट नहीं है।
 - डेटासेट पर `vae_cache_ondemand` या `vae_cache_disable` सेट है, और उसके text embed बैकएंड पर `text_cache_ondemand` सेट है। लेटेंट और text embed प्रशिक्षण से पहले एन्कोड नहीं किए जा सकते।
+- `crop_aspect: "random"` के साथ `vae_cache_disable` या `--aspect_bucket_disable_rebuild` भी सेट है। ऐसा डेटासेट हर एपोक में सैंपलों का साइज़ और क्रॉप नए सिरे से चुनता है, जिससे पिछले एपोक में रखा गया लेटेंट मेल नहीं खाएगा।
 - `max_num_samples`, `scan_for_errors` और `vae_cache_clear_each_epoch` सेट नहीं हैं।
 - मॉडल को कंडीशनिंग इमेज embed की ज़रूरत नहीं है।
 - डेटासेट में कम से कम उतने शार्ड हैं जितने रैंक हैं।

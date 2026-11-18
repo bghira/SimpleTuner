@@ -12,7 +12,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from simpletuner.helpers.data_backend.dataset_runtime import RUNTIME_MUTABLE_KEYS, DatasetRuntime, shuffle_window
+from simpletuner.helpers.data_backend.dataset_runtime import (
+    RUNTIME_MUTABLE_KEYS,
+    DatasetRuntime,
+    recrops_each_epoch,
+    shuffle_window,
+)
 
 from .runtime import BatchFetcher
 
@@ -3161,7 +3166,8 @@ class FactoryRegistry:
         if window is None:
             return
         dataset_type = ensure_dataset_type(init_backend.get("dataset_type"), default=DatasetType.IMAGE)
-        _, vae_cache_ondemand = _normalise_vae_cache_config(init_backend["config"])
+        vae_cache_disable, vae_cache_ondemand = _normalise_vae_cache_config(init_backend["config"])
+        has_autoencoder = getattr(self.model, "AUTOENCODER_CLASS", None) is not None
         text_embed_cache = init_backend.get("text_embed_cache")
         conflicts = [
             (
@@ -3186,8 +3192,14 @@ class FactoryRegistry:
                 for key in ("max_num_samples", "scan_for_errors", "vae_cache_clear_each_epoch")
             ),
             (
-                getattr(self.model, "AUTOENCODER_CLASS", None) is not None and not vae_cache_ondemand,
+                has_autoencoder and not vae_cache_ondemand,
                 "Its latents cannot be encoded before training. Set vae_cache_ondemand or vae_cache_disable on the dataset.",
+            ),
+            (
+                has_autoencoder and not vae_cache_disable and recrops_each_epoch(init_backend["config"], self.args),
+                "crop_aspect=random gives its samples a new size and crop each epoch, so a latent kept from an earlier"
+                " epoch would no longer match its sample. Set vae_cache_disable on the dataset, or"
+                " --aspect_bucket_disable_rebuild to keep the size and crop each sample is first given.",
             ),
             (
                 text_embed_cache is not None and not text_embed_cache.text_cache_ondemand,

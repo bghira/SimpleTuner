@@ -255,7 +255,9 @@ class TestWindowedDatasetConfiguration(unittest.TestCase):
 class TestWhatAShuffleWindowRulesOut(unittest.TestCase):
     def factory(self, model=None, **args):
         factory = object.__new__(FactoryRegistry)
-        factory.args = SimpleNamespace(**{"max_train_steps": 100, "eval_dataset_id": None, **args})
+        factory.args = SimpleNamespace(
+            **{"max_train_steps": 100, "eval_dataset_id": None, "aspect_bucket_disable_rebuild": False, **args}
+        )
         factory.model = model or _StubModel()
         return factory
 
@@ -315,6 +317,23 @@ class TestWhatAShuffleWindowRulesOut(unittest.TestCase):
         self.assertIn("Set vae_cache_ondemand or vae_cache_disable", self.refusal(self.factory(model)))
         self.assertIsNone(self.refusal(self.factory(model), vae_cache_ondemand=True))
         self.assertIsNone(self.refusal(self.factory(model), vae_cache_disable=True))
+
+    def test_latents_are_not_kept_for_a_dataset_cropped_anew_each_epoch(self):
+        model = _StubModel()
+        model.AUTOENCODER_CLASS = object
+        recropped = dict(crop=True, crop_aspect="random", crop_aspect_buckets=[0.5, 1.0, 2.0])
+        refusal = self.refusal(self.factory(model), vae_cache_ondemand=True, **recropped)
+        self.assertIn("crop_aspect=random gives its samples a new size and crop each epoch", refusal)
+        self.assertIn("Set vae_cache_disable on the dataset, or --aspect_bucket_disable_rebuild", refusal)
+
+        self.assertIsNone(self.refusal(self.factory(model), vae_cache_disable=True, **recropped))
+        self.assertIsNone(
+            self.refusal(self.factory(model, aspect_bucket_disable_rebuild=True), vae_cache_ondemand=True, **recropped)
+        )
+        self.assertIsNone(self.refusal(self.factory(), **recropped))
+        for kept in (dict(crop=True, crop_aspect="square"), dict(recropped, crop=False)):
+            with self.subTest(kept=kept):
+                self.assertIsNone(self.refusal(self.factory(model), vae_cache_ondemand=True, **kept))
 
     def test_captions_have_to_be_encoded_while_training(self):
         self.assertIn(

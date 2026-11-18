@@ -1549,6 +1549,7 @@ What it requires. Configuration stops with a message naming the setting when one
 - `--max_train_steps` is set.
 - `dataset_type` is `image`, the dataset has no `conditioning_data` or `conditioning`, and it is not the `--eval_dataset_id` dataset.
 - `vae_cache_ondemand` or `vae_cache_disable` is set on the dataset, and `text_cache_ondemand` on its text embed backend. Latents and text embeds cannot be encoded before training.
+- With `crop_aspect: "random"`, `vae_cache_disable` is set too, or `--aspect_bucket_disable_rebuild`. Such a dataset gives its samples a new size and crop each epoch, which a latent kept from an earlier epoch would not match.
 - `max_num_samples`, `scan_for_errors` and `vae_cache_clear_each_epoch` are not set.
 - The model does not need conditioning image embeds.
 - The dataset has at least as many shards as there are ranks.
