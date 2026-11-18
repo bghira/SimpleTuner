@@ -12,7 +12,10 @@ import requests
 import torch
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
-from simpletuner.helpers.data_backend.config.validators import validate_webshart_caption_key
+from simpletuner.helpers.data_backend.config.validators import (
+    validate_webshart_caption_key,
+    validate_webshart_shuffle_window,
+)
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.data_backend.filters import DatasetFilter
 from simpletuner.helpers.image_manipulation.load import load_image, load_video
@@ -37,6 +40,7 @@ class WebshartSampleRef:
 
 class WebshartDataBackend(BaseDataBackend):
     format = "tar"
+    shuffle_window = None
     SAMPLE_PREFIX = "webshart://"
     PATH_NORMALIZED_SAMPLE_PREFIX = "webshart:/"
     CACHE_EXTENSIONS = {".json", ".pt", ".msgpack", ".safetensors"}
@@ -69,9 +73,12 @@ class WebshartDataBackend(BaseDataBackend):
         aws_secret_access_key: Optional[str] = None,
         aws_session_token: Optional[str] = None,
         aws_max_pool_connections: int = 32,
+        shuffle_window: Optional[int] = None,
     ):
         if not source:
             raise ValueError("source is required for Webshart data backends.")
+        validate_webshart_shuffle_window(shuffle_window)
+        self.shuffle_window = shuffle_window
         validate_webshart_caption_key(caption_key)
         self.caption_key = caption_key
         if format not in {"tar", "parquet"}:
@@ -120,14 +127,20 @@ class WebshartDataBackend(BaseDataBackend):
         self.dataset_type = ensure_dataset_type(dataset_type, default=DatasetType.IMAGE)
         self.optimize_captions = bool(optimize_captions)
         self._shard_metadata_cache: dict[int, dict] = {}
-        self._shard_metadata_cache_limit = 8
+        # Batches read from every shard of an open window in turn. A cache smaller than the window
+        # fetches a shard's metadata from the source again each time it comes round.
+        self._shard_metadata_cache_limit = max(8, self.shuffle_window or 0)
 
         Path(self.cache_dir).mkdir(parents=True, exist_ok=True)
         Path(self.metadata_cache_dir).mkdir(parents=True, exist_ok=True)
 
         discovery = {}
         if self.format == "parquet":
-            discovery = {"format": "parquet", "manifest": self.manifest, "metadata_cache_size": 8}
+            discovery = {
+                "format": "parquet",
+                "manifest": self.manifest,
+                "metadata_cache_size": self._shard_metadata_cache_limit,
+            }
             discovery.update({("caption_column" if k == "captions" else f"{k}_column"): v for k, v in self.columns.items()})
             if self.source.startswith("s3://"):
                 discovery["s3_options"] = {
@@ -644,6 +657,7 @@ class WebshartDataBackend(BaseDataBackend):
             "compress_cache": self.compress_cache,
             "dataset_type": self.dataset_type.value,
             "caption_key": self.caption_key,
+            "shuffle_window": self.shuffle_window,
         }
 
     @staticmethod
@@ -673,6 +687,7 @@ class WebshartDataBackend(BaseDataBackend):
             compress_cache=representation.get("compress_cache", False),
             dataset_type=representation.get("dataset_type", DatasetType.IMAGE),
             caption_key=representation.get("caption_key"),
+            shuffle_window=representation.get("shuffle_window"),
         )
         expected = representation.get("dataset_fingerprint")
         if expected is not None and expected != backend.dataset.fingerprint:

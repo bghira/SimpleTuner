@@ -5,9 +5,11 @@ import shutil
 import subprocess
 import tempfile
 import time
+from collections.abc import Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from hashlib import sha256
+from math import ceil
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -30,6 +32,8 @@ else:
 
 
 class WebshartMetadataBackend(MetadataBackend):
+    shuffle_window = None
+
     def __init__(
         self,
         id: str,
@@ -56,6 +60,10 @@ class WebshartMetadataBackend(MetadataBackend):
     ):
         if not isinstance(data_backend, WebshartDataBackend):
             raise ValueError("WebshartMetadataBackend requires WebshartDataBackend")
+        # With a window the dataset is indexed a shard at a time, as the cursor opens each one, and
+        # has no files that describe all of it.
+        self.shuffle_window = data_backend.shuffle_window
+        self._open_units: dict[int, list[str]] = {}
         if data_backend.format == "parquet":
             fingerprint = data_backend.dataset.fingerprint[:16]
             cache_file = f"{cache_file}_source_{fingerprint}"
@@ -118,6 +126,8 @@ class WebshartMetadataBackend(MetadataBackend):
         return self.data_backend.get_caption(self.data_backend.normalize_sample_id(index))
 
     def reload_cache(self, set_config: bool = True):
+        if self.shuffle_window is not None:
+            return
         if self.data_backend.exists(self.cache_file):
             try:
                 cache_data = json.loads(self.data_backend.read(self.cache_file))
@@ -134,6 +144,8 @@ class WebshartMetadataBackend(MetadataBackend):
         self.load_image_metadata()
 
     def save_cache(self, enforce_constraints: bool = False):
+        if self.shuffle_window is not None:
+            return
         if enforce_constraints:
             self._enforce_min_bucket_size()
         self._enforce_min_aspect_ratio()
@@ -154,6 +166,8 @@ class WebshartMetadataBackend(MetadataBackend):
         self.data_backend.write(self.cache_file, json.dumps(cache_data))
 
     def load_image_metadata(self):
+        if self.shuffle_window is not None:
+            return
         self.image_metadata = {}
         self.image_metadata_loaded = False
         if self.data_backend.exists(self.metadata_file):
@@ -163,11 +177,71 @@ class WebshartMetadataBackend(MetadataBackend):
             self.image_metadata_loaded = True
 
     def save_image_metadata(self):
+        if self.shuffle_window is not None:
+            return
         self.data_backend.write(self.metadata_file, json.dumps(self.image_metadata))
         self.image_metadata_loaded = True
 
     def _all_shard_indices(self) -> list[int]:
         return list(range(self.data_backend.num_shards()))
+
+    def unit_count(self) -> int:
+        return self.data_backend.num_shards()
+
+    def open_unit(self, unit: int, epoch: int) -> dict[str, list[str]]:
+        """Index one shard. Its usable samples are returned by target size and described until close_unit."""
+        skipped = dict.fromkeys(("metadata_missing", "caption_missing", "too_small", "aspect_ratio", "error"), 0)
+        pools: dict[str, list[str]] = {}
+        sample_ids = []
+        for bucket, sample_path, sample_metadata in self._prepare_shard(unit, self._requires_captions(), skipped):
+            # Without a window, save_cache drops the buckets outside these limits once all are built.
+            if (self.minimum_aspect_ratio and float(bucket) < self.minimum_aspect_ratio) or (
+                self.maximum_aspect_ratio and float(bucket) > self.maximum_aspect_ratio
+            ):
+                skipped["aspect_ratio"] += 1
+                continue
+            width, height = sample_metadata["target_size"]
+            pools.setdefault(f"{width}x{height}", []).append(sample_path)
+            self.image_metadata[sample_path] = sample_metadata
+            sample_ids.append(sample_path)
+        self._open_units[unit] = sample_ids
+        logger.debug("(id=%s) Shard %s holds %s usable samples; skipped %s.", self.id, unit, len(sample_ids), skipped)
+        return pools
+
+    def close_unit(self, unit: int) -> None:
+        for sample_path in self._open_units.pop(unit):
+            del self.image_metadata[sample_path]
+
+    def check_window(self, units: Sequence[int], *, ranks: int) -> None:
+        """Refuse a window whose shards the shard cache cannot hold for every rank at once."""
+        backend = self.data_backend
+        if backend.shard_cache_dir is None or os.path.isdir(backend.source):
+            # Nothing is cached: reads go to the source, which for a local dataset is the disk.
+            return
+        largest = max(backend.dataset.get_shard_info(unit)["size"] for unit in units)
+        # Every rank's cache is the same directory, and the limit applies to the directory.
+        needed = ranks * self.shuffle_window * largest
+        limit = backend.shard_cache_gb * 2**30
+        if needed <= limit:
+            return
+        needed_gb = ceil(needed / 2**30)
+        message = (
+            f"(id={self.id}) webshart.shuffle_window={self.shuffle_window} keeps that many shards open on each of"
+            f" {ranks} rank(s), about {needed / 2**30:.1f} GiB with shards of up to {largest / 2**20:.0f} MiB,"
+            f" and shard_cache_gb={backend.shard_cache_gb:g} cannot hold them."
+        )
+        fits = int(limit // (ranks * largest))
+        if fits >= 1:
+            message += f" Set shuffle_window to {fits} or less, or shard_cache_gb to at least {needed_gb}."
+        else:
+            message += f" Set shard_cache_gb to at least {needed_gb}."
+        free = shutil.disk_usage(backend.shard_cache_dir).free
+        if free < needed:
+            message += (
+                f" The volume holding {backend.shard_cache_dir} has {free / 2**30:.1f} GiB free,"
+                " which is not enough for that."
+            )
+        raise ValueError(message)
 
     def _sample_id_from_entry(self, shard_idx: int, entry: dict) -> str:
         if "sample_idx" not in entry:
@@ -389,7 +463,53 @@ class WebshartMetadataBackend(MetadataBackend):
         caption_member = self.data_backend.caption_sidecar_filename(str(entry["filename"]))
         return caption_member in shard_metadata
 
+    def _requires_captions(self) -> bool:
+        backend_config = StateTracker.get_data_backend_config(self.id) or {}
+        return str(backend_config.get("caption_strategy", "")).lower() == "webshart"
+
+    def _prepare_shard(
+        self, shard_idx: int, require_captions: bool, skipped: dict, *, known=frozenset(), executor=None
+    ) -> Iterator[tuple[str, str, dict]]:
+        """
+        Decide the geometry of a shard's samples, one at a time. Yields (bucket, sample id, metadata)
+        for each usable sample and counts the others in `skipped` by reason.
+        """
+        shard_entries = self._entries_for_shard(shard_idx)
+        if not shard_entries:
+            return
+        shard_metadata = self.data_backend.get_shard_metadata(shard_idx)
+        candidates = []
+        for entry in shard_entries:
+            entry = {**entry, "shard_idx": shard_idx}
+            sample_path = self._sample_id_from_entry(shard_idx, entry)
+            if sample_path not in known:
+                candidates.append((entry, sample_path))
+
+        def prepare(candidate):
+            return self._prepare_bucket_entry(shard_metadata, candidate[0], candidate[1], require_captions)
+
+        # Probing videos is slow, so they are prepared a few at a time on the executor.
+        chunk_size = 1 if executor is None else max(1, int(self.data_backend.parallel_downloads) * 2)
+        for start in range(0, len(candidates), chunk_size):
+            chunk = candidates[start : start + chunk_size]
+            results = map(prepare, chunk) if executor is None else executor.map(prepare, chunk)
+            for (entry, sample_path), (sample_metadata, prepared, error) in zip(chunk, results):
+                if isinstance(error, CaptionNotFoundError):
+                    skipped["caption_missing"] += 1
+                elif error is not None:
+                    logger.error("Error processing webshart bucket entry %s: %s", entry, error)
+                    skipped["error"] += 1
+                elif prepared is None:
+                    skipped["too_small" if sample_metadata else "metadata_missing"] += 1
+                else:
+                    yield prepared[0], sample_path, prepared[1]
+
     def compute_aspect_ratio_bucket_indices(self, ignore_existing_cache: bool = False, progress_callback=None):
+        if self.shuffle_window is not None:
+            raise RuntimeError(
+                f"(id={self.id}) This dataset sets webshart.shuffle_window, so it is indexed a shard at a time"
+                " while training and has no whole-dataset bucket lists to build."
+            )
         logger.info("Building aspect ratio buckets from webshart metadata...")
         statistics = {
             "total_processed": 0,
@@ -401,8 +521,7 @@ class WebshartMetadataBackend(MetadataBackend):
                 "error": 0,
             },
         }
-        backend_config = StateTracker.get_data_backend_config(self.id) or {}
-        require_captions = str(backend_config.get("caption_strategy", "")).lower() == "webshart"
+        require_captions = self._requires_captions()
 
         if not ignore_existing_cache:
             self.reload_cache()
@@ -415,7 +534,6 @@ class WebshartMetadataBackend(MetadataBackend):
             self.image_metadata = {}
             existing_files = set()
 
-        processed_entries = 0
         last_save_time = time.time()
         aspect_ratio_bucket_updates: Dict[float, list[str]] = {}
         metadata_updates: Dict[str, dict] = {}
@@ -441,64 +559,17 @@ class WebshartMetadataBackend(MetadataBackend):
                 ):
                     break
 
-                shard_entries = self._entries_for_shard(shard_idx)
-                if not shard_entries:
-                    continue
-                shard_metadata = self.data_backend.get_shard_metadata(shard_idx)
-                candidates = []
-                for entry in shard_entries:
-                    entry = {**entry, "shard_idx": shard_idx}
-                    sample_path = self._sample_id_from_entry(shard_idx, entry)
-                    if sample_path in existing_files:
-                        continue
-                    candidates.append((entry, sample_path))
-
-                chunk_size = max(1, worker_count * 2)
-                candidate_idx = 0
-                while candidate_idx < len(candidates):
+                for bucket_key, sample_path, sample_metadata in self._prepare_shard(
+                    shard_idx, require_captions, statistics["skipped"], known=existing_files, executor=executor
+                ):
+                    aspect_ratio_bucket_updates.setdefault(bucket_key, []).append(sample_path)
+                    metadata_updates[sample_path] = sample_metadata
+                    statistics["total_processed"] += 1
                     if (
                         self.max_num_samples is not None
                         and statistics["total_processed"] + len(existing_files) >= self.max_num_samples
                     ):
                         break
-                    remaining = (
-                        self.max_num_samples - statistics["total_processed"] - len(existing_files)
-                        if self.max_num_samples is not None
-                        else chunk_size
-                    )
-                    current_chunk_size = min(chunk_size, remaining)
-                    chunk = candidates[candidate_idx : candidate_idx + current_chunk_size]
-                    candidate_idx += len(chunk)
-                    if executor is None:
-                        results = [
-                            self._prepare_bucket_entry(shard_metadata, entry, sample_path, require_captions)
-                            for entry, sample_path in chunk
-                        ]
-                    else:
-                        results = executor.map(
-                            lambda item: self._prepare_bucket_entry(shard_metadata, item[0], item[1], require_captions),
-                            chunk,
-                        )
-
-                    for (entry, sample_path), (sample_metadata, prepared, error) in zip(chunk, results):
-                        processed_entries += 1
-                        if isinstance(error, CaptionNotFoundError):
-                            statistics["skipped"]["caption_missing"] += 1
-                            continue
-                        if error is not None:
-                            logger.error("Error processing webshart bucket entry %s: %s", entry, error)
-                            statistics["skipped"]["error"] += 1
-                            continue
-                        if prepared is None:
-                            if sample_metadata:
-                                statistics["skipped"]["too_small"] += 1
-                            else:
-                                statistics["skipped"]["metadata_missing"] += 1
-                            continue
-                        bucket_key, sample_metadata = prepared
-                        aspect_ratio_bucket_updates.setdefault(bucket_key, []).append(sample_path)
-                        metadata_updates[sample_path] = sample_metadata
-                        statistics["total_processed"] += 1
 
                     current_time = time.time()
                     if (current_time - last_save_time) >= self.metadata_update_interval:

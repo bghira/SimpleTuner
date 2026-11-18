@@ -153,6 +153,13 @@ def validate_webshart_caption_key(caption_key) -> None:
         raise ValueError("webshart.caption_key must be a non-empty string or a non-empty list of non-empty strings.")
 
 
+def validate_webshart_shuffle_window(shuffle_window) -> None:
+    if shuffle_window is None:
+        return
+    if isinstance(shuffle_window, bool) or not isinstance(shuffle_window, int) or shuffle_window < 1:
+        raise ValueError(f"webshart.shuffle_window must be a whole number of shards, 1 or more, not {shuffle_window!r}.")
+
+
 def validate_webshart_backend_settings(
     backend_type: str, metadata_backend: Optional[str], caption_strategy: Optional[str], backend_id: str
 ) -> Dict[str, str]:
