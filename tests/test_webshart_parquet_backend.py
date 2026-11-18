@@ -537,6 +537,7 @@ class TestWebshartParquetBackend(unittest.TestCase):
 
     def test_conditioning_and_embedding_requests_share_native_target_membership(self):
         from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime, TextRequestBuilder
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
         from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBackend
         from simpletuner.helpers.metadata.backends.webshart_exclusions import Exclusions, _publish
         from simpletuner.helpers.models.common import TextEmbedCacheKey
@@ -549,8 +550,16 @@ class TestWebshartParquetBackend(unittest.TestCase):
             "resolution": 8,
             "resolution_type": "pixel",
         }
-        args = SimpleNamespace(model_family="sdxl", disable_bucket_pruning=False)
-        accelerator = SimpleNamespace(num_processes=1, process_index=0, is_main_process=True)
+        args = SimpleNamespace(
+            model_family="sdxl",
+            disable_bucket_pruning=False,
+            skip_file_discovery="",
+            max_train_steps=1,
+            allow_dataset_oversubscription=False,
+            gradient_accumulation_steps=1,
+            eval_dataset_id=None,
+        )
+        accelerator = SimpleNamespace(num_processes=1, process_index=0, is_main_process=True, is_local_main_process=True)
         with (
             patch.object(StateTracker, "get_data_backend_config", return_value=config),
             patch.object(StateTracker, "get_args", return_value=args),
@@ -568,7 +577,19 @@ class TestWebshartParquetBackend(unittest.TestCase):
                 resolution_type="pixel",
             )
             self.addCleanup(metadata.close)
-            metadata.compute_aspect_ratio_bucket_indices()
+            factory = FactoryRegistry.__new__(FactoryRegistry)
+            factory.args = args
+            factory.accelerator = accelerator
+            config["conditioning_type"] = "reference_strict"
+            with (
+                patch.object(StateTracker, "get_data_backend", side_effect=AssertionError("legacy source clone")),
+                patch.object(factory, "_handle_config_versioning"),
+            ):
+                factory._handle_bucket_operations(
+                    {**config, "id": self.backend.id},
+                    {"id": self.backend.id, "config": config, "metadata_backend": metadata},
+                    "reference_strict",
+                )
             (accepted, excluded), count = metadata.read_page(limit=2)
             self.assertEqual(count, 2)
             runtime = DatasetRuntime(self.backend.id, self.backend, metadata, config)

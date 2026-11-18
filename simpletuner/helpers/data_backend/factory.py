@@ -3005,27 +3005,26 @@ class FactoryRegistry:
         Args:
             skip_bucket_split: If True, skip split_buckets_between_processes (used for audio-only datasets).
         """
+        metadata = init_backend["metadata_backend"]
         metadata_clone_source_id = backend.get("metadata_clone_source_id")
         has_metadata_clone_source = metadata_clone_source_id is not None
-        if (
+        has_prepared_catalogue = getattr(metadata, "requires_complete_preparation", False) is True
+        strict_conditioning = conditioning_type in ("mask", "reference_strict")
+        clone_conditioning = strict_conditioning and not has_prepared_catalogue
+        discovers_buckets = (
             not has_metadata_clone_source
             and "aspect" not in self.args.skip_file_discovery
             and "aspect" not in backend.get("skip_file_discovery", "")
-            and conditioning_type
-            not in [
-                # masks must align to source metadata; skip independent discovery.
-                "mask",
-                # grounding datasets share the same directory as their parent; skip independent discovery.
-                "grounding",
-                # controlnet uses pixel values for older Unets but encoded latents for newer models.
-                # when we require encoded latents, we also must scan for aspect ratio buckets here.
-                # This approach is inefficient as it effectively doubles the I/O to discover the conditioning dataset,
-                # and a more ideal implementation would simply reference the training dataset metadata buckets.
-                # but currently, there is no method to instruct a dataset to use a separate metadata instance with different paths.
-                "controlnet" if not self.model.requires_conditioning_latents() else -1,
-                "reference_strict",
-            ]
-        ):
+            and (
+                has_prepared_catalogue
+                or not (
+                    strict_conditioning
+                    or conditioning_type == "grounding"
+                    or (conditioning_type == "controlnet" and not self.model.requires_conditioning_latents())
+                )
+            )
+        )
+        if discovers_buckets:
             if self.accelerator.is_local_main_process:
                 info_log(f"(id={init_backend['id']}) Refreshing aspect buckets on main process.")
                 try:
@@ -3045,19 +3044,7 @@ class FactoryRegistry:
 
         # When the main process rebuilds buckets, make every rank partition the same
         # serialized cache rather than mixing rank 0's in-memory order with reloaded order.
-        if (
-            self._is_multi_process()
-            and not has_metadata_clone_source
-            and "aspect" not in self.args.skip_file_discovery
-            and "aspect" not in backend.get("skip_file_discovery", "")
-            and conditioning_type
-            not in [
-                "mask",
-                "grounding",
-                "controlnet" if not self.model.requires_conditioning_latents() else -1,
-                "reference_strict",
-            ]
-        ):
+        if self._is_multi_process() and discovers_buckets:
             info_log(f"(id={init_backend['id']}) Reloading bucket manager cache on subprocesses after refresh.")
             init_backend["metadata_backend"].reload_cache()
             # Discovery also populates the geometry used when preparing VAE inputs.
@@ -3100,7 +3087,7 @@ class FactoryRegistry:
                     source_backend=StateTracker.get_data_backend(metadata_clone_source_id),
                     target_backend=init_backend,
                 )
-        elif backend.get("conditioning_type", None) in ["reference_strict", "mask"]:
+        elif clone_conditioning:
             # special case where strict/mask conditioning alignment allows us to duplicate metadata from the source dataset.
             # we'll search for the source dataset by id and copy metadata from it:
             source_dataset_id = backend.get("source_dataset_id", None)
@@ -3283,9 +3270,16 @@ class FactoryRegistry:
         )
 
         dataset_type = init_backend.get("dataset_type")
-        dataset_empty = len(init_backend["metadata_backend"]) == 0
+        metadata = init_backend["metadata_backend"]
+        if dataset_type == "conditioning" and getattr(metadata, "requires_complete_preparation", False) is True:
+            sample_count = metadata.describe().accepted_samples
+            if sample_count is None:
+                raise ValueError(f"Scan conditioning dataset {init_backend['id']!r} to establish accepted membership.")
+        else:
+            sample_count = len(metadata)
+        dataset_empty = sample_count == 0
         if bucket_report := init_backend.get("bucket_report"):
-            bucket_report.record_stage("sampler_batches", sample_count=len(init_backend["metadata_backend"]))
+            bucket_report.record_stage("sampler_batches", sample_count=sample_count)
 
         if dataset_empty and not missing_instance_dir:
             bucket_report = init_backend.get("bucket_report")
