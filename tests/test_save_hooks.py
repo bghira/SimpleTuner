@@ -48,6 +48,21 @@ class SaveHookManagerTests(unittest.TestCase):
         with patch.object(StateTracker, "get_datasets", return_value={"local": local}):
             self.assertEqual(manager._build_tag_frequency_from_captions(), {"local": {"style": 3}})
 
+    def test_caption_statistics_omit_partial_counts_and_keep_prompt_alternatives(self):
+        manager = object.__new__(SaveHookManager)
+        local = SimpleNamespace(
+            config={"caption_strategy": "instanceprompt", "instance_prompt": ["style", "portrait"]},
+            uses_native_schedule=False,
+            iter_accepted_captions=lambda: iter(["style, cat", "style, dog"]),
+        )
+        remote = SimpleNamespace(
+            config={"caption_strategy": "instanceprompt", "instance_prompt": "style"},
+            uses_native_schedule=False,
+            iter_accepted_captions=Mock(side_effect=OSError("caption source unavailable")),
+        )
+        with patch.object(StateTracker, "get_datasets", return_value={"local": local, "remote": remote}):
+            self.assertEqual(manager._build_trigger_words_metadata(), {"trained_words": "style, portrait"})
+
     def _run_save_model_hook(self, is_local_main_process):
         output_dir = "/tmp/checkpoint"
 

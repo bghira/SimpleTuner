@@ -23,6 +23,7 @@ from tqdm import tqdm
 
 from simpletuner.helpers.configuration.template_vars import build_modelspec_template_values, render_modelspec_comment
 from simpletuner.helpers.models.common import PipelineTypes, PredictionTypes
+from simpletuner.helpers.prompts import PromptHandler
 from simpletuner.helpers.training.ema import EMAModel
 from simpletuner.helpers.training.multi_process import _get_rank as get_rank
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -545,14 +546,14 @@ class SaveHookManager:
         """
         Collect instance_prompt values from all data backends as trigger words.
         """
-        trigger_words = []
-        seen = set()
-        for dataset in StateTracker.get_datasets("image", "video", "audio", "caption").values():
-            instance_prompt = dataset.config.get("instance_prompt")
-            if instance_prompt and instance_prompt not in seen:
-                trigger_words.append(instance_prompt)
-                seen.add(instance_prompt)
-        return trigger_words
+        datasets = StateTracker.get_datasets("image", "video", "audio", "caption").values()
+        return list(
+            dict.fromkeys(
+                prompt
+                for dataset in datasets
+                for prompt in PromptHandler._normalize_caption_payload(dataset.config.get("instance_prompt"))
+            )
+        )
 
     def _build_tag_frequency_from_captions(self) -> dict[str, dict[str, int]]:
         """
@@ -595,7 +596,8 @@ class SaveHookManager:
                     seen_captions += 1
             except Exception as exc:
                 logger.debug("Could not count captions for dataset %s: %s", dataset_id, exc)
-                continue
+                self._tag_frequency_cache = {}
+                return {}
             caption_count += seen_captions
             caption_presence.update(presence)
             dataset_tags[dataset_id] = counts
