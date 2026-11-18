@@ -748,17 +748,15 @@ class DatasetViewerService:
     ) -> Optional[Dict[str, Any]]:
         """Recalculate metadata for a single file using TrainingSample.
 
-        Sets up a minimal StateTracker context (like the scan service) and
-        runs TrainingSample.prepare(image=None) to recompute target_size,
-        intermediary_size, crop_coordinates, and aspect_ratio purely from
-        original_size and the current dataset configuration.
+        Recompute target size, intermediary size, crop and aspect ratio
+        from the original size and the resolved dataset settings.
 
         Returns the updated metadata dict on success, None on failure.
         """
         from simpletuner.helpers.data_backend.config import create_backend_config
         from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
-        from simpletuner.helpers.training.state_tracker import StateTracker
-        from simpletuner.simpletuner_sdk.server.services.dataset_scan_service import _ScanArgsNamespace
+        from simpletuner.helpers.multiaspect.image import ImageGeometry, MultiaspectImage
+        from simpletuner.simpletuner_sdk.server.services.dataset_scan_service import DatasetScanService, _ScanArgsNamespace
 
         # Load existing metadata
         cache_path = self._find_cache_file(dataset_config, "metadata")
@@ -787,6 +785,8 @@ class DatasetViewerService:
             "caption_strategy",
             "model_type",
             "model_family",
+            "aspect_bucket_alignment",
+            "aspect_bucket_rounding",
         ):
             if key in dataset_config:
                 args_overrides[key] = dataset_config[key]
@@ -794,22 +794,17 @@ class DatasetViewerService:
                 args_overrides[key] = global_config[key]
 
         scan_args = _ScanArgsNamespace(args_overrides)
-        from simpletuner.simpletuner_sdk.server.services.dataset_scan_service import DatasetScanService
-
         scan_args.output_dir = DatasetScanService._resolve_scan_output_dir(scan_args.output_dir)
 
         # Apply pixel_area conversion
         dataset_config = DatasetScanService._convert_pixel_area(dataset_config, scan_args)
 
-        original_args = StateTracker.get_args()
-        StateTracker.set_args(scan_args)
-        config_id = None
-
         try:
-            args_dict = {k: getattr(scan_args, k, None) for k in vars(scan_args)}
-            config = create_backend_config(dataset_config, args_dict)
-            config_id = config.id
-            StateTracker.set_data_backend_config(config.id, config.to_dict()["config"])
+            config = create_backend_config(dataset_config, vars(scan_args))
+            geometry = ImageGeometry(
+                MultiaspectImage._get_alignment(args=scan_args),
+                MultiaspectImage._get_rounding(2, args=scan_args),
+            )
 
             # Build image_metadata with only original_size (forces recalculation)
             rebuild_meta = {"original_size": tuple(original_size)}
@@ -823,7 +818,8 @@ class DatasetViewerService:
                 data_backend_id=config.id,
                 image_metadata=rebuild_meta,
                 image_path=file_path,
-                model=None,
+                data_backend_config=config.to_dict()["config"],
+                geometry=geometry,
             )
             prepared = sample.prepare()
 
@@ -841,10 +837,6 @@ class DatasetViewerService:
         except Exception as e:
             logger.warning("Failed to rebuild metadata for %s: %s", file_path, e)
             return None
-        finally:
-            StateTracker.set_args(original_args)
-            if config_id is not None:
-                StateTracker.data_backends.pop(config_id, None)
 
     def delete_vae_cache_file(
         self,

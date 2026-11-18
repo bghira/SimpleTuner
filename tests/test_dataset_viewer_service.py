@@ -782,6 +782,24 @@ class TestUpdateCropCoordinates(unittest.TestCase):
         meta = self.service.get_file_metadata(self._config(), "photo.jpg")
         self.assertEqual(meta.crop_coordinates, [50, 30])
 
+    def test_rebuild_uses_viewer_settings_without_changing_the_registered_dataset(self):
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        config = dict(self._config(), crop=True, crop_style="center", crop_aspect="square")
+        active = DatasetRuntime(config["id"], None, None, {"resolution": 1024})
+        with (
+            patch.object(StateTracker, "datasets", {active.id: active}),
+            patch.object(StateTracker, "set_args", side_effect=AssertionError("changed trainer args")),
+            patch.object(StateTracker, "set_data_backend_config", side_effect=AssertionError("changed trainer dataset")),
+        ):
+            updated = self.service.rebuild_file_metadata(
+                config, {"resolution": 64, "resolution_type": "pixel", "aspect_bucket_alignment": 8}, "photo.jpg"
+            )
+            self.assertEqual(updated["target_size"], [64, 64])
+            self.assertEqual(StateTracker.get_dataset(active.id).config["resolution"], 1024)
+        self.assertEqual(self.service.get_file_metadata(config, "photo.jpg").target_size, [64, 64])
+
     def test_update_missing_file_returns_false(self):
         ok = self.service.update_crop_coordinates(self._config(), "missing.jpg", [10, 10])
         self.assertFalse(ok)
