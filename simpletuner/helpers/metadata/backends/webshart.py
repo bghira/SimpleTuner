@@ -15,10 +15,12 @@ from typing import Any, Dict, List, Optional
 
 from tqdm import tqdm
 
+from simpletuner.helpers.data_backend.dataset_runtime import RUNTIME_MUTABLE_KEYS, recrops_each_epoch
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.data_backend.webshart import CaptionValue, WebshartDataBackend
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
+from simpletuner.helpers.metadata.decisions import UnitDecisions
 from simpletuner.helpers.prompts import CaptionNotFoundError
 from simpletuner.helpers.training import video_file_extensions
 from simpletuner.helpers.training.multi_process import should_log
@@ -31,8 +33,13 @@ else:
     logger.setLevel("ERROR")
 
 
+# What preparing a sample decides, as it is named in the sample's record.
+DECIDED = ("aspect_ratio", "target_size", "intermediary_size", "crop_coordinates")
+
+
 class WebshartMetadataBackend(MetadataBackend):
     shuffle_window = None
+    _decisions = None
 
     def __init__(
         self,
@@ -189,10 +196,39 @@ class WebshartMetadataBackend(MetadataBackend):
         return self.data_backend.num_shards()
 
     def open_unit(self, unit: int, epoch: int) -> dict[str, list[str]]:
-        """Index one shard. Its usable samples are returned by target size and described until close_unit."""
-        skipped = dict.fromkeys(("metadata_missing", "caption_missing", "too_small", "aspect_ratio", "error"), 0)
+        """
+        Index one shard. Its usable samples are returned by target size and described until close_unit.
+
+        What is decided for a shard is recorded, and a later opening gives every sample the size and the
+        crop it was given before: its latent may already be written. A dataset that re-crops each epoch
+        keeps a shard's decisions for the epoch they were made in.
+        """
+        decisions = self._unit_decisions()
+        recorded = decisions.read(unit)
+        config = StateTracker.get_data_backend_config(self.id)
+        if recorded is not None and (recorded[0] == epoch or not recrops_each_epoch(config, StateTracker.get_args())):
+            samples = self._recorded_samples(unit, recorded[1])
+        else:
+            samples = self._decide_samples(unit)
+            decisions.write(
+                unit,
+                epoch,
+                {
+                    int(metadata["webshart"]["sample_idx"]): {key: metadata[key] for key in DECIDED}
+                    for metadata in samples.values()
+                },
+            )
         pools: dict[str, list[str]] = {}
-        sample_ids = []
+        for sample_path, sample_metadata in samples.items():
+            width, height = sample_metadata["target_size"]
+            pools.setdefault(f"{width}x{height}", []).append(sample_path)
+        self.image_metadata.update(samples)
+        self._open_units[unit] = list(samples)
+        return pools
+
+    def _decide_samples(self, unit: int) -> dict[str, dict]:
+        skipped = dict.fromkeys(("metadata_missing", "caption_missing", "too_small", "aspect_ratio", "error"), 0)
+        samples = {}
         for bucket, sample_path, sample_metadata in self._prepare_shard(unit, self._requires_captions(), skipped):
             # Without a window, save_cache drops the buckets outside these limits once all are built.
             if (self.minimum_aspect_ratio and float(bucket) < self.minimum_aspect_ratio) or (
@@ -200,13 +236,46 @@ class WebshartMetadataBackend(MetadataBackend):
             ):
                 skipped["aspect_ratio"] += 1
                 continue
-            width, height = sample_metadata["target_size"]
-            pools.setdefault(f"{width}x{height}", []).append(sample_path)
-            self.image_metadata[sample_path] = sample_metadata
-            sample_ids.append(sample_path)
-        self._open_units[unit] = sample_ids
-        logger.debug("(id=%s) Shard %s holds %s usable samples; skipped %s.", self.id, unit, len(sample_ids), skipped)
-        return pools
+            samples[sample_path] = sample_metadata
+        logger.debug("(id=%s) Shard %s holds %s usable samples; skipped %s.", self.id, unit, len(samples), skipped)
+        return samples
+
+    def _recorded_samples(self, unit: int, decisions: dict[int, dict]) -> dict[str, dict]:
+        """The shard's samples as they were decided. A sample without a decision was left out then."""
+        if not decisions:
+            return {}
+        shard_metadata = self.data_backend.get_shard_metadata(unit)
+        samples = {}
+        for entry in self._entries_for_shard(unit):
+            decision = decisions.get(int(entry["sample_idx"]))
+            if decision is None:
+                continue
+            entry = {**entry, "shard_idx": unit}
+            sample_path = self._sample_id_from_entry(unit, entry)
+            samples[sample_path] = {
+                **self._metadata_for_entry(shard_metadata, str(entry["filename"]), entry, sample_path),
+                **decision,
+            }
+        return samples
+
+    def _unit_decisions(self) -> UnitDecisions:
+        """Where this dataset's decisions are recorded: a directory of their own for each set of settings they follow from."""
+        if self._decisions is None:
+            args, model, backend = StateTracker.get_args(), StateTracker.get_model(), self.data_backend
+            config = StateTracker.get_data_backend_config(self.id)
+            decided_by = {
+                "config": {key: value for key, value in config.items() if key not in RUNTIME_MUTABLE_KEYS},
+                "resolution": [self.resolution, self.resolution_type],
+                "limits": [self.minimum_image_size, self.minimum_aspect_ratio, self.maximum_aspect_ratio],
+                "alignment": getattr(args, "aspect_bucket_alignment", None),
+                "rounding": getattr(args, "aspect_bucket_rounding", None),
+                "canvas": getattr(model, "MAXIMUM_CANVAS_SIZE", None),
+                "shards": backend.num_shards(),
+                "fingerprint": backend.dataset.fingerprint if backend.format == "parquet" else None,
+            }
+            digest = sha256(json.dumps(decided_by, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:16]
+            self._decisions = UnitDecisions(Path(backend.cache_dir) / "decisions" / digest)
+        return self._decisions
 
     def close_unit(self, unit: int) -> None:
         for sample_path in self._open_units.pop(unit):

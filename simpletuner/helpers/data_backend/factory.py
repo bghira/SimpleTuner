@@ -12,7 +12,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime, shuffle_window
+from simpletuner.helpers.data_backend.dataset_runtime import RUNTIME_MUTABLE_KEYS, DatasetRuntime, shuffle_window
 
 from .runtime import BatchFetcher
 
@@ -3346,14 +3346,6 @@ class FactoryRegistry:
 
     def _handle_config_versioning(self, backend: Dict[str, Any], init_backend: Dict[str, Any]) -> None:
         """Handle configuration versioning and validation."""
-        runtime_mutable_keys = (
-            "train_batch_size",
-            "repeats",
-            "start_epoch",
-            "start_step",
-            "end_epoch",
-            "end_step",
-        )
         excluded_keys = [
             "probability",
             "ignore_epochs",
@@ -3369,7 +3361,7 @@ class FactoryRegistry:
             "data_transforms",
             "hash_filenames",  # always enabled, not user-configurable
             "_s2v_audio_autoinjected",  # runtime flag, not user-configurable
-            *runtime_mutable_keys,
+            *RUNTIME_MUTABLE_KEYS,
         ]
         _latest_config_version = latest_config_version()
         current_config_version = _latest_config_version
@@ -3406,7 +3398,7 @@ class FactoryRegistry:
 
         metadata_backend_config = getattr(init_backend["metadata_backend"], "config", None)
         if isinstance(metadata_backend_config, dict):
-            for key in runtime_mutable_keys:
+            for key in RUNTIME_MUTABLE_KEYS:
                 if key in init_backend["config"]:
                     metadata_backend_config[key] = init_backend["config"][key]
                 else:

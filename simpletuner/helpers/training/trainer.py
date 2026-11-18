@@ -42,7 +42,7 @@ from simpletuner.helpers.caching.memory import reclaim_memory
 from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
 from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
 from simpletuner.helpers.configuration.loader import load_config
-from simpletuner.helpers.data_backend.dataset_runtime import shuffle_window
+from simpletuner.helpers.data_backend.dataset_runtime import recrops_each_epoch, shuffle_window
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.data_backend.factory import (
     BatchFetcher,
@@ -6057,12 +6057,9 @@ class Trainer:
             if shuffle_window(backend_config) is not None:
                 # Its shards are indexed again as they open in the new epoch.
                 continue
-            if (
-                backend_config.get("crop")
-                and backend_config.get("crop_aspect") == "random"
-                and "metadata_backend" in backend
-                and not self.config.aspect_bucket_disable_rebuild
-            ) or (backend_config.get("vae_cache_clear_each_epoch") and "vaecache" in backend):
+            if (recrops_each_epoch(backend_config, self.config) and "metadata_backend" in backend) or (
+                backend_config.get("vae_cache_clear_each_epoch") and "vaecache" in backend
+            ):
                 # when the aspect ratio is random, we need to shuffle the dataset on each epoch.
                 if self.accelerator.is_main_process:
                     # we only compute the aspect ratio indices on the main process.

@@ -14,10 +14,18 @@ from simpletuner.helpers.training.multi_process import broadcast_object_from_mai
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.utils.pathing import normalize_data_path
 
+# Dataset settings a run may change without the dataset's samples being decided again.
+RUNTIME_MUTABLE_KEYS = ("train_batch_size", "repeats", "start_epoch", "start_step", "end_epoch", "end_step")
+
 
 def shuffle_window(config: Mapping[str, Any]) -> int | None:
     """How many shards a rank keeps open, for a dataset that is indexed a shard at a time."""
     return (config.get("webshart") or {}).get("shuffle_window")
+
+
+def recrops_each_epoch(config: Mapping[str, Any], args) -> bool:
+    """Whether a dataset's samples are given a new aspect and crop when an epoch ends."""
+    return bool(config.get("crop")) and config.get("crop_aspect") == "random" and not args.aspect_bucket_disable_rebuild
 
 
 class DatasetRuntime:

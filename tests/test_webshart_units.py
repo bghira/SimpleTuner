@@ -3,6 +3,7 @@
 import json
 import tarfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -18,6 +19,7 @@ from simpletuner.helpers.data_backend.cursor import WindowedCursor
 from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 from simpletuner.helpers.data_backend.webshart import WebshartDataBackend
 from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBackend
+from simpletuner.helpers.metadata.decisions import UnitDecisions
 from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
 from simpletuner.helpers.training.state_tracker import StateTracker
 
@@ -107,12 +109,17 @@ class WebshartSource:
         self.source = self.root / "source"
         self.source.mkdir()
         self.write_source(self.source)
-        args = SimpleNamespace(
-            disable_bucket_pruning=False, allow_dataset_oversubscription=False, ignore_missing_files=False, seed=42
+        self.dataset_config = dict(self.config)
+        self.args = SimpleNamespace(
+            disable_bucket_pruning=False,
+            allow_dataset_oversubscription=False,
+            ignore_missing_files=False,
+            seed=42,
+            aspect_bucket_disable_rebuild=False,
         )
         for patcher in (
-            patch.object(StateTracker, "get_data_backend_config", return_value=self.config),
-            patch.object(StateTracker, "get_args", return_value=args),
+            patch.object(StateTracker, "get_data_backend_config", side_effect=lambda *_, **__: self.dataset_config),
+            patch.object(StateTracker, "get_args", return_value=self.args),
             patch.object(StateTracker, "get_model", return_value=None),
             patch.object(StateTracker, "set_image_files"),
         ):
@@ -156,6 +163,13 @@ class WebshartSource:
 
     def cache_files(self):
         return {path: path.read_bytes() for path in self.root.rglob("*.json") if self.source not in path.parents}
+
+    def opened(self, backend, unit, epoch=1):
+        """A shard's pools and the record of each of its samples, with the shard closed again."""
+        pools = backend.open_unit(unit, epoch=epoch)
+        records = {ref: backend.get_metadata_by_filepath(ref) for refs in pools.values() for ref in refs}
+        backend.close_unit(unit)
+        return pools, records
 
 
 class UnitTests(WebshartSource):
@@ -302,6 +316,92 @@ class UnitTests(WebshartSource):
         self.assertEqual(trained[0] | trained[1], expected)
         self.assertEqual(trained[0] & trained[1], set())
 
+    def test_a_shard_opened_again_gives_its_samples_the_size_and_crop_they_were_given(self):
+        self.dataset_config = {**self.config, "crop": True, "crop_aspect": "square", "crop_style": "random"}
+        windowed = self.windowed()
+        first = self.opened(windowed, 2)
+        self.assertEqual({record["target_size"] for record in first[1].values()}, {(64, 64)})
+        self.assertGreater(len({record["crop_coordinates"] for record in first[1].values()}), 1)
+
+        self.assertEqual(self.opened(windowed, 2), first)
+        self.assertEqual(self.opened(windowed, 2, epoch=2), first)
+        # Another process, or a resumed run.
+        self.assertEqual(self.opened(self.windowed(), 2, epoch=5), first)
+
+    def test_a_sample_left_out_when_its_shard_was_decided_is_not_decided_again(self):
+        first = self.opened(self.windowed(), 1)
+        self.assertEqual(len(first[1]), len(USABLE) + 1)
+
+        again = self.windowed()
+        with patch.object(again, "_prepare_bucket_entry", side_effect=AssertionError("decided again")):
+            self.assertEqual(self.opened(again, 1), first)
+
+    def test_a_dataset_that_recrops_each_epoch_keeps_a_shard_for_the_epoch_it_was_decided_in(self):
+        self.dataset_config = {
+            **self.config,
+            "crop": True,
+            "crop_aspect": "random",
+            "crop_aspect_buckets": [0.5, 1.0, 2.0],
+            "crop_style": "random",
+        }
+        windowed = self.windowed()
+        with patch.object(windowed, "_decide_samples", wraps=windowed._decide_samples) as decide:
+            first = self.opened(windowed, 2, epoch=1)
+            self.assertEqual(self.opened(windowed, 2, epoch=1), first)
+            self.assertEqual(decide.call_count, 1)
+
+            second = self.opened(windowed, 2, epoch=2)
+            self.assertEqual(decide.call_count, 2)
+            self.assertEqual(windowed._unit_decisions().read(2)[0], 2)
+            self.assertEqual(self.opened(windowed, 2, epoch=2), second)
+            self.assertEqual(decide.call_count, 2)
+
+            # Decided again for an epoch behind the recorded one too: a new run starts over at epoch 1.
+            self.opened(windowed, 2, epoch=1)
+            self.assertEqual(decide.call_count, 3)
+
+            self.args.aspect_bucket_disable_rebuild = True
+            self.opened(windowed, 2, epoch=7)
+            self.assertEqual(decide.call_count, 3)
+            self.assertEqual(windowed._unit_decisions().read(2)[0], 1)
+
+    def test_decisions_are_kept_apart_by_the_settings_they_follow_from(self):
+        first = self.windowed()
+        self.opened(first, 0)
+        directory = first._unit_decisions().directory
+        self.assertEqual(directory.parent, Path(first.data_backend.cache_dir) / "decisions")
+        self.assertEqual(
+            sorted(path.relative_to(directory) for path in directory.rglob("*")), [Path("0"), Path("0/0.sqlite")]
+        )
+
+        def directory_with(config=None, args=None, **limits):
+            self.dataset_config = {**self.config, **(config or {})}
+            with patch.object(StateTracker, "get_args", return_value=SimpleNamespace(**vars(self.args), **(args or {}))):
+                return self.windowed(**limits)._unit_decisions().directory
+
+        self.assertEqual(directory_with(), directory)
+        for key in ("train_batch_size", "repeats", "start_epoch", "start_step", "end_epoch", "end_step"):
+            with self.subTest(key=key):
+                self.assertEqual(directory_with({key: 3}), directory)
+        for change in (
+            dict(config={"resolution": 32}),
+            dict(config={"crop": True}),
+            dict(config={"caption_strategy": "instanceprompt"}),
+            dict(args={"aspect_bucket_alignment": 16}),
+            dict(args={"aspect_bucket_rounding": 3}),
+            dict(minimum_aspect_ratio=0.9),
+            dict(maximum_aspect_ratio=1.6),
+        ):
+            with self.subTest(change=change):
+                self.assertNotEqual(directory_with(**change), directory)
+        with patch.object(StateTracker, "get_model", return_value=SimpleNamespace(MAXIMUM_CANVAS_SIZE=4096)):
+            self.assertNotEqual(directory_with(), directory)
+
+        other_settings = self.metadata_backend(first.data_backend, "other", minimum_aspect_ratio=0.9)
+        with patch.object(other_settings, "_decide_samples", wraps=other_settings._decide_samples) as decide:
+            self.opened(other_settings, 0)
+        self.assertEqual(decide.call_count, 1)
+
     def test_the_size_of_a_shard_is_the_size_of_its_file(self):
         backend = self.data_backend("sizes")
         pattern = "*.parquet" if self.format == "parquet" else "*.tar"
@@ -404,6 +504,83 @@ class TestWholeDatasetIndexing(WebshartSource, unittest.TestCase):
         self.assertEqual(saves, sorted(saves))
         self.assertLess(saves[0], saves[-1])
         self.assertEqual(saves[-1], sum(len(USABLE) + shard for shard in range(SHARDS)))
+
+
+class TestUnitDecisions(unittest.TestCase):
+    DECISIONS = {
+        3: dict(aspect_ratio=1.5, target_size=(96, 64), intermediary_size=(96, 96), crop_coordinates=(7, 0)),
+        0: dict(aspect_ratio=1.0, target_size=(64, 64), intermediary_size=None, crop_coordinates=(0, 0)),
+    }
+
+    def setUp(self):
+        temp = TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.directory = Path(temp.name) / "decisions"
+        self.store = UnitDecisions(self.directory)
+
+    def files(self):
+        return sorted(str(path.relative_to(self.directory)) for path in self.directory.rglob("*") if path.is_file())
+
+    def test_a_unit_that_was_not_decided_has_nothing_recorded(self):
+        self.assertIsNone(self.store.read(12))
+        self.assertFalse(self.directory.exists())
+
+    def test_what_is_written_for_a_unit_is_read_back(self):
+        self.store.write(12, 4, self.DECISIONS)
+        self.assertEqual(UnitDecisions(self.directory).read(12), (4, self.DECISIONS))
+        self.assertIsNone(self.store.read(13))
+
+    def test_a_unit_that_kept_no_sample_is_recorded_as_decided(self):
+        self.store.write(12, 1, {})
+        self.assertEqual(self.store.read(12), (1, {}))
+
+    def test_writing_a_unit_again_replaces_its_rows_and_its_epoch(self):
+        self.store.write(12, 1, self.DECISIONS)
+        replacement = {5: dict(aspect_ratio=0.5, target_size=(32, 64), intermediary_size=(32, 64), crop_coordinates=(0, 0))}
+        self.store.write(12, 2, replacement)
+        self.assertEqual(self.store.read(12), (2, replacement))
+        self.assertEqual(self.files(), ["0/12.sqlite"])
+
+    def test_files_are_kept_a_thousand_units_to_a_directory(self):
+        for unit in (999, 1000, 471954):
+            self.store.write(unit, 1, {})
+        self.assertEqual(self.files(), ["0/999.sqlite", "1/1000.sqlite", "471/471954.sqlite"])
+
+    def test_a_write_that_fails_leaves_what_was_recorded(self):
+        self.store.write(12, 1, self.DECISIONS)
+        unstorable = {1: dict(self.DECISIONS[3], aspect_ratio=object())}
+        with self.assertRaises(Exception):
+            self.store.write(12, 2, unstorable)
+        self.assertEqual(self.store.read(12), (1, self.DECISIONS))
+        self.assertEqual(self.files(), ["0/12.sqlite"])
+
+    def test_a_reader_sees_all_of_one_writing_or_all_of_another(self):
+        def decisions(writer):
+            return {
+                sample: dict(aspect_ratio=1.0, target_size=(writer, sample), intermediary_size=None, crop_coordinates=(0, 0))
+                for sample in range(200)
+            }
+
+        written = {writer: decisions(writer) for writer in (1, 2)}
+        self.store.write(12, 1, written[1])
+
+        def write(writer):
+            for _ in range(25):
+                self.store.write(12, writer, written[writer])
+
+        def read(_):
+            return [self.store.read(12) for _ in range(100)]
+
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            writers = [executor.submit(write, writer) for writer in (1, 2)]
+            seen = [result for results in executor.map(read, range(2)) for result in results]
+            for writer in writers:
+                writer.result()
+
+        self.assertEqual({epoch for epoch, _ in seen} - {1, 2}, set())
+        for epoch, rows in seen:
+            self.assertEqual(rows, written[epoch])
+        self.assertEqual(self.files(), ["0/12.sqlite"])
 
 
 class TestShuffleWindowSetting(unittest.TestCase):
