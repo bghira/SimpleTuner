@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, Dict, Iterator, List, Optional
 
+from .dataset_worker import dataset_worker
+
 logger = logging.getLogger(__name__)
 
 # Model families that do not use text embedding caches.
@@ -290,19 +292,11 @@ class CacheJobService:
         return job_id
 
     def _monitor_worker(self, context, cancelled, job, dataset_config, global_config, dataset_plan):
-        reader, writer = context.Pipe(duplex=False)
-        process = context.Process(
-            target=_execute_cache_process, args=(writer, cancelled, job, dataset_config, global_config, dataset_plan)
-        )
         try:
-            with reader, writer:
-                process.start()
-                writer.close()
-                while True:
-                    try:
-                        data = reader.recv()
-                    except EOFError:
-                        break
+            with dataset_worker(
+                context, _execute_cache_process, cancelled, job, dataset_config, global_config, dataset_plan
+            ) as messages:
+                for data in messages:
                     with self._lock:
                         if job.status == CacheJobStatus.CANCELLED:
                             continue
@@ -316,13 +310,12 @@ class CacheJobService:
                             data["error"],
                         )
                         self._broadcast("dataset_cache", self._job_to_dict(job))
-                process.join()
-                if process.exitcode or job.status not in (
+                if job.status not in (
                     CacheJobStatus.COMPLETED,
                     CacheJobStatus.FAILED,
                     CacheJobStatus.CANCELLED,
                 ):
-                    raise RuntimeError(f"Cache worker exited before completion (exit code {process.exitcode}).")
+                    raise RuntimeError("Cache worker exited before reporting completion.")
         except Exception as exc:
             logger.exception("Cache worker failed for %s", job.dataset_id)
             with self._lock:
@@ -330,10 +323,6 @@ class CacheJobService:
                     job.status, job.error = CacheJobStatus.FAILED, str(exc)
                     self._broadcast("dataset_cache", self._job_to_dict(job))
         finally:
-            cancelled.set()
-            if process.pid is not None:
-                process.join()
-            process.close()
             job.finished_at = time.time()
 
     def get_active_status(self) -> Optional[Dict[str, Any]]:
