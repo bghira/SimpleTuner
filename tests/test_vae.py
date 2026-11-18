@@ -443,6 +443,7 @@ class TestMetadataFilterOnSplitShard(unittest.TestCase):
         backend.bucket_report = None
         backend.dataset_type = DatasetType.IMAGE
         backend.aspect_ratio_bucket_indices = {"1.0": list(images or cls.IMAGES)}
+        backend.discard_bucket_membership.side_effect = MetadataBackend.discard_bucket_membership.__get__(backend)
         backend.read_only = False
         backend.filtering_statistics = None
         backend.accelerator = SimpleNamespace(

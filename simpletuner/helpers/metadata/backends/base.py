@@ -1063,6 +1063,21 @@ class MetadataBackend:
         if image_path in self.aspect_ratio_bucket_indices[bucket]:
             self.aspect_ratio_bucket_indices[bucket].remove(image_path)
 
+    def discard_bucket_membership(self, image_path, bucket=None, *, preserve_split=False):
+        """Remove every matching occurrence from the selected legacy buckets."""
+        buckets = self.aspect_ratio_bucket_indices
+        key = str(bucket) if bucket is not None else None
+        memberships = (buckets[key],) if key in buckets else buckets.values()
+        removed = False
+        for paths in memberships:
+            previous_length = len(paths)
+            while image_path in paths:
+                paths.remove(image_path)
+                removed = True
+            if preserve_split and self.read_only and paths and len(paths) < previous_length:
+                paths.extend([paths[-1]] * (previous_length - len(paths)))
+        return removed
+
     def update_buckets_with_existing_files(self, existing_files: set):
         """remove non-existent files and duplicates from buckets"""
         logger.debug(

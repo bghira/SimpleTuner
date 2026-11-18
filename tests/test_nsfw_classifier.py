@@ -81,8 +81,9 @@ class FakeMetadataBackend(MetadataBackend):
         self.removed = []
         self.saved = False
 
-    def remove_image(self, filepath, bucket=None):
+    def discard_bucket_membership(self, filepath, bucket=None, *, preserve_split=False):
         self.removed.append((filepath, bucket))
+        return True
 
     def save_cache(self, enforce_constraints=False):
         self.saved = True
@@ -252,7 +253,7 @@ class VaeNsfwFilterTest(unittest.TestCase):
         vae = make_vae_for_nsfw_filter({}, rejected_paths=set(), delete_nsfw_images=True)
         vae.metadata_backend = FakeReadOnlyMetadataBackend(
             split_cache={"1.0": [bad]},
-            unsplit_cache={"1.0": ["good.png", bad], "2.0": ["other.png"]},
+            unsplit_cache={"1.0": ["good.png", bad, bad], "2.0": ["other.png"]},
         )
         split_cache = vae.metadata_backend.aspect_ratio_bucket_indices
         vae._queue_metadata_filter_action(

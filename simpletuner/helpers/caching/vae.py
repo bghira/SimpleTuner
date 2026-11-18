@@ -305,31 +305,6 @@ class VAECache(WebhookMixin):
     def _is_multi_process(self) -> bool:
         return int(getattr(self.accelerator, "num_processes", 1) or 1) > 1
 
-    def _remove_image_from_metadata_backend(self, metadata_backend, filepath: str, bucket: str = None) -> bool:
-        aspect_ratio_bucket_indices = getattr(metadata_backend, "aspect_ratio_bucket_indices", None)
-        if not isinstance(aspect_ratio_bucket_indices, dict):
-            metadata_backend.remove_image(filepath, bucket)
-            return True
-
-        candidate_buckets = []
-        if bucket in aspect_ratio_bucket_indices:
-            candidate_buckets.append(bucket)
-        elif bucket is not None:
-            for candidate in aspect_ratio_bucket_indices:
-                if str(candidate) == str(bucket):
-                    candidate_buckets.append(candidate)
-                    break
-        if not candidate_buckets:
-            candidate_buckets = list(aspect_ratio_bucket_indices.keys())
-
-        removed = False
-        for candidate in candidate_buckets:
-            images = aspect_ratio_bucket_indices.get(candidate, [])
-            while filepath in images:
-                images.remove(filepath)
-                removed = True
-        return removed
-
     def _record_filter_stat(
         self,
         reason: str,
@@ -381,17 +356,9 @@ class VAECache(WebhookMixin):
         delete_from_backend: bool = False,
         details: dict = None,
     ) -> None:
-        buckets = getattr(self.metadata_backend, "aspect_ratio_bucket_indices", None)
-        shard_lengths = (
-            {shard: len(images) for shard, images in buckets.items()}
-            if isinstance(buckets, dict) and getattr(self.metadata_backend, "read_only", False)
-            else None
-        )
-        removed = self._remove_image_from_metadata_backend(self.metadata_backend, filepath, bucket)
+        removed = self.metadata_backend.discard_bucket_membership(filepath, bucket, preserve_split=True)
         if removed:
             self._record_filter_stat(reason, bucket, filepath)
-            if shard_lengths is not None:
-                self._restore_split_shard_lengths(shard_lengths)
         self._queue_metadata_filter_action(
             filepath=filepath,
             bucket=bucket,
@@ -399,20 +366,6 @@ class VAECache(WebhookMixin):
             delete_from_backend=delete_from_backend,
             details=details,
         )
-
-    def _restore_split_shard_lengths(self, shard_lengths: dict) -> None:
-        """Refill a post-split shard the filter just shortened.
-
-        Every data-parallel rank has to schedule the same number of samples, so removing an
-        entry from one rank's shard desynchronises them. The removed slots are refilled by
-        repeating the final surviving sample, which is how the splitter pads. A bucket the
-        filter emptied has nothing to repeat and stays empty until the next split.
-        """
-        for bucket, length in shard_lengths.items():
-            images = self.metadata_backend.aspect_ratio_bucket_indices.get(bucket)
-            if not images or len(images) >= length:
-                continue
-            images.extend([images[-1]] * (length - len(images)))
 
     def _handle_nsfw_rejected_sample(self, filepath: str, bucket: str, classification: dict) -> None:
         rejected_entry = {
@@ -475,7 +428,7 @@ class VAECache(WebhookMixin):
                     filepath = action["filepath"]
                     bucket = action.get("bucket")
                     reason = action.get("reason", "other")
-                    if self._remove_image_from_metadata_backend(metadata_backend, filepath, bucket):
+                    if metadata_backend.discard_bucket_membership(filepath, bucket):
                         removed_count += 1
                         self._record_filter_stat(
                             reason=reason,
