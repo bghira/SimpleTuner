@@ -83,9 +83,6 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         self._dataset_loaded = False
         self._loading_dataset = False
 
-        # Virtual file system mapping: index -> virtual path
-        self._path_to_index = {}
-        self._index_to_path = {}
         if should_log():
             logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
         else:
@@ -163,8 +160,6 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
                 )
                 logger.info(f"Dataset filtered from {original_size} to {len(self.dataset)} items")
 
-            # Build virtual path mapping
-            self._build_path_mapping()
             self._dataset_loaded = True
         finally:
             if not self._dataset_loaded:
@@ -410,41 +405,10 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         self._dataset = value
         self._dataset_loaded = value is not None
 
-    def _build_path_mapping(self):
-        self._ensure_dataset_loaded()
-        self._path_to_index.clear()
-        self._index_to_path.clear()
-        if not self.streaming:
-            dataset_len = len(self.dataset)
-            for idx in range(dataset_len):
-                # Create virtual paths based on composite configuration
-                virtual_path = f"{idx}.{self.file_extension}"
-
-                self._path_to_index[virtual_path] = idx
-                self._index_to_path[idx] = virtual_path
-
-                # Also map the simple format for backwards compatibility
-                simple_path = f"{idx}.{self.file_extension}"
-                if simple_path != virtual_path:
-                    self._path_to_index[simple_path] = idx
-        else:
-            logger.warning("Streaming mode enabled - path mapping will be built on demand")
-
     def _get_index_from_path(self, filepath: str) -> Optional[int]:
-        if isinstance(filepath, Path):
-            filepath = str(filepath)
-
-        # Handle absolute paths by taking just the filename
         basename = os.path.basename(filepath)
-
-        # Try direct lookup first
-        if basename in self._path_to_index:
-            return self._path_to_index[basename]
-
-        # Handle simple format (e.g., "123.{self.file_extension}" -> 123)
         try:
-            index = int(os.path.splitext(basename)[0])
-            return index
+            return int(os.path.splitext(basename)[0])
         except ValueError:
             logger.error(f"Could not extract index from path: {filepath}")
             raise
@@ -923,21 +887,14 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
                 result.append((root, dirs, filtered_files))
             return result
 
-        if self.streaming:
-            logger.warning("Cannot list files in streaming mode")
-            return []
+        return [] if self.streaming else [("", [], list(self.iter_file_keys(file_extensions)))]
 
-        # For HF datasets, we use a flat structure (no subdirectories)
-        self._ensure_dataset_loaded()
-        files = []
-        for idx in range(len(self.dataset)):
-            virtual_path = self._index_to_path.get(idx, f"{idx}.{self.file_extension}")
-            if file_extensions:
-                ext = os.path.splitext(virtual_path)[1].lower().strip(".")
-                if ext not in file_extensions:
-                    continue
-            files.append(virtual_path)
-        return [("", [], files)]
+    def iter_file_keys(self, file_extensions=None, instance_data_dir=None):
+        if instance_data_dir:
+            yield from super().iter_file_keys(file_extensions, instance_data_dir)
+        elif not self.streaming and (not file_extensions or self.file_extension in file_extensions):
+            for index in range(len(self.dataset)):
+                yield f"{index}.{self.file_extension}"
 
     def get_abs_path(self, sample_path: str) -> str:
         # for virtual paths, just return if it exists

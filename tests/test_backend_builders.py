@@ -686,9 +686,24 @@ class TestHuggingfaceBackendBuilder(unittest.TestCase):
             audio_path = Path(temp_dir) / "sample.flac"
             audio_path.write_bytes(b"audio bytes")
             backend.dataset = [{"audio": str(audio_path)}]
-            backend._build_path_mapping()
 
             self.assertEqual(backend.read("0.wav"), b"audio bytes")
+            self.assertEqual(list(backend.iter_file_keys(["wav"])), ["0.wav"])
+
+    def test_huggingface_virtual_keys_need_no_index_or_sample_access(self):
+        backend = HuggingfaceDatasetsBackend(
+            accelerator=self.accelerator,
+            id="test_image",
+            dataset_name="example/images",
+            auto_load=False,
+        )
+        dataset = MagicMock()
+        dataset.__len__.return_value = 700_000_000
+        dataset.__getitem__.side_effect = AssertionError("read a dataset row")
+        backend.dataset = dataset
+        self.assertEqual(next(backend.iter_file_keys(["jpg"])), "0.jpg")
+        self.assertEqual(backend._get_index_from_path(Path("directory/699999999.jpg")), 699_999_999)
+        self.assertTrue(backend.exists("699999999.jpg"))
 
     @patch("datasets.Audio")
     def test_huggingface_audio_column_disables_decode(self, mock_audio):
