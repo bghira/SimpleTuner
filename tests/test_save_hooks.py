@@ -56,6 +56,16 @@ class SaveHookManagerTests(unittest.TestCase):
             self.assertEqual(manager._build_tag_frequency_from_captions(), {"local": {"style": 2}})
         self.assertEqual(read.call_args.args[0], ["a.png", "b.png"])
 
+    def test_caches_registered_beside_the_datasets_are_not_read_for_captions(self):
+        manager = object.__new__(SaveHookManager)
+        manager.args = SimpleNamespace()
+        read = Mock(side_effect=lambda refs, on_missing_caption: [("style, cat", ref) for ref in refs])
+        local = self._caption_backend("textfile", {"1.0": ["a.png"]}, read)
+        # What the factory registers for a distillation cache: no metadata backend, no runtime.
+        cache = {"data_backend": object(), "config": {"caption_strategy": "filename"}, "distillation_cache": object()}
+        with patch.object(StateTracker, "get_data_backends", return_value={"local": local, "cache": cache}):
+            self.assertEqual(manager._build_tag_frequency_from_captions(), {"local": {"style": 1, "cat": 1}})
+
     def _run_save_model_hook(self, is_local_main_process):
         output_dir = "/tmp/checkpoint"
 

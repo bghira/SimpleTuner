@@ -584,10 +584,8 @@ class SaveHookManager:
         backend_captions = {}
 
         for backend_id, backend in backends.items():
-            if backend.get("data_backend") is None:
-                continue
-
-            if not backend.get("config", {}).get("caption_strategy"):
+            # Caches registered beside the datasets have a data backend and a caption strategy, but are never sampled.
+            if "dataset_runtime" not in backend or not backend["config"].get("caption_strategy"):
                 continue
             sample_refs = [
                 sample_ref
