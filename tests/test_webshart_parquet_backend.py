@@ -1236,6 +1236,14 @@ class TestWebshartParquetBackend(unittest.TestCase):
             "resolution_type": "pixel",
         }
         initialized = {"id": store.id, "data_backend": store, "instance_data_dir": str(local_root), "config": config}
+        other = Mock(id="other", config=native, uses_native_schedule=True, data_backend=self.backend)
+        other.describe.return_value = replace(source.describe(), view_revision="other-view")
+        for linked in ({source.id: source, other.id: other}, {other.id: other, source.id: source}):
+            with (
+                patch.object(StateTracker, "get_datasets", return_value=linked),
+                self.assertRaisesRegex(ValueError, "cannot share one prepared view"),
+            ):
+                factory._configure_metadata_backend(config, initialized.copy())
         with (
             patch.object(StateTracker, "get_datasets", return_value={source.id: source}),
             patch.object(StateTracker, "set_data_backend_config"),
@@ -1251,7 +1259,9 @@ class TestWebshartParquetBackend(unittest.TestCase):
         refs = [str(path) for path in local_files]
         self.assertEqual(target.read_page(limit=2), (refs, 2))
         self.assertEqual([target.conditioning_ref(ref) for ref in source_refs], refs)
-        records = target.read_samples([refs[1], refs[0], refs[1]], fields=("image", "metadata"))
+        with patch.object(geometry, "get_view_metadata", wraps=geometry.get_view_metadata) as scoped_read:
+            records = target.read_samples([refs[1], refs[0], refs[1]], fields=("image", "metadata"))
+        scoped_read.assert_called_once_with([source_refs[1], source_refs[0], source_refs[1]], source.published_read_view())
         self.assertEqual(
             [record["training_sample_path"] for record in records], [source_refs[1], source_refs[0], source_refs[1]]
         )

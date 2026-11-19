@@ -2955,21 +2955,35 @@ class FactoryRegistry:
                 aligned_source = source
         elif backend.get("type") == "local" and backend.get("conditioning_type") in ("mask", "reference_strict"):
             sources = StateTracker.get_datasets(DatasetType.IMAGE, DatasetType.VIDEO)
+            target = backend["id"]
+            linked = [
+                dataset
+                for dataset in sources.values()
+                if (links := dataset.config.get("conditioning_data")) == target
+                or isinstance(links, list)
+                and target in links
+            ]
             if source_id := backend.get("source_dataset_id"):
                 source = sources.get(source_id)
             else:
-                target = backend["id"]
                 source = next(
                     (
                         dataset
-                        for dataset in sources.values()
-                        if (links := dataset.config.get("conditioning_data")) == target
-                        or isinstance(links, list)
-                        and target in links
+                        for dataset in linked
+                        if dataset.uses_native_schedule is True and dataset.data_backend.format == "parquet"
                     ),
                     None,
                 )
             if source is not None and source.uses_native_schedule is True and source.data_backend.format == "parquet":
+                revision = source.describe().view_revision
+                for linked_source in linked:
+                    if linked_source is source:
+                        continue
+                    if linked_source.uses_native_schedule is not True or linked_source.describe().view_revision != revision:
+                        raise ValueError(
+                            f"Aligned conditioning dataset {target} cannot share one prepared view across "
+                            f"{source.id} and {linked_source.id}. Use a separate conditioning dataset ID per source view."
+                        )
                 aligned_source = source
         init_backend["metadata_backend"] = create_metadata_provider(
             init_backend["id"],

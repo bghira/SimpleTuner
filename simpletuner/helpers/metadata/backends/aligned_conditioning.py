@@ -17,7 +17,7 @@ from simpletuner.helpers.metadata.backends.webshart_membership import (
     MembershipPages,
     publish_indexed_membership,
 )
-from simpletuner.helpers.metadata.preparation import PreparationView
+from simpletuner.helpers.metadata.preparation import DatasetReadView, PreparationView
 from simpletuner.helpers.utils.pathing import canonicalize_data_uri
 
 
@@ -31,9 +31,9 @@ class AlignedConditioningMetadata(MetadataBackend):
         self.source = source
         self.source_metadata = source.metadata_backend
         description = source.describe()
-        self.source_view_revision = description.view_revision
+        self.source_view = DatasetReadView(description.view_revision)
         conditioning = self.dataset_config.get("conditioning_config") or {}
-        inputs = [self.source_view_revision, conditioning]
+        inputs = [self.source_view.revision, conditioning]
         if not generated:
             inputs.append("configured")
         revision = hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
@@ -59,7 +59,7 @@ class AlignedConditioningMetadata(MetadataBackend):
     def describe(self, spec=None):
         if spec is not None:
             raise ValueError("Aligned conditioning uses the source schedule.")
-        if self.source_metadata.view_revision != self.source_view_revision:
+        if self.source_metadata.view_revision != self.source_view.revision:
             raise ValueError("Source membership changed. Reload the aligned conditioning view.")
         if self._filtered is None:
             return self.description
@@ -195,7 +195,7 @@ class AlignedConditioningMetadata(MetadataBackend):
         self.describe()
         refs = tuple(refs)
         source_refs = [self._source_ref(ref) for ref in refs]
-        geometry = self.source_metadata.get_metadata_batch(source_refs)
+        geometry = self.source_metadata.get_view_metadata(source_refs, self.source_view)
         for ref, source_ref, metadata in zip(refs, source_refs, geometry, strict=True):
             if source_ref is None or metadata is None:
                 yield None
