@@ -1519,6 +1519,8 @@ Parquet 分桶缓存按目录指纹隔离。序列化工作进程会拒绝目录
 
 每个分片的尺寸与裁剪在首次打开时记录；参见[已决定的尺寸与裁剪保存在哪里](#where-decided-sizes-and-crops-are-kept)。
 
+在 Linux 上，请在启动训练的环境中设置 `MALLOC_ARENA_MAX=4`。glibc 会为每个分配内存的线程分配独立的内存 arena，一个训练进程有数百个线程，它们释放的内存分散在这些 arena 中，因此常驻内存会随每个窗口增长。在两个 H200 rank 上以 `shuffle_window: 1` 读取 63-88 MB 的 Parquet 分片时，未设置该变量时每个 rank 的匿名常驻内存每个窗口约增长 200 MiB，设置后保持平稳，步时不变。
+
 #### 提前优化 captions
 
 同样的合并也可以通过 Webshart CLI 完成，它还能发布修复后的 metadata，让该数据集的所有使用者无需 runtime 选项即可受益：

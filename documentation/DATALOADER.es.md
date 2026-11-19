@@ -1502,6 +1502,8 @@ Un checkpoint registra la época, la ventana y la posición dentro de ella, y al
 
 Los tamaños y recortes de cada shard se registran la primera vez que se abre; consulta [Dónde se guardan los tamaños y recortes decididos](#where-decided-sizes-and-crops-are-kept).
 
+En Linux, define `MALLOC_ARENA_MAX=4` en el entorno que lanza el entrenamiento. glibc da a cada hilo que reserva memoria su propia arena, un proceso de entrenamiento ejecuta unos cientos de hilos y la memoria que liberan queda repartida entre esas arenas, así que la memoria residente crece con cada ventana. En dos ranks H200 leyendo shards Parquet de 63-88 MB con `shuffle_window: 1`, la memoria residente anónima creció unos 200 MiB por ventana y rank sin ella y se mantuvo estable con ella, con el mismo tiempo por paso.
+
 #### Optimizar captions por adelantado
 
 La misma consolidación está disponible desde la CLI de Webshart, que además puede publicar la metadata reparada para que todos los consumidores del dataset se beneficien sin la opción en tiempo de ejecución:

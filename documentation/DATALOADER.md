@@ -1575,6 +1575,8 @@ A checkpoint records the epoch, the window and the position inside it, and a res
 
 Each shard's sizes and crops are recorded when it is first opened; see [Where decided sizes and crops are kept](#where-decided-sizes-and-crops-are-kept).
 
+On Linux, set `MALLOC_ARENA_MAX=4` in the environment that launches training. glibc gives each thread that allocates its own memory arena, a training process runs a few hundred threads, and the memory they free stays spread over those arenas, so resident memory grows with every window. On two H200 ranks reading 63-88 MB Parquet shards with `shuffle_window: 1`, anonymous resident memory grew by about 200 MiB a window per rank without it and stayed flat with it, at the same step time.
+
 #### Optimizing captions ahead of time
 
 The same coalescing is available from the Webshart CLI, which can also publish the repaired metadata so every consumer of the dataset benefits without the runtime option:

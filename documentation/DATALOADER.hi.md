@@ -1501,6 +1501,8 @@ Parquet bucket cache कैटलॉग fingerprint के अनुसार �
 
 हर shard के आकार और क्रॉप उसके पहली बार खुलने पर दर्ज होते हैं; देखें [तय किए गए आकार और क्रॉप कहाँ रखे जाते हैं](#where-decided-sizes-and-crops-are-kept)।
 
+Linux पर, ट्रेनिंग शुरू करने वाले environment में `MALLOC_ARENA_MAX=4` सेट करें। glibc मेमोरी लेने वाले हर thread को अलग arena देता है, एक ट्रेनिंग process में कुछ सौ threads होते हैं, और उनकी छोड़ी गई मेमोरी इन arenas में बिखरी रहती है, इसलिए resident मेमोरी हर window के साथ बढ़ती है। दो H200 ranks पर `shuffle_window: 1` के साथ 63-88 MB के Parquet shards पढ़ते समय, इसके बिना हर rank की anonymous resident मेमोरी प्रति window लगभग 200 MiB बढ़ी और इसके साथ स्थिर रही, step समय वही रहा।
+
 #### Captions को पहले से optimize करना
 
 यही coalescing Webshart CLI से भी उपलब्ध है, जो repaired metadata publish भी कर सकती है ताकि dataset के सभी consumers को runtime option के बिना फायदा मिले:
