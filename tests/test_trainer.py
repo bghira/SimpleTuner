@@ -601,6 +601,8 @@ sys.modules.setdefault("wandb", wandb_module)
 
 from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
+from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend
+from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBackend
 from simpletuner.helpers.models.common import PredictionTypes
 from simpletuner.helpers.training.attention_backend import AttentionBackendMode
 from simpletuner.helpers.training.trainer import DistributedType, Trainer
@@ -2342,38 +2344,12 @@ class TestTrainer(unittest.TestCase):
 
         for name, overrode_max_train_steps, allow_oversubscription, expected in cases:
             with self.subTest(name=name):
-                trainer = object.__new__(Trainer)
-                trainer.state = {"first_epoch": 1, "current_epoch": 1}
-                trainer.accelerator = MagicMock(is_main_process=True)
-                trainer.extra_lr_scheduler_kwargs = {}
-                trainer.get_steps_per_epoch_for_epoch = MagicMock(return_value=100)
-                trainer.config = SimpleNamespace(
-                    num_train_epochs=5,
-                    aspect_bucket_disable_rebuild=False,
-                    lr_scheduler="constant",
-                    num_update_steps_per_epoch=100,
-                    gradient_accumulation_steps=3,
-                    overrode_max_train_steps=overrode_max_train_steps,
-                    allow_dataset_oversubscription=allow_oversubscription,
-                )
-                metadata_backend = MagicMock(read_only=True)
-                metadata_backend.aspect_ratio_bucket_indices = {"1.0": ["image-0.jpg"]}
-                backends = {
-                    "train": SimpleNamespace(
-                        config={"crop": True, "crop_aspect": "random"},
-                        metadata_backend=metadata_backend,
-                        vae_cache=None,
-                        uses_native_schedule=False,
-                    )
-                }
+                trainer, metadata_backend, _, backends = self._rollover_fixture({"1.0": ["image-0.jpg"]})
+                trainer.config.gradient_accumulation_steps = 3
+                trainer.config.overrode_max_train_steps = overrode_max_train_steps
+                trainer.config.allow_dataset_oversubscription = allow_oversubscription
 
-                with (
-                    patch("simpletuner.helpers.training.trainer.StateTracker.set_epoch"),
-                    patch(
-                        "simpletuner.helpers.training.trainer.StateTracker.get_datasets",
-                        return_value=backends,
-                    ),
-                ):
+                with self._rollover_patches(backends):
                     trainer._epoch_rollover(2)
 
                 metadata_backend.split_buckets_between_processes.assert_called_once_with(
@@ -2381,7 +2357,7 @@ class TestTrainer(unittest.TestCase):
                     apply_padding=expected,
                 )
 
-    def _rollover_fixture(self, bucket_contents, usable_batches):
+    def _rollover_fixture(self, bucket_contents, provider=DiscoveryMetadataBackend):
         trainer = object.__new__(Trainer)
         trainer.state = {"first_epoch": 1, "current_epoch": 1}
         trainer.accelerator = MagicMock(is_main_process=True)
@@ -2396,18 +2372,20 @@ class TestTrainer(unittest.TestCase):
             overrode_max_train_steps=False,
             allow_dataset_oversubscription=False,
         )
-        metadata_backend = MagicMock(read_only=True, batch_size=4)
+        metadata_backend = provider.__new__(provider)
+        metadata_backend.id = "train"
+        metadata_backend.accelerator = trainer.accelerator
+        metadata_backend.read_only = True
+        metadata_backend.batch_size = 4
+        metadata_backend.repeats = 0
         metadata_backend.aspect_ratio_bucket_indices = bucket_contents
-        metadata_backend.__len__.return_value = usable_batches
+        metadata_backend.compute_aspect_ratio_bucket_indices = Mock()
+        metadata_backend.reload_cache = Mock()
+        metadata_backend.split_buckets_between_processes = Mock()
         vaecache = MagicMock()
-        backends = {
-            "train": SimpleNamespace(
-                config={"crop": True, "crop_aspect": "random"},
-                metadata_backend=metadata_backend,
-                vae_cache=vaecache,
-                uses_native_schedule=False,
-            )
-        }
+        dataset = DatasetRuntime("train", None, metadata_backend, {"crop": True, "crop_aspect": "random"})
+        dataset.vae_cache = vaecache
+        backends = {"train": dataset}
         return trainer, metadata_backend, vaecache, backends
 
     @contextmanager
@@ -2422,8 +2400,8 @@ class TestTrainer(unittest.TestCase):
             yield
 
     def test_epoch_rollover_keeps_native_geometry_and_rebuilds_only_requested_artifacts(self):
-        trainer, metadata, vae_cache, backends = self._rollover_fixture({}, usable_batches=10)
-        metadata.stable_prepared_geometry = True
+        trainer, metadata, vae_cache, backends = self._rollover_fixture({}, provider=WebshartMetadataBackend)
+        metadata.native_policy = "shard_local"
         trainer.accelerator.process_index = 2
         trainer.accelerator.num_processes = 8
         dataset = backends["train"]
@@ -2439,9 +2417,7 @@ class TestTrainer(unittest.TestCase):
         vae_cache.rebuild_prepared_cache.assert_called_once_with(dataset, worker=2, workers=8)
 
     def test_epoch_rollover_rejects_a_rank_the_resplit_left_empty(self):
-        trainer, metadata_backend, vaecache, backends = self._rollover_fixture(
-            bucket_contents={"1.0": [], "1.5": []}, usable_batches=0
-        )
+        trainer, metadata_backend, vaecache, backends = self._rollover_fixture({"1.0": [], "1.5": []})
 
         with self._rollover_patches(backends):
             with self.assertRaises(ValueError) as context:
@@ -2453,13 +2429,34 @@ class TestTrainer(unittest.TestCase):
         metadata_backend.split_buckets_between_processes.assert_called_once()
         vaecache.rebuild_cache.assert_not_called()
 
+    def test_epoch_rollover_vae_only_leaves_legacy_geometry_alone(self):
+        trainer, metadata, cache, backends = self._rollover_fixture({"1.0": ["image.jpg"]})
+        backends["train"].config.update(crop_aspect="square", crop_style="center", vae_cache_clear_each_epoch=True)
+        with self._rollover_patches(backends):
+            trainer._epoch_rollover(2)
+        cache.rebuild_cache.assert_called_once_with()
+        metadata.compute_aspect_ratio_bucket_indices.assert_not_called()
+        metadata.reload_cache.assert_not_called()
+        metadata.split_buckets_between_processes.assert_not_called()
+
+    def test_epoch_rollover_rebuilds_legacy_fixed_shape_random_crops_when_opted_in(self):
+        trainer, metadata, cache, backends = self._rollover_fixture({"1.0": ["image.jpg"]})
+        config = backends["train"].config
+        config.update(crop_aspect="square", crop_style="random")
+        with self._rollover_patches(backends):
+            trainer._epoch_rollover(2)
+            metadata.compute_aspect_ratio_bucket_indices.assert_not_called()
+            config["vae_cache_clear_each_epoch"] = True
+            trainer._epoch_rollover(3)
+        metadata.compute_aspect_ratio_bucket_indices.assert_called_once_with(ignore_existing_cache=True)
+        cache.rebuild_cache.assert_called_once_with()
+
     def test_epoch_rollover_keeps_a_rank_that_cannot_fill_a_batch(self):
         # One sample against batch_size=4, so the startup guard's len() would read 0 here.
         # This guard asks only whether the shard is empty, and this rank keeps training on
         # recycled samples exactly as it does today.
-        trainer, metadata_backend, vaecache, backends = self._rollover_fixture(
-            bucket_contents={"1.0": ["image-0.jpg"]}, usable_batches=0
-        )
+        trainer, metadata_backend, vaecache, backends = self._rollover_fixture({"1.0": ["image-0.jpg"]})
+        self.assertEqual(len(metadata_backend), 0)
 
         with self._rollover_patches(backends):
             trainer._epoch_rollover(2)

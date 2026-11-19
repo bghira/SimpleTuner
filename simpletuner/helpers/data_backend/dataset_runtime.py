@@ -78,6 +78,27 @@ class DatasetRuntime:
     def uses_native_schedule(self) -> bool:
         return self.epoch_provider is not None
 
+    def prepare_epoch(self, epoch, *, rebuild_random_aspect, gradient_accumulation_steps, apply_padding):
+        """Refresh prepared data before the sampler and prefetcher start the next epoch."""
+        metadata, cache = self.metadata_backend, self.vae_cache
+        rebuilt = metadata.refresh_epoch_geometry(
+            epoch,
+            rebuild_random_aspect=rebuild_random_aspect,
+            gradient_accumulation_steps=gradient_accumulation_steps,
+            apply_padding=apply_padding,
+        )
+        if cache is None:
+            return
+        clear_latents = self.config.get("vae_cache_clear_each_epoch")
+        if self.requires_complete_preparation is True:
+            accelerator = metadata.accelerator
+            if clear_latents:
+                cache.rebuild_prepared_cache(self, worker=accelerator.process_index, workers=accelerator.num_processes)
+            elif rebuilt and not cache.vae_cache_ondemand:
+                cache.prepare_dataset(self, worker=accelerator.process_index, workers=accelerator.num_processes)
+        elif rebuilt or clear_latents:
+            cache.rebuild_cache()
+
     def start_epoch(self, epoch):
         if self.uses_native_schedule:
             self.sampler.start_native_epoch(epoch)

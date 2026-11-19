@@ -113,7 +113,6 @@ class MetadataBackend:
     epoch_provider = None
     caption_projection_strategy = None
     requires_complete_preparation = False
-    stable_prepared_geometry = False
     _preparation_source = None
 
     def __init__(
@@ -808,6 +807,39 @@ class MetadataBackend:
             f"(id={self.id}) Found {len(missing_metadata)} cached samples missing metadata; rebuilding metadata cache."
         )
         self.scan_for_metadata()
+
+    def refresh_epoch_geometry(self, epoch, *, rebuild_random_aspect, gradient_accumulation_steps, apply_padding):
+        """Rebuild and split a mutable randomized view, reporting whether it changed."""
+        config = self.active_dataset_config
+        if not config.get("crop"):
+            return False
+        if config.get("crop_aspect") == "random":
+            recrop = rebuild_random_aspect
+        else:
+            recrop = config.get("vae_cache_clear_each_epoch") and config.get("crop_style", "random") == "random"
+        if not recrop:
+            return False
+        if self.accelerator.is_main_process:
+            self.read_only = False
+            self.compute_aspect_ratio_bucket_indices(ignore_existing_cache=True)
+        self.accelerator.wait_for_everyone()
+        self.reload_cache(set_config=False)
+        self.accelerator.wait_for_everyone()
+        self.split_buckets_between_processes(
+            gradient_accumulation_steps=gradient_accumulation_steps, apply_padding=apply_padding
+        )
+        if not any(self.aspect_ratio_bucket_indices.values()):
+            raise ValueError(
+                f"(id={self.id}) Dataset produced no usable samples. The epoch rollover"
+                f" re-split left this rank with zero samples, so epoch {epoch} would train"
+                f" against an empty schedule here.\n"
+                f"This usually means per-epoch re-bucketing (e.g., crop_aspect=random) produced"
+                f" buckets too small to divide across the data-parallel ranks, or that samples"
+                f" were filtered out of the cache during the previous epoch.\n"
+                f"Enable --allow_dataset_oversubscription so short buckets are padded across"
+                f" ranks, use fewer GPUs, or add more samples to the dataset."
+            )
+        return True
 
     def split_buckets_between_processes(self, gradient_accumulation_steps=1, apply_padding=False):
         """split bucket contents across processes for distributed training"""

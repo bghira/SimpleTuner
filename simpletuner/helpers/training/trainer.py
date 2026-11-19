@@ -6015,69 +6015,13 @@ class Trainer:
         logger.debug(
             f"Just completed epoch {self.state['current_epoch'] - 1}. Beginning epoch {epoch}. Starting epoch was {self.state['first_epoch']}. Final epoch will be {self.config.num_train_epochs}"
         )
-        for dataset_id, dataset in self._registered_training_datasets().items():
-            metadata = dataset.metadata_backend
-            config = dataset.config
-            vae_cache = dataset.vae_cache
-            if getattr(metadata, "stable_prepared_geometry", False) is True:
-                if config.get("vae_cache_clear_each_epoch") and vae_cache is not None:
-                    vae_cache.rebuild_prepared_cache(
-                        dataset, worker=self.accelerator.process_index, workers=self.accelerator.num_processes
-                    )
-                continue
-            if (
-                config.get("crop")
-                and config.get("crop_aspect") == "random"
-                and metadata is not None
-                and not self.config.aspect_bucket_disable_rebuild
-            ) or (config.get("vae_cache_clear_each_epoch") and vae_cache is not None):
-                # when the aspect ratio is random, we need to shuffle the dataset on each epoch.
-                if self.accelerator.is_main_process:
-                    # we only compute the aspect ratio indices on the main process.
-                    # we have to set read_only to False since we're generating a new, un-split list.
-                    # otherwise, we can't actually save the new cache to disk.
-                    metadata.read_only = False
-                    # this will generate+save the new cache to the storage backend.
-                    metadata.compute_aspect_ratio_bucket_indices(ignore_existing_cache=True)
-                self.accelerator.wait_for_everyone()
-                logger.info(f"Reloading cache for backend {dataset_id}")
-                metadata.reload_cache(set_config=False)
-                logger.info("Waiting for other threads to finish..")
-                self.accelerator.wait_for_everyone()
-                # we'll have to split the buckets between GPUs again now, so that the VAE cache distributes properly.
-                logger.info("Splitting buckets across GPUs")
-                metadata.split_buckets_between_processes(
-                    gradient_accumulation_steps=self.config.gradient_accumulation_steps,
-                    apply_padding=(self.config.overrode_max_train_steps or self.config.allow_dataset_oversubscription),
-                )
-                if dataset.uses_native_schedule:
-                    local_sample_count = len(metadata)
-                else:
-                    local_sample_count = sum(len(bucket) for bucket in metadata.aspect_ratio_bucket_indices.values())
-                if local_sample_count == 0:
-                    raise ValueError(
-                        f"(id={dataset_id}) Dataset produced no usable samples. The epoch rollover"
-                        f" re-split left this rank with zero samples, so epoch {epoch} would train"
-                        f" against an empty schedule here.\n"
-                        f"This usually means per-epoch re-bucketing (e.g., crop_aspect=random) produced"
-                        f" buckets too small to divide across the data-parallel ranks, or that samples"
-                        f" were filtered out of the cache during the previous epoch.\n"
-                        f"Enable --allow_dataset_oversubscription so short buckets are padded across"
-                        f" ranks, use fewer GPUs, or add more samples to the dataset."
-                    )
-                # we have to rebuild the VAE cache if it exists.
-                if vae_cache is not None:
-                    logger.info("Rebuilding VAE cache..")
-                    if dataset.uses_native_schedule:
-                        if not vae_cache.vae_cache_ondemand:
-                            vae_cache.prepare_dataset(
-                                dataset,
-                                worker=self.accelerator.process_index,
-                                workers=self.accelerator.num_processes,
-                            )
-                    else:
-                        vae_cache.rebuild_cache()
-                # no need to manually call metadata_backend.save_cache() here.
+        for dataset in self._registered_training_datasets().values():
+            dataset.prepare_epoch(
+                epoch,
+                rebuild_random_aspect=not self.config.aspect_bucket_disable_rebuild,
+                gradient_accumulation_steps=self.config.gradient_accumulation_steps,
+                apply_padding=(self.config.overrode_max_train_steps or self.config.allow_dataset_oversubscription),
+            )
         if self.config.lr_scheduler == "cosine_with_restarts":
             self.extra_lr_scheduler_kwargs["epoch"] = epoch
 

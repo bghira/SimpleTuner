@@ -25,7 +25,6 @@ class AlignedConditioningMetadata(MetadataBackend):
     """Map conditioning files onto a pinned source preparation view."""
 
     requires_complete_preparation = True
-    stable_prepared_geometry = True
 
     def __init__(self, *, source, generated, **kwargs):
         super().__init__(load_cache_on_init=False, **kwargs)
@@ -53,6 +52,9 @@ class AlignedConditioningMetadata(MetadataBackend):
         self.reload_cache()
         self.image_metadata_loaded = True
         self.set_readonly()
+
+    def refresh_epoch_geometry(self, epoch, *, rebuild_random_aspect, gradient_accumulation_steps, apply_padding):
+        return False
 
     def describe(self, spec=None):
         if spec is not None:

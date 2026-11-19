@@ -269,9 +269,15 @@ class WebshartMetadataBackend(MetadataBackend):
     def requires_complete_preparation(self):
         return self.native_policy is not None
 
-    @property
-    def stable_prepared_geometry(self):
-        return self.native_policy is not None
+    def refresh_epoch_geometry(self, epoch, *, rebuild_random_aspect, gradient_accumulation_steps, apply_padding):
+        if self.native_policy:
+            return False
+        return super().refresh_epoch_geometry(
+            epoch,
+            rebuild_random_aspect=rebuild_random_aspect,
+            gradient_accumulation_steps=gradient_accumulation_steps,
+            apply_padding=apply_padding,
+        )
 
     def epoch_spec(self, epoch, batch_size, *, occurrence_revision=None):
         args = self.runtime_args
