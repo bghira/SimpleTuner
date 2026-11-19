@@ -27,3 +27,13 @@ simpletuner train
 在 WebUI 环境创建器和设置向导中，先选择模型系列。示例选择器只显示该系列的配方。切换系列会清除先前选择的示例。
 
 这些配方是起点。请参阅模型指南，根据数据集和硬件调整批量大小、分辨率和训练步数。
+
+## Parquet 渐进式训练
+
+复制 PixArt Sigma 配方，修改数据加载器配置中的采集存储桶、清单文件名和缓存路径。通过 AWS 环境变量提供源凭据，并使用 `AWS_ENDPOINT_URL` 指定 S3 兼容端点。使用 R2 时，请在 Webshart 条目中将 `aws_region_name` 设置为 `auto`。
+
+```bash
+simpletuner examples copy pixart/600M-512/default/progressive-webshart-full --dest config
+```
+
+此示例对 600M-512 模型进行微调，依次使用不裁剪的 128、256 和 512 像素阶段。文本在当前批次中编码，采样按分片进行。若要全局打乱，请设置 `webshart.sampling_policy: global`。请在首次训练前确定各阶段的边界，并在从检查点恢复时保持这些设置。

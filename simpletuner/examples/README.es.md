@@ -27,3 +27,13 @@ simpletuner train
 En el creador de entornos y el asistente de configuración de la WebUI, selecciona primero la familia. El selector solo muestra recetas de esa familia. Cambiarla borra la selección anterior.
 
 Estas recetas son puntos de partida. Consulta la guía del modelo y adapta el lote, la resolución y la duración a tus datos y hardware.
+
+## Entrenamiento progresivo con Parquet
+
+Copia la receta de PixArt Sigma y cambia el bucket de captura, el manifiesto y las rutas de caché del dataloader. Usa las variables de entorno de AWS para las credenciales y configura `AWS_ENDPOINT_URL` para un punto de conexión compatible con S3. Para R2, establece `aws_region_name` en `auto` en las entradas de Webshart.
+
+```bash
+simpletuner examples copy pixart/600M-512/default/progressive-webshart-full --dest config
+```
+
+El ejemplo ajusta el modelo 600M-512 y pasa por etapas de 128, 256 y 512 píxeles sin recorte. Codifica el texto de cada lote y muestrea por shard. Para mezclar globalmente, usa `webshart.sampling_policy: global`. Elige los límites de las etapas antes de iniciar y consérvalos al reanudar desde un checkpoint.

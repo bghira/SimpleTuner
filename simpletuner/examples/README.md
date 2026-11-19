@@ -27,3 +27,13 @@ simpletuner train
 In the WebUI environment creator and setup wizard, select the model family first. The example selector shows only that family’s recipes. Changing the family clears the previous example selection.
 
 These recipes are starting points. Check the model guide and adjust batch size, resolution, and training length for your dataset and hardware.
+
+## Progressive Parquet training
+
+Copy the PixArt Sigma recipe and replace the capture bucket, manifest name, and cache paths in its dataloader. Supply the source credentials through the AWS environment and set `AWS_ENDPOINT_URL` for an S3-compatible endpoint. For R2, set `aws_region_name` to `auto` on the Webshart entries.
+
+```bash
+simpletuner examples copy pixart/600M-512/default/progressive-webshart-full --dest config
+```
+
+The example fine-tunes the 600M-512 model and uses uncropped 128, 256 and 512 pixel stages. It encodes text in the current batch and uses shard-local sampling. Set `webshart.sampling_policy` to `global` for a global shuffle. Choose the stage boundaries before the first run and keep them fixed when resuming from a checkpoint.
