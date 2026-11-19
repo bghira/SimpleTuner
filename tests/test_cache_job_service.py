@@ -112,6 +112,15 @@ class TestCacheArgsNamespace(unittest.TestCase):
         self.assertEqual(args.get("foo"), "bar")
         self.assertEqual(args.get("nonexistent", 42), 42)
 
+    def test_a_config_without_caption_dropout_caches_the_dropout_record_training_reads(self):
+        from simpletuner.helpers.configuration.cmd_args import get_argument_parser
+        from simpletuner.helpers.data_backend.dataset_runtime import image_context_dropout_record
+
+        args = _CacheArgsNamespace({"model_family": "moss_image"})
+        self.assertEqual(args.caption_dropout_probability, get_argument_parser().get_default("caption_dropout_probability"))
+        model = SimpleNamespace(uses_image_context_dropout_caption_cache=lambda: True)
+        self.assertEqual(image_context_dropout_record(model, args, "k", {}), {"prompt": "", "key": "k", "metadata": {}})
+
     def test_built_args_keep_the_transform_store_where_training_would(self):
         from simpletuner.simpletuner_sdk.server.services.dataset_scan_service import DatasetScanService
 

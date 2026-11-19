@@ -128,6 +128,7 @@ class _CacheArgsNamespace:
             "maximum_image_size": None,
             "target_downsample_size": None,
             "caption_strategy": "filename",
+            "caption_dropout_probability": 0.1,
             "model_type": "full",
             "model_family": None,
             "output_dir": "output/cache",
