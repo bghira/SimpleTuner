@@ -327,6 +327,7 @@ nav:
       - DALL-E 3: data_presets/preset_dalle3.md
       - Pexels: data_presets/preset_pexels.md
       - Subjects200K: data_presets/preset_subjects200k.md
+      - ScaleEdit-12M: data_presets/preset_scaleedit.md
       - Audio with Lyrics: data_presets/preset_audio_dataset_with_lyrics.md
 
   - Scaling & Performance:

@@ -11,3 +11,4 @@ Hugging Face Hub पर विभिन्न बड़े पैमाने �
 - [Midjourney v6 520k](../data_presets/preset_midjourney.md)
 - [Nijijourney v6 520k](../data_presets/preset_nijijourney.md)
 - [Subjects200K](../data_presets/preset_subjects200k.md), `datasets` लाइब्रेरी के उपयोग का एक उदाहरण
+- [ScaleEdit-12M](../data_presets/preset_scaleedit.md), metadata indexes के साथ युग्मित Parquet editing इमेज

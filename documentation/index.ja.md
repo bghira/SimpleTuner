@@ -84,6 +84,14 @@
 
     [:octicons-arrow-right-24: AnyFlow](experimental/ANYFLOW.md) · [:octicons-arrow-right-24: MixFlow](experimental/MIXFLOW.md) · [:octicons-arrow-right-24: XM](experimental/EXPLORATION_MODELING.ja.md) · [:octicons-arrow-right-24: NextLat](experimental/NEXTLAT.ja.md) · [:octicons-arrow-right-24: 音声クローニング](experimental/VOICE_CLONING.ja.md) · [:octicons-arrow-right-24: DiffusionBlocks](experimental/DIFFUSION_BLOCKS.md) · [:octicons-arrow-right-24: Self-Transcendence](experimental/SELF_TRANSCENDENCE.md) · [:octicons-arrow-right-24: iREPA](experimental/IREPA.ja.md) · [:octicons-arrow-right-24: ConvRot / Hadamard SDNQ](experimental/CONVROT.md) · [:octicons-arrow-right-24: Segmented Checkpointing](experimental/SEGMENTED_CHECKPOINTING.md) · [:octicons-arrow-right-24: Unsloth Checkpointing](experimental/UNSLOTH_CHECKPOINTING.md) · [:octicons-arrow-right-24: Metal Flash Attention](experimental/METAL_FLASH_ATTENTION.md)
 
+-   :material-database:{ .lg .middle } __データセットプリセット__
+
+    ---
+
+    ScaleEdit のペア画像編集など、Hub データセットを設定します。
+
+    [:octicons-arrow-right-24: すべてのプリセット](data_presets/README.md) · [:octicons-arrow-right-24: ScaleEdit-12M](data_presets/preset_scaleedit.md)
+
 </div>
 
 ## 機能
