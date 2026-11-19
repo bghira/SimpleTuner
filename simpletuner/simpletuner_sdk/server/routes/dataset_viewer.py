@@ -548,7 +548,9 @@ async def get_viewer_conditioning_match(
         return None
     config = _require_dataset_config(dataset_id)
     try:
-        return _get_viewer_service().get_conditioning_file_match(config, datasets, file_path, view_revision=view_revision)
+        return _get_viewer_service().get_conditioning_file_match(
+            config, datasets, file_path, view_revision=view_revision, global_config=_get_global_config()
+        )
     except DatasetViewChanged as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 

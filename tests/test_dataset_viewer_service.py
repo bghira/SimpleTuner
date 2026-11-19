@@ -1238,7 +1238,7 @@ class TestConditioningFileMatch(unittest.TestCase):
         }
         result = self.service.get_conditioning_file_match(src_config, [src_config], "photo123.jpg")
         self.assertIsNotNone(result)
-        self.assertEqual(result["conditioning_id"], "auto-gen-canny")
+        self.assertEqual(result["conditioning_id"], "src-ds_conditioning_canny")
         self.assertEqual(result["conditioning_type"], "canny")
 
     def test_match_via_derived_id_and_path(self):
@@ -1253,13 +1253,14 @@ class TestConditioningFileMatch(unittest.TestCase):
             "id": "src-ds",
             "type": "local",
             "instance_data_dir": str(self.src_dir),
-            # cache_dir_vae lets _derive_conditioning_dir find the cache root
-            "cache_dir_vae": str(Path(self.tmpdir) / "vae" / "model" / "src-ds"),
+            "cache_dir_vae": str(Path(self.tmpdir) / "independent-latent-store"),
             "conditioning": [
                 {"type": "canny", "conditioning_type": "controlnet"},
             ],
         }
-        result = self.service.get_conditioning_file_match(src_config, [src_config], "photo123.jpg")
+        result = self.service.get_conditioning_file_match(
+            src_config, [src_config], "photo123.jpg", global_config={"cache_dir": self.tmpdir}
+        )
         self.assertIsNotNone(result)
         self.assertEqual(result["conditioning_id"], "src-ds_conditioning_canny")
         self.assertEqual(result["conditioning_type"], "controlnet")

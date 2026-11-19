@@ -14,7 +14,7 @@ class TestClearConditioningCache(unittest.TestCase):
     """Verify clear_conditioning_cache only removes auto-generated dirs."""
 
     def setUp(self):
-        self.tmpdir = tempfile.mkdtemp()
+        self.tmpdir = self.enterContext(tempfile.TemporaryDirectory())
         self.service = DatasetScanService()
 
         # Set up a cache root with conditioning_data dirs
@@ -49,7 +49,7 @@ class TestClearConditioningCache(unittest.TestCase):
 
     @patch.object(DatasetScanService, "_resolve_scan_output_dir", side_effect=lambda x: x)
     def test_clears_auto_generated_only(self, _mock):
-        cleared = self.service.clear_conditioning_cache(self._dataset_config(), {})
+        cleared = self.service.clear_conditioning_cache(self._dataset_config(), {"cache_dir": str(self.cache_root)})
         self.assertEqual(len(cleared), 1)
         self.assertIn("myds_conditioning_canny", cleared[0])
         self.assertFalse(self.auto_dir.exists())
@@ -68,8 +68,20 @@ class TestClearConditioningCache(unittest.TestCase):
         import shutil
 
         shutil.rmtree(self.auto_dir)
-        cleared = self.service.clear_conditioning_cache(self._dataset_config(), {})
+        cleared = self.service.clear_conditioning_cache(self._dataset_config(), {"cache_dir": str(self.cache_root)})
         self.assertEqual(cleared, [])
+
+    def test_explicit_conditioning_location_and_other_dataset_sources_are_preserved(self):
+        config = self._dataset_config()
+        global_config = {"cache_dir": str(self.cache_root)}
+        config["conditioning"][0]["instance_data_dir"] = str(self.manual_dir)
+        self.assertEqual(self.service.clear_conditioning_cache(config, global_config), [])
+        self.assertTrue(self.manual_dir.is_dir())
+        config["conditioning"][0].pop("instance_data_dir")
+        alias = {"id": "alias", "type": "local", "instance_data_dir": str(self.auto_dir)}
+        with self.assertRaisesRegex(ValueError, "overlaps a dataset source"):
+            self.service.clear_conditioning_cache(config, global_config, dataset_plan=[config, alias])
+        self.assertTrue(self.auto_dir.is_dir())
 
 
 class TestDatasetScanServiceOutputDir(unittest.TestCase):

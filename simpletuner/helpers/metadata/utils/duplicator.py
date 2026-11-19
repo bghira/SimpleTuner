@@ -14,6 +14,14 @@ else:
 
 class DatasetDuplicator:
     @staticmethod
+    def generated_conditioning_id(source_id, generator_type):
+        return f"{source_id}_conditioning_{generator_type}"
+
+    @staticmethod
+    def generated_conditioning_directory(cache_dir, dataset_id):
+        return os.path.join(cache_dir, "conditioning_data", dataset_id)
+
+    @staticmethod
     def _translate_conditioning_path(path: str, source_dir: str, target_dir: str, conditioning_data_type: str | None) -> str:
         source_dir_abs = os.path.abspath(source_dir)
         target_dir_abs = os.path.abspath(target_dir)
@@ -217,16 +225,12 @@ class DatasetDuplicator:
             )
 
         # Set ID
-        target_cfg["id"] = f"{source_id}_conditioning_{conditioning_data_type}"
+        target_cfg["id"] = DatasetDuplicator.generated_conditioning_id(source_id, conditioning_data_type)
 
         # Set instance data directory
         target_dataset_path = cond_cfg.get("instance_data_dir", None)
         if target_dataset_path is None:
-            target_dataset_path = os.path.join(
-                global_cfg.cache_dir,
-                "conditioning_data",
-                target_cfg["id"],
-            )
+            target_dataset_path = DatasetDuplicator.generated_conditioning_directory(global_cfg.cache_dir, target_cfg["id"])
         target_cfg["instance_data_dir"] = target_dataset_path
 
         # Remove conditioning from target config

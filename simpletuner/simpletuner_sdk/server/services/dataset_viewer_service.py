@@ -1894,6 +1894,7 @@ class DatasetViewerService:
         source_file_path: str,
         *,
         view_revision: Optional[str] = None,
+        global_config=None,
     ) -> Optional[Dict[str, Any]]:
         """Find the conditioning image matched by the configured providers.
 
@@ -1902,6 +1903,9 @@ class DatasetViewerService:
         """
         from simpletuner.helpers.data_backend.base import conditioning_file_path
         from simpletuner.helpers.data_backend.webshart import WebshartDataBackend
+        from simpletuner.helpers.metadata.utils.duplicator import DatasetDuplicator
+
+        from .dataset_scan_service import DatasetScanService
 
         native_ref = source_config.get("type") == "webshart" and WebshartDataBackend.is_sample_id(source_file_path)
         source_revision = None
@@ -1975,15 +1979,16 @@ class DatasetViewerService:
         for gen in generators:
             gen_type = gen.get("type", "")
             # Derive the ID the same way the duplicator does at runtime
-            gen_id = gen.get("id") or f"{source_id}_conditioning_{gen_type}"
+            gen_id = DatasetDuplicator.generated_conditioning_id(source_id, gen_type)
             # Skip if already checked via conditioning_data
             if gen_id in cond_ids:
                 continue
 
             # Try to find the conditioning images on disk
             instance_dir = gen.get("instance_data_dir")
-            if not instance_dir:
-                instance_dir = self._derive_conditioning_dir(source_config, gen_id)
+            if not instance_dir and global_config is not None:
+                cache_root = DatasetScanService.conditioning_cache_root(global_config, source_config)
+                instance_dir = DatasetDuplicator.generated_conditioning_directory(cache_root, gen_id)
 
             if instance_dir and Path(instance_dir).is_dir():
                 generated = {"instance_data_dir": instance_dir, "conditioning_config": gen}
@@ -2004,23 +2009,6 @@ class DatasetViewerService:
                 result["conditioning_id"] = gen_id
                 return result
 
-        return None
-
-    @staticmethod
-    def _derive_conditioning_dir(source_config: Dict[str, Any], gen_id: str) -> Optional[str]:
-        """Best-effort derivation of where auto-generated conditioning images live."""
-        # Try cache_dir_vae parent as an approximation of cache_root
-        cache_dir_vae = source_config.get("cache_dir_vae", "")
-        if cache_dir_vae:
-            # cache_dir_vae is typically {cache_root}/vae/{model_family}/{id}
-            # We need {cache_root}/conditioning_data/{gen_id}
-            parts = Path(cache_dir_vae).parts
-            try:
-                vae_idx = parts.index("vae")
-                cache_root = str(Path(*parts[:vae_idx]))
-                return os.path.join(cache_root, "conditioning_data", gen_id)
-            except (ValueError, TypeError):
-                pass
         return None
 
     def _generate_conditioning_preview(
