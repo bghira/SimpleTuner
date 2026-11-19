@@ -168,8 +168,13 @@ class DatasetRuntime:
             batch["dataset_continuation"] = self.sampler.fetched_state()
             yield batch
 
-    def training_batch_count(self) -> int:
-        """Count the per-rank batches scheduled by the training dataloader."""
+    def prepare_for_training(self, request):
+        return self.metadata_backend.prepare_for_training(request)
+
+    def training_batch_count(self) -> int | None:
+        """Report the exact per-rank count when the provider knows it."""
+        if getattr(self.metadata_backend, "training_count_is_exact", True) is False:
+            return None
         return len(self.training_dataloader)
 
     def reset_evaluation(self):

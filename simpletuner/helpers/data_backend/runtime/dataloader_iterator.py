@@ -291,7 +291,15 @@ def agree_training_batch_counts(local_counts):
     counts_by_rank = gather_across_processes(local_counts)
     if any(counts.keys() != local_counts.keys() for counts in counts_by_rank):
         raise ValueError("Training ranks must have the same dataset bindings.")
-    agreed = {name: min(counts[name] for counts in counts_by_rank) for name in local_counts}
+    agreed = {}
+    for name in local_counts:
+        counts = [rank[name] for rank in counts_by_rank]
+        if all(count is None for count in counts):
+            agreed[name] = None
+        elif any(count is None for count in counts):
+            raise ValueError(f"Training ranks disagree on whether dataset {name!r} has a complete schedule.")
+        else:
+            agreed[name] = min(counts)
     uneven = {name: limit for name, limit in agreed.items() if any(counts[name] != limit for counts in counts_by_rank)}
     return agreed, uneven
 
@@ -321,6 +329,8 @@ class DatasetMixer:
                 {name: dataset.training_batch_count() for name, dataset in backends.items()}
             )
         self.dataset_batches = counts if self.sampling_method == "auto-weighting" else {}
+        if None in self.dataset_batches.values():
+            raise ValueError("Automatic dataset weighting requires exact training batch counts.")
         self.remaining_batches = limits.copy()
         identity = [settings, self.seed, self.sampling_method, self.gradient_accumulation_steps]
         if self.dataset_batches:

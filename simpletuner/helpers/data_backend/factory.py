@@ -90,6 +90,7 @@ from simpletuner.helpers.distillation.requirements import (
 from simpletuner.helpers.image_manipulation.nsfw_classifier import DEFAULT_NSFW_CHECK_MODELS_CSV
 from simpletuner.helpers.metadata.backends.aligned_conditioning import AlignedConditioningMetadata
 from simpletuner.helpers.metadata.backends.caption import CaptionMetadataBackend
+from simpletuner.helpers.metadata.preparation import TrainingPreparation
 from simpletuner.helpers.metadata.utils import DatasetDuplicator
 from simpletuner.helpers.models.common import ModelFoundation
 from simpletuner.helpers.multiaspect.dataset import MultiAspectDataset
@@ -99,7 +100,7 @@ from simpletuner.helpers.training.collate import collate_fn
 from simpletuner.helpers.training.default_settings import default, latest_config_version
 from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
 from simpletuner.helpers.training.multi_process import _get_rank as get_rank
-from simpletuner.helpers.training.multi_process import agree_process_failure, rank_info, should_log
+from simpletuner.helpers.training.multi_process import agree_process_failure, gather_across_processes, rank_info, should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 from .builders import build_backend_from_config, create_backend_builder
@@ -2910,12 +2911,29 @@ class FactoryRegistry:
             return nullcontext()
         return agree_process_failure(f"(id={dataset_id}) {phase}", self.accelerator.process_index)
 
+    def _prepare_bucket_view(self, init_backend, discovers_buckets):
+        metadata = init_backend["metadata_backend"]
+        if not discovers_buckets:
+            if self._is_multi_process():
+                self.accelerator.wait_for_everyone()
+            return
+        with self._dataset_startup_phase(init_backend["id"], "Bucket discovery"):
+            if self.accelerator.is_local_main_process:
+                info_log(f"(id={init_backend['id']}) Refreshing aspect buckets on main process.")
+                metadata.refresh_buckets(rank_info())
+        if self._is_multi_process():
+            with self._dataset_startup_phase(init_backend["id"], "Bucket reload"):
+                info_log(f"(id={init_backend['id']}) Reloading bucket manager cache after refresh.")
+                metadata.reload_cache()
+                StateTracker.load_aspect_resolution_map(dataloader_resolution=init_backend["config"]["resolution"])
+
     def _handle_bucket_operations(
         self,
         backend: Dict[str, Any],
         init_backend: Dict[str, Any],
         conditioning_type: Optional[str],
         skip_bucket_split: bool = False,
+        preparation: TrainingPreparation | None = None,
     ) -> None:
         """Handle bucket refreshing and validation.
 
@@ -2944,20 +2962,16 @@ class FactoryRegistry:
                 )
             )
         )
-        if discovers_buckets:
-            with self._dataset_startup_phase(init_backend["id"], "Bucket discovery"):
-                if self.accelerator.is_local_main_process:
-                    info_log(f"(id={init_backend['id']}) Refreshing aspect buckets on main process.")
-                    metadata.refresh_buckets(rank_info())
-        elif self._is_multi_process():
-            self.accelerator.wait_for_everyone()
-
-        if self._is_multi_process() and discovers_buckets:
-            # Partition the same published order and geometry on every rank.
-            with self._dataset_startup_phase(init_backend["id"], "Bucket reload"):
-                info_log(f"(id={init_backend['id']}) Reloading bucket manager cache after refresh.")
-                metadata.reload_cache()
-                StateTracker.load_aspect_resolution_map(dataloader_resolution=init_backend["config"]["resolution"])
+        deferred = False
+        if preparation is not None:
+            with self._dataset_startup_phase(init_backend["id"], "Training view selection"):
+                deferred = init_backend["dataset_runtime"].prepare_for_training(preparation) is True
+            if self._is_multi_process():
+                modes = gather_across_processes(deferred)
+                if any(mode != deferred for mode in modes):
+                    raise ValueError(f"Ranks disagree on preparation mode for dataset {init_backend['id']!r}.")
+        if not deferred:
+            self._prepare_bucket_view(init_backend, discovers_buckets)
 
         if (
             not has_metadata_clone_source
@@ -3177,10 +3191,12 @@ class FactoryRegistry:
             sample_count = metadata.describe().accepted_samples
             if sample_count is None:
                 raise ValueError(f"Scan conditioning dataset {init_backend['id']!r} to establish accepted membership.")
+        elif getattr(metadata, "training_count_is_exact", True) is False:
+            sample_count = None
         else:
             sample_count = len(metadata)
         dataset_empty = sample_count == 0
-        if bucket_report := init_backend.get("bucket_report"):
+        if sample_count is not None and (bucket_report := init_backend.get("bucket_report")):
             bucket_report.record_stage("sampler_batches", sample_count=sample_count)
 
         if dataset_empty and not missing_instance_dir:
@@ -3994,8 +4010,34 @@ class FactoryRegistry:
             runtime = init_backend["dataset_runtime"]
             StateTracker.own_dataset_resource(runtime)
 
-        # Audio-only datasets contain no video stream to split into spatial buckets.
-        self._handle_bucket_operations(backend, init_backend, conditioning_type, skip_bucket_split=is_audio_only_dataset)
+        _, ondemand_latents = _normalise_vae_cache_config(init_backend["config"])
+        text_cache = runtime.text_embed_cache
+        needs_complete_view = bool(
+            "aspect" in self.args.skip_file_discovery
+            or "aspect" in backend.get("skip_file_discovery", "")
+            or backend.get("scan_for_errors")
+            or getattr(self.args, "validation_using_datasets", False)
+            or getattr(self.args, "eval_dataset_id", None)
+            or getattr(self.args, "enable_nsfw_check", False)
+            or requires_conditioning_dataset
+            or backend.get("conditioning_data")
+            or backend.get("s2v_datasets")
+            or backend.get("metadata_clone_source_id")
+            or any(
+                candidate.get("source_dataset_id") == runtime.id or candidate.get("metadata_clone_source_id") == runtime.id
+                for candidate in data_backend_config
+                if not (candidate.get("disabled") or candidate.get("disable"))
+            )
+            or self.model.requires_conditioning_image_embeds()
+        )
+        preparation = TrainingPreparation(
+            online_text=text_cache is not None and text_cache.text_cache_ondemand,
+            ondemand_latents=ondemand_latents or getattr(self.model, "AUTOENCODER_CLASS", None) is None,
+            requires_complete_view=needs_complete_view,
+        )
+        self._handle_bucket_operations(
+            backend, init_backend, conditioning_type, skip_bucket_split=is_audio_only_dataset, preparation=preparation
+        )
 
         self._create_dataset_and_sampler(backend, init_backend, conditioning_type)
 

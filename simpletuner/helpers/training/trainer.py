@@ -3847,6 +3847,12 @@ class Trainer:
             if (end_epoch is not None and end_epoch < start_epoch) or (end_step is not None and end_step < start_step):
                 continue
             dataset_batches = batch_counts[dataset_id]
+            if dataset_batches is None:
+                budget = self.config.max_train_steps
+                if not budget or self.config.strict_epoch_limit:
+                    raise ValueError("Datasets with deferred preparation require a fixed training step budget.")
+                budget = max(0, min(end_step or budget, budget) - start_step + 1)
+                dataset_batches = budget * max(self.config.gradient_accumulation_steps or 1, 1)
             if dataset_batches:
                 batch_windows.append((start_epoch, end_epoch, start_step, end_step, dataset_batches))
             total_num_batches += dataset_batches

@@ -1521,6 +1521,14 @@ class MetadataBackend:
             example = {}
         return len(metadata), example.get("sample_rate"), example.get("num_channels")
 
+    def prepare_for_training(self, request):
+        """Set up deferred preparation when supported for this training run."""
+        return False
+
+    @property
+    def training_count_is_exact(self):
+        return True
+
     @property
     def view_revision(self):
         return self.describe().view_revision

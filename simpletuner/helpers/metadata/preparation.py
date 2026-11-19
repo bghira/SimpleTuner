@@ -17,6 +17,13 @@ from filelock import FileLock
 
 
 @dataclass(frozen=True)
+class TrainingPreparation:
+    online_text: bool
+    ondemand_latents: bool
+    requires_complete_view: bool
+
+
+@dataclass(frozen=True)
 class DatasetDescription:
     source_revision: str | None = None
     view_revision: str | None = None
@@ -79,6 +86,7 @@ class DatasetReadView:
     revision: str
     epoch: int | None = None
     seed: int = 0
+    partition: int | None = None
 
 
 class MetadataLookup(Protocol):
