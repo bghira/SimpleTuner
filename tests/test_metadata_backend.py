@@ -692,3 +692,47 @@ class TestStateTrackerDiskCache(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestParquetCaptionCells(unittest.TestCase):
+    """Pandas reads a null caption cell as NaN; it is no caption, not the text "nan"."""
+
+    def captions(self, frame, **config):
+        stub = SimpleNamespace(
+            parquet_database=frame,
+            parquet_config={"filename_column": "filename", **config},
+            dataset_type=DatasetType.IMAGE,
+        )
+        return ParquetMetadataBackend._extract_captions_to_fast_list(stub)
+
+    def test_a_null_caption_takes_the_fallback_column_in_parquet_and_json_lines(self):
+        import io
+
+        import pandas as pd
+
+        rows = [{"filename": "a", "caption": "cat", "tags": "ta"}, {"filename": "b", "caption": None, "tags": "tb"}]
+        parquet = io.BytesIO()
+        pd.DataFrame(rows).to_parquet(parquet)
+        parquet.seek(0)
+        json_lines = io.StringIO("\n".join(json.dumps(row) for row in rows))
+        for name, frame in (
+            ("parquet", pd.read_parquet(parquet, engine="pyarrow")),
+            ("json_lines", pd.read_json(json_lines, lines=True)),
+        ):
+            with self.subTest(source=name):
+                self.assertEqual(
+                    self.captions(frame, caption_column="caption", fallback_caption_column="tags"), {"a": "cat", "b": "tb"}
+                )
+                self.assertEqual(self.captions(frame, caption_column=["caption", "tags"]), {"a": ["cat", "ta"], "b": ["tb"]})
+                self.assertEqual(self.captions(frame, caption_column="caption"), {"a": "cat"})
+
+    def test_null_entries_of_a_list_caption_are_dropped(self):
+        import io
+
+        import pandas as pd
+
+        parquet = io.BytesIO()
+        pd.DataFrame([{"filename": "a", "caption": ["cat", None]}]).to_parquet(parquet)
+        parquet.seek(0)
+        frame = pd.read_parquet(parquet, engine="pyarrow")
+        self.assertEqual(self.captions(frame, caption_column="caption"), {"a": ["cat"]})

@@ -33,6 +33,11 @@ except ImportError:
     raise ImportError("Pandas is required for the ParquetMetadataBackend.")
 
 
+def _is_null(value) -> bool:
+    """Whether a Parquet or JSON cell holds no value; pandas reads a null as NaN."""
+    return value is None or (pd.api.types.is_scalar(value) and pd.isna(value))
+
+
 class ParquetMetadataBackend(RecordedGeometry, MetadataBackend):
     transform_recipe_name = "parquet"
 
@@ -183,25 +188,27 @@ class ParquetMetadataBackend(RecordedGeometry, MetadataBackend):
             if isinstance(caption_column, list):
                 if len(caption_column) > 0:
                     # Gather all columns in a list
-                    cvals = [row.get(c, "") for c in caption_column]
-                    cvals = [c for c in cvals if c]  # remove empties
+                    cvals = [row.get(c) for c in caption_column]
+                    cvals = [c for c in cvals if not _is_null(c) and c]
                     caption = cvals if cvals else None
                 else:
                     caption = None
             else:
-                caption = row.get(caption_column, None)
+                caption = row.get(caption_column)
+                if _is_null(caption):
+                    caption = None
 
-            if caption is None and fallback_caption_column:
-                caption = row.get(fallback_caption_column, None)
+            if caption is None and fallback_caption_column and not _is_null(row.get(fallback_caption_column)):
+                caption = row.get(fallback_caption_column)
 
             if caption is None and caption_field_preferences:
                 for field in caption_field_preferences:
-                    if field in row and row.get(field):
+                    if field in row and not _is_null(row.get(field)) and row.get(field):
                         caption = row.get(field)
                         break
 
             if isinstance(caption, (numpy.ndarray, pd.Series)):
-                caption = [str(item) for item in caption if item is not None]
+                caption = [str(item) for item in caption if not _is_null(item)]
             elif isinstance(caption, bytes):
                 caption = caption.decode("utf-8")
             elif isinstance(caption, str):
