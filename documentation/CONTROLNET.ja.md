@@ -99,13 +99,13 @@ ControlNet モデルは、トレーニング時に与える条件データに応
 
 ## 条件画像入力の生成
 
-SimpleTuner の ControlNet 対応はまだ新しく、現時点で利用できるトレーニングセット生成手段は 1 つです:
+リポジトリのチェックアウトから、入力、元画像の出力先、条件画像の出力先を指定して Canny ヘルパーを実行します。両方の出力にはサブディレクトリを含む相対パスが保持されるため、Local プロバイダーが画像を対応付けられます。
 
-- [create_canny_edge.py](/scripts/datasets/controlnet/create_canny_edge.py)
-  - Canny モデルの学習用データセットを生成するための、非常に基本的な例です。
-  - スクリプト内の `input_dir` と `output_dir` を変更する必要があります。
-
-100 枚未満の小さなデータセットなら約 30 秒です。
+```bash
+python -m pip install opencv-python-headless
+python scripts/datasets/controlnet/create_canny_edge.py \
+  datasets/antelope datasets/antelope-data datasets/antelope-conditioning
+```
 
 ## ControlNet モデルを学習するための設定変更
 

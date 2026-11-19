@@ -100,13 +100,13 @@ The dataloader configuration remains pretty close to a typical text-to-image dat
 
 ## Generating conditioning image inputs
 
-As new as ControlNet support is in SimpleTuner, we've currently just got one option available for generating your training set:
+From the repository checkout, run the Canny helper with the input, original output, and conditioning output directories. The two output trees preserve relative filenames, including nested directories, so the Local provider can pair them.
 
-- [create_canny_edge.py](/scripts/datasets/controlnet/create_canny_edge.py)
-  - An extremely basic example on generating a training set for Canny model training.
-  - You will have to modify the `input_dir` and `output_dir` values in the script
-
-This will take about 30 seconds for a small dataset of fewer than 100 images.
+```bash
+python -m pip install opencv-python-headless
+python scripts/datasets/controlnet/create_canny_edge.py \
+  datasets/antelope datasets/antelope-data datasets/antelope-conditioning
+```
 
 ## Modifying your configuration to train ControlNet models
 
