@@ -29,10 +29,11 @@ def resolve_dataset_relationships(configs, *, authored=False):
                     raise
 
     conditioning, audio = {}, {}
+    source_roles = {DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.AUDIO, DatasetType.EVAL, DatasetType.CONDITIONING}
     for config in enabled:
         dataset_id = config["id"]
         role = roles.get(dataset_id)
-        for field, target_role, source_roles, links in (
+        for field, target_role, eligible_source_roles, links in (
             (
                 "conditioning_data",
                 DatasetType.CONDITIONING,
@@ -42,7 +43,7 @@ def resolve_dataset_relationships(configs, *, authored=False):
             ("s2v_datasets", DatasetType.AUDIO, (DatasetType.VIDEO, DatasetType.EVAL), audio),
         ):
             targets = config.get(field)
-            if role not in source_roles or not targets:
+            if role not in eligible_source_roles or not targets:
                 continue
             if authored and field == "conditioning_data" and config.get("conditioning"):
                 continue
@@ -65,5 +66,14 @@ def resolve_dataset_relationships(configs, *, authored=False):
             if source and (not isinstance(source, str) or roles.get(source) not in {DatasetType.VIDEO, DatasetType.EVAL}):
                 field = "source_dataset_id" if config.get("source_dataset_id") else "audio.source_dataset_id"
                 raise DatasetRelationshipError(dataset_id, field, f"Video source {source!r} is unavailable or disabled.")
+
+        for field in ("source_dataset_id", "metadata_clone_source_id"):
+            source = config.get(field)
+            if source is None:
+                continue
+            if not isinstance(source, str) or source == dataset_id or roles.get(source) not in source_roles:
+                raise DatasetRelationshipError(
+                    dataset_id, field, f"{field} references {source!r}, which is not a separate enabled source dataset."
+                )
 
     return conditioning, audio

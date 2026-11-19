@@ -43,6 +43,27 @@ class TestFactoryEdgeCases(unittest.TestCase):
             with self.subTest(dataset=target["id"]), patch.dict(target, disabled=True):
                 with self.assertRaisesRegex(ValueError, f"{target['id']}.*enabled"):
                     resolve([video, reference, audio])
+        for field in ("source_dataset_id", "metadata_clone_source_id"):
+            with self.subTest(field=field), patch.dict(reference, {field: "missing"}):
+                with self.assertRaisesRegex(ValueError, f"{field}.*missing"):
+                    resolve([video, reference, audio])
+
+    def test_embedded_audio_discovery_keeps_the_video_source_connection_settings(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        factory = FactoryRegistry.__new__(FactoryRegistry)
+        factory.args = SimpleNamespace(output_dir="output", model_family="wan_s2v")
+        factory.model = self.model
+        factory._requires_s2v_datasets = lambda: True
+        for type_, options in (
+            ("aws", {"aws_session_token": "temporary-session", "aws_data_prefix": ["a/", "b/"]}),
+            ("huggingface", {"split": "validation", "data_files": ["part.parquet"], "huggingface": {"revision": "main"}}),
+        ):
+            with self.subTest(backend=type_):
+                video = {"id": "video", "type": type_, "dataset_type": "video", **options}
+                _, audio = factory._inject_s2v_audio_configs([video])
+                self.assertEqual({key: audio[key] for key in options}, options)
+                self.assertEqual(audio["source_dataset_id"], video["id"])
 
     def setUp(self):
         """Set up test fixtures."""

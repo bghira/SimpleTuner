@@ -1962,8 +1962,15 @@ class FactoryRegistry:
                 "aws_endpoint_url",
                 "aws_access_key_id",
                 "aws_secret_access_key",
+                "aws_session_token",
+                "aws_max_pool_connections",
                 "dataset_name",
-                "revision",  # HuggingFace
+                "dataset_config",
+                "split",
+                "revision",
+                "data_files",
+                "audio_column",
+                "huggingface",
             ]:
                 if inherit_key in backend:
                     audio_dataset_config[inherit_key] = backend[inherit_key]
