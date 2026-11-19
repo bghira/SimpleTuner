@@ -356,10 +356,6 @@ class DatasetScanService:
         with self._lock:
             if self._scan_thread is not None and self._scan_thread.is_alive():
                 raise RuntimeError("A scan is already in progress. Wait for it to finish.")
-            if clear_vae_cache:
-                self.clear_vae_cache(dataset_config, global_config or {})
-            if clear_conditioning_cache:
-                self.clear_conditioning_cache(dataset_config, global_config or {})
 
             job_id = str(uuid.uuid4())[:8]
             job = ScanJob(job_id=job_id, dataset_id=dataset_id)
@@ -369,6 +365,7 @@ class DatasetScanService:
             self._scan_thread = threading.Thread(
                 target=self._run_scan,
                 args=(job, dataset_config, global_config or {}, force_rescan),
+                kwargs={"clear_vae_cache": clear_vae_cache, "clear_conditioning_cache": clear_conditioning_cache},
                 daemon=True,
             )
             self._scan_thread.start()
@@ -483,6 +480,9 @@ class DatasetScanService:
         dataset_config: Dict[str, Any],
         global_config: Dict[str, Any],
         force_rescan: bool,
+        *,
+        clear_vae_cache: bool = False,
+        clear_conditioning_cache: bool = False,
     ):
         context = multiprocessing.get_context("spawn")
         with self._lock:
@@ -512,6 +512,10 @@ class DatasetScanService:
             with self._lock:
                 if job.status == ScanStatus.CANCELLED:
                     return
+                if clear_vae_cache:
+                    self.clear_vae_cache(dataset_config, global_config)
+                if clear_conditioning_cache:
+                    self.clear_conditioning_cache(dataset_config, global_config)
                 job.status = ScanStatus.COMPLETED
                 job.finished_at = time.time()
             self._broadcast(

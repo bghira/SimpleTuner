@@ -101,6 +101,11 @@ def wait_for_scan_cancel(connection, cancelled, dataset_config, global_config, f
             raise RuntimeError("The scan did not receive cancellation.")
 
 
+def reject_scan(connection, *_):
+    with connection:
+        connection.send({"error": "replacement scan failed"})
+
+
 class TestDatasetScanProcess(unittest.TestCase):
     def test_scan_uses_a_scoped_runtime_without_setting_dataset_registry_config(self):
         from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
@@ -127,6 +132,9 @@ class TestDatasetScanProcess(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             Image.new("RGB", (128, 128)).save(root / "image.png")
+            vae_dir = root / "latents"
+            vae_dir.mkdir()
+            (vae_dir / "existing.pt").touch()
             config = {
                 "id": "example",
                 "type": "local",
@@ -134,12 +142,15 @@ class TestDatasetScanProcess(unittest.TestCase):
                 "crop": False,
                 "resolution": 128,
                 "resolution_type": "pixel",
+                "cache_dir_vae": str(vae_dir),
             }
             with (
                 patch.object(StateTracker, "datasets", {"example": runtime}),
                 patch.object(StateTracker, "_pending_dataset_configs", {}),
             ):
-                job_id = service.scan_dataset("example", config, {"output_dir": str(root / "output")}, force_rescan=True)
+                job_id = service.scan_dataset(
+                    "example", config, {"output_dir": str(root / "output")}, force_rescan=True, clear_vae_cache=True
+                )
                 service._scan_thread.join(timeout=45)
                 self.assertFalse(service._scan_thread.is_alive())
                 result = service.get_scan_status(job_id)
@@ -149,6 +160,23 @@ class TestDatasetScanProcess(unittest.TestCase):
                 self.assertEqual(StateTracker._pending_dataset_configs, {})
                 self.assertIs(StateTracker.get_args(), training_args)
                 self.assertTrue((root / "output" / "all_image_files_example.json").is_file())
+                self.assertFalse(vae_dir.exists())
+
+    def test_failed_scan_does_not_clear_existing_artifacts(self):
+        service = DatasetScanService()
+        with (
+            patch("simpletuner.simpletuner_sdk.server.services.dataset_scan_service._execute_scan_process", reject_scan),
+            patch.object(service, "clear_vae_cache") as clear_vae,
+            patch.object(service, "clear_conditioning_cache") as clear_conditioning,
+        ):
+            job_id = service.scan_dataset(
+                "scan", {"id": "scan"}, force_rescan=True, clear_vae_cache=True, clear_conditioning_cache=True
+            )
+            service._scan_thread.join(timeout=25)
+            self.assertFalse(service._scan_thread.is_alive())
+            self.assertEqual(service.get_scan_status(job_id)["status"], "failed")
+            clear_vae.assert_not_called()
+            clear_conditioning.assert_not_called()
 
     def test_cancellation_reaches_the_running_process(self):
         progress = Event()
@@ -158,16 +186,21 @@ class TestDatasetScanProcess(unittest.TestCase):
                 progress.set()
 
         service = DatasetScanService(broadcast_fn=broadcast)
-        with patch(
-            "simpletuner.simpletuner_sdk.server.services.dataset_scan_service._execute_scan_process", wait_for_scan_cancel
+        with (
+            patch(
+                "simpletuner.simpletuner_sdk.server.services.dataset_scan_service._execute_scan_process",
+                wait_for_scan_cancel,
+            ),
+            patch.object(service, "clear_vae_cache") as clear_vae,
         ):
-            job_id = service.scan_dataset("scan", {"id": "scan"})
+            job_id = service.scan_dataset("scan", {"id": "scan"}, force_rescan=True, clear_vae_cache=True)
             try:
                 self.assertTrue(progress.wait(timeout=20))
                 self.assertTrue(service.cancel_scan())
             finally:
                 service._scan_thread.join(timeout=25)
             self.assertFalse(service._scan_thread.is_alive())
+            clear_vae.assert_not_called()
         self.assertEqual(service.get_scan_status(job_id)["status"], "cancelled")
 
 
