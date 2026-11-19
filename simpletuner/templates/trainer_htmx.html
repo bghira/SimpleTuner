@@ -1826,6 +1826,18 @@ function trainerComponent() {
                 }
             }
             if (dataset.type === 'webshart') {
+                dataset.webshart ||= {};
+                for (const key of ['cache_dir', 'shard_cache_gb', 'parallel_downloads']) {
+                    if (!(key in dataset.webshart) && dataset[key] !== undefined) {
+                        dataset.webshart[key] = dataset[key];
+                    }
+                    delete dataset[key];
+                }
+                for (const key of ['source', 'metadata']) {
+                    if (dataset[key] === undefined && dataset.webshart[key] !== undefined) {
+                        dataset[key] = dataset.webshart[key];
+                    }
+                }
                 if (dataset.caption_strategy !== 'webshart' && dataset.caption_strategy !== 'instanceprompt') {
                     dataset.caption_strategy = 'webshart';
                 }
@@ -3085,10 +3097,18 @@ function trainerComponent() {
                     };
                     assignWebshart('source');
                     assignWebshart('metadata');
-                    const cacheDir = this._coerceString(dataset.cache_dir);
-                    const shardCacheGb = this._coerceFloat(dataset.shard_cache_gb);
-                    const parallelDownloads = this._coerceInt(dataset.parallel_downloads);
+                    const options = dataset.webshart || {};
                     const webshart = {};
+                    for (const key of ['cache_dir', 'metadata_cache_dir', 'shard_cache_dir', 'hf_token', 'subfolder']) {
+                        const value = this._coerceString(options[key] ?? dataset[key]);
+                        if (value) webshart[key] = value;
+                    }
+                    for (const key of ['parallel_downloads', 'buffer_size', 'max_file_size']) {
+                        const value = this._coerceInt(options[key] ?? dataset[key]);
+                        if (Number.isFinite(value) && value > 0) webshart[key] = value;
+                    }
+                    const shardCacheGb = this._coerceFloat(options.shard_cache_gb ?? dataset.shard_cache_gb);
+                    if (Number.isFinite(shardCacheGb) && shardCacheGb >= 0) webshart.shard_cache_gb = shardCacheGb;
                     const format = this._coerceString(dataset.webshart?.format);
                     if (format) webshart.format = format;
                     const samplingPolicy = this._coerceString(dataset.webshart?.sampling_policy);
@@ -3111,15 +3131,9 @@ function trainerComponent() {
                     if (dataset.webshart?.caption_key !== undefined) {
                         webshart.caption_key = this.sanitizeValueForSave(dataset.webshart.caption_key);
                     }
-                    if (cacheDir) {
-                        webshart.cache_dir = cacheDir;
-                    }
-                    if (Number.isFinite(shardCacheGb)) {
-                        webshart.shard_cache_gb = shardCacheGb;
-                    }
-                    if (Number.isFinite(parallelDownloads)) {
-                        webshart.parallel_downloads = parallelDownloads;
-                    }
+                    delete cleaned.cache_dir;
+                    delete cleaned.shard_cache_gb;
+                    delete cleaned.parallel_downloads;
                     if (Object.keys(webshart).length > 0) {
                         cleaned.webshart = webshart;
                     } else {

@@ -319,36 +319,6 @@
                 <div class="form-text small">Pass the metadata repo id; Webshart follows shard subfolders like data/.</div>
             </div>
         </div>
-        <div class="row g-2 mt-2">
-            <div class="col-md-4">
-                <label class="form-label small">Cache Directory <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#webshart-datasets') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
-                <textarea rows="1"
-                          class="form-control form-control-sm resizable-path"
-                          x-model="editingDataset.cache_dir"
-                          @input="touchConnectionField(editingDataset)"
-                          placeholder="cache/webshart/my-dataset"></textarea>
-            </div>
-            <div class="col-md-4">
-                <label class="form-label small">Shard Cache GB</label>
-                <input type="number"
-                       class="form-control form-control-sm"
-                       min="0"
-                       step="1"
-                       x-model.number.lazy="editingDataset.shard_cache_gb"
-                       @input="touchConnectionField(editingDataset)"
-                       placeholder="25">
-            </div>
-            <div class="col-md-4">
-                <label class="form-label small">Parallel Downloads</label>
-                <input type="number"
-                       class="form-control form-control-sm"
-                       min="1"
-                       step="1"
-                       x-model.number.lazy="editingDataset.parallel_downloads"
-                       @input="touchConnectionField(editingDataset)"
-                       placeholder="4">
-            </div>
-        </div>
     </div>
 
     <!-- VAE Cache Directory (for non-local backends) -->

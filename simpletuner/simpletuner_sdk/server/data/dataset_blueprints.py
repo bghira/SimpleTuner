@@ -839,7 +839,7 @@ _BLUEPRINTS: List[BackendBlueprint] = [
                     "advanced": True,
                 },
                 {
-                    "id": "cache_dir",
+                    "id": "webshart.cache_dir",
                     "label": "dataset cache",
                     "description": "optional hugging face cache directory override",
                     "type": "text",
@@ -968,7 +968,7 @@ _BLUEPRINTS: List[BackendBlueprint] = [
                     "placeholder": "webshart/conceptual-captions-12m-webdataset-metadata",
                 },
                 {
-                    "id": "cache_dir",
+                    "id": "webshart.cache_dir",
                     "label": "dataset cache",
                     "description": "cache root for webshart metadata, shard cache, and SimpleTuner metadata",
                     "type": "text",
@@ -976,7 +976,19 @@ _BLUEPRINTS: List[BackendBlueprint] = [
                     "advanced": True,
                 },
                 {
-                    "id": "shard_cache_gb",
+                    "id": "webshart.metadata_cache_dir",
+                    "label": "metadata cache directory",
+                    "type": "text",
+                    "advanced": True,
+                },
+                {
+                    "id": "webshart.shard_cache_dir",
+                    "label": "shard cache directory",
+                    "type": "text",
+                    "advanced": True,
+                },
+                {
+                    "id": "webshart.shard_cache_gb",
                     "label": "shard cache GB",
                     "description": "maximum size of the webshart shard cache",
                     "type": "number",
@@ -986,7 +998,7 @@ _BLUEPRINTS: List[BackendBlueprint] = [
                     "advanced": True,
                 },
                 {
-                    "id": "parallel_downloads",
+                    "id": "webshart.parallel_downloads",
                     "label": "parallel downloads",
                     "description": "number of shard downloads webshart may run in parallel",
                     "type": "number",

@@ -2447,6 +2447,13 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
     def test_webshart_parquet_settings_edit_and_save(self) -> None:
         self.seed_defaults()
         config_path = self.config_dir / "default" / "multidatabackend.json"
+        cache_options = {
+            "cache_dir": "cache/prepared",
+            "metadata_cache_dir": "cache/metadata",
+            "shard_cache_dir": "cache/shards",
+            "shard_cache_gb": 0,
+            "parallel_downloads": 7,
+        }
         config_path.write_text(
             json.dumps(
                 [
@@ -2457,7 +2464,7 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
                         "source": "s3://images",
                         "caption_strategy": "webshart",
                         "metadata_backend": "webshart",
-                        "webshart": {"caption_key": "original"},
+                        "webshart": {"caption_key": "original", **cache_options},
                     }
                 ]
             ),
@@ -2528,6 +2535,8 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
             self.assertEqual(persisted["webshart"]["sampling_policy"], "shard_local")
             self.assertEqual(persisted["webshart"]["manifest"], "combined/dataset.json")
             self.assertEqual(persisted["webshart"]["columns"], {"captions": "caption_text"})
+            for key, value in cache_options.items():
+                self.assertEqual(persisted["webshart"][key], value)
             self.assertEqual(persisted["aws_endpoint_url"], "https://storage.example")
             self.assertEqual(persisted["aws_session_token"], "example-session")
             WebDriverWait(driver, 5).until(
@@ -2561,6 +2570,15 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
                 )
             )
             self.assertEqual(endpoint.get_attribute("value"), "https://storage.example")
+            for key, value in cache_options.items():
+                cache_field = (
+                    driver.find_element(By.CSS_SELECTOR, f'.dataset-list-item-expanded input[x-model$=".webshart.{key}"]')
+                    if isinstance(value, str)
+                    else driver.find_element(
+                        By.CSS_SELECTOR, rf'.dataset-list-item-expanded input[x-model\.number$=".webshart.{key}"]'
+                    )
+                )
+                self.assertEqual(cache_field.get_attribute("value"), str(value))
             field = WebDriverWait(driver, 10).until(
                 lambda d: next((e for e in d.find_elements(*selector) if e.is_displayed()), False)
             )
