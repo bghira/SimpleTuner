@@ -406,19 +406,23 @@ class TestImageArtifactPreparation(unittest.TestCase):
         }
         source = {"id": "source", "dataset_type": "image", "conditioning_data": "references"}
         runtime = DatasetRuntime("references", Mock(type="local"), Mock(), {**reference, "instance_data_dir": "references"})
-        job = CacheJob("job", "references", "conditioning")
         self.assertFalse(model.requires_conditioning_image_embeds())
-        with (
-            patch.object(service, "_load_model", return_value=model),
-            patch.object(service, "_create_dataset_runtime", return_value=runtime),
-            patch.object(service, "_prepare_image_artifacts"),
-            patch("simpletuner.helpers.caching.image_embed.ImageEmbedCache") as cache,
-        ):
-            service._run_cache_job(job, reference, {"model_family": "z_image_omni"}, [source, reference])
+        for selected in (source, reference):
+            with self.subTest(selected=selected["id"]):
+                job = CacheJob("job", selected["id"], "conditioning")
+                with (
+                    patch.object(service, "_load_model", return_value=model),
+                    patch.object(service, "_create_dataset_runtime", return_value=runtime) as open_dataset,
+                    patch.object(service, "_prepare_image_artifacts"),
+                    patch("simpletuner.helpers.caching.image_embed.ImageEmbedCache") as cache,
+                ):
+                    service._run_cache_job(job, selected, {"model_family": "z_image_omni"}, [source, reference])
 
-        self.assertEqual(job.status, CacheJobStatus.COMPLETED, job.error)
-        self.assertTrue(model.requires_conditioning_image_embeds())
-        self.assertEqual(cache.call_args.kwargs["id"], "references")
+                self.assertEqual(job.status, CacheJobStatus.COMPLETED, job.error)
+                self.assertTrue(model.requires_conditioning_image_embeds())
+                open_dataset.assert_called_once()
+                self.assertIs(open_dataset.call_args.args[0], reference)
+                self.assertEqual(cache.call_args.kwargs["id"], "references")
 
     def test_image_cache_preparation_keeps_the_training_dataset_registered(self):
         from simpletuner.helpers.training.state_tracker import StateTracker

@@ -819,7 +819,7 @@ class CacheJobService:
     def _execute_conditioning_cache(
         self, job: CacheJob, dataset_config: Dict[str, Any], global_config: Dict[str, Any], dataset_plan=None
     ):
-        from simpletuner.helpers.data_backend.factory import configure_model_data_signals
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry, configure_model_data_signals
         from simpletuner.helpers.training.state_tracker import StateTracker
 
         args = self._build_args(global_config)
@@ -828,9 +828,7 @@ class CacheJobService:
         original_accelerator = StateTracker.get_accelerator()
         StateTracker.set_args(args)
         StateTracker.set_accelerator(accelerator)
-        scope = ExitStack()
         model = None
-        embed_cache = None
 
         try:
             self._check_cancelled(job)
@@ -839,7 +837,8 @@ class CacheJobService:
             self._broadcast("dataset_cache", self._job_to_dict(job))
 
             model = self._load_model(global_config, args, accelerator)
-            configure_model_data_signals(model, dataset_plan or [dataset_config])
+            plan = dataset_plan or [dataset_config]
+            configure_model_data_signals(model, plan)
 
             if not model.requires_conditioning_image_embeds():
                 raise ValueError(
@@ -852,54 +851,68 @@ class CacheJobService:
             job.stage = "Setting up data backend"
             self._broadcast("dataset_cache", self._job_to_dict(job))
 
-            runtime = self._create_dataset_runtime(dataset_config, args, accelerator)
-            scope.callback(runtime.close)
+            datasets = [dataset_config]
+            if dataset_config.get("conditioning_data") and model.conditioning_image_embeds_use_reference_dataset():
+                conditioning, _ = FactoryRegistry._resolve_dataset_relationships(plan)
+                target_ids = conditioning.get(dataset_config["id"], ())
+                if target_ids:
+                    by_id = {entry["id"]: entry for entry in plan}
+                    datasets = [by_id[target_id] for target_id in dict.fromkeys(target_ids)]
 
-            cache_store, store_config = self._image_artifact_store(
-                dataset_config, dataset_plan, args, accelerator, runtime.data_backend, "conditioning_image_embeds"
-            )
-            store_directory = store_config.get("cache_dir")
-            if store_directory == dataset_config.get("cache_dir_vae"):
-                store_directory = None
-            cache_dir = self._resolve_cache_dir(
-                dataset_config.get("cache_dir_conditioning_image_embeds")
-                or store_directory
-                or self._resolve_global_key(global_config, "cache_dir_conditioning_image_embeds"),
-                global_config,
-                dataset_config,
-                absolute=cache_store.type != "aws",
-            )
-            if not cache_dir:
-                raise ValueError("No conditioning cache directory configured")
-
-            from simpletuner.helpers.caching.image_embed import ImageEmbedCache
-
-            embed_cache = ImageEmbedCache(
-                id=runtime.id,
-                dataset_type=runtime.config["dataset_type"],
-                model=model,
-                accelerator=accelerator,
-                metadata_backend=runtime.metadata_backend,
-                image_data_backend=runtime.data_backend,
-                cache_data_backend=cache_store,
-                instance_data_dir=runtime.config["instance_data_dir"],
-                cache_dir=cache_dir,
-                write_batch_size=int(global_config.get("write_batch_size", 64) or 64),
-                read_batch_size=int(global_config.get("read_batch_size", 25) or 25),
-                embed_batch_size=int(global_config.get("embed_batch_size", 4) or 4),
-                hash_filenames=True,
-            )
-
-            self._check_cancelled(job)
-
-            self._prepare_image_artifacts(job, runtime, "conditioning_image_embed_cache", embed_cache)
+            for dataset in datasets:
+                self._check_cancelled(job)
+                with closing(self._create_dataset_runtime(dataset, args, accelerator)) as runtime:
+                    self._prepare_conditioning_embeddings(
+                        job, runtime, dataset, plan, global_config, args, accelerator, model
+                    )
 
         finally:
             StateTracker.set_args(original_args)
             StateTracker.set_accelerator(original_accelerator)
-            scope.close()
-            del embed_cache, model
+            del model
             self._cleanup_gpu()
+
+    def _prepare_conditioning_embeddings(self, job, runtime, dataset, dataset_plan, global_config, args, accelerator, model):
+        cache_store, store_config = self._image_artifact_store(
+            dataset, dataset_plan, args, accelerator, runtime.data_backend, "conditioning_image_embeds"
+        )
+        store_directory = store_config.get("cache_dir")
+        if store_directory == dataset.get("cache_dir_vae"):
+            store_directory = None
+        cache_dir = self._resolve_cache_dir(
+            dataset.get("cache_dir_conditioning_image_embeds")
+            or store_directory
+            or self._resolve_global_key(global_config, "cache_dir_conditioning_image_embeds"),
+            global_config,
+            dataset,
+            absolute=cache_store.type != "aws",
+        )
+        if not cache_dir:
+            raise ValueError("No conditioning cache directory configured")
+
+        from simpletuner.helpers.caching.image_embed import ImageEmbedCache
+
+        embed_cache = ImageEmbedCache(
+            id=runtime.id,
+            dataset_type=runtime.config["dataset_type"],
+            model=model,
+            accelerator=accelerator,
+            metadata_backend=runtime.metadata_backend,
+            image_data_backend=runtime.data_backend,
+            cache_data_backend=cache_store,
+            instance_data_dir=runtime.config["instance_data_dir"],
+            cache_dir=cache_dir,
+            write_batch_size=dataset.get("write_batch_size", args.write_batch_size),
+            read_batch_size=dataset.get("read_batch_size", args.read_batch_size),
+            embed_batch_size=dataset.get(
+                "conditioning_image_embed_batch_size", args.conditioning_image_embed_batch_size or args.vae_batch_size
+            ),
+            hash_filenames=True,
+        )
+
+        self._check_cancelled(job)
+
+        self._prepare_image_artifacts(job, runtime, "conditioning_image_embed_cache", embed_cache)
 
 
 # Module-level singleton
