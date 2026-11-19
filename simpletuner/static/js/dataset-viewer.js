@@ -818,7 +818,7 @@ window.datasetViewerComponent = function () {
         // --- Crop dragging ---
 
         onCropMouseDown(e) {
-            if (!this.cropOverlay || !this._intermediaryImgEl) return;
+            if (!this.selectedFile?.metadata_editable || !this.cropOverlay || !this._intermediaryImgEl) return;
             e.preventDefault();
             this.cropDragging = true;
             this.cropDragStart = {
@@ -900,6 +900,7 @@ window.datasetViewerComponent = function () {
             this.bboxCanvas = new BboxCanvas(container, {
                 width: w,
                 height: h,
+                readOnly: !f.metadata_editable,
                 onChange: () => {
                     this.bboxModified = true;
                 },
@@ -929,6 +930,7 @@ window.datasetViewerComponent = function () {
             const request = this._fileRequest;
             const datasetId = this.selectedFileDatasetId;
             const file = this.selectedFile;
+            if (!file?.metadata_editable) return null;
             const response = await fetch('/api/datasets/viewer/' + action, {
                 method,
                 headers: { 'Content-Type': 'application/json' },

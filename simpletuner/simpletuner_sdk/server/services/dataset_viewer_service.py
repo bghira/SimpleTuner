@@ -78,6 +78,10 @@ class DatasetViewChanged(ValueError):
     """The indexed dataset was replaced between page requests."""
 
 
+class DatasetFileMutationUnavailable(ValueError):
+    """The prepared provider does not support direct file edits."""
+
+
 class DatasetFilePage(BaseModel):
     """Paginated file listing from a dataset."""
 
@@ -111,6 +115,7 @@ class FileMetadata(BaseModel):
     bucket_key: Optional[str] = None
     caption: Optional[str] = None
     view_revision: Optional[str] = None
+    metadata_editable: bool = True
     bbox_entities: Optional[List[Dict[str, Any]]] = None
     extra: Dict[str, Any] = Field(default_factory=dict)
 
@@ -661,6 +666,7 @@ class DatasetViewerService:
         """Read per-file metadata from the metadata cache."""
         with self._webshart_view(dataset_config, view_revision) as (indices, index):
             current_revision = index.header["view_revision"] if index is not None else None
+            editable = not self._uses_indexed_geometry(dataset_config, index)
             if index is not None and index.header.get("geometry_format") == "sqlite-v1":
                 if index.header.get("source_pins"):
                     with accepted_ref_lookup(indices, index) as contains:
@@ -714,21 +720,39 @@ class DatasetViewerService:
             bucket_key=meta.get("bucket_key"),
             bbox_entities=meta.get("bbox_entities"),
             view_revision=current_revision,
+            metadata_editable=editable,
             extra=extra,
         )
         result.caption = self._get_file_caption(dataset_config, file_path, view_revision=current_revision)
         return result
+
+    @staticmethod
+    def _uses_indexed_geometry(config, index):
+        return config.get("type") == "webshart" and bool(
+            (config.get("webshart") or {}).get("sampling_policy")
+            or (index is not None and index.header.get("geometry_format") == "sqlite-v1")
+        )
+
+    def _require_editable_file(self, dataset_config, view_revision):
+        with self._webshart_view(dataset_config, view_revision) as (_, index):
+            if self._uses_indexed_geometry(dataset_config, index):
+                raise DatasetFileMutationUnavailable(
+                    "This dataset uses a prepared view. Rescan it to recompute metadata or clear its artifacts."
+                )
 
     def update_crop_coordinates(
         self,
         dataset_config: Dict[str, Any],
         file_path: str,
         crop_coordinates: List[int],
+        *,
+        view_revision: Optional[str] = None,
     ) -> bool:
         """Update crop_coordinates for a file in the metadata cache.
 
         Returns True if the update succeeded.
         """
+        self._require_editable_file(dataset_config, view_revision)
         cache_path = self._find_cache_file(dataset_config, "metadata")
         if cache_path is None:
             return False
@@ -751,11 +775,14 @@ class DatasetViewerService:
         dataset_config: Dict[str, Any],
         file_path: str,
         bbox_entities: Optional[List[Dict[str, Any]]],
+        *,
+        view_revision: Optional[str] = None,
     ) -> bool:
         """Update bbox_entities for a file in the metadata cache.
 
         Returns True if the update succeeded.
         """
+        self._require_editable_file(dataset_config, view_revision)
         cache_path = self._find_cache_file(dataset_config, "metadata")
         if cache_path is None:
             return False
@@ -782,6 +809,8 @@ class DatasetViewerService:
         dataset_config: Dict[str, Any],
         global_config: Dict[str, Any],
         file_path: str,
+        *,
+        view_revision: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Recalculate metadata for a single file using TrainingSample.
 
@@ -795,6 +824,7 @@ class DatasetViewerService:
         from simpletuner.helpers.multiaspect.image import ImageGeometry, MultiaspectImage
         from simpletuner.simpletuner_sdk.server.services.dataset_scan_service import DatasetScanService
 
+        self._require_editable_file(dataset_config, view_revision)
         # Load existing metadata
         cache_path = self._find_cache_file(dataset_config, "metadata")
         if cache_path is None:
@@ -859,11 +889,14 @@ class DatasetViewerService:
         self,
         dataset_config: Dict[str, Any],
         file_path: str,
+        *,
+        view_revision: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Delete the VAE cache .pt file for a single image/video.
 
         Returns a dict with 'deleted' (bool) and 'cache_path' (str or None).
         """
+        self._require_editable_file(dataset_config, view_revision)
         cache_dir_vae = dataset_config.get("cache_dir_vae", "")
         if not cache_dir_vae:
             return {"deleted": False, "cache_path": None, "error": "No cache_dir_vae configured"}

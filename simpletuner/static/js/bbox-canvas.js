@@ -36,7 +36,7 @@ class BboxCanvas {
         this._deleteBtn = null;
 
         this._canvas = document.createElement('canvas');
-        this._canvas.style.cursor = 'crosshair';
+        this._canvas.style.cursor = opts.readOnly ? 'default' : 'crosshair';
         this._canvas.style.display = 'block';
         this._canvas.style.margin = '0 auto';
         this._canvas.style.borderRadius = '6px';
@@ -47,7 +47,7 @@ class BboxCanvas {
         this._pendingBoxIdx = -1;
 
         this._resizeCanvas();
-        this._bindEvents();
+        if (!opts.readOnly) this._bindEvents();
     }
 
     // -- Public API --

@@ -2095,6 +2095,7 @@ class DatasetViewerRevisionTestCase(_TrainerPageMixin, WebUITestCase):
                         return Promise.resolve(response({
                             path: window.detailQuery.file_path,
                             found: true,
+                            metadata_editable: window.detailQuery.dataset_id !== 'first',
                             view_revision: window.detailQuery.view_revision,
                         }));
                     }
@@ -2153,6 +2154,9 @@ class DatasetViewerRevisionTestCase(_TrainerPageMixin, WebUITestCase):
                 "other.jpg",
             )
             self.assertEqual(driver.execute_script("return window.detailQuery.file_path;"), "other.jpg")
+            self.assertTrue(
+                wait.until(EC.invisibility_of_element_located((By.XPATH, "//button[contains(., 'Rebuild Metadata')]")))
+            )
 
         self.for_each_browser("test_conditioning_pairs_keep_the_selected_link_and_view", scenario)
 

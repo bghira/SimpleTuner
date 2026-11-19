@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import importlib.metadata
 import importlib.util
+from contextlib import contextmanager
 from typing import Annotated, Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -18,6 +19,7 @@ from simpletuner.simpletuner_sdk.server.services.dataset_scan_service import get
 from simpletuner.simpletuner_sdk.server.services.dataset_viewer_service import (
     AudioPreview,
     CaptionValidationResult,
+    DatasetFileMutationUnavailable,
     DatasetFilePage,
     DatasetGraph,
     DatasetSummary,
@@ -195,9 +197,23 @@ async def get_viewer_preview(
     return result
 
 
-class CropCoordinatesUpdate(BaseModel):
+class SingleFileAction(BaseModel):
     dataset_id: str
     file_path: str
+    view_revision: Optional[str] = None
+
+
+@contextmanager
+def _viewer_file_action():
+    try:
+        yield
+    except DatasetViewChanged as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except DatasetFileMutationUnavailable as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+class CropCoordinatesUpdate(SingleFileAction):
     crop_coordinates: conlist(int, min_length=2, max_length=2)
 
 
@@ -209,8 +225,11 @@ async def update_viewer_crop_coordinates(
     service = _get_viewer_service()
     config = _require_dataset_config(request.dataset_id)
 
-    if not service.update_crop_coordinates(config, request.file_path, request.crop_coordinates):
-        raise HTTPException(status_code=404, detail="Metadata entry not found")
+    with _viewer_file_action():
+        if not service.update_crop_coordinates(
+            config, request.file_path, request.crop_coordinates, view_revision=request.view_revision
+        ):
+            raise HTTPException(status_code=404, detail="Metadata entry not found")
 
     # Re-generate the cropped preview with the new coordinates
     meta = service.get_file_metadata(config, request.file_path)
@@ -224,9 +243,7 @@ async def update_viewer_crop_coordinates(
     }
 
 
-class BboxEntitiesUpdate(BaseModel):
-    dataset_id: str
-    file_path: str
+class BboxEntitiesUpdate(SingleFileAction):
     bbox_entities: Optional[List[Dict[str, Any]]] = None
 
 
@@ -238,18 +255,16 @@ async def update_viewer_bbox_entities(
     service = _get_viewer_service()
     config = _require_dataset_config(request.dataset_id)
 
-    if not service.update_bbox_entities(config, request.file_path, request.bbox_entities):
-        raise HTTPException(status_code=404, detail="Metadata entry not found")
+    with _viewer_file_action():
+        if not service.update_bbox_entities(
+            config, request.file_path, request.bbox_entities, view_revision=request.view_revision
+        ):
+            raise HTTPException(status_code=404, detail="Metadata entry not found")
 
     return {
         "saved": True,
         "bbox_entities": request.bbox_entities,
     }
-
-
-class SingleFileAction(BaseModel):
-    dataset_id: str
-    file_path: str
 
 
 def _captioning_install_command() -> str:
@@ -395,7 +410,8 @@ async def rebuild_file_metadata(request: SingleFileAction, _user: User = Depends
     config = _require_dataset_config(request.dataset_id)
     global_config = _get_global_config()
 
-    result = service.rebuild_file_metadata(config, global_config, request.file_path)
+    with _viewer_file_action():
+        result = service.rebuild_file_metadata(config, global_config, request.file_path, view_revision=request.view_revision)
     if result is None:
         raise HTTPException(status_code=404, detail="Could not rebuild metadata for this file")
 
@@ -407,7 +423,8 @@ async def delete_vae_cache_file(request: SingleFileAction, _user: User = Depends
     """Delete the VAE cache file for a single image/video."""
     service = _get_viewer_service()
     config = _require_dataset_config(request.dataset_id)
-    return service.delete_vae_cache_file(config, request.file_path)
+    with _viewer_file_action():
+        return service.delete_vae_cache_file(config, request.file_path, view_revision=request.view_revision)
 
 
 # ---------------------------------------------------------------------------

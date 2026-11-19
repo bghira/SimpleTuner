@@ -601,7 +601,7 @@
                                     <i class="fas fa-vector-square me-1"></i>Bounding Boxes
                                     <span class="badge bg-secondary ms-1" x-text="selectedFile.bbox_entities.length"></span>
                                 </label>
-                                <small class="text-muted" style="font-size: 0.75rem;">
+                                <small x-show="selectedFile?.metadata_editable" class="text-muted" style="font-size: 0.75rem;">
                                     Draw to create &middot; Click to select &middot; Double-click to rename &middot; <kbd>Del</kbd> to remove
                                 </small>
                             </div>
@@ -666,7 +666,7 @@
                     </div>
 
                     <!-- Per-file actions -->
-                    <div x-show="!loadingFileDetail && selectedFile" class="d-flex gap-2 mt-3 pt-3 border-top border-secondary">
+                    <div x-show.important="!loadingFileDetail && selectedFile?.metadata_editable" class="d-flex gap-2 mt-3 pt-3 border-top border-secondary">
                         <button type="button" class="btn btn-sm btn-outline-info"
                                 :disabled="rebuildingMetadata"
                                 @click="rebuildFileMetadata()"
@@ -684,6 +684,9 @@
                             Delete VAE Cache
                         </button>
                     </div>
+                    <p x-show="!loadingFileDetail && selectedFile?.metadata_editable === false" class="text-muted small mt-3">
+                        Rescan the dataset to recompute its prepared metadata or clear its artifacts.
+                    </p>
                 </div>
             </div>
         </div>

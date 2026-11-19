@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 from PIL import Image
 
 from simpletuner.simpletuner_sdk.server.services.dataset_viewer_service import (
+    DatasetFileMutationUnavailable,
     DatasetViewChanged,
     DatasetViewerService,
     _data_backend_cache,
@@ -321,6 +322,18 @@ class TestWebshartMembershipPages(unittest.TestCase):
                 service.get_file_metadata(configs[1], refs[4], view_revision=pages.header["view_revision"])
             metadata = service.get_file_metadata(configs[1], refs[4], view_revision=filtered_page.view_revision)
             self.assertEqual(metadata.view_revision, filtered_page.view_revision)
+            self.assertFalse(metadata.metadata_editable)
+            for action, args in (
+                (service.update_crop_coordinates, (configs[1], refs[4], [0, 0])),
+                (service.update_bbox_entities, (configs[1], refs[4], [])),
+                (service.rebuild_file_metadata, (configs[1], {}, refs[4])),
+                (service.delete_vae_cache_file, (configs[1], refs[4])),
+            ):
+                with self.subTest(action=action.__name__):
+                    with self.assertRaises(DatasetViewChanged):
+                        action(*args, view_revision=pages.header["view_revision"])
+                    with self.assertRaisesRegex(DatasetFileMutationUnavailable, "Rescan"):
+                        action(*args, view_revision=filtered_page.view_revision)
             with patch.object(service, "get_dataset_files", side_effect=AssertionError("unbounded listing")):
                 report = service.get_conditioning_pairs(*configs, offset=1, limit=2)
                 self.assertEqual(report["pairs"], [{"source_path": refs[1], "conditioning_path": refs[1]}])
