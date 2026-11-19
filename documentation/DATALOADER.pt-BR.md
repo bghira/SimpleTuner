@@ -1408,6 +1408,8 @@ Com uma política de amostragem nativa, a preparação VAE lê a visão aceita e
 
 No Parquet nativo, o índice de membros preparado registra referências aceitas, contagens e revisões fixadas da fonte. A geometria reutilizável das imagens com políticas de recorte compatíveis fica no cache de transformações por shard do Webshart, em `webshart.cache_dir`. Os bytes das imagens vêm da fonte ou do cache separado de shards inteiros. Uma nova revisão preparada é publicada após uma nova varredura forçada bem-sucedida. A substituição do conteúdo invalida as exclusões do shard correspondente. Reabra o conjunto de dados se a impressão digital do catálogo da fonte mudar.
 
+O SimpleTuner mantém desativada a remoção automática das transformações do Webshart. O diretório `.webshart-transforms` guarda somente a geometria. Uma nova varredura forçada bem-sucedida inicia outra geração do cache, então varreduras repetidas podem deixar gerações anteriores no disco. Nos recortes por época compatíveis, o provedor reutiliza a forma preparada e calcula o novo recorte quando lê a amostra.
+
 Defina `text_cache_encode_only: true` na entrada de embeddings de texto vinculada para codificar o lote atual durante o treinamento sem acessar arquivos de embeddings. Para pré-calcular, use um armazenamento Local ou AWS gravável e independente e indique-o no campo `text_embeds` do conjunto de imagens.
 
 As legendas podem ser strings, objetos JSON nativos ou listas mistas dos dois.

@@ -1463,6 +1463,8 @@ With a native sampling policy, VAE preparation reads the accepted view in bounde
 
 For native Parquet, the prepared membership index records accepted references, counts, and source pins. Reusable image geometry for supported crop policies is stored in Webshart's per-shard transform cache under `webshart.cache_dir`. Image bytes use the source or the separate whole-shard cache. A forced rescan publishes a new prepared revision after the scan succeeds. Replacement content invalidates exclusions for its shard. Reopen the dataset when the source catalogue fingerprint changes.
 
+SimpleTuner leaves automatic Webshart transform eviction disabled. The `.webshart-transforms` directory stores geometry only. A successful forced rescan starts a new cache generation, so repeated rescans can leave older generations on disk. With eligible epoch recrops, the provider reuses the prepared shape and derives the new crop when the sample is read.
+
 Set `text_cache_encode_only: true` on the bound text embedding entry to encode the current batch during training without accessing embedding files. For precomputation, use an independent writable Local or AWS text embedding store and point the image dataset's `text_embeds` field to it.
 
 Captions can be strings, native JSON objects, or mixed lists of both. Objects stay

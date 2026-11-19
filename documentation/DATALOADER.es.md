@@ -1408,6 +1408,8 @@ Con una política de muestreo nativa, la preparación VAE lee la vista aceptada 
 
 En Parquet nativo, el índice de pertenencia preparado registra las referencias aceptadas, los recuentos y las revisiones fijadas de la fuente. La geometría reutilizable de las imágenes con políticas de recorte compatibles se guarda en la caché de transformaciones por shard de Webshart, bajo `webshart.cache_dir`. Los bytes de las imágenes se leen de la fuente o de la caché separada de shards completos. Una nueva revisión preparada se publica tras un escaneo forzado exitoso. Reemplazar el contenido invalida las exclusiones del shard afectado. Vuelve a abrir el dataset si cambia la huella del catálogo de origen.
 
+SimpleTuner mantiene desactivada la expulsión automática de las transformaciones de Webshart. El directorio `.webshart-transforms` guarda únicamente la geometría. Un escaneo forzado exitoso inicia una nueva generación de la caché, por lo que escaneos repetidos pueden dejar generaciones anteriores en el disco. En los recortes por época compatibles, el proveedor reutiliza la forma preparada y calcula el recorte al leer la muestra.
+
 Define `text_cache_encode_only: true` en la entrada vinculada de embeddings de texto para codificar el lote actual durante el entrenamiento sin acceder a los archivos de embeddings. Para precalcularlos, utiliza un almacén Local o AWS independiente y con permisos de escritura, y selecciónalo con `text_embeds` en el dataset de imágenes.
 
 Los captions pueden ser cadenas, objetos JSON nativos o listas mixtas de ambos.
