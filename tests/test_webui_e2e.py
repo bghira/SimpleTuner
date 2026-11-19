@@ -2510,7 +2510,8 @@ class DatasetCaptioningTabSmokeTestCase(_TrainerPageMixin, WebUITestCase):
                         "type": "local",
                         "dataset_type": "image",
                         "instance_data_dir": str(dataset_dir),
-                    }
+                    },
+                    {"id": "remote-caption-smoke", "type": "webshart", "dataset_type": "image", "source": "s3://images"},
                 ]
             ),
             encoding="utf-8",
@@ -2551,6 +2552,20 @@ class DatasetCaptioningTabSmokeTestCase(_TrainerPageMixin, WebUITestCase):
                 WebDriverWait(driver, 10).until(captioning_panel_ready),
                 "Captioning sub-tab did not initialize",
             )
+            dataset_options = driver.execute_async_script(
+                """
+                const done = arguments[0];
+                const root = document.querySelector('[x-data="datasetCaptioningComponent()"]');
+                const component = Alpine.$data(root);
+                component.capabilities.eligible_dataset_ids = ['caption-smoke'];
+                component.selectedDatasetId = 'remote-caption-smoke';
+                component.loadDatasets().then(() => done({
+                    options: component.datasets.map(dataset => dataset.dataset_id),
+                    selected: component.selectedDatasetId,
+                })).catch(error => done({error: error.message}));
+                """
+            )
+            self.assertEqual(dataset_options, {"options": ["caption-smoke"], "selected": "caption-smoke"})
 
             raw_buttons = [
                 button

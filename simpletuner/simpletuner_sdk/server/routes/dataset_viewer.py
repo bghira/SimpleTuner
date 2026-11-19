@@ -303,6 +303,7 @@ class CaptioningCapabilities(BaseModel):
     version: Optional[str] = None
     required_version: str = "0.5.0"
     install_command: str = Field(default_factory=_captioning_install_command)
+    eligible_dataset_ids: list[str] = Field(default_factory=list)
 
 
 class CaptioningJobRequest(BaseModel):
@@ -371,7 +372,21 @@ async def get_captioning_capabilities(_user: User = Depends(get_current_user)) -
     except importlib.metadata.PackageNotFoundError:
         version = None
 
-    return CaptioningCapabilities(installed=True, ready=_version_at_least(version, "0.5.0"), version=version)
+    from simpletuner.simpletuner_sdk.server.services.captionflow_job_service import resolve_captioning_dataset_source
+
+    plan, _, _ = _cache_plan()
+    eligible = []
+    for config in plan:
+        if not config.get("id"):
+            continue
+        try:
+            resolve_captioning_dataset_source(config)
+        except ValueError:
+            continue
+        eligible.append(config["id"])
+    return CaptioningCapabilities(
+        installed=True, ready=_version_at_least(version, "0.5.0"), version=version, eligible_dataset_ids=eligible
+    )
 
 
 @router.post("/captioning/jobs", response_model=CaptioningJobResponse)

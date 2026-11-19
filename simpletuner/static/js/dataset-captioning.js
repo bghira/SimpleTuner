@@ -239,12 +239,10 @@ window.datasetCaptioningComponent = function () {
                 throw new Error(detail.detail || 'Failed to load datasets');
             }
             const datasets = await response.json();
-            this.datasets = datasets.filter((dataset) => {
-                const type = String(dataset.config?.dataset_type || 'image').toLowerCase();
-                return !['text_embeds', 'image_embeds', 'audio'].includes(type);
-            });
-            if (!this.selectedDatasetId && this.datasets.length > 0) {
-                this.selectedDatasetId = this.datasets[0].dataset_id;
+            const eligible = new Set(this.capabilities.eligible_dataset_ids);
+            this.datasets = datasets.filter(dataset => eligible.has(dataset.dataset_id));
+            if (!this.datasets.some(dataset => dataset.dataset_id === this.selectedDatasetId)) {
+                this.selectedDatasetId = this.datasets[0]?.dataset_id || '';
             }
             this.syncExportModeForDataset();
         },
