@@ -2087,6 +2087,29 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 metadata.split_buckets_between_processes.assert_not_called()
                 self.accelerator.wait_for_everyone.assert_not_called()
 
+    def test_native_parquet_provider_failure_precedes_bucket_preparation(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        factory = FactoryRegistry(self.args, self.accelerator, self.text_encoders, self.tokenizers, self.model)
+        self.accelerator.num_processes = 2
+        backend = {
+            "id": "capture",
+            "type": "webshart",
+            "webshart": {"format": "parquet", "sampling_policy": "global"},
+            "preserve_data_backend_cache": True,
+        }
+        initial = {"id": "capture", "dataset_type": "image", "config": {"resolution": 128}}
+        with (
+            patch("simpletuner.helpers.data_backend.factory.init_backend_config", return_value=initial),
+            patch.object(factory, "_configure_backend_by_type", side_effect=OSError("catalogue unavailable")),
+            patch.object(factory, "_handle_bucket_operations") as prepare,
+            patch("simpletuner.helpers.data_backend.factory.gather_across_processes") as gather,
+        ):
+            with self.assertRaisesRegex(OSError, "catalogue unavailable"):
+                factory._configure_single_data_backend(backend, [backend], [], [], False)
+            gather.assert_called_once_with("rank 0: OSError: catalogue unavailable")
+            prepare.assert_not_called()
+
     def test_loading_another_resolution_preserves_the_first_geometry_map(self):
         from simpletuner.helpers.training.state_tracker import StateTracker
 

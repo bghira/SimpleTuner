@@ -155,7 +155,6 @@ class WebshartMetadataBackend(MetadataBackend):
         if self.dataset_type not in {DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.CONDITIONING, DatasetType.EVAL}:
             raise ValueError("WebshartMetadataBackend supports image, video, conditioning, and eval datasets only.")
 
-        context = accelerator.main_process_first() if hasattr(accelerator, "main_process_first") else nullcontext()
         self._geometry_digest = None
         self.maximum_canvas_size = maximum_canvas_size
         self.native_policy = (self.dataset_config.get("webshart") or {}).get("sampling_policy")
@@ -167,11 +166,15 @@ class WebshartMetadataBackend(MetadataBackend):
         self._stored_geometry_digest = None
         self._transforms = None
         self._writing_transforms = None
-        with context:
-            if self.native_policy or not preparation_only:
-                self.reload_cache(set_config=not preparation_only)
-        if hasattr(accelerator, "wait_for_everyone"):
-            accelerator.wait_for_everyone()
+        if self.native_policy and self.data_backend.format == "parquet":
+            self.reload_cache(set_config=not preparation_only)
+        else:
+            context = accelerator.main_process_first() if hasattr(accelerator, "main_process_first") else nullcontext()
+            with context:
+                if self.native_policy or not preparation_only:
+                    self.reload_cache(set_config=not preparation_only)
+            if hasattr(accelerator, "wait_for_everyone"):
+                accelerator.wait_for_everyone()
 
     def _bucketed_sample_ids(self) -> list[str]:
         sample_ids = []

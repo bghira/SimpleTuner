@@ -3997,20 +3997,24 @@ class FactoryRegistry:
                 dataloader_resolution=init_backend["config"]["resolution"],
             )
 
-        self._configure_backend_by_type(backend, init_backend)
-
-        self._assign_text_embed_cache(backend, init_backend)
-
-        image_embed_data_backend = self._get_image_embed_backend(backend, init_backend)
-        conditioning_image_embed_backend = self._get_conditioning_image_embed_backend(backend, init_backend)
-
-        self._configure_metadata_backend(backend, init_backend)
-        self._attach_audio_backend(init_backend, dataset_type_enum)
+        webshart = backend.get("webshart") or {}
+        setup = (
+            self._dataset_startup_phase(init_backend["id"], "Opening native Parquet providers")
+            if backend["type"] == "webshart" and webshart.get("format") == "parquet" and webshart.get("sampling_policy")
+            else nullcontext()
+        )
+        with setup:
+            self._configure_backend_by_type(backend, init_backend)
+            self._assign_text_embed_cache(backend, init_backend)
+            image_embed_data_backend = self._get_image_embed_backend(backend, init_backend)
+            conditioning_image_embed_backend = self._get_conditioning_image_embed_backend(backend, init_backend)
+            self._configure_metadata_backend(backend, init_backend)
+            self._attach_audio_backend(init_backend, dataset_type_enum)
+            self._bind_dataset_runtime(init_backend, conditioning_type)
+            runtime = init_backend["dataset_runtime"]
+            StateTracker.own_dataset_resource(runtime)
 
         # Audio-only datasets contain no video stream to split into spatial buckets.
-        self._bind_dataset_runtime(init_backend, conditioning_type)
-        runtime = init_backend["dataset_runtime"]
-        StateTracker.own_dataset_resource(runtime)
         self._handle_bucket_operations(backend, init_backend, conditioning_type, skip_bucket_split=is_audio_only_dataset)
 
         self._create_dataset_and_sampler(backend, init_backend, conditioning_type)
