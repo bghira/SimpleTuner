@@ -3001,7 +3001,6 @@ class TestEvalDatasetVAECacheMetadata(TestFactoryEdgeCases):
         )
 
         # StateTracker lookup with eval explicitly included must work
-        # (this is the code path VAECache uses via _metadata_search_types)
         st_meta_eval = StateTracker.get_metadata_by_filepath(
             filepath,
             data_backend_id="eval-test",

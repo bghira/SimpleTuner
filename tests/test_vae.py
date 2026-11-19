@@ -222,6 +222,10 @@ class DummyAccelerator:
 
 
 class DummyMetadataBackend:
+    from simpletuner.helpers.metadata.backends.base import MetadataBackend
+
+    get_metadata_batch = MetadataBackend.get_metadata_batch
+
     def __init__(self, metadata: dict):
         self._metadata = metadata
         self.image_metadata_loaded = True
@@ -275,10 +279,9 @@ class TestVaeCacheAudio(unittest.TestCase):
         vae_cache = VAECache.__new__(VAECache)
         vae_cache.id = "audio-cache"
         vae_cache.dataset_type_enum = DatasetType.AUDIO
-        vae_cache._metadata_search_types = ["image", "video", "conditioning", "audio"]
         vae_cache.metadata_backend = DummyMetadataBackend(metadata={"track.wav": {"num_samples": 350}})
 
-        with patch.object(StateTracker, "get_metadata_by_filepath", return_value=None):
+        with patch.object(StateTracker, "get_metadata_by_filepath", side_effect=AssertionError("global geometry lookup")):
             entries = vae_cache._gather_sample_metadata(["track.wav"], samples=torch.zeros(1, 2, 300))
 
         self.assertEqual(entries[0]["metadata"]["num_samples"], 300)

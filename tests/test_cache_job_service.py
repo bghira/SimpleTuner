@@ -392,6 +392,22 @@ class _LegacyPreparationMetadata(SimpleNamespace):
 
 
 class TestImageArtifactPreparation(unittest.TestCase):
+    def test_image_cache_preparation_keeps_the_training_dataset_registered(self):
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        service = CacheJobService()
+        job = CacheJob("job", "video", "vae")
+        training = DatasetRuntime("video", None, None, {"dataset_type": "video"})
+        preparation = DatasetRuntime("video", None, None, {"dataset_type": "video"})
+        cache = Mock()
+        cache.prepare_dataset.return_value = 8
+        with patch.object(StateTracker, "datasets", {"video": training}):
+            service._prepare_image_artifacts(job, preparation, "vae_cache", cache)
+            self.assertIs(StateTracker.get_dataset("video"), training)
+        self.assertIs(preparation.vae_cache, cache)
+        self.assertIsNone(training.vae_cache)
+        self.assertIs(cache.prepare_dataset.call_args.args[0], preparation)
+
     def test_vae_and_conditioning_jobs_use_the_configured_artifact_store(self):
         service = CacheJobService()
         source = Mock(type="webshart")

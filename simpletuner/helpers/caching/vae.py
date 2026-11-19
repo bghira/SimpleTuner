@@ -129,10 +129,6 @@ class VAECache(WebhookMixin):
         self.dataset = dataset
         self.dataset_type_enum = ensure_dataset_type(dataset_type, default=DatasetType.IMAGE)
         self.dataset_type = self.dataset_type_enum.value
-        _base_search_types = ["image", "video", "conditioning"]
-        self._metadata_search_types = (
-            _base_search_types if self.dataset_type in _base_search_types else _base_search_types + [self.dataset_type]
-        )
         if image_data_backend and image_data_backend.id != id:
             raise ValueError(f"VAECache received incorrect image_data_backend: {image_data_backend}")
         self.image_data_backend = image_data_backend
@@ -737,24 +733,14 @@ class VAECache(WebhookMixin):
         return value
 
     def _gather_sample_metadata(self, filepaths, samples: torch.Tensor | None = None, *, view=None):
+        refs = tuple(filepaths)
+        records = (
+            self.metadata_backend.get_metadata_batch(refs)
+            if view is None
+            else self.metadata_backend.get_view_metadata(refs, view)
+        )
         metadata_entries = []
-        view_metadata = iter(self.metadata_backend.get_view_metadata(filepaths, view)) if view is not None else None
-        for index, filepath in enumerate(filepaths):
-            if view_metadata is not None:
-                resolved_metadata = next(view_metadata)
-            else:
-                resolved_metadata = None
-                try:
-                    resolved_metadata = StateTracker.get_metadata_by_filepath(
-                        filepath, data_backend_id=self.id, search_dataset_types=self._metadata_search_types
-                    )
-                except Exception as exc:
-                    logger.debug(f"StateTracker metadata lookup failed for {filepath}: {exc}")
-                if resolved_metadata is None and self.metadata_backend:
-                    try:
-                        resolved_metadata = self.metadata_backend.get_metadata_by_filepath(filepath)
-                    except Exception as exc:
-                        logger.debug(f"Metadata backend lookup failed for {filepath}: {exc}")
+        for index, (filepath, resolved_metadata) in enumerate(zip(refs, records, strict=True)):
             resolved_metadata = dict(resolved_metadata or {})
             if self.dataset_type_enum is DatasetType.AUDIO and torch.is_tensor(samples):
                 resolved_metadata["num_samples"] = int(samples[index].shape[-1])

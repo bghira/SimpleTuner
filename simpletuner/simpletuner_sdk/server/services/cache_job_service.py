@@ -522,10 +522,7 @@ class CacheJobService:
     # ------------------------------------------------------------------
 
     def _prepare_image_artifacts(self, job, runtime, binding, cache):
-        from simpletuner.helpers.training.state_tracker import StateTracker
-
         setattr(runtime, binding, cache)
-        StateTracker.register_dataset(runtime)
         job.status = CacheJobStatus.RUNNING
         job.stage = "Preparing latents" if binding == "vae_cache" else "Preparing conditioning embeddings"
         last_update = 0.0
