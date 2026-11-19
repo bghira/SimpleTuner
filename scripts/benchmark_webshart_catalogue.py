@@ -1,7 +1,8 @@
 """Measure native capture discovery and projected row reads in a fresh process.
 
-Pass a credential object with url, access_id and secret_key on stdin. Each invocation
-opens a fresh catalogue and visits evenly spaced shards without enabling a payload cache.
+Pass a credential object with url, access_id and secret_key on stdin for S3.
+Local Parquet fixtures take a source directory and an optional manifest. Each
+invocation uses a new reader and visits evenly spaced shards with no payload cache.
 """
 
 import argparse
@@ -10,6 +11,7 @@ import json
 import sys
 import time
 import tracemalloc
+from urllib.parse import urlparse
 
 import psutil
 import webshart
@@ -18,26 +20,31 @@ import webshart
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", required=True)
-    parser.add_argument("--manifest", required=True)
+    parser.add_argument("--manifest")
     parser.add_argument("--shards", type=int, required=True)
     parser.add_argument("--startup-budget-mib", type=int, default=256)
     parser.add_argument("--retained-budget-mib", type=int, default=32)
     args = parser.parse_args()
     if args.shards < 1:
         parser.error("--shards must be positive")
-    credentials = json.load(sys.stdin)
+    s3_options = None
+    if urlparse(args.source).scheme == "s3":
+        if not args.manifest:
+            parser.error("--manifest is required for an S3 source")
+        credentials = json.load(sys.stdin)
+        s3_options = {
+            "region_name": "auto",
+            "endpoint_url": credentials["url"],
+            "aws_access_key_id": credentials["access_id"],
+            "aws_secret_access_key": credentials["secret_key"],
+        }
     process = psutil.Process()
     initial = process.memory_info().rss
     dataset = webshart.discover_parquet_dataset(
         args.source,
         manifest=args.manifest,
         metadata_cache_size=8,
-        s3_options=dict(
-            region_name="auto",
-            endpoint_url=credentials["url"],
-            aws_access_key_id=credentials["access_id"],
-            aws_secret_access_key=credentials["secret_key"],
-        ),
+        s3_options=s3_options,
     )
     count = min(args.shards, dataset.num_shards)
     gc.collect()
@@ -46,6 +53,8 @@ def main():
         json.dumps(
             dict(
                 stage="discovery",
+                scope="webshart_catalogue_projection",
+                webshart_version=webshart.__version__,
                 source_revision=dataset.fingerprint,
                 shards=dataset.num_shards,
                 physical_rows=len(dataset),
@@ -59,7 +68,6 @@ def main():
         raise RuntimeError("Catalogue startup exceeded the RSS budget")
     tracemalloc.start()
     warm = None
-    projected_bytes = 0
     min_size = max_size = None
     started = time.monotonic()
     for index in range(count):
@@ -71,7 +79,6 @@ def main():
         dataset.read_metadata_rows(
             shard, range(min(4, info["num_rows"])), fields=["captions", "width", "height", "url_status"]
         )
-        projected_bytes += dataset._file(shard).bytes_read
         visited = index + 1
         if visited in (1, 10, 100, 1000, count):
             gc.collect()
@@ -87,7 +94,7 @@ def main():
                         rss=rss,
                         python_heap=heap,
                         peak_python_heap=peak_heap,
-                        reader_bytes=projected_bytes,
+                        transport=dataset.io_stats(),
                         open_readers=len(dataset._files),
                         hydrated_shards=len(dataset._metadata_cache),
                         smallest_shard=min_size,
