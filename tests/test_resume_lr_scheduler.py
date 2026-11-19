@@ -50,7 +50,7 @@ class ResumeLRSchedulerTests(unittest.TestCase):
             )
 
             with (
-                patch("simpletuner.helpers.training.state_tracker.StateTracker.get_data_backends", return_value={}),
+                patch("simpletuner.helpers.training.state_tracker.StateTracker.get_datasets", return_value={}),
                 patch("simpletuner.helpers.training.state_tracker.StateTracker.get_global_step", return_value=100),
                 patch("simpletuner.helpers.training.state_tracker.StateTracker.set_global_resume_step"),
                 patch("simpletuner.helpers.training.state_tracker.StateTracker.get_training_state", return_value={}),
@@ -113,7 +113,7 @@ class ResumeLRSchedulerTests(unittest.TestCase):
             )
 
             with (
-                patch("simpletuner.helpers.training.state_tracker.StateTracker.get_data_backends", return_value={}),
+                patch("simpletuner.helpers.training.state_tracker.StateTracker.get_datasets", return_value={}),
                 patch("simpletuner.helpers.training.state_tracker.StateTracker.get_global_step", return_value=200),
                 patch("simpletuner.helpers.training.state_tracker.StateTracker.set_global_resume_step"),
                 patch(

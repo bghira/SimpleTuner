@@ -624,10 +624,7 @@ class TestTrainer(unittest.TestCase):
         dataset = DatasetRuntime("references", None, SimpleNamespace(should_abort=False), {"dataset_type": "conditioning"})
         dataset.vae_cache = SimpleNamespace(should_abort=False)
         dataset.text_embed_cache = SimpleNamespace(should_abort=False)
-        with (
-            patch.object(StateTracker, "datasets", {dataset.id: dataset}),
-            patch.object(StateTracker, "get_data_backends", side_effect=AssertionError("bundle registry read")),
-        ):
+        with patch.object(StateTracker, "datasets", {dataset.id: dataset}):
             trainer.abort()
         trainer.bf.stop_fetching.assert_called_once()
         self.assertTrue(trainer.should_abort)
@@ -2965,7 +2962,7 @@ class TestTrainer(unittest.TestCase):
         lr_scheduler.state_dict.return_value = {"base_lrs": [0.1], "_last_lr": [0.1]}
 
         with patch(
-            "simpletuner.helpers.training.state_tracker.StateTracker.get_data_backends",
+            "simpletuner.helpers.training.state_tracker.StateTracker.get_datasets",
             return_value={},
         ):
             with patch(
@@ -3018,7 +3015,7 @@ class TestTrainer(unittest.TestCase):
             lr_scheduler = Mock()
             lr_scheduler.state_dict.return_value = {"base_lrs": [0.1], "_last_lr": [0.1]}
 
-            with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_data_backends", return_value={}):
+            with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_datasets", return_value={}):
                 with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_global_step", return_value=100):
                     with patch("simpletuner.helpers.training.state_tracker.StateTracker.set_global_resume_step"):
                         with patch(
@@ -3073,7 +3070,7 @@ class TestTrainer(unittest.TestCase):
             lr_scheduler = Mock()
             lr_scheduler.state_dict.return_value = {"base_lrs": [0.1], "_last_lr": [0.1]}
 
-            with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_data_backends", return_value={}):
+            with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_datasets", return_value={}):
                 with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_global_step", return_value=100):
                     with patch("simpletuner.helpers.training.state_tracker.StateTracker.set_global_resume_step"):
                         with patch(
@@ -3525,7 +3522,7 @@ class TestTrainer(unittest.TestCase):
                 wait_for_everyone=Mock(),
             )
 
-            with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_data_backends", return_value={}):
+            with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_datasets", return_value={}):
                 save_path = trainer.checkpoint_state_save(tmpdir)
 
             self.assertEqual(save_path, str(checkpoint_dir))
@@ -3589,7 +3586,7 @@ class TestTrainer(unittest.TestCase):
                         )
 
                         with patch(
-                            "simpletuner.helpers.training.state_tracker.StateTracker.get_data_backends",
+                            "simpletuner.helpers.training.state_tracker.StateTracker.get_datasets",
                             return_value={},
                         ):
                             save_path = trainer.checkpoint_state_save(tmpdir)
@@ -3644,7 +3641,7 @@ class TestTrainer(unittest.TestCase):
         trainer.job_id = "test-job"
 
         # Mock StateTracker methods
-        with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_data_backends", return_value={}):
+        with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_datasets", return_value={}):
             with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_global_step", return_value=0):
                 with patch("simpletuner.helpers.training.state_tracker.StateTracker.set_global_resume_step"):
                     with patch(
@@ -3711,7 +3708,7 @@ class TestTrainer(unittest.TestCase):
         trainer.job_id = "test-job"
 
         # Mock StateTracker methods
-        with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_data_backends", return_value={}):
+        with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_datasets", return_value={}):
             with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_global_step", return_value=0):
                 with patch("simpletuner.helpers.training.state_tracker.StateTracker.set_global_resume_step"):
                     with patch(

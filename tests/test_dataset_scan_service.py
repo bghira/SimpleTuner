@@ -123,7 +123,6 @@ class TestDatasetScanProcess(unittest.TestCase):
 
         service = DatasetScanService()
         runtime = object()
-        registered_config = {"config": {"resolution": 512}}
         training_args = StateTracker.get_args()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -138,7 +137,7 @@ class TestDatasetScanProcess(unittest.TestCase):
             }
             with (
                 patch.object(StateTracker, "datasets", {"example": runtime}),
-                patch.object(StateTracker, "data_backends", {"example": registered_config}),
+                patch.object(StateTracker, "_pending_dataset_configs", {}),
             ):
                 job_id = service.scan_dataset("example", config, {"output_dir": str(root / "output")}, force_rescan=True)
                 service._scan_thread.join(timeout=45)
@@ -147,7 +146,7 @@ class TestDatasetScanProcess(unittest.TestCase):
                 self.assertEqual(result["status"], "completed", result)
                 self.assertEqual(result["current"], 1)
                 self.assertIs(StateTracker.get_dataset("example"), runtime)
-                self.assertIs(StateTracker.get_data_backend("example"), registered_config)
+                self.assertEqual(StateTracker._pending_dataset_configs, {})
                 self.assertIs(StateTracker.get_args(), training_args)
                 self.assertTrue((root / "output" / "all_image_files_example.json").is_file())
 

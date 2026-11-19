@@ -78,8 +78,7 @@ class DatasetRuntimeTests(unittest.TestCase):
     def test_registry_exposes_catalogue_without_sampler_or_legacy_bundle(self):
         with (
             patch.object(StateTracker, "datasets", {}),
-            patch.object(StateTracker, "data_backends", {}),
-            patch.object(StateTracker, "get_data_backends", side_effect=AssertionError("legacy lookup")),
+            patch.object(StateTracker, "_pending_dataset_configs", {}),
         ):
             StateTracker.register_dataset(self.runtime)
             self.assertIs(StateTracker.get_dataset("images"), self.runtime)
@@ -87,18 +86,14 @@ class DatasetRuntimeTests(unittest.TestCase):
             updated = {**self.runtime.config, "probability": 0.25}
             StateTracker.set_data_backend_config("images", updated)
             self.assertIs(StateTracker.get_data_backend_config("images"), updated)
-            self.assertNotIn("images", StateTracker.data_backends)
+            self.assertNotIn("images", StateTracker._pending_dataset_configs)
 
-    def test_compatibility_bundle_uses_the_registered_runtime_config(self):
-        with patch.object(StateTracker, "datasets", {}), patch.object(StateTracker, "data_backends", {}):
+    def test_registration_retires_the_unbound_configuration(self):
+        with patch.object(StateTracker, "datasets", {}), patch.object(StateTracker, "_pending_dataset_configs", {}):
+            StateTracker.set_data_backend_config(self.runtime.id, {"probability": 0.5})
             StateTracker.register_dataset(self.runtime)
-            bundle = {"id": self.runtime.id, "config": {**self.config}}
-            StateTracker.register_data_backend(bundle)
-            self.assertIs(bundle["config"], self.runtime.config)
-            changed = {**self.runtime.config, "probability": 0.5}
-            StateTracker.set_data_backend_config(self.runtime.id, changed)
-            self.assertIs(self.runtime.config, changed)
-            self.assertIs(StateTracker.get_data_backend_config(self.runtime.id), changed)
+            self.assertNotIn(self.runtime.id, StateTracker._pending_dataset_configs)
+            self.assertIs(StateTracker.get_data_backend_config(self.runtime.id), self.runtime.config)
 
     def test_run_closes_shared_writer_once_after_dataset_handles(self):
         from contextlib import ExitStack
@@ -110,7 +105,7 @@ class DatasetRuntimeTests(unittest.TestCase):
         with (
             patch.object(StateTracker, "_dataset_resources", ExitStack()),
             patch.object(StateTracker, "datasets", {}),
-            patch.object(StateTracker, "data_backends", {}),
+            patch.object(StateTracker, "_pending_dataset_configs", {}),
             patch.object(StateTracker, "dataset_schedule", {}),
             patch.object(StateTracker, "default_text_embed_cache", None),
             patch.object(StateTracker, "consumed_dataset_mixer", None),
@@ -125,24 +120,19 @@ class DatasetRuntimeTests(unittest.TestCase):
             StateTracker.clear_data_backends()
         self.assertEqual(order, ["other", "images", "writer"])
 
-    def test_relationships_link_typed_only_datasets_and_validate_before_updating_mirrors(self):
-        target = DatasetRuntime("target", None, None, {})
-        other = DatasetRuntime("other", None, None, {})
-        datasets = {ds.id: ds for ds in (self.runtime, target, other)}
-        for method, attribute, key in (
-            (StateTracker.set_conditioning_datasets, "conditioning_datasets", "conditioning_data"),
-            (StateTracker.set_s2v_datasets, "audio_datasets", "s2v_data"),
+    def test_dataset_links_are_validated_before_replacing_bound_handles(self):
+        first = DatasetRuntime("first", None, None, {})
+        second = DatasetRuntime("second", None, None, {})
+        datasets = {ds.id: ds for ds in (self.runtime, first, second)}
+        for method, attribute in (
+            (StateTracker.set_conditioning_datasets, "conditioning_datasets"),
+            (StateTracker.set_s2v_datasets, "audio_datasets"),
         ):
             with self.subTest(method=method.__name__), patch.object(StateTracker, "datasets", datasets):
-                with patch.object(StateTracker, "data_backends", {}):
-                    method(self.runtime.id, [target.id])
-                    self.assertEqual(getattr(self.runtime, attribute), (target,))
-                source_bundle = {key: [{"id": target.id}]}
-                with patch.object(StateTracker, "data_backends", {self.runtime.id: source_bundle}):
-                    with self.assertRaises(KeyError):
-                        method(self.runtime.id, [other.id])
-                    self.assertEqual(getattr(self.runtime, attribute), (target,))
-                    self.assertEqual(source_bundle[key], [{"id": target.id}])
+                method(self.runtime.id, [first.id])
+                with self.assertRaises(KeyError):
+                    method(self.runtime.id, [second.id, "missing"])
+                self.assertEqual(getattr(self.runtime, attribute), (first,))
 
     def test_occurrence_revision_pins_binding_order_views_captions_and_dropout(self):
         from simpletuner.helpers.metadata.preparation import DatasetDescription
@@ -361,7 +351,7 @@ class DatasetRuntimeTests(unittest.TestCase):
                 self.config["caption_strategy"] = strategy
                 runtime = DatasetRuntime("images", self.data_backend, self.metadata_backend, self.config)
                 with (
-                    patch.object(StateTracker, "get_data_backend", side_effect=AssertionError("registry lookup")),
+                    patch.object(StateTracker, "get_dataset", side_effect=AssertionError("registry lookup")),
                     patch.object(StateTracker, "get_data_backend_config", side_effect=AssertionError("config lookup")),
                 ):
                     self.assertEqual(runtime.resolve_caption("sample.jpg"), ["first", "second"])
@@ -394,7 +384,7 @@ class DatasetRuntimeTests(unittest.TestCase):
         config = {**self.config, "caption_strategy": "parquet", "instance_data_dir": "images"}
         runtime = DatasetRuntime("images", self.data_backend, self.metadata_backend, config)
         with (
-            patch.object(StateTracker, "get_data_backend", side_effect=AssertionError("registry lookup")),
+            patch.object(StateTracker, "get_dataset", side_effect=AssertionError("registry lookup")),
             patch.object(StateTracker, "get_data_backend_config", side_effect=AssertionError("config lookup")),
         ):
             self.assertEqual(runtime.resolve_caption("images/nested/sample.jpg"), ["first", "second"])

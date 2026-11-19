@@ -4037,7 +4037,6 @@ class FactoryRegistry:
         runtime.text_embed_cache = init_backend.get("text_embed_cache")
         StateTracker.own_dataset_resource(runtime)
         StateTracker.register_dataset(runtime)
-        StateTracker.register_data_backend(init_backend)
         self.caption_backends[init_backend["id"]] = init_backend
         info_log(f"(id={init_backend['id']}) Caption dataset registered.")
 
@@ -4149,13 +4148,11 @@ class FactoryRegistry:
             info_log(
                 f"(id={init_backend['id']}) Detected mocked data backend without mocked metadata backend; skipping runtime setup steps."
             )
-            StateTracker.register_data_backend(init_backend)
             self.data_backends[init_backend["id"]] = init_backend
             return
 
         if data_backend_is_mock and metadata_backend_is_mock:
             info_log(f"(id={init_backend['id']}) Detected fully mocked backend stack, skipping dataset creation steps.")
-            StateTracker.register_data_backend(init_backend)
             self.data_backends[init_backend["id"]] = init_backend
             return
 
@@ -4233,7 +4230,6 @@ class FactoryRegistry:
         self._move_text_encoders_for_vae_cache(self.accelerator.device)
         init_backend["metadata_backend"].save_cache()
 
-        StateTracker.register_data_backend(init_backend)
         self.data_backends[init_backend["id"]] = init_backend
 
     def configure(self, data_backend_config: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:

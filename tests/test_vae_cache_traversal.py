@@ -53,10 +53,7 @@ class TestConditioningGeometry(unittest.TestCase):
                 {**config, "dataset_type": "conditioning", "instance_data_dir": str(reference_root)},
             )
             reference.source_dataset = source
-            with (
-                patch.object(StateTracker, "get_conditioning_mappings", side_effect=AssertionError("global relationships")),
-                patch.object(StateTracker, "get_dataset", side_effect=AssertionError("global dataset lookup")),
-            ):
+            with (patch.object(StateTracker, "get_dataset", side_effect=AssertionError("global dataset lookup")),):
                 image, crop, aspect = prepare_sample(
                     Image.new("RGB", (256, 256)),
                     reference.id,

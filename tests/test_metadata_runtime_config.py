@@ -52,12 +52,10 @@ class MetadataRuntimeConfigTests(unittest.TestCase):
                 backend.load_image_metadata = Mock()
                 backend._load_caption_cache = Mock()
                 backend._sync_image_files_with_buckets = Mock()
-                registered_backend = {"config": live_config}
-
-                with patch.dict(StateTracker.data_backends, {backend.id: registered_backend}, clear=True):
+                with patch.dict(StateTracker._pending_dataset_configs, {backend.id: live_config}, clear=True):
                     for _ in range(2):
                         backend.reload_cache()
-                        self.assertIs(registered_backend["config"], live_config)
+                        self.assertIs(StateTracker.get_data_backend_config(backend.id), live_config)
                         self.assertEqual(StateTracker.get_data_backend_config(backend.id), live_config)
                         self.assertEqual(backend.config, cached_config)
                     if backend_class is CaptionMetadataBackend:
@@ -68,4 +66,4 @@ class MetadataRuntimeConfigTests(unittest.TestCase):
                     backend.config = {"resolution": 1024}
                     backend.reload_cache(set_config=False)
                     self.assertEqual(backend.config, {"resolution": 1024})
-                    self.assertIs(registered_backend["config"], live_config)
+                    self.assertIs(StateTracker.get_data_backend_config(backend.id), live_config)

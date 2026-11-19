@@ -100,7 +100,7 @@ class TestDatasetMixer(unittest.TestCase):
 
         with (
             patch.object(StateTracker, "args", SimpleNamespace(seed=42, gradient_accumulation_steps=2)),
-            patch.object(StateTracker, "data_backends", {k: {"config": v} for k, v in configs.items()}),
+            patch.object(StateTracker, "_pending_dataset_configs", configs.copy()),
             patch.object(StateTracker, "repeats", {}),
             patch.object(StateTracker, "exhausted_backends", []),
             patch.object(StateTracker, "consumed_dataset_mixer", None),

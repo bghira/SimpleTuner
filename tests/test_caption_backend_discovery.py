@@ -42,7 +42,7 @@ class CaptionDiscoveryRestartTests(unittest.TestCase):
                 expected = ["a fox", "a landscape"] if extensions else ["a lake", "a fox", "a landscape"]
 
                 with (
-                    patch.object(StateTracker, "data_backends", {}),
+                    patch.object(StateTracker, "_pending_dataset_configs", {}),
                     patch.object(StateTracker, "args", args),
                 ):
                     StateTracker.set_data_backend_config("captions", config.to_dict()["config"])

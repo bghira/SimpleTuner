@@ -461,11 +461,11 @@ class CaptionGeneratorConfigTests(unittest.TestCase):
         ]
         with (
             patch("simpletuner.helpers.data_backend.caption_generator.CaptionImageGenerator") as generator,
-            patch.object(StateTracker, "data_backends", {"prompts": {"config": {"resolution": 128}}}),
+            patch.object(StateTracker, "_pending_dataset_configs", {"prompts": {"resolution": 128}}),
         ):
             generator.return_value.bucket_directories.return_value = {"512x512": "cache/a", "768x1024": "cache/b"}
             factory._materialize_caption_generators(config)
-            self.assertEqual(StateTracker.data_backends, {"prompts": {"config": {"resolution": 128}}})
+            self.assertEqual(StateTracker._pending_dataset_configs, {"prompts": {"resolution": 128}})
         generator.return_value.generate.assert_called_once_with()
         self.assertEqual([entry["dataset_type"] for entry in config], ["image", "image"])
         self.assertEqual([entry["id"] for entry in config], ["prompts-generated-512x512", "prompts-generated-768x1024"])

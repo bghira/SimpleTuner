@@ -173,7 +173,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
 
         with (
             patch.object(StateTracker, "datasets", {}),
-            patch.object(StateTracker, "data_backends", {}),
+            patch.object(StateTracker, "_pending_dataset_configs", {}),
             patch.object(factory, "_configure_single_data_backend", side_effect=register),
         ):
             factory.configure_data_backends(config)
@@ -837,7 +837,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
                     model=self.model,
                 )
                 with (
-                    patch.dict(StateTracker.data_backends, {backend["id"]: init_backend}, clear=True),
+                    patch.dict(StateTracker._pending_dataset_configs, {backend["id"]: live_config}, clear=True),
                     patch.object(StateTracker, "own_dataset_resource"),
                     patch.object(StateTracker, "register_dataset"),
                     patch("simpletuner.helpers.data_backend.factory.MultiAspectDataset"),
@@ -2975,14 +2975,9 @@ class TestEvalDatasetVAECacheMetadata(TestFactoryEdgeCases):
         finally:
             release_feeders.set()
 
-        # Register the data backend in StateTracker (as factory does at line 4141)
-        init_backend = {
-            "id": "eval-test",
-            "data_backend": data_backend,
-            "metadata_backend": metadata_backend,
-            "dataset_type": "eval",
-        }
-        StateTracker.register_data_backend(init_backend)
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+
+        StateTracker.register_dataset(DatasetRuntime("eval-test", data_backend, metadata_backend, backend_config))
 
         # Get a filepath from the bucket indices
         all_bucket_files = []

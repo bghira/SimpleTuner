@@ -43,7 +43,6 @@ class TestS2VConnectSamples(unittest.TestCase):
         backend = LocalDataBackend(None, dataset_id)
         config = {"instance_data_dir": "/videos", **bundle.get("config", {})}
         StateTracker.register_dataset(DatasetRuntime(dataset_id, backend, None, config))
-        StateTracker.register_data_backend(bundle)
 
     def _create_mock_sampler(self, backend_id: str = "video-backend"):
         """Create a mock sampler with the connect_s2v_samples method."""
@@ -375,51 +374,6 @@ class TestS2VCollateIntegration(unittest.TestCase):
 
         self.assertEqual(s2v_audio_paths[0], "/audio/video_001.wav")
         self.assertIsNone(s2v_audio_paths[1])
-
-
-class TestStateTrackerS2VMethods(unittest.TestCase):
-    """Test StateTracker S2V dataset methods."""
-
-    def setUp(self):
-        StateTracker.clear_data_backends()
-
-    def tearDown(self):
-        StateTracker.clear_data_backends()
-
-    def test_set_and_get_s2v_datasets(self):
-        """Test setting and getting s2v_datasets."""
-        StateTracker.register_data_backend({"id": "video-1"})
-        StateTracker.register_data_backend({"id": "audio-1"})
-        StateTracker.register_data_backend({"id": "audio-2"})
-
-        StateTracker.set_s2v_datasets("video-1", ["audio-1", "audio-2"])
-
-        result = StateTracker.get_s2v_datasets("video-1")
-        self.assertEqual(len(result), 2)
-        self.assertEqual(result[0]["id"], "audio-1")
-        self.assertEqual(result[1]["id"], "audio-2")
-
-    def test_get_s2v_datasets_empty_when_not_set(self):
-        """Test that get_s2v_datasets returns empty list when not configured."""
-        StateTracker.register_data_backend({"id": "video-1"})
-
-        result = StateTracker.get_s2v_datasets("video-1")
-        self.assertEqual(result, [])
-
-    def test_get_s2v_mappings(self):
-        """Test getting all S2V mappings."""
-        StateTracker.register_data_backend({"id": "video-1"})
-        StateTracker.register_data_backend({"id": "video-2"})
-        StateTracker.register_data_backend({"id": "audio-1"})
-        StateTracker.register_data_backend({"id": "audio-2"})
-
-        StateTracker.set_s2v_datasets("video-1", ["audio-1"])
-        StateTracker.set_s2v_datasets("video-2", ["audio-2"])
-
-        mappings = StateTracker.get_s2v_mappings()
-
-        self.assertIn(("video-1", "audio-1"), mappings)
-        self.assertIn(("video-2", "audio-2"), mappings)
 
 
 if __name__ == "__main__":

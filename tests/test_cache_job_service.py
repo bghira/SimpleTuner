@@ -526,7 +526,7 @@ class TestStreamingTextPreparation(unittest.TestCase):
 
         def consume(records, *, batch_size, progress_callback):
             self.assertIs(StateTracker.get_dataset("stream-test"), runtime)
-            self.assertNotIn("stream-test", StateTracker.data_backends)
+            self.assertNotIn("stream-test", StateTracker._pending_dataset_configs)
             self.assertEqual(batch_size, 2)
             self.assertNotIsInstance(records, list)
             progress_callback(0)

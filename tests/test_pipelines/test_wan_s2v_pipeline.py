@@ -125,18 +125,6 @@ class TestWanS2VModelMetadata(unittest.TestCase):
         )
 
 
-class TestWanS2VStateTrackerIntegration(unittest.TestCase):
-    """Test StateTracker S2V dataset methods."""
-
-    def test_s2v_dataset_methods_exist(self):
-        """Test that StateTracker has s2v_datasets methods."""
-        from simpletuner.helpers.training.state_tracker import StateTracker
-
-        self.assertTrue(hasattr(StateTracker, "set_s2v_datasets"))
-        self.assertTrue(hasattr(StateTracker, "get_s2v_datasets"))
-        self.assertTrue(hasattr(StateTracker, "get_s2v_mappings"))
-
-
 class TestWanS2VCollateIntegration(unittest.TestCase):
     def test_training_consumes_on_demand_audio_from_the_selected_datasets(self):
         from simpletuner.helpers.models.wan_s2v.model import WanS2V

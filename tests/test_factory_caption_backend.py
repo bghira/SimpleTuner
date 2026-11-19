@@ -77,26 +77,26 @@ class FactoryCaptionBackendTests(unittest.TestCase):
             ),
             patch("simpletuner.helpers.data_backend.factory.StateTracker") as state_tracker,
         ):
-            state_tracker.register_data_backend.side_effect = lambda _backend: events.append("register")
+            state_tracker.register_dataset.side_effect = lambda _backend: events.append("register")
             factory._configure_caption_backend(backend)
-            registered_backend = state_tracker.register_data_backend.call_args.args[0]
+            registered_backend = state_tracker.register_dataset.call_args.args[0]
 
         return registered_backend, events
 
     def test_caption_backend_uses_dataset_batch_size_override(self):
         registered_backend, events = self._configure_backend(global_batch_size=8, dataset_batch_size=3)
 
-        self.assertIsInstance(registered_backend["sampler"], CaptionSampler)
-        self.assertEqual(registered_backend["sampler"].batch_size, 3)
-        self.assertIs(registered_backend["train_dataloader"].sampler, registered_backend["sampler"])
+        self.assertIsInstance(registered_backend.sampler, CaptionSampler)
+        self.assertEqual(registered_backend.sampler.batch_size, 3)
+        self.assertIs(registered_backend.training_dataloader.sampler, registered_backend.sampler)
         self.assertEqual(events, ["wait", "load", "register"])
 
     def test_caption_backend_uses_global_batch_size_fallback(self):
         registered_backend, _events = self._configure_backend(global_batch_size=5)
 
-        self.assertIsInstance(registered_backend["sampler"], CaptionSampler)
-        self.assertEqual(registered_backend["sampler"].batch_size, 5)
-        self.assertIn("train_dataloader", registered_backend)
+        self.assertIsInstance(registered_backend.sampler, CaptionSampler)
+        self.assertEqual(registered_backend.sampler.batch_size, 5)
+        self.assertIsNotNone(registered_backend.training_dataloader)
 
 
 if __name__ == "__main__":

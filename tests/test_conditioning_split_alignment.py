@@ -172,7 +172,6 @@ class TestConditioningSplitAlignment(unittest.TestCase):
         if source_config_overrides:
             source_config.update(source_config_overrides)
 
-        StateTracker.register_data_backend({"id": source_id})
         StateTracker.set_data_backend_config(
             source_id,
             source_config,
@@ -192,14 +191,13 @@ class TestConditioningSplitAlignment(unittest.TestCase):
             repeats=int(source_config.get("repeats", 0) or 0),
         )
         training_metadata.aspect_ratio_bucket_indices = deepcopy(base_buckets)
-        source_entry = StateTracker.get_data_backend(source_id)
-        source_entry.update(
-            {
-                "metadata_backend": training_metadata,
-                "instance_data_dir": source_dir,
-                "dataset_type": "image",
-            }
-        )
+        source_entry = {
+            "id": source_id,
+            "config": source_config,
+            "metadata_backend": training_metadata,
+            "instance_data_dir": source_dir,
+            "dataset_type": "image",
+        }
         training_metadata.split_buckets_between_processes(apply_padding=apply_padding)
 
         conditioning_config = {
@@ -212,7 +210,6 @@ class TestConditioningSplitAlignment(unittest.TestCase):
         if conditioning_config_overrides:
             conditioning_config.update(conditioning_config_overrides)
 
-        StateTracker.register_data_backend({"id": conditioning_id})
         StateTracker.set_data_backend_config(
             conditioning_id,
             conditioning_config,
@@ -231,14 +228,13 @@ class TestConditioningSplitAlignment(unittest.TestCase):
             minimum_image_size=conditioning_config.get("minimum_image_size"),
             repeats=int(conditioning_config.get("repeats", 0) or 0),
         )
-        conditioning_entry = StateTracker.get_data_backend(conditioning_id)
-        conditioning_entry.update(
-            {
-                "metadata_backend": conditioning_metadata,
-                "instance_data_dir": conditioning_dir,
-                "dataset_type": "conditioning",
-            }
-        )
+        conditioning_entry = {
+            "id": conditioning_id,
+            "config": conditioning_config,
+            "metadata_backend": conditioning_metadata,
+            "instance_data_dir": conditioning_dir,
+            "dataset_type": "conditioning",
+        }
 
         if before_copy_callback:
             before_copy_callback(

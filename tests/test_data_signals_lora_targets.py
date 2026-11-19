@@ -319,7 +319,7 @@ class TestFactoryDataSignals(unittest.TestCase):
             raise PreparationReached()
 
         with (
-            patch.object(StateTracker, "get_conditioning_mappings", side_effect=AssertionError("global dataset links")),
+            patch.object(StateTracker, "get_datasets", return_value={}),
             patch.object(factory, "_configure_single_data_backend", side_effect=check),
             self.assertRaises(PreparationReached),
         ):

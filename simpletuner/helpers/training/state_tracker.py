@@ -50,7 +50,7 @@ class StateTracker:
     _dataset_resources = ExitStack()
     _is_sdxl_refiner = False
     accelerator = None
-    data_backends = {}
+    _pending_dataset_configs = {}
     datasets: dict[str, "DatasetRuntime"] = {}
     # A list of backend IDs to exhaust.
     exhausted_backends = []
@@ -586,20 +586,9 @@ class StateTracker:
         cls.validation_sample_images = validation_sample_images
 
     @classmethod
-    def register_data_backend(cls, data_backend):
-        dataset_id = data_backend["id"]
-        dataset = cls.datasets.get(dataset_id)
-        if dataset is not None:
-            data_backend["config"] = dataset.config
-        cls.data_backends[dataset_id] = data_backend
-
-    @classmethod
-    def get_data_backend(cls, id: str):
-        return cls.data_backends[id]
-
-    @classmethod
     def register_dataset(cls, dataset: "DatasetRuntime"):
         cls.datasets[dataset.id] = dataset
+        cls._pending_dataset_configs.pop(dataset.id, None)
 
     @classmethod
     def get_dataset(cls, dataset_id: str) -> "DatasetRuntime":
@@ -619,77 +608,28 @@ class StateTracker:
     @classmethod
     def get_dataset_size(cls, data_backend_id: str):
         dataset = cls.datasets.get(data_backend_id)
-        if dataset is not None and dataset.sampler is not None:
-            return len(dataset.sampler)
-        if "sampler" in cls.data_backends[data_backend_id]:
-            return len(cls.data_backends[data_backend_id]["sampler"])
-        return 0
-
-    @classmethod
-    def _set_dataset_relationship(cls, source_id, target_ids, runtime_attribute, bundle_key):
-        runtime = cls.datasets.get(source_id)
-        bundle = cls.data_backends.get(source_id)
-        if runtime is None and bundle is None:
-            raise KeyError(source_id)
-        runtime_targets = tuple(cls.datasets[target_id] for target_id in target_ids) if runtime is not None else None
-        bundle_targets = [cls.data_backends[target_id] for target_id in target_ids] if bundle is not None else None
-        if runtime is not None:
-            setattr(runtime, runtime_attribute, runtime_targets)
-        if bundle is not None:
-            bundle[bundle_key] = bundle_targets
+        return dataset.training_batch_count() if dataset is not None and dataset.training_dataloader is not None else 0
 
     @classmethod
     def set_conditioning_datasets(cls, data_backend_id: str, conditioning_backend_ids: list[str]):
-        cls._set_dataset_relationship(
-            data_backend_id, conditioning_backend_ids, "conditioning_datasets", "conditioning_data"
-        )
+        cls.datasets[data_backend_id].conditioning_datasets = tuple(cls.datasets[id] for id in conditioning_backend_ids)
 
     @classmethod
     def set_s2v_datasets(cls, data_backend_id: str, s2v_backend_ids: list[str]):
-        """Link audio datasets for S2V (Speech-to-Video) training."""
-        cls._set_dataset_relationship(data_backend_id, s2v_backend_ids, "audio_datasets", "s2v_data")
-
-    @classmethod
-    def get_s2v_datasets(cls, data_backend_id: str) -> list[dict]:
-        """Get linked S2V audio datasets for a video dataset."""
-        return cls.data_backends[data_backend_id].get("s2v_data", [])
-
-    @classmethod
-    def get_s2v_mappings(cls) -> list[tuple[str, str]]:
-        """Get all S2V dataset mappings (video_dataset_id, audio_dataset_id)."""
-        s2v_mappings = []
-        for data_backend_id, data_backend in cls.data_backends.items():
-            s2v = data_backend.get("s2v_data", [])
-            s2v_mappings.extend((data_backend_id, x["id"]) for x in s2v)
-        return s2v_mappings
+        cls.datasets[data_backend_id].audio_datasets = tuple(cls.datasets[id] for id in s2v_backend_ids)
 
     @classmethod
     def get_data_backend_config(cls, data_backend_id: str):
         dataset = cls.datasets.get(data_backend_id)
-        if dataset is not None:
-            return dataset.config
-        return cls.data_backends.get(data_backend_id, {}).get("config", {})
+        return dataset.config if dataset is not None else cls._pending_dataset_configs.get(data_backend_id, {})
 
     @classmethod
     def set_data_backend_config(cls, data_backend_id: str, config: dict):
         dataset = cls.datasets.get(data_backend_id)
         if dataset is not None:
             dataset.config = config
-            if data_backend_id not in cls.data_backends:
-                return
-        cls.data_backends.setdefault(data_backend_id, {})["config"] = config
-
-    @classmethod
-    def attach_bucket_report(cls, data_backend_id: str, bucket_report) -> None:
-        if data_backend_id not in cls.data_backends:
-            cls.data_backends[data_backend_id] = {}
-        cls.data_backends[data_backend_id]["bucket_report"] = bucket_report
-
-    @classmethod
-    def get_conditioning_mappings(cls) -> list[tuple[str, str]]:
-        return [
-            (dataset.id, reference.id) for dataset in cls.datasets.values() for reference in dataset.conditioning_datasets
-        ]
+        else:
+            cls._pending_dataset_configs[data_backend_id] = config
 
     @classmethod
     def own_dataset_resource(cls, resource):
@@ -698,31 +638,11 @@ class StateTracker:
     @classmethod
     def clear_data_backends(cls):
         cls.consumed_dataset_mixer = None
-        cls.data_backends = {}
+        cls._pending_dataset_configs = {}
         cls.datasets = {}
         cls.dataset_schedule = {}
         cls.default_text_embed_cache = None
         cls._dataset_resources.close()
-
-    @classmethod
-    def get_data_backends(
-        cls,
-        _type: object = DatasetType.IMAGE,
-        _types: object = (DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.CAPTION, DatasetType.AUDIO),
-    ):
-        target_type = ensure_dataset_type(_type, default=DatasetType.IMAGE)
-        allowed_types = set()
-        if isinstance(_types, (list, tuple, set)):
-            allowed_types = {ensure_dataset_type(value, default=DatasetType.IMAGE) for value in _types}
-        elif _types is not None:
-            allowed_types = {ensure_dataset_type(_types, default=DatasetType.IMAGE)}
-
-        output = {}
-        for backend_id, backend in dict(cls.data_backends).items():
-            backend_type = ensure_dataset_type(backend.get("dataset_type"), default=DatasetType.IMAGE)
-            if backend_type == target_type or (allowed_types and backend_type in allowed_types):
-                output[backend_id] = backend
-        return output
 
     @classmethod
     def set_accelerator(cls, accelerator):
@@ -823,10 +743,6 @@ class StateTracker:
             if dataset.config["dataset_type"] in search_dataset_types or dataset.config["dataset_type"] == DatasetType.IMAGE:
                 return dataset.metadata_backend.get_metadata_by_filepath(filepath)
             return None
-        # Auxiliary and legacy registrations may expose metadata without a DatasetRuntime.
-        backend = cls.get_data_backends(_types=search_dataset_types).get(data_backend_id)
-        if backend is not None and "metadata_backend" in backend:
-            return backend["metadata_backend"].get_metadata_by_filepath(filepath)
         return None
 
     @classmethod

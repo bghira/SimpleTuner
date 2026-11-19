@@ -72,7 +72,7 @@ class TestVaeCache(unittest.TestCase):
         )
         with (
             patch.object(StateTracker, "get_args", return_value=SimpleNamespace(aspect_bucket_alignment=8)),
-            patch.object(StateTracker, "get_data_backend", side_effect=AssertionError("registry lookup")),
+            patch.object(StateTracker, "get_dataset", side_effect=AssertionError("registry lookup")),
             patch.object(StateTracker, "get_metadata_by_filepath", side_effect=AssertionError("registry metadata lookup")),
         ):
             pixels = cache._process_images_in_batch(

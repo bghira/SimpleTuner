@@ -773,7 +773,7 @@ class TestWebshartParquetBackend(unittest.TestCase):
             )
             requests = [paths[1], paths[0], paths[1]]
             with (
-                patch.object(StateTracker, "get_data_backend", side_effect=AssertionError("registry lookup")),
+                patch.object(StateTracker, "get_dataset", side_effect=AssertionError("registry lookup")),
                 patch.object(self.backend.loader, "load_sample", side_effect=AssertionError("unexpected payload read")),
             ):
                 records = runtime.read_samples(requests)
@@ -1111,7 +1111,7 @@ class TestWebshartParquetBackend(unittest.TestCase):
             factory.accelerator = accelerator
             config["conditioning_type"] = "reference_strict"
             with (
-                patch.object(StateTracker, "get_data_backend", side_effect=AssertionError("legacy source clone")),
+                patch.object(StateTracker, "get_dataset", side_effect=AssertionError("legacy source clone")),
                 patch.object(factory, "_handle_config_versioning"),
             ):
                 factory._handle_bucket_operations(
@@ -1850,7 +1850,6 @@ class TestWebshartParquetBackend(unittest.TestCase):
             patch.object(StateTracker, "get_data_backend_config", return_value=config),
             patch.object(StateTracker, "get_args", return_value=args),
             patch.object(StateTracker, "get_model", return_value=None),
-            patch.object(StateTracker, "get_s2v_datasets", return_value=[]),
             patch.object(self.backend.source_files, "publish", side_effect=AssertionError("corpus inventory")),
             patch.object(self.backend, "read", side_effect=AssertionError("whole geometry or membership read")),
         ):

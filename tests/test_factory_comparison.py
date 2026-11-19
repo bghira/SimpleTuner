@@ -95,7 +95,6 @@ class TestFactoryComparison(unittest.TestCase):
             )
             self.assertIsNotNone(result)
             # Check StateTracker calls
-            self.assertTrue(mock_state_tracker.register_data_backend.called)
             self.assertTrue(mock_state_tracker.set_data_backend_config.called)
         except Exception as e:
             self.fail(f"Old factory failed: {str(e)}")
@@ -142,7 +141,6 @@ class TestFactoryComparison(unittest.TestCase):
             result = factory.configure(data_backend_config=config)
             self.assertIsNotNone(result)
             # Check StateTracker calls
-            self.assertTrue(mock_state_tracker.register_data_backend.called)
             self.assertTrue(mock_state_tracker.set_data_backend_config.called)
         except Exception as e:
             self.fail(f"New factory failed: {str(e)}")

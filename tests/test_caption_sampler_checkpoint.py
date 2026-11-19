@@ -29,7 +29,7 @@ class CaptionSamplerCheckpointTests(unittest.TestCase):
         self.args = SimpleNamespace(seed=42, gradient_accumulation_steps=1, data_backend_sampling="uniform")
         for key, value in [
             ("args", self.args),
-            ("data_backends", {}),
+            ("_pending_dataset_configs", {}),
             ("exhausted_backends", []),
             ("repeats", {}),
             ("epoch", 1),

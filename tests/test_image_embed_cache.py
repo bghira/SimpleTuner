@@ -136,14 +136,14 @@ class TestImageEmbedCache(unittest.TestCase):
         self._old_args = getattr(StateTracker, "args", None)
         StateTracker.set_args(SimpleNamespace(output_dir=self.tempdir.name))
 
-        self._old_data_backends = StateTracker.data_backends.copy()
+        self._old_data_backends = StateTracker._pending_dataset_configs.copy()
 
     def tearDown(self):
         if self._old_args is not None:
             StateTracker.set_args(self._old_args)
         else:
             StateTracker.set_args(None)
-        StateTracker.data_backends = self._old_data_backends
+        StateTracker._pending_dataset_configs = self._old_data_backends
         self.tempdir.cleanup()
 
     def test_generate_embed_filename_with_hash(self):
