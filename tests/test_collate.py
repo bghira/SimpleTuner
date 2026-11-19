@@ -591,6 +591,25 @@ class CollateFunctionTests(unittest.TestCase):
         self.assertEqual(prompt_entry["key"], "dataset:sample.mp4")
         default_cache.read_training_batch.assert_called_once_with([prompt_entry], device=None)
 
+    def test_contextual_dropout_reads_from_the_dataset_artifact_store(self):
+        from simpletuner.helpers.models.minimaxh3.model import MiniMaxH3
+
+        model = MiniMaxH3.__new__(MiniMaxH3)
+        dataset_cache = MagicMock(text_cache_ondemand=False)
+        dataset_cache.read_training_batch.return_value = [
+            {"prompt_embeds": torch.ones(1, 1, 1), "text_token_tags": torch.ones(1, 1, dtype=torch.long)}
+        ]
+        prompt = {
+            "prompt": "",
+            "key": "dataset:sample.mp4:__caption_dropout__",
+            "metadata": {"image_paths": ["reference.png"], "data_backend_ids": ["references"]},
+        }
+
+        with patch.object(StateTracker, "get_default_text_embed_cache", side_effect=AssertionError("wrong store")):
+            compute_prompt_embeddings([prompt], dataset_cache, model)
+
+        dataset_cache.read_training_batch.assert_called_once_with([prompt], device=None)
+
     def test_collate_fn_stacks_conditioning_image_embeds(self):
         conditioning_tensor = torch.ones(2, 4)
         text_outputs = {"prompt_embeds": torch.zeros(1, 1)}

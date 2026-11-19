@@ -292,8 +292,11 @@ def _training_text_request(prompt_entry, text_embed_cache, model=None):
     if not isinstance(prompt_entry, dict):
         prompt_entry = {"prompt": prompt_entry, "key": prompt_entry, "metadata": {}}
     prompt_value = prompt_entry.get("prompt")
-    if prompt_value == "" or not prompt_value:
-        # Grab the default text embed backend for null caption.
+    if not prompt_value:
+        active_model = model if model is not None else getattr(text_embed_cache, "model", None)
+        if getattr(active_model, "uses_image_context_dropout_caption_cache", lambda: False)() is True:
+            return text_embed_cache, prompt_entry
+        # The global dropout caption is prepared once in the default store.
         text_embed_cache = StateTracker.get_default_text_embed_cache()
         # Use sentinel key for filename-based caches to match encode_dropout_caption()
         cache_model = model if model is not None else getattr(text_embed_cache, "model", None)
