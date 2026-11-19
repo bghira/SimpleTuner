@@ -510,8 +510,8 @@ function dataloaderSectionComponent() {
         }
         // Initialize schedule mode based on start_epoch and start_step values
         if (dataset._scheduleMode === undefined) {
-            if (dataset.start_step !== undefined && dataset.start_step !== null && dataset.start_step > 0) {
-                dataset._scheduleMode = 'step';
+            if (dataset.start_step > 0) {
+                dataset._scheduleMode = dataset.start_epoch >= 1 ? 'both' : 'step';
             } else if (dataset.start_epoch !== undefined && dataset.start_epoch !== null && dataset.start_epoch > 1) {
                 dataset._scheduleMode = 'epoch';
             } else {
@@ -520,8 +520,8 @@ function dataloaderSectionComponent() {
         }
         // Initialize end schedule mode based on end_epoch and end_step values
         if (dataset._endScheduleMode === undefined) {
-            if (dataset.end_step !== undefined && dataset.end_step !== null && dataset.end_step > 0) {
-                dataset._endScheduleMode = 'step';
+            if (dataset.end_step > 0) {
+                dataset._endScheduleMode = dataset.end_epoch > 0 ? 'both' : 'step';
             } else if (dataset.end_epoch !== undefined && dataset.end_epoch !== null && dataset.end_epoch > 0) {
                 dataset._endScheduleMode = 'epoch';
             } else {

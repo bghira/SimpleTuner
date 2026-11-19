@@ -2961,6 +2961,10 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
                         "source": "s3://images",
                         "caption_strategy": "webshart",
                         "metadata_backend": "webshart",
+                        "start_epoch": 1,
+                        "start_step": 1,
+                        "end_epoch": 5,
+                        "end_step": 200,
                         "webshart": {"caption_key": "original", **cache_options},
                     }
                 ]
@@ -2992,6 +2996,22 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
                     name,
                 )
 
+            def schedule_field(name):
+                return WebDriverWait(driver, 10).until(
+                    EC.visibility_of_element_located(
+                        (
+                            By.CSS_SELECTOR,
+                            rf'.dataset-list-item-expanded input[x-model\.number\.lazy="editingDataset.{name}"]',
+                        )
+                    )
+                )
+
+            select_tab("Scheduling")
+            for name, value in (("start_epoch", "1"), ("start_step", "1"), ("end_epoch", "5"), ("end_step", "200")):
+                self.assertEqual(schedule_field(name).get_attribute("value"), value)
+            last_step = schedule_field("end_step")
+            last_step.clear()
+            last_step.send_keys("300", Keys.TAB)
             select_tab("Storage")
             selector = (By.CSS_SELECTOR, ".dataset-list-item-expanded .webshart-format")
             field = WebDriverWait(driver, 10).until(
@@ -3036,6 +3056,9 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
                 self.assertEqual(persisted["webshart"][key], value)
             self.assertEqual(persisted["aws_endpoint_url"], "https://storage.example")
             self.assertEqual(persisted["aws_session_token"], "example-session")
+            self.assertEqual(
+                [persisted[name] for name in ("start_epoch", "start_step", "end_epoch", "end_step")], [1, 1, 5, 300]
+            )
             WebDriverWait(driver, 5).until(
                 lambda d: d.execute_script("return Alpine.store('trainer').hasUnsavedChanges === false;")
             )
@@ -3046,6 +3069,8 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
             driver.execute_script(
                 "const toggle = document.querySelector('[data-dataset-id=\"webshart-parquet\"] .list-item-toggle'); if (toggle.getAttribute('aria-expanded') !== 'true') toggle.click();"
             )
+            select_tab("Scheduling")
+            self.assertEqual(schedule_field("end_step").get_attribute("value"), "300")
             select_tab("Storage")
             field = WebDriverWait(driver, 10).until(
                 lambda d: next((e for e in d.find_elements(*selector) if e.is_displayed()), False)
