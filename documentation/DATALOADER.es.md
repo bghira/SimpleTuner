@@ -933,7 +933,8 @@ Consulta la sección [Solución de Problemas](#solución-de-problemas-de-dataset
 ### `vae_cache_clear_each_epoch`
 
 - Activa esta opción para reconstruir la caché del VAE al inicio de cada época de entrenamiento posterior a la primera. Con `crop: true` y `crop_style: random`, también se renuevan los recortes aleatorios de los conjuntos de datos mutables.
-- Los conjuntos de imágenes en Parquet con muestreo nativo de Webshart, tamaños de destino fijos y sin entradas de condicionamiento emparejadas reutilizan la vista preparada. El proveedor elige nuevos desplazamientos de recorte al leer las filas y codifica bajo demanda los latentes VAE correspondientes.
+- Con esta opción desactivada, el entrenamiento reutiliza los mismos recortes y latentes almacenados entre épocas, incluso si se configuraron recortes aleatorios. Las repeticiones del conjunto de datos reutilizan los latentes de la misma época en ambos modos.
+- Los conjuntos de imágenes en Parquet con muestreo nativo de Webshart, tamaños de destino fijos y sin entradas de condicionamiento emparejadas reutilizan la vista preparada. El proveedor elige nuevos desplazamientos de recorte al leer las filas y codifica bajo demanda los latentes VAE correspondientes. Al pasar a la siguiente época, se eliminan de la caché de esta ejecución los latentes de la época anterior.
 
 ### `vae_cache_ondemand`
 

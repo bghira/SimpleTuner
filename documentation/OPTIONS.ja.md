@@ -2916,13 +2916,9 @@ options:
                         files. This will save substantial disk space, but may
                         slow down the training process
   --aspect_bucket_disable_rebuild [ASPECT_BUCKET_DISABLE_REBUILD]
-                        When using a randomised aspect bucket list, the VAE
-                        and aspect cache are rebuilt on each epoch. With a
-                        large and diverse enough dataset, rebuilding the
-                        aspect list may take a long time, and this may be
-                        undesirable. This option will not override
-                        vae_cache_clear_each_epoch. If both options are
-                        provided, only the VAE cache will be rebuilt
+                        Skip random aspect bucket rebuilding for datasets
+                        with vae_cache_clear_each_epoch enabled. The VAE
+                        cache still refreshes each epoch for those datasets.
   --keep_vae_loaded [KEEP_VAE_LOADED]
                         If set, will keep the VAE loaded in memory. This can
                         reduce disk churn, but consumes VRAM during the

@@ -1462,8 +1462,8 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             subsection="advanced",
             default_value=False,
             checkbox_label="Skip aspect bucket rebuild",
-            help_text="When using a randomised aspect bucket list, the VAE and aspect cache are rebuilt on each epoch. With a large and diverse enough dataset, rebuilding the aspect list may take a long time, and this may be undesirable. This option will not override vae_cache_clear_each_epoch. If both options are provided, only the VAE cache will be rebuilt",
-            tooltip="When using a randomised aspect bucket list, the VAE and aspect cache are rebuilt on each epoch. With a large and diverse enough dataset, rebuilding the aspect list may take a long time, and this may be undesirable. This option will not override vae_cache_clear_each_epoch. If both options are provided, only the VAE cache will be rebuilt.",
+            help_text="Skip random aspect bucket rebuilding for datasets with vae_cache_clear_each_epoch enabled. The VAE cache still refreshes each epoch for those datasets.",
+            tooltip="Keep the existing random aspect buckets when rebuilding VAE latents each epoch.",
             importance=ImportanceLevel.ADVANCED,
             order=54,
         )
