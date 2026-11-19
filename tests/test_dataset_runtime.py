@@ -120,20 +120,6 @@ class DatasetRuntimeTests(unittest.TestCase):
             StateTracker.clear_data_backends()
         self.assertEqual(order, ["other", "images", "writer"])
 
-    def test_dataset_links_are_validated_before_replacing_bound_handles(self):
-        first = DatasetRuntime("first", None, None, {})
-        second = DatasetRuntime("second", None, None, {})
-        datasets = {ds.id: ds for ds in (self.runtime, first, second)}
-        for method, attribute in (
-            (StateTracker.set_conditioning_datasets, "conditioning_datasets"),
-            (StateTracker.set_s2v_datasets, "audio_datasets"),
-        ):
-            with self.subTest(method=method.__name__), patch.object(StateTracker, "datasets", datasets):
-                method(self.runtime.id, [first.id])
-                with self.assertRaises(KeyError):
-                    method(self.runtime.id, [second.id, "missing"])
-                self.assertEqual(getattr(self.runtime, attribute), (first,))
-
     def test_occurrence_revision_pins_binding_order_views_captions_and_dropout(self):
         from simpletuner.helpers.metadata.preparation import DatasetDescription
 

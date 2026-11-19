@@ -31,6 +31,19 @@ from simpletuner.helpers.data_backend.dataset_types import DatasetType
 class TestFactoryEdgeCases(unittest.TestCase):
     """Test edge cases and error conditions for factory.py."""
 
+    def test_relationships_validate_enabled_targets_without_opening_datasets(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        video = {"id": "video", "dataset_type": "video", "conditioning_data": "reference", "s2v_datasets": ["audio"]}
+        reference = {"id": "reference", "dataset_type": "conditioning"}
+        audio = {"id": "audio", "dataset_type": "audio"}
+        resolve = FactoryRegistry._resolve_dataset_relationships
+        self.assertEqual(resolve([video, reference, audio]), ({"video": ["reference"]}, {"video": ["audio"]}))
+        for target in (reference, audio):
+            with self.subTest(dataset=target["id"]), patch.dict(target, disabled=True):
+                with self.assertRaisesRegex(ValueError, f"{target['id']}.*enabled"):
+                    resolve([video, reference, audio])
+
     def setUp(self):
         """Set up test fixtures."""
         self.accelerator = MagicMock()
