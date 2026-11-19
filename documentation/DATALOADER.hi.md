@@ -384,6 +384,20 @@ Data augmentation के लिए tag-based captions के deterministic shuff
 - **Description:** प्रशिक्षण के दौरान dataset metadata को कितनी बार refresh करना है (seconds में)। लंबे प्रशिक्षण में बदलते datasets के लिए उपयोगी।
 - **Default:** trainer के `--metadata_update_interval` argument पर fallback करता है।
 
+### तय किए गए आकार और क्रॉप कहाँ रखे जाते हैं {#where-decided-sizes-and-crops-are-kept}
+
+जब किसी डेटासेट को बकेट किया जाता है, तो हर सैंपल को एक aspect ratio, target size, intermediary size और crop coordinates दिए जाते हैं। `discovery` और `huggingface` metadata backends के साथ:
+
+- मेटाडेटा फ़ाइल (`aspect_ratio_bucket_metadata_<id>.json`) हर सैंपल के बारे में मापी गई जानकारी रखती है, जैसे उसका मूल आकार, फ़्रेम संख्या और bounding boxes।
+- आकार और क्रॉप उसके पास की `transforms/` डायरेक्टरी में रखे जाते हैं, हर डेटासेट और recipe के लिए एक SQLite फ़ाइल। बकेट इंडेक्स (`aspect_ratio_bucket_indices_<id>.json`) उस recipe का नाम रखता है जिसके तहत उसके बकेट बने थे, और हर प्रोसेस उसी recipe के तहत आकार और क्रॉप पढ़ता है।
+- किसी सैंपल के लिए दर्ज किया गया पहला आकार और क्रॉप रखा जाता है। ज़बरदस्ती किया गया rescan हर सैंपल को फिर से तय करता है।
+- `crop_aspect: "random"` वाला डेटासेट हर एपोक में उस एपोक के नाम वाली recipe के तहत फिर से तय किया जाता है। हर एपोक के रिकॉर्ड रखे जाते हैं, इसलिए `transforms/` हर एपोक में एक फ़ाइल बढ़ता है।
+- S3 पर रखे डेटासेट के लिए हर प्रोसेस `<cache_dir>/transforms/<id>/` (`--cache_dir`) में एक कॉपी रखता है, और डेटासेट को बकेट करने वाला प्रोसेस store को मेटाडेटा फ़ाइल के पास `transforms/` में अपलोड करता है।
+- पुराने संस्करण से लिखा गया बकेट इंडेक्स किसी recipe का नाम नहीं रखता, इसलिए अपग्रेड के बाद डेटासेट एक बार फिर से बकेट किया जाता है। `crop_style: "random"` के साथ उसके क्रॉप फिर से चुने जाते हैं और अपग्रेड से पहले कैश किए गए latents से मेल नहीं खाते; उस डेटासेट का VAE कैश साफ़ करें।
+- WebUI dataset viewer में क्रॉप संपादन और मेटाडेटा rebuild दर्ज मान को बदल देते हैं।
+
+`parquet` metadata backend आकार और क्रॉप अपनी मेटाडेटा फ़ाइल में रखता है। `webshart.shuffle_window` वाला Webshart डेटासेट हर shard के आकार और क्रॉप `webshart.cache_dir` के अंदर `transforms/` में दर्ज करता है, हर shard के लिए एक SQLite फ़ाइल, डेटासेट की सेटिंग्स से बनी recipe के तहत (`crop_aspect: "random"` के साथ एपोक भी शामिल)। बाद के एपोक में या रिज़्यूम के बाद फिर से खोला गया shard अपने सैंपल्स को वही आकार और क्रॉप देता है जो उन्हें पहली बार मिले थे।
+
 ### Cropping Options
 
 - `crop`: image cropping सक्षम/अक्षम करता है।
@@ -1484,6 +1498,8 @@ Parquet bucket cache कैटलॉग fingerprint के अनुसार �
 इस तरह पढ़ा गया डेटासेट `--validation_using_datasets` को इमेज नहीं दे सकता।
 
 चेकपॉइंट में एपोक, विंडो और उसके भीतर की स्थिति दर्ज होती है, और रिज़्यूम करने पर वही विंडो फिर से खोली जाती है। उसी `shuffle_window`, `repeats`, रैंकों की संख्या और शार्डों की संख्या के साथ रिज़्यूम करें; अलग मानों के साथ लिखा गया चेकपॉइंट अस्वीकार कर दिया जाता है।
+
+हर shard के आकार और क्रॉप उसके पहली बार खुलने पर दर्ज होते हैं; देखें [तय किए गए आकार और क्रॉप कहाँ रखे जाते हैं](#where-decided-sizes-and-crops-are-kept)।
 
 #### Captions को पहले से optimize करना
 

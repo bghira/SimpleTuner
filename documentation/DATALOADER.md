@@ -386,6 +386,20 @@ The first tag "dog" stays fixed while the remaining tags are shuffled.
 - **Description:** How often (in seconds) to refresh dataset metadata during training. Useful for datasets that may change during a long training run.
 - **Default:** Falls back to the trainer's `--metadata_update_interval` argument.
 
+### Where decided sizes and crops are kept
+
+When a dataset is bucketed, each sample is given an aspect ratio, a target size, an intermediary size and crop coordinates. With the `discovery` and `huggingface` metadata backends:
+
+- The metadata file (`aspect_ratio_bucket_metadata_<id>.json`) keeps what was measured of each sample, such as its original size, frame count and bounding boxes.
+- The sizes and crops are kept in a `transforms/` directory beside it, one SQLite file per dataset and recipe. The bucket index (`aspect_ratio_bucket_indices_<id>.json`) names the recipe its buckets were built under, and every process reads sizes and crops under that recipe.
+- The first size and crop recorded for a sample are kept. A forced rescan decides every sample again.
+- A dataset with `crop_aspect: "random"` is decided again each epoch, under a recipe that names the epoch. Every epoch's records are kept, so `transforms/` grows by one file per epoch.
+- For a dataset on S3, each process keeps a copy under `<cache_dir>/transforms/<id>/` (`--cache_dir`), and the process that buckets the dataset uploads the store to `transforms/` beside the metadata file.
+- A bucket index written by an earlier version names no recipe, so the dataset is bucketed again once after upgrading. With `crop_style: "random"` its crops are chosen again and no longer match latents cached before the upgrade; clear that dataset's VAE cache.
+- Crop edits and metadata rebuilds in the WebUI dataset viewer replace what is recorded.
+
+The `parquet` metadata backend keeps sizes and crops in its metadata file. A Webshart dataset with `webshart.shuffle_window` records each shard's sizes and crops in `transforms/` under `webshart.cache_dir`, one SQLite file per shard, under a recipe made from the dataset's settings (and the epoch, with `crop_aspect: "random"`). A shard opened again, in a later epoch or after a resume, gives its samples the sizes and crops they were first given.
+
 ### Cropping Options
 
 - `crop`: Enables or disables image cropping.
@@ -1558,6 +1572,8 @@ What it requires. Configuration stops with a message naming the setting when one
 A dataset read this way cannot supply images to `--validation_using_datasets`.
 
 A checkpoint records the epoch, the window and the position inside it, and a resumed run reopens that window. Resume with the same `shuffle_window`, `repeats`, number of ranks and number of shards; a checkpoint written with different values is refused.
+
+Each shard's sizes and crops are recorded when it is first opened; see [Where decided sizes and crops are kept](#where-decided-sizes-and-crops-are-kept).
 
 #### Optimizing captions ahead of time
 

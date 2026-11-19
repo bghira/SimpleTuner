@@ -384,6 +384,20 @@ La primera tag "dog" permanece fija mientras las tags restantes se mezclan.
 - **Descripción:** Con qué frecuencia (en segundos) refrescar metadatos del dataset durante el entrenamiento. Útil para datasets que puedan cambiar durante una ejecución larga.
 - **Default:** Usa el argumento `--metadata_update_interval` del trainer.
 
+### Dónde se guardan los tamaños y recortes decididos {#where-decided-sizes-and-crops-are-kept}
+
+Cuando un dataset se agrupa en buckets, cada muestra recibe una relación de aspecto, un tamaño objetivo, un tamaño intermedio y unas coordenadas de recorte. Con los backends de metadatos `discovery` y `huggingface`:
+
+- El archivo de metadatos (`aspect_ratio_bucket_metadata_<id>.json`) guarda lo que se midió de cada muestra, como su tamaño original, el número de fotogramas y los bounding boxes.
+- Los tamaños y recortes se guardan en un directorio `transforms/` junto a él, un archivo SQLite por dataset y receta. El índice de buckets (`aspect_ratio_bucket_indices_<id>.json`) nombra la receta con la que se construyeron sus buckets, y cada proceso lee los tamaños y recortes con esa receta.
+- Se conserva el primer tamaño y recorte registrado para una muestra. Un reescaneo forzado decide de nuevo cada muestra.
+- Un dataset con `crop_aspect: "random"` se decide de nuevo en cada época, con una receta que nombra la época. Se conservan los registros de cada época, así que `transforms/` crece un archivo por época.
+- Para un dataset en S3, cada proceso guarda una copia en `<cache_dir>/transforms/<id>/` (`--cache_dir`), y el proceso que agrupa el dataset sube el almacén a `transforms/` junto al archivo de metadatos.
+- Un índice de buckets escrito por una versión anterior no nombra ninguna receta, así que el dataset se vuelve a agrupar una vez tras actualizar. Con `crop_style: "random"` sus recortes se eligen de nuevo y ya no coinciden con los latents cacheados antes de la actualización; borra la caché VAE de ese dataset.
+- Las ediciones de recorte y las reconstrucciones de metadatos en el visor de datasets de la WebUI reemplazan lo registrado.
+
+El backend de metadatos `parquet` guarda los tamaños y recortes en su archivo de metadatos. Un dataset Webshart con `webshart.shuffle_window` registra los tamaños y recortes de cada shard en `transforms/` dentro de `webshart.cache_dir`, un archivo SQLite por shard, con una receta construida a partir de la configuración del dataset (y la época, con `crop_aspect: "random"`). Un shard que se vuelve a abrir, en una época posterior o tras reanudar, da a sus muestras los tamaños y recortes que recibieron la primera vez.
+
 ### Opciones de recorte
 
 - `crop`: Habilita o deshabilita el recorte de imágenes.
@@ -1485,6 +1499,8 @@ Qué requiere. La configuración se detiene con un mensaje que nombra el ajuste 
 Un dataset leído de esta forma no puede aportar imágenes a `--validation_using_datasets`.
 
 Un checkpoint registra la época, la ventana y la posición dentro de ella, y al reanudar se vuelve a abrir esa ventana. Reanuda con los mismos `shuffle_window`, `repeats`, número de ranks y número de shards; un checkpoint escrito con valores distintos se rechaza.
+
+Los tamaños y recortes de cada shard se registran la primera vez que se abre; consulta [Dónde se guardan los tamaños y recortes decididos](#where-decided-sizes-and-crops-are-kept).
 
 #### Optimizar captions por adelantado
 

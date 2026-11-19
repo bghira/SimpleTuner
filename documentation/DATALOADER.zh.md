@@ -383,6 +383,20 @@ LTX-2 使用原生纯音频分支；MiniMax-H3 在打包序列中为每个 laten
 - **说明:** 训练期间刷新数据集元数据的频率（秒）。适用于长时间训练中可能变化的数据集。
 - **默认值:** 回退到训练器的 `--metadata_update_interval` 参数。
 
+### 已决定的尺寸与裁剪保存在哪里 {#where-decided-sizes-and-crops-are-kept}
+
+数据集分桶时，每个样本都会被赋予宽高比、目标尺寸、中间尺寸和裁剪坐标。使用 `discovery` 和 `huggingface` 元数据后端时：
+
+- 元数据文件（`aspect_ratio_bucket_metadata_<id>.json`）保存对每个样本测得的信息，例如原始尺寸、帧数和边界框。
+- 尺寸与裁剪保存在它旁边的 `transforms/` 目录中，每个数据集和配方（recipe）对应一个 SQLite 文件。桶索引（`aspect_ratio_bucket_indices_<id>.json`）记录其桶所依据的配方，每个进程都按该配方读取尺寸与裁剪。
+- 为样本记录的第一个尺寸与裁剪会被保留。强制重新扫描会重新决定每个样本。
+- 使用 `crop_aspect: "random"` 的数据集每个 epoch 都会重新决定，所用配方包含该 epoch。每个 epoch 的记录都会保留，因此 `transforms/` 每个 epoch 增加一个文件。
+- 对于 S3 上的数据集，每个进程在 `<cache_dir>/transforms/<id>/` (`--cache_dir`) 下保留一份副本，由负责分桶的进程把存储上传到元数据文件旁边的 `transforms/`。
+- 旧版本写入的桶索引没有记录配方，因此升级后该数据集会重新分桶一次。使用 `crop_style: "random"` 时裁剪会重新选择，与升级前缓存的 latents 不再一致；请清除该数据集的 VAE 缓存。
+- 在 WebUI 数据集查看器中编辑裁剪或重建元数据，会替换已记录的值。
+
+`parquet` 元数据后端把尺寸与裁剪保存在其元数据文件中。设置了 `webshart.shuffle_window` 的 Webshart 数据集会把每个分片的尺寸与裁剪记录在 `webshart.cache_dir` 下的 `transforms/` 中，每个分片一个 SQLite 文件，所用配方由数据集设置生成（使用 `crop_aspect: "random"` 时还包含 epoch）。之后再次打开的分片（在后续 epoch 或恢复训练后）会让样本保持最初得到的尺寸与裁剪。
+
 ### 裁剪选项
 
 - `crop`: 启用或禁用图像裁剪。
@@ -1502,6 +1516,8 @@ Parquet 分桶缓存按目录指纹隔离。序列化工作进程会拒绝目录
 以这种方式读取的数据集无法为 `--validation_using_datasets` 提供图像。
 
 检查点会记录 epoch、窗口以及窗口内的位置，恢复训练时会重新打开该窗口。请使用相同的 `shuffle_window`、`repeats`、rank 数和分片数恢复；使用不同的值写入的检查点会被拒绝。
+
+每个分片的尺寸与裁剪在首次打开时记录；参见[已决定的尺寸与裁剪保存在哪里](#where-decided-sizes-and-crops-are-kept)。
 
 #### 提前优化 captions
 
