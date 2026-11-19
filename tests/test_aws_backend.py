@@ -25,6 +25,26 @@ class FakePaginator:
 
 class TestS3PrefixHandling(unittest.TestCase):
 
+    def test_delete_batch_streams_keys_and_surfaces_per_object_errors(self):
+        backend = S3DataBackend.__new__(S3DataBackend)
+        backend.bucket_name = "cache"
+        backend.client = Mock()
+        backend.client.delete_objects.side_effect = [{}, {"Errors": [{"Code": "AccessDenied", "Key": "old/1000.pt"}]}]
+
+        def keys():
+            for position in range(1001):
+                if position == 1000:
+                    self.assertEqual(backend.client.delete_objects.call_count, 1)
+                yield f"old/{position}.pt"
+
+        with self.assertRaisesRegex(ClientError, "AccessDenied"):
+            backend.delete_batch(keys())
+        first, last = [entry.kwargs for entry in backend.client.delete_objects.call_args_list]
+        self.assertEqual(first["Bucket"], "cache")
+        self.assertEqual(first["Delete"], {"Objects": [{"Key": f"old/{i}.pt"} for i in range(1000)], "Quiet": True})
+        self.assertEqual(last, {"Bucket": "cache", "Delete": {"Objects": [{"Key": "old/1000.pt"}], "Quiet": True}})
+        backend.client.delete_object.assert_not_called()
+
     def test_bulk_exists_probes_only_requested_keys_in_order(self):
         backend = S3DataBackend.__new__(S3DataBackend)
         backend.max_pool_connections = 2

@@ -906,18 +906,18 @@ class VAECache(WebhookMixin):
         prefix = self._epoch_cache_dir + "/"
         is_shared_store = store.type == "aws"
         should_delete = accelerator.is_main_process if is_shared_store else accelerator.is_local_main_process
+
+        def epoch_keys():
+            for key in store.iter_file_keys(["pt"], prefix):
+                if not key.startswith(prefix):
+                    raise ValueError("Epoch latent listing returned a key outside its prefix.")
+                yield key
+
         accelerator.wait_for_everyone()
         failure = None
         if should_delete:
             try:
-                for key in store.iter_file_keys(["pt"], prefix):
-                    if not key.startswith(prefix):
-                        raise ValueError("Epoch latent listing returned a key outside its prefix.")
-                    try:
-                        store.delete(key)
-                    except FileNotFoundError:
-                        # Node leaders can share a filesystem and race to remove the same entry.
-                        pass
+                store.delete_batch(epoch_keys())
             except Exception as exc:
                 failure = f"{type(exc).__name__}: {exc}"
         failures = [error for error in gather_across_processes(failure) if error is not None]

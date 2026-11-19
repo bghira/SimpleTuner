@@ -86,6 +86,14 @@ class BaseDataBackend(ABC):
         """
         pass
 
+    def delete_batch(self, identifiers):
+        """Delete the supplied identifiers, allowing objects to be absent."""
+        for identifier in identifiers:
+            try:
+                self.delete(identifier)
+            except FileNotFoundError:
+                continue
+
     @abstractmethod
     def exists(self, identifier):
         """

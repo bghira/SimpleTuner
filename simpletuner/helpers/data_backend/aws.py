@@ -259,6 +259,18 @@ class S3DataBackend(BaseDataBackend):
                 else:
                     time.sleep(self.write_retry_interval)
 
+    def delete_batch(self, identifiers):
+        """Delete keys in bounded S3 requests, surfacing per-object failures."""
+        for keys in batched(identifiers, 1000):
+            response = self.client.delete_objects(
+                Bucket=self.bucket_name,
+                Delete={"Objects": [{"Key": str(key)} for key in keys], "Quiet": True},
+            )
+            if errors := response.get("Errors"):
+                raise ClientError(
+                    {"Error": errors[0], "ResponseMetadata": response.get("ResponseMetadata", {})}, "DeleteObjects"
+                )
+
     def list_by_prefix(self, prefix=""):
         """List all files under a specific path (prefix) in the S3 bucket."""
         prefixes = normalise_s3_prefixes(prefix)

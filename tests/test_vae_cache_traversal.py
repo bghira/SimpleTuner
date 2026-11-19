@@ -257,6 +257,8 @@ class TestVaeCacheTraversal(unittest.TestCase):
         cache.accelerator = Mock(is_main_process=False, is_local_main_process=True)
         prefix = cache._epoch_cache_dir + "/"
         key = prefix + "ab/cd/one.pt"
+        deleted = []
+        store.delete_batch.side_effect = deleted.extend
 
         cache.expire_epoch_latents()
         store.iter_file_keys.assert_not_called()
@@ -265,14 +267,14 @@ class TestVaeCacheTraversal(unittest.TestCase):
         store.iter_file_keys.return_value = iter([key])
         cache.expire_epoch_latents()
         store.iter_file_keys.assert_called_once_with(["pt"], prefix)
-        store.delete.assert_called_once_with(key)
+        self.assertEqual(deleted, [key])
         self.assertEqual(cache.accelerator.wait_for_everyone.call_count, 2)
 
-        store.delete.reset_mock()
+        deleted.clear()
         store.iter_file_keys.return_value = iter(["latents/epoch-latents-v1/run-other/one.pt"])
         with self.assertRaisesRegex(RuntimeError, "outside its prefix"):
             cache.expire_epoch_latents()
-        store.delete.assert_not_called()
+        self.assertEqual(deleted, [])
 
     def test_accepted_partition_drives_cold_mixed_and_warm_latents(self):
         dataset = Mock(requires_complete_preparation=True, uses_native_schedule=False)
