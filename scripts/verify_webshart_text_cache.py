@@ -3,7 +3,8 @@
 From the repository root, use PYTHONPATH=. and pass --source s3://BUCKET and
 --manifest KEY. Supply a JSON object with url, access_id and secret_key on stdin.
 Requires two CUDA devices, the project JXL extra and access to the CLIP weights.
-Only the temporary directory on the host receives writes.
+Only the temporary directory on the host receives writes. Use --cpu-fixture
+for a local Parquet and tiny CLIP run without credentials or downloads.
 """
 
 import argparse
@@ -18,6 +19,7 @@ from bisect import bisect_right
 from collections import Counter
 from contextlib import ExitStack, closing
 from datetime import timedelta
+from io import BytesIO
 from itertools import accumulate
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -30,7 +32,7 @@ from accelerate import Accelerator
 from accelerate.utils import InitProcessGroupKwargs
 from torch.multiprocessing import spawn
 from torch.nn.parallel import DistributedDataParallel
-from transformers import CLIPTextModel, CLIPTokenizer
+from transformers import CLIPTextConfig, CLIPTextModel, CLIPTokenizer
 
 from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
 from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
@@ -45,12 +47,34 @@ from simpletuner.simpletuner_sdk.server.services.cache_job_service import CacheJ
 
 
 class ClipEncoder:
-    def __init__(self, device):
-        name = "openai/clip-vit-base-patch32"
+    def __init__(self, device, *, fixture=False):
         self.device = device
-        self.tokenizer = CLIPTokenizer.from_pretrained(name)
-        self.encoder = CLIPTextModel.from_pretrained(name).eval().to(device)
         self.calls = 0
+        self.encoded_prompts = 0
+        if fixture:
+            torch.manual_seed(19)
+            self.tokenizer = None
+            self.encoder = (
+                CLIPTextModel(
+                    CLIPTextConfig(
+                        vocab_size=256,
+                        hidden_size=16,
+                        intermediate_size=32,
+                        num_attention_heads=2,
+                        num_hidden_layers=1,
+                        bos_token_id=1,
+                        eos_token_id=2,
+                        pad_token_id=0,
+                        max_position_embeddings=24,
+                    )
+                )
+                .eval()
+                .to(device)
+            )
+        else:
+            name = "openai/clip-vit-base-patch32"
+            self.tokenizer = CLIPTokenizer.from_pretrained(name)
+            self.encoder = CLIPTextModel.from_pretrained(name).eval().to(device)
 
     def text_embed_cache_key(self):
         return TextEmbedCacheKey.CAPTION
@@ -64,8 +88,15 @@ class ClipEncoder:
     @torch.no_grad()
     def encode_text_batch(self, prompts, **kwargs):
         self.calls += 1
-        tokens = self.tokenizer(prompts, padding="max_length", max_length=77, truncation=True, return_tensors="pt")
-        return {"prompt_embeds": self.encoder(**tokens.to(self.device)).last_hidden_state}
+        self.encoded_prompts += len(prompts)
+        if self.tokenizer is None:
+            rows = [[1, *prompt.encode()[:22], 2] for prompt in prompts]
+            input_ids = torch.tensor([row + [0] * (24 - len(row)) for row in rows], device=self.device)
+            tokens = {"input_ids": input_ids, "attention_mask": input_ids.ne(0)}
+        else:
+            tokens = self.tokenizer(prompts, padding="max_length", max_length=77, truncation=True, return_tensors="pt")
+            tokens = tokens.to(self.device)
+        return {"prompt_embeds": self.encoder(**tokens).last_hidden_state}
 
     def pack_text_embeddings_for_cache(self, embeddings):
         return {key: value.detach().cpu() for key, value in embeddings.items()}
@@ -77,7 +108,7 @@ class ClipEncoder:
         return {"prompt_embeds": torch.cat([sample["prompt_embeds"] for sample in samples])}
 
 
-def open_cache(stack, args, accelerator, model, directory, *, writes, local_s3=None):
+def open_cache(stack, args, accelerator, model, directory, *, writes, local_s3=None, encode_only=False):
     spec = {"id": directory.name, "type": "local", "cache_dir": str(directory), "dataset_type": "text_embeds"}
     if local_s3 is not None:
         spec.update(
@@ -90,7 +121,12 @@ def open_cache(stack, args, accelerator, model, directory, *, writes, local_s3=N
             aws_data_prefix=directory.name,
         )
     store, prefix = build_text_embed_store(spec, args, accelerator)
-    stack.enter_context(patch.object(store, "list_files", side_effect=AssertionError("Artifact store listing")))
+    stack.enter_context(patch.object(store, "list_files", side_effect=AssertionError("Artifact store inventory")))
+    if encode_only:
+        for method in ("create_directory", "iter_file_keys", "bulk_exists", "read_cached_tensors", "torch_save"):
+            stack.enter_context(
+                patch.object(store, method, side_effect=AssertionError(f"Encode-only store access: {method}"))
+            )
     cache = TextEmbeddingCache(
         store.id,
         store,
@@ -101,6 +137,7 @@ def open_cache(stack, args, accelerator, model, directory, *, writes, local_s3=N
         cache_dir=prefix,
         text_encoder_batch_size=4,
         text_cache_disable=not writes,
+        text_cache_encode_only=encode_only,
     )
     return stack.enter_context(closing(cache))
 
@@ -287,8 +324,11 @@ def compare_sampling(rank, source, params, config, root, options, device):
 
 def run_rank(rank, connection, options, directory, port):
     os.environ.update(LOCAL_RANK=str(rank), RANK=str(rank), WORLD_SIZE="2", MASTER_ADDR="127.0.0.1", MASTER_PORT=str(port))
-    torch.cuda.set_device(rank)
-    accelerator = Accelerator(kwargs_handlers=[InitProcessGroupKwargs(timeout=timedelta(minutes=2))])
+    if not options.cpu_fixture:
+        torch.cuda.set_device(rank)
+    accelerator = Accelerator(
+        cpu=options.cpu_fixture, kwargs_handlers=[InitProcessGroupKwargs(timeout=timedelta(minutes=2))]
+    )
     root = Path(directory)
     args = _CacheArgsNamespace(
         dict(
@@ -301,11 +341,18 @@ def run_rank(rank, connection, options, directory, port):
             offload_during_startup=False,
         )
     )
-    config = dict(id="probe", caption_strategy="webshart", resolution=64, resolution_type="pixel", crop=False)
+    config = dict(
+        id="probe",
+        caption_strategy="webshart",
+        resolution=64,
+        resolution_type="pixel",
+        crop=False,
+        webshart={"sampling_policy": "shard_local"},
+    )
     StateTracker.set_accelerator(accelerator)
     StateTracker.set_args(args)
     StateTracker.set_data_backend_config(config["id"], config)
-    model = ClipEncoder(accelerator.device)
+    model = ClipEncoder(accelerator.device, fixture=options.cpu_fixture)
     source = WebshartDataBackend(
         accelerator,
         config["id"],
@@ -315,9 +362,9 @@ def run_rank(rank, connection, options, directory, port):
         cache_dir=str(root / "source"),
         shard_cache_gb=0,
         aws_region_name="auto",
-        aws_endpoint_url=connection["url"],
-        aws_access_key_id=connection["access_id"],
-        aws_secret_access_key=connection["secret_key"],
+        aws_endpoint_url=connection.get("url"),
+        aws_access_key_id=connection.get("access_id"),
+        aws_secret_access_key=connection.get("secret_key"),
     )
     params = dict(
         id=source.id,
@@ -330,32 +377,35 @@ def run_rank(rank, connection, options, directory, port):
         resolution=64,
         resolution_type="pixel",
         max_num_samples=16,
+        dataset_config=config,
+        runtime_args=args,
     )
     if rank == 0:
-        WebshartMetadataBackend(**params).compute_aspect_ratio_bucket_indices()
+        with closing(WebshartMetadataBackend(**params)) as writer:
+            writer.compute_aspect_ratio_bucket_indices()
     dist.barrier()
     reader = WebshartMetadataBackend(**params, preparation_only=True)
     runtime = DatasetRuntime(source.id, source, reader, config)
-    results = {"gpu": torch.cuda.get_device_name(), "ranks": 2, "source_revision": source.dataset.fingerprint}
+    results = {
+        "device": "cpu" if options.cpu_fixture else torch.cuda.get_device_name(),
+        "ranks": 2,
+        "source_revision": source.dataset.fingerprint,
+        "view_revision": runtime.describe().view_revision,
+    }
     try:
         with ExitStack() as stack:
-            for owner, method in (
-                (source, "list_files"),
-                (StateTracker, "get_text_cache_files"),
-                (StateTracker, "get_image_files"),
-            ):
+            for method in ("list_files", "iter_file_keys"):
                 stack.enter_context(
-                    patch.object(owner, method, side_effect=AssertionError(f"Dataset inventory via {method}"))
+                    patch.object(source, method, side_effect=AssertionError(f"Dataset inventory via {method}"))
                 )
-            records = list(
-                runtime.iter_preparation_text_records(model, init_backend={"id": source.id}, worker=rank, workers=2)
-            )
+            records = list(runtime.iter_preparation_text_records(model, worker=rank, workers=2))
             assert len(records) == 8, "Select a source with 16 accepted single-caption rows"
             refs = [record["metadata"]["image_path"] for record in records]
             all_refs = [None, None]
             dist.all_gather_object(all_refs, refs)
             assert len(set(all_refs[0] + all_refs[1])) == 16
             offline = open_cache(stack, args, accelerator, model, root / "offline", writes=True, local_s3=options.local_s3)
+            runtime.text_embed_cache = offline
             physical_dir = root / "offline" if options.local_s3 is None else root / "objects" / "embeddings" / "offline"
             snapshot = measure_s3(offline.data_backend.client) if options.local_s3 else None
             factory = FactoryRegistry(args, accelerator, None, None, model=model)
@@ -406,11 +456,12 @@ def run_rank(rank, connection, options, directory, port):
 
             online = open_cache(stack, args, accelerator, model, root / f"online-{rank}", writes=False)
             online.data_backend.torch_save({"prompt_embeds": cached}, online.hash_prompt_with_path(first))
-            stack.enter_context(patch.object(StateTracker, "get_default_text_embed_cache", return_value=online))
             calls = model.calls
+            encoded = model.encoded_prompts
             torch.manual_seed(123)
             head = DistributedDataParallel(
-                torch.nn.Linear(model.encoder.config.hidden_size, 1).to(accelerator.device), device_ids=[rank]
+                torch.nn.Linear(model.encoder.config.hidden_size, 1).to(accelerator.device),
+                device_ids=None if options.cpu_fixture else [rank],
             )
             optimizer = torch.optim.SGD(head.parameters(), lr=1e-3)
             for batch in (records[:4], records[4:]):
@@ -427,7 +478,23 @@ def run_rank(rank, connection, options, directory, port):
                 loss.backward()
                 optimizer.step()
             assert model.calls == calls + 2
+            assert model.encoded_prompts - encoded == len(records) - 1
             assert len(list(Path(online.cache_dir).glob("*.pt"))) == 1
+            results["read_existing_cache_hits_per_rank"] = 1
+
+            encode_only = open_cache(
+                stack, args, accelerator, model, root / f"encode-only-{rank}", writes=False, encode_only=True
+            )
+            calls = model.calls
+            encoded = model.encoded_prompts
+            selected = [records[0], records[1], records[0]]
+            on_demand = compute_prompt_embeddings(selected, encode_only, model)["prompt_embeds"]
+            known = compute_prompt_embeddings(selected, offline, model)["prompt_embeds"]
+            torch.testing.assert_close(on_demand.cpu(), known.cpu(), rtol=2e-4, atol=5e-5)
+            assert model.calls == calls + 1
+            assert model.encoded_prompts - encoded == 2
+            assert not Path(encode_only.cache_dir).exists()
+            results["encode_only_calls_per_rank"] = model.calls - calls
             weight = head.module.weight.detach().contiguous()
             weights = [torch.empty_like(weight) for _ in range(2)]
             dist.all_gather(weights, weight)
@@ -439,13 +506,38 @@ def run_rank(rank, connection, options, directory, port):
             if rank == 0:
                 print(json.dumps(results), flush=True)
     finally:
+        runtime.close()
         dist.destroy_process_group()
+
+
+def create_parquet_fixture(directory):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    from PIL import Image
+
+    root = Path(directory) / "fixtures"
+    root.mkdir()
+    rows = []
+    for index in range(16):
+        image = BytesIO()
+        Image.new("RGB", (64, 64), (index * 16, 0, 0)).save(image, format="PNG")
+        rows.append(
+            {
+                "image": {"bytes": image.getvalue(), "path": None},
+                "captions": f"fixture caption {index}",
+                "width": 64,
+                "height": 64,
+            }
+        )
+    pq.write_table(pa.Table.from_pylist(rows), root / "samples.parquet", row_group_size=4)
+    return str(root)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source", required=True)
-    parser.add_argument("--manifest", required=True)
+    parser.add_argument("--source")
+    parser.add_argument("--manifest")
+    parser.add_argument("--cpu-fixture", action="store_true")
     parser.add_argument("--local-s3-binary", type=Path, help="rclone binary for a loopback-only on-disk S3 artifact test")
     parser.add_argument("--sampling-shards", type=int, default=0)
     parser.add_argument("--shard-local-first", action="store_true")
@@ -453,11 +545,20 @@ if __name__ == "__main__":
     options = parser.parse_args()
     if options.sampling_shards < 0 or options.sampling_shards == 1:
         parser.error("--sampling-shards must be zero or at least two")
-    connection = json.load(sys.stdin)
+    if options.cpu_fixture:
+        if options.source or options.manifest or options.sampling_shards:
+            parser.error("--cpu-fixture supplies its own source and does not measure sampling locality")
+        connection = {}
+    else:
+        if not options.source or not options.manifest:
+            parser.error("--source and --manifest are required for R2 verification")
+        connection = json.load(sys.stdin)
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
     with TemporaryDirectory() as directory, ExitStack() as stack:
+        if options.cpu_fixture:
+            options.source = create_parquet_fixture(directory)
         options.local_s3 = None
         if options.local_s3_binary:
             objects = Path(directory) / "objects"
