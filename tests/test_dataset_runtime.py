@@ -125,6 +125,25 @@ class DatasetRuntimeTests(unittest.TestCase):
             StateTracker.clear_data_backends()
         self.assertEqual(order, ["other", "images", "writer"])
 
+    def test_relationships_link_typed_only_datasets_and_validate_before_updating_mirrors(self):
+        target = DatasetRuntime("target", None, None, {})
+        other = DatasetRuntime("other", None, None, {})
+        datasets = {ds.id: ds for ds in (self.runtime, target, other)}
+        for method, attribute, key in (
+            (StateTracker.set_conditioning_datasets, "conditioning_datasets", "conditioning_data"),
+            (StateTracker.set_s2v_datasets, "audio_datasets", "s2v_data"),
+        ):
+            with self.subTest(method=method.__name__), patch.object(StateTracker, "datasets", datasets):
+                with patch.object(StateTracker, "data_backends", {}):
+                    method(self.runtime.id, [target.id])
+                    self.assertEqual(getattr(self.runtime, attribute), (target,))
+                source_bundle = {key: [{"id": target.id}]}
+                with patch.object(StateTracker, "data_backends", {self.runtime.id: source_bundle}):
+                    with self.assertRaises(KeyError):
+                        method(self.runtime.id, [other.id])
+                    self.assertEqual(getattr(self.runtime, attribute), (target,))
+                    self.assertEqual(source_bundle[key], [{"id": target.id}])
+
     def test_occurrence_revision_pins_binding_order_views_captions_and_dropout(self):
         from simpletuner.helpers.metadata.preparation import DatasetDescription
 

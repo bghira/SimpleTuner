@@ -626,17 +626,28 @@ class StateTracker:
         return 0
 
     @classmethod
+    def _set_dataset_relationship(cls, source_id, target_ids, runtime_attribute, bundle_key):
+        runtime = cls.datasets.get(source_id)
+        bundle = cls.data_backends.get(source_id)
+        if runtime is None and bundle is None:
+            raise KeyError(source_id)
+        runtime_targets = tuple(cls.datasets[target_id] for target_id in target_ids) if runtime is not None else None
+        bundle_targets = [cls.data_backends[target_id] for target_id in target_ids] if bundle is not None else None
+        if runtime is not None:
+            setattr(runtime, runtime_attribute, runtime_targets)
+        if bundle is not None:
+            bundle[bundle_key] = bundle_targets
+
+    @classmethod
     def set_conditioning_datasets(cls, data_backend_id: str, conditioning_backend_ids: list[str]):
-        if data_backend_id in cls.datasets:
-            cls.datasets[data_backend_id].conditioning_datasets = tuple(cls.datasets[x] for x in conditioning_backend_ids)
-        cls.data_backends[data_backend_id]["conditioning_data"] = [cls.data_backends[x] for x in conditioning_backend_ids]
+        cls._set_dataset_relationship(
+            data_backend_id, conditioning_backend_ids, "conditioning_datasets", "conditioning_data"
+        )
 
     @classmethod
     def set_s2v_datasets(cls, data_backend_id: str, s2v_backend_ids: list[str]):
         """Link audio datasets for S2V (Speech-to-Video) training."""
-        if data_backend_id in cls.datasets:
-            cls.datasets[data_backend_id].audio_datasets = tuple(cls.datasets[x] for x in s2v_backend_ids)
-        cls.data_backends[data_backend_id]["s2v_data"] = [cls.data_backends[x] for x in s2v_backend_ids]
+        cls._set_dataset_relationship(data_backend_id, s2v_backend_ids, "audio_datasets", "s2v_data")
 
     @classmethod
     def get_s2v_datasets(cls, data_backend_id: str) -> list[dict]:
