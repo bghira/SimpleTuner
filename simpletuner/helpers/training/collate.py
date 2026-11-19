@@ -266,7 +266,11 @@ def compute_latents(filepaths, data_backend_id: str, model, *, vae_cache=None, d
 
             return latents
         if vae_cache is None:
-            vae_cache = StateTracker.get_dataset(data_backend_id).vae_cache
+            if dataset is None:
+                dataset = StateTracker.get_dataset(data_backend_id)
+            vae_cache = dataset.vae_cache
+        if vae_cache is None:
+            raise ValueError(f"Dataset {data_backend_id} has no VAE cache for this batch.")
         if getattr(vae_cache, "vae_cache_ondemand", False):
             latents = vae_cache.encode_images([None] * len(filepaths), filepaths, view=view)
         else:
@@ -1079,13 +1083,23 @@ def collate_fn(batch, *, dataset=None):
         s2v_audio_paths.append(audio_path)
         s2v_audio_backend_ids.append(audio_backend_id)
 
-    if dataset_type == "video" and dataset.audio_datasets and not any("s2v_audio_path" in example for example in examples):
+    linked_audio = {audio.id: audio for audio in dataset.audio_datasets} if dataset_type == "video" else {}
+    if linked_audio:
         for index, path in enumerate(filepaths):
+            example = examples[index]
+            if s2v_audio_paths[index] is not None or (isinstance(example, dict) and "s2v_audio_path" in example):
+                continue
             pair = dataset.resolve_s2v_audio(path)
             if pair is not None:
                 audio_dataset, audio_ref = pair
                 s2v_audio_paths[index] = audio_ref
                 s2v_audio_backend_ids[index] = audio_dataset.id
+        if len(linked_audio) == 1:
+            default_id = next(iter(linked_audio))
+            s2v_audio_backend_ids = [
+                (backend_id or default_id) if path is not None else backend_id
+                for path, backend_id in zip(s2v_audio_paths, s2v_audio_backend_ids, strict=True)
+            ]
 
     audio_latent_batch = None
     audio_latent_mask = None
@@ -1097,23 +1111,30 @@ def collate_fn(batch, *, dataset=None):
             uses_audio_latents = False
     if uses_audio_latents and any(s2v_audio_paths):
         if dataset_type == "video":
-            default_audio_backend_id = dataset.audio_datasets[0].id if len(dataset.audio_datasets) == 1 else None
             grouped: dict[str, list[int]] = {}
             for idx, path in enumerate(s2v_audio_paths):
                 if path is None:
                     continue
-                backend_id = s2v_audio_backend_ids[idx] or default_audio_backend_id
-                if backend_id is None:
+                backend_id = s2v_audio_backend_ids[idx]
+                if backend_id not in linked_audio:
                     raise ValueError(
-                        f"Missing s2v audio backend id for {path}. Ensure the audio dataset is linked via s2v_datasets."
+                        f"Audio dataset {backend_id!r} for {path} is not linked to {dataset.id} via s2v_datasets."
                     )
                 grouped.setdefault(backend_id, []).append(idx)
 
             audio_latents_by_index: list[torch.Tensor | None] = [None] * len(s2v_audio_paths)
             for backend_id, indices in grouped.items():
                 audio_paths = [s2v_audio_paths[i] for i in indices]
-                latents = compute_latents(audio_paths, backend_id, model)
-                for offset, latent in zip(indices, latents):
+                audio = linked_audio[backend_id]
+                latents = compute_latents(
+                    audio_paths,
+                    backend_id,
+                    model,
+                    vae_cache=audio.vae_cache,
+                    dataset=audio,
+                    view=audio.published_read_view(),
+                )
+                for offset, latent in zip(indices, latents, strict=True):
                     if isinstance(latent, dict):
                         latent = latent.get("latents")
                     audio_latents_by_index[offset] = latent

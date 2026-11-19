@@ -223,6 +223,35 @@ class CollateFunctionTests(unittest.TestCase):
         self.assertEqual(output["s2v_audio_paths"], ["speech.wav"])
         self.assertEqual(output["s2v_audio_backend_ids"], ["speech"])
 
+    def test_mixed_s2v_occurrences_use_their_bound_audio_cache(self):
+        dataset = DatasetRuntime("backend-1", _make_stub_data_backend(), None, {"dataset_type": "video"})
+        metadata = SimpleNamespace(epoch_provider=None, requires_complete_preparation=False)
+        audio = DatasetRuntime("speech", None, metadata, {"dataset_type": "audio"})
+        audio.vae_cache = object()
+        dataset.audio_datasets = (audio,)
+        model = _StubModel(uses_text_embeddings_cache=False)
+        model.uses_audio_latents_for_data_backend = lambda _: True
+        examples = self.base_batch[0]["training_samples"]
+        examples[0].update(dataset_type="video", s2v_audio_path="selected.wav")
+        examples.append({key: value for key, value in examples[0].items() if key != "s2v_audio_path"})
+        examples[1]["image_path"] = "second.mp4"
+        patchers, _ = self._patch_state_tracker(model=model, data_backend={}, text_outputs={})
+
+        with ExitStack() as stack:
+            for patcher in patchers:
+                stack.enter_context(patcher)
+            resolve = stack.enter_context(patch.object(dataset, "resolve_s2v_audio", return_value=(audio, "resolved.wav")))
+            latents = stack.enter_context(
+                patch("simpletuner.helpers.training.collate.compute_latents", return_value=[torch.zeros(1, 4, 4, 4)] * 2)
+            )
+            output = collate_fn(self.base_batch, dataset=dataset)
+
+        resolve.assert_called_once_with("second.mp4")
+        latents.assert_called_with(
+            ["selected.wav", "resolved.wav"], "speech", model, vae_cache=audio.vae_cache, dataset=audio, view=None
+        )
+        self.assertEqual(output["s2v_audio_backend_ids"], ["speech", "speech"])
+
     def test_collate_passes_all_selected_reference_paths_to_text_encoding(self):
         from threading import Thread
 
