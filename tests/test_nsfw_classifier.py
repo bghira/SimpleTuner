@@ -259,6 +259,28 @@ class VaeNsfwFilterTest(unittest.TestCase):
         self.assertEqual(vae.image_data_backend.deleted, [bad])
         self.assertEqual(vae._nsfw_scan_report["deleted_images"], 1)
 
+    def test_every_rank_learns_whether_any_rank_filtered_a_sample(self):
+        from unittest.mock import patch
+
+        filtered = [{"filepath": "bad.png", "bucket": "1.0", "reason": "nsfw", "delete_from_backend": False}]
+        for is_main_process, groups, expected in (
+            (False, [[], filtered], True),
+            (False, [[], []], False),
+            (True, [filtered, []], True),
+            (True, [[], []], False),
+        ):
+            with self.subTest(is_main_process=is_main_process, expected=expected):
+                vae = make_vae_for_nsfw_filter({}, rejected_paths=set())
+                vae.accelerator.is_main_process = is_main_process
+                vae.accelerator.num_processes = 2
+                vae.metadata_backend = FakeBucketListMetadataBackend({"1.0": ["good.png", "bad.png"]}, on_save=lambda: None)
+                with patch("simpletuner.helpers.caching.vae.gather_across_processes", return_value=groups):
+                    self.assertIs(vae._finalize_deferred_metadata_filters(), expected)
+                self.assertEqual(vae.accelerator.waits, 1)
+                # Only the main process writes the lists back.
+                saved = {"1.0": ["good.png"]} if is_main_process and expected else None
+                self.assertEqual(vae.metadata_backend.saved_cache, saved)
+
     def test_eval_dataset_type_is_not_scanned_even_when_sample_types_all(self):
         vae = VAECache.__new__(VAECache)
         vae.nsfw_check_requested = True

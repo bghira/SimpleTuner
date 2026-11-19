@@ -2291,7 +2291,9 @@ class TestTrainer(unittest.TestCase):
         )
         metadata_backend = MagicMock()
         metadata_backend.aspect_ratio_bucket_indices = bucket_contents
-        backends = {"train": {"metadata_backend": metadata_backend, "vaecache": MagicMock(), "dataset_runtime": MagicMock()}}
+        vaecache = MagicMock()
+        vaecache.rebuild_cache.return_value = False
+        backends = {"train": {"metadata_backend": metadata_backend, "vaecache": vaecache, "dataset_runtime": MagicMock()}}
         return trainer, backends
 
     @contextmanager
@@ -2357,6 +2359,27 @@ class TestTrainer(unittest.TestCase):
                 expected = ["reload", "rebuild_cursor", "rebuild_vae_cache"]
                 if is_main_process:
                     expected.insert(0, "recompute")
+                self.assertEqual([name for name, _args, _kwargs in calls.mock_calls], expected)
+
+    def test_samples_the_vae_rebuild_filters_out_leave_every_rank_share(self):
+        for is_main_process in (True, False):
+            with self.subTest(is_main_process=is_main_process):
+                trainer, backends = self._rollover_fixture(
+                    bucket_contents={"1.0": ["image-0.jpg"]}, is_main_process=is_main_process
+                )
+                backend = backends["train"]
+                backend["vaecache"].rebuild_cache.return_value = True
+                calls = Mock()
+                calls.attach_mock(backend["metadata_backend"].reload_cache, "reload")
+                calls.attach_mock(backend["dataset_runtime"].rebuild_cursor, "rebuild_cursor")
+                calls.attach_mock(backend["vaecache"].rebuild_cache, "rebuild_vae_cache")
+
+                with self._rollover_patches(backends):
+                    trainer._epoch_rollover(2)
+
+                # The main process saved the lists it filtered; the others read them back.
+                after = ["rebuild_cursor"] if is_main_process else ["reload", "rebuild_cursor"]
+                expected = ["reload", "rebuild_cursor", "rebuild_vae_cache", *after]
                 self.assertEqual([name for name, _args, _kwargs in calls.mock_calls], expected)
 
     def test_epoch_rollover_drops_what_is_left_of_the_previous_epoch(self):

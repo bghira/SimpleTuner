@@ -51,6 +51,18 @@ class TestVaeCacheTraversal(unittest.TestCase):
     def test_a_training_rank_encodes_its_share_of_the_dataset(self):
         self._run_pipeline(webshart=False, training_rank=True)
 
+    def test_a_rebuild_reports_whether_encoding_filtered_samples_out(self):
+        for ondemand, filtered, expected in ((False, True, True), (False, False, False), (True, True, False)):
+            with self.subTest(ondemand=ondemand, filtered=filtered):
+                cache = VAECache.__new__(VAECache)
+                cache.debug_log = Mock()
+                cache.accelerator = SimpleNamespace(is_local_main_process=False, wait_for_everyone=Mock())
+                for name in ("clear_cache", "discover_unprocessed_files", "init_vae"):
+                    setattr(cache, name, Mock())
+                cache.process_buckets = Mock(return_value=filtered)
+                cache.vae_cache_ondemand = ondemand
+                self.assertIs(cache.rebuild_cache(), expected)
+
     def _run_pipeline(self, webshart, training_rank=False):
         wide0, wide1 = "webshart://0/0/wide.jpg", "webshart://1/0/wide.jpg"
         square0, square1 = "webshart://0/1/square.jpg", "webshart://1/1/square.jpg"
@@ -85,7 +97,7 @@ class TestVaeCacheTraversal(unittest.TestCase):
         cache._vae_cache_written_count = 0
         cache.accelerator = SimpleNamespace(is_local_main_process=False, wait_for_everyone=Mock())
         cache._close_nsfw_classifier_store = Mock()
-        cache._finalize_deferred_metadata_filters = Mock()
+        cache._finalize_deferred_metadata_filters = Mock(return_value=True)
         cache._write_nsfw_scan_report = Mock()
         backend = WebshartDataBackend.__new__(WebshartDataBackend)
         group_input = []
@@ -132,7 +144,8 @@ class TestVaeCacheTraversal(unittest.TestCase):
 
         cache._write_latents_in_batch = write
         progress = Mock()
-        cache.process_buckets(progress_callback=progress)
+        # Whether samples were filtered out reaches the caller, so the ranks can take their new shares.
+        self.assertIs(cache.process_buckets(progress_callback=progress), True)
 
         expected = [wide0, restored, square0, wide1, square1] if webshart else [wide1, wide0, restored, square1, square0]
         self.assertEqual(read_order, expected)

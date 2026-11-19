@@ -6081,7 +6081,11 @@ class Trainer:
                 # we have to rebuild the VAE cache if it exists.
                 if "vaecache" in backend:
                     logger.info("Rebuilding VAE cache..")
-                    backend["vaecache"].rebuild_cache()
+                    if backend["vaecache"].rebuild_cache():
+                        # Samples were filtered out; every rank takes its share of what the main process saved.
+                        if not self.accelerator.is_main_process:
+                            backend["metadata_backend"].reload_cache(set_config=False)
+                        backend["dataset_runtime"].rebuild_cursor()
                 # no need to manually call metadata_backend.save_cache() here.
         if self.config.lr_scheduler == "cosine_with_restarts":
             self.extra_lr_scheduler_kwargs["epoch"] = epoch

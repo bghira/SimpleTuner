@@ -483,17 +483,13 @@ class VAECache(WebhookMixin):
             )
             return False
 
-    def _finalize_deferred_metadata_filters(self) -> None:
+    def _finalize_deferred_metadata_filters(self) -> bool:
+        """Apply every rank's filtered samples on the main process. Whether there were any, on every rank."""
         actions = getattr(self, "_deferred_metadata_filter_actions", [])
         gathered_action_groups = gather_across_processes(actions)
         if hasattr(self, "_metadata_filter_actions_lock"):
             with self._metadata_filter_actions_lock:
                 self._deferred_metadata_filter_actions = []
-
-        if not self._is_main_process():
-            if self._is_multi_process():
-                self.accelerator.wait_for_everyone()
-            return
 
         gathered_actions = [
             action
@@ -502,10 +498,10 @@ class VAECache(WebhookMixin):
             if isinstance(action, dict) and action.get("filepath")
         ]
         deduplicated_actions = self._deduplicate_filter_actions(gathered_actions)
-        if not deduplicated_actions:
+        if not self._is_main_process() or not deduplicated_actions:
             if self._is_multi_process():
                 self.accelerator.wait_for_everyone()
-            return
+            return bool(deduplicated_actions)
 
         metadata_cache_updated = self._apply_filter_actions_to_metadata_cache(deduplicated_actions)
         if not metadata_cache_updated:
@@ -517,7 +513,7 @@ class VAECache(WebhookMixin):
                 )
             if self._is_multi_process():
                 self.accelerator.wait_for_everyone()
-            return
+            return True
 
         deleted_nsfw_images = 0
         for action in deduplicated_actions:
@@ -530,6 +526,7 @@ class VAECache(WebhookMixin):
 
         if self._is_multi_process():
             self.accelerator.wait_for_everyone()
+        return True
 
     def _scan_sample_for_nsfw(self, filepath: str, sample, bucket: str) -> bool:
         classifier_store = self._get_nsfw_classifier_store()
@@ -883,7 +880,8 @@ class VAECache(WebhookMixin):
         self.vae = self.model.get_vae()
         self.vae.to(self.accelerator.device, dtype=self._cache_vae_dtype())
 
-    def rebuild_cache(self):
+    def rebuild_cache(self) -> bool:
+        """Encode the dataset again. Whether samples were filtered out of the bucket lists."""
         self.debug_log("Rebuilding cache.")
         if self.accelerator.is_local_main_process:
             self.debug_log("Updating StateTracker with new VAE cache entry list.")
@@ -901,9 +899,10 @@ class VAECache(WebhookMixin):
         self.discover_unprocessed_files()
         self.debug_log("-> Load VAE")
         self.init_vae()
+        filtered = False
         if not self.vae_cache_ondemand:
             self.debug_log("-> Process VAE cache")
-            self.process_buckets()
+            filtered = self.process_buckets()
             if self.accelerator.is_local_main_process:
                 self.debug_log("Updating StateTracker with new VAE cache entry list.")
                 StateTracker.set_vae_cache_files(
@@ -915,6 +914,7 @@ class VAECache(WebhookMixin):
                 )
             self.accelerator.wait_for_everyone()
         self.debug_log("-> Completed cache rebuild")
+        return filtered
 
     def clear_cache(self):
         # can't simply clear directory since it might be mixed with image samples (s3 case)
@@ -2025,7 +2025,7 @@ class VAECache(WebhookMixin):
                 completed_futures.append(future)
         return [f for f in futures if f not in completed_futures]
 
-    def process_buckets(self, progress_callback=None):
+    def process_buckets(self, progress_callback=None) -> bool:
         futures = []
         self.debug_log("Listing cached images")
         processed_images = self._list_cached_images()
@@ -2206,7 +2206,7 @@ class VAECache(WebhookMixin):
             self._close_nsfw_classifier_store()
 
         # Send completion event for VAE cache initialization
-        self._finalize_deferred_metadata_filters()
+        filtered = self._finalize_deferred_metadata_filters()
         self._write_nsfw_scan_report()
         if self.accelerator.is_local_main_process:
             StateTracker.set_vae_cache_files(
@@ -2229,6 +2229,7 @@ class VAECache(WebhookMixin):
                 job_id=StateTracker.get_job_id(),
             )
             self.webhook_handler.send_raw(event, message_level="info", job_id=StateTracker.get_job_id())
+        return filtered
 
     def scan_cache_contents(self):
         """
