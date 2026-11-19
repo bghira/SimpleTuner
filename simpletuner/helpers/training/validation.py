@@ -1353,10 +1353,8 @@ def _build_validation_grounding_batch(
     embed_cache,
     max_entities: int,
     vae_scale_factor: int,
-    # Sidecar path (existing):
     image_path: str | None = None,
-    data_backend_id: str | None = None,
-    # Inline path (new):
+    dataset=None,
     bbox_entities: list[dict] | None = None,
     shortname: str | None = None,
     target_size: tuple[int, int] | None = None,
@@ -1366,8 +1364,8 @@ def _build_validation_grounding_batch(
 
     Two modes:
 
-    *Sidecar*: provide ``image_path`` + ``data_backend_id``.  Reads a ``.bbox``
-    sidecar file and delegates to ``GroundingCollate.build_batch``.
+    *Dataset*: provide ``image_path`` and a dataset binding. Reads the published
+    metadata or a local ``.bbox`` sidecar and delegates to ``GroundingCollate.build_batch``.
 
     *Inline*: provide ``bbox_entities`` + ``shortname`` + ``target_size``.
     Builds the batch directly from pre-cached entity embeds without needing
@@ -1385,30 +1383,28 @@ def _build_validation_grounding_batch(
             target_size=target_size or (512, 512),
         )
 
-    if not image_path or not data_backend_id:
+    if not image_path or dataset is None:
         return None
 
     from simpletuner.helpers.training.grounding.collate import GroundingCollate
     from simpletuner.helpers.training.grounding.metadata import BboxMetadata
 
-    # Locate the .bbox sidecar file next to the image
-    sidecar_path = Path(image_path).with_suffix(".bbox")
-    if not sidecar_path.exists():
-        return None
+    (metadata,) = dataset.read_samples([image_path], view=dataset.published_read_view())
+    entity_dicts = metadata.get("bbox_entities")
+    if not entity_dicts:
+        sidecar_path = Path(image_path).with_suffix(".bbox")
+        if not sidecar_path.exists():
+            return None
+        try:
+            entities = BboxMetadata.from_file(str(sidecar_path))
+        except Exception:
+            logger.debug(f"Failed to parse bbox sidecar for validation: {sidecar_path}")
+            return None
+        if not entities:
+            return None
+        entity_dicts = [{"label": entity.label, "bbox": list(entity.bbox)} for entity in entities]
 
-    try:
-        entities = BboxMetadata.from_file(str(sidecar_path))
-    except Exception:
-        logger.debug(f"Failed to parse bbox sidecar for validation: {sidecar_path}")
-        return None
-
-    if not entities:
-        return None
-
-    # Build a single-sample examples list matching the collate interface
-    metadata = StateTracker.get_metadata_by_filepath(str(image_path), data_backend_id) or {}
     file_target_size = metadata.get("target_size", (512, 512))
-    entity_dicts = [{"label": e.label, "bbox": list(e.bbox)} for e in entities]
     example = {
         "image_path": str(image_path),
         "target_size": file_target_size,
@@ -1418,7 +1414,7 @@ def _build_validation_grounding_batch(
     collate = GroundingCollate(max_entities=max_entities, vae_scale_factor=vae_scale_factor)
     grounding_batch = collate.build_batch(
         examples=[example],
-        data_backend_id=data_backend_id,
+        dataset_root=dataset.instance_data_dir,
         text_embed_cache=embed_cache,
         grounding_image_cache=grounding_image_cache,
     )
@@ -4733,7 +4729,7 @@ class Validation:
                             max_entities=getattr(self.config, "max_grounding_entities", 4),
                             vae_scale_factor=8,
                             image_path=image_path,
-                            data_backend_id=data_backend_id,
+                            dataset=StateTracker.get_datasets().get(data_backend_id),
                         )
                     if grounding_batch is not None:
                         grounding_batch = grounding_batch.to(
