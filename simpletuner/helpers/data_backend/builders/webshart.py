@@ -1,13 +1,10 @@
 """Webshart backend builder for creating WebshartDataBackend instances."""
 
 import logging
-import os
-from pathlib import Path
 from typing import Any, Dict
 
 from simpletuner.helpers.data_backend.config.base import BaseBackendConfig
 from simpletuner.helpers.data_backend.webshart import WebshartDataBackend
-from simpletuner.helpers.training.state_tracker import StateTracker
 
 from .base import BaseBackendBuilder
 
@@ -62,25 +59,6 @@ class WebshartBackendBuilder(BaseBackendBuilder):
             "aws_max_pool_connections": getattr(config, "aws_max_pool_connections", None) or 32,
         }
         return WebshartDataBackend(**backend_kwargs)
-
-    def _default_cache_dir(self, config: BaseBackendConfig) -> Path:
-        candidates = []
-        if isinstance(self.args, dict):
-            candidates.append(self.args.get("cache_dir"))
-        elif self.args is not None:
-            candidates.append(getattr(self.args, "cache_dir", None))
-
-        state_args = getattr(StateTracker, "get_args", lambda: None)()
-        if isinstance(state_args, dict):
-            candidates.append(state_args.get("cache_dir"))
-        elif state_args is not None:
-            candidates.append(getattr(state_args, "cache_dir", None))
-
-        candidates.append(os.environ.get("SIMPLETUNER_CACHE_DIR", None))
-        for candidate in candidates:
-            if candidate:
-                return Path(candidate).expanduser() / "webshart" / config.id
-        return Path("cache") / "webshart" / config.id
 
     def _validate_webshart_config(self, config: BaseBackendConfig) -> None:
         if not getattr(config, "webshart_source", None):

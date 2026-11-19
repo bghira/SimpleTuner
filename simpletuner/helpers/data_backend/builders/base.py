@@ -3,6 +3,7 @@
 import logging
 import os
 from abc import ABC, abstractmethod
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, Optional
 
@@ -209,6 +210,10 @@ class BaseBackendBuilder(ABC):
             preparation_only=preparation_only,
         )
 
+    def _default_cache_dir(self, config: BaseBackendConfig) -> Path:
+        root = get_arg_value(self.args, "cache_dir") or os.environ.get("SIMPLETUNER_CACHE_DIR") or "cache"
+        return Path(root).expanduser() / config.backend_type / config.id
+
     def _get_compression_setting(self, config: BaseBackendConfig, args: Optional[Any] = None) -> bool:
         if config.compress_cache is not None:
             return bool(config.compress_cache)
@@ -216,23 +221,5 @@ class BaseBackendBuilder(ABC):
         if config.config.get("compress_cache") is not None:
             return bool(config.config.get("compress_cache"))
 
-        candidate_args = []
-        if args is not None:
-            candidate_args.append(args)
-        if self.args is not None:
-            candidate_args.append(self.args)
-        tracker_args = StateTracker.get_args()
-        if tracker_args is not None:
-            candidate_args.append(tracker_args)
-
-        for source in candidate_args:
-            if source is None:
-                continue
-            if isinstance(source, dict):
-                if "compress_disk_cache" in source:
-                    return bool(source["compress_disk_cache"])
-            else:
-                if hasattr(source, "compress_disk_cache"):
-                    return bool(getattr(source, "compress_disk_cache"))
-
-        return False
+        default = get_arg_value(self.args, "compress_disk_cache", False)
+        return bool(get_arg_value(args, "compress_disk_cache", default))

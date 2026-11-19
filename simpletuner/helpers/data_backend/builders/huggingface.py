@@ -1,14 +1,11 @@
 """Hugging Face backend builder for creating HuggingfaceDatasetsBackend instances."""
 
 import logging
-import os
-from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 from simpletuner.helpers.data_backend.config.base import BaseBackendConfig
 from simpletuner.helpers.data_backend.filters import build_dataset_filter
 from simpletuner.helpers.data_backend.huggingface import HuggingfaceDatasetsBackend
-from simpletuner.helpers.training.state_tracker import StateTracker
 
 from .base import BaseBackendBuilder
 
@@ -76,29 +73,6 @@ class HuggingfaceBackendBuilder(BaseBackendBuilder):
         data_backend = HuggingfaceDatasetsBackend(**backend_kwargs)
 
         return data_backend
-
-    def _default_cache_dir(self, config: BaseBackendConfig) -> Optional[Path]:
-        candidates = []
-
-        if isinstance(self.args, dict):
-            candidates.append(self.args.get("cache_dir"))
-        elif self.args is not None:
-            candidates.append(getattr(self.args, "cache_dir", None))
-
-        state_args = getattr(StateTracker, "get_args", lambda: None)()
-        if isinstance(state_args, dict):
-            candidates.append(state_args.get("cache_dir"))
-        elif state_args is not None:
-            candidates.append(getattr(state_args, "cache_dir", None))
-
-        candidates.append(os.environ.get("SIMPLETUNER_CACHE_DIR", None))
-
-        for candidate in candidates:
-            if candidate:
-                base = Path(candidate).expanduser()
-                return base / "huggingface" / config.id
-
-        return Path("cache") / "huggingface" / config.id
 
     def _validate_huggingface_config(self, config: BaseBackendConfig) -> None:
 
