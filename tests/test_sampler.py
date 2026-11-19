@@ -280,19 +280,9 @@ class TestMultiAspectSampler(unittest.TestCase):
             metadata_backend.seen_occurrence_count("same.jpg")
 
     def test_i2v_first_frame_conditioning_sample_maps_video_to_png(self):
-        sampler = object.__new__(MultiAspectSampler)
-        sampler.id = "conditioning"
-        sampler.model = None
-        sampler.metadata_backend = SimpleNamespace(instance_data_dir="/conditioning")
-        sampler.conditioning_type = "reference_strict"
-        sampler.source_dataset_id = None
-        sampler.caption_strategy = "filename"
-        sampler.instance_prompt = None
-        sampler.prepend_instance_prompt = False
-        sampler.use_captions = True
-        sampler.disable_multiline_split = False
-        sampler.logger = MagicMock()
-        sampler.debug_log = MagicMock()
+        metadata_backend = SimpleNamespace(
+            instance_data_dir="/conditioning", epoch_provider=None, requires_complete_preparation=False
+        )
 
         read_paths = []
 
@@ -309,30 +299,27 @@ class TestMultiAspectSampler(unittest.TestCase):
             "training_sample_path": "11.mp4",
         }
 
-        sampler.data_backend = SimpleNamespace(read_image=read_image)
-        sampler.metadata_backend.get_metadata_by_filepath = lambda path: metadata if path == "/conditioning/11.png" else None
-        sampler.metadata_backend.get_metadata_batch = lambda refs: MetadataBackend.get_metadata_batch(
-            sampler.metadata_backend, refs
-        )
+        data_backend = SimpleNamespace(read_image=read_image)
+        metadata_backend.get_metadata_by_filepath = lambda path: metadata if path == "/conditioning/11.png" else None
+        metadata_backend.get_metadata_batch = lambda refs: MetadataBackend.get_metadata_batch(metadata_backend, refs)
         backend_config = {
             "conditioning_config": {"type": "i2v_first_frame"},
+            "conditioning_type": "reference_strict",
             "crop": False,
             "crop_style": "random",
             "resolution": 8,
             "resolution_type": "pixel",
         }
-        sampler.metadata_backend.active_dataset_config = backend_config
-        sampler.metadata_backend.conditioning_ref = MetadataBackend.conditioning_ref.__get__(sampler.metadata_backend)
+        metadata_backend.active_dataset_config = backend_config
+        metadata_backend.conditioning_ref = MetadataBackend.conditioning_ref.__get__(metadata_backend)
 
-        sampler.dataset_runtime = DatasetRuntime(
-            "conditioning", sampler.data_backend, sampler.metadata_backend, backend_config
-        )
+        dataset = DatasetRuntime("conditioning", data_backend, metadata_backend, backend_config)
         with (
             patch.object(StateTracker, "get_data_backend_config", return_value=backend_config),
             patch.object(StateTracker, "get_model", return_value=None),
             patch("simpletuner.helpers.prompts.PromptHandler.magic_prompt", return_value="caption"),
         ):
-            conditioning_sample = sampler.get_conditioning_sample("/training/11.mp4")
+            conditioning_sample = dataset.read_conditioning_sample("/training/11.mp4")
 
         self.assertEqual(read_paths, ["/conditioning/11.png"])
         self.assertIsNotNone(conditioning_sample)
@@ -374,17 +361,14 @@ class TestMultiAspectSampler(unittest.TestCase):
                 )
                 conditioning_metadata.aspect_ratio_bucket_indices = {}
                 conditioning_metadata.get_metadata_by_filepath.return_value = metadata
-                conditioning_sampler = MultiAspectSampler(
-                    dataset_runtime=DatasetRuntime(
-                        conditioning_id, LocalDataBackend(self.accelerator, conditioning_id), conditioning_metadata, {}
-                    ),
-                    accelerator=self.accelerator,
-                    batch_size=2,
-                    model=None,
-                    conditioning_type="mask",
+                conditioning_datasets.append(
+                    DatasetRuntime(
+                        conditioning_id,
+                        LocalDataBackend(self.accelerator, conditioning_id),
+                        conditioning_metadata,
+                        {**backend_config, "conditioning_type": "mask"},
+                    )
                 )
-                conditioning_sampler.dataset_runtime.sampler = conditioning_sampler
-                conditioning_datasets.append(conditioning_sampler.dataset_runtime)
 
             for sampling_mode in ("random", "combined"):
                 for dataset_count in (1, 2):

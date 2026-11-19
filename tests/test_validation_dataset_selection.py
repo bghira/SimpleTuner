@@ -2,7 +2,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import torch
 from PIL import Image
@@ -32,7 +32,8 @@ class EvalDatasetSelectionTests(unittest.TestCase):
         self.addCleanup(registry.stop)
 
     def _register(self, id, *, sampler=None, root=None, config=None):
-        dataset = DatasetRuntime(id, None, SimpleNamespace(instance_data_dir=root), config or {})
+        metadata = SimpleNamespace(instance_data_dir=root, epoch_provider=None, requires_complete_preparation=False)
+        dataset = DatasetRuntime(id, None, metadata, config or {})
         dataset.sampler = sampler
         StateTracker.register_dataset(dataset)
         return dataset
@@ -178,10 +179,10 @@ class EvalDatasetSelectionTests(unittest.TestCase):
         sampler.metadata_backend.instance_data_dir = str(dataset_root)
         sampler.retrieve_validation_set.return_value = [("clip", "prompt", sample_path, None)]
         conditioning_sample = MagicMock()
-        conditioning_sampler = MagicMock()
-        conditioning_sampler.get_conditioning_sample.return_value = conditioning_sample
         source = self._register("source", sampler=sampler, root=str(dataset_root))
-        source.conditioning_datasets = (self._register("conditioning", sampler=conditioning_sampler),)
+        target = self._register("conditioning")
+        target.read_conditioning_sample = MagicMock(return_value=conditioning_sample)
+        source.conditioning_datasets = (target,)
 
         with (
             patch("simpletuner.helpers.training.validation.StateTracker.get_model", return_value=model),
@@ -190,11 +191,11 @@ class EvalDatasetSelectionTests(unittest.TestCase):
             result = retrieve_validation_edit_images()
 
         self.assertEqual(len(result), 1)
-        conditioning_sampler.get_conditioning_sample.assert_called_once_with(
-            "clip.mp4", paired_source=("source", sample_path)
+        target.read_conditioning_sample.assert_called_once_with(
+            "clip.mp4", source=source, source_ref=sample_path, source_view=None, model=model, rng=ANY
         )
 
-        conditioning_sampler.reset_mock()
+        target.read_conditioning_sample.reset_mock()
         native_ref = "webshart://3/152/shard.parquet/000000000152.jpg"
         sampler.retrieve_validation_set.return_value = [("clip", "prompt", native_ref, None)]
         with (
@@ -203,8 +204,8 @@ class EvalDatasetSelectionTests(unittest.TestCase):
         ):
             result = retrieve_validation_edit_images()
         self.assertEqual(len(result), 1)
-        conditioning_sampler.get_conditioning_sample.assert_called_once_with(
-            native_ref, paired_source=("source", native_ref)
+        target.read_conditioning_sample.assert_called_once_with(
+            native_ref, source=source, source_ref=native_ref, source_view=None, model=model, rng=ANY
         )
 
     def test_i2v_with_validation_using_datasets_uses_image_backend(self):

@@ -558,21 +558,11 @@ class DatasetRuntimeTests(unittest.TestCase):
                     source_runtime.resolve_captions.assert_not_called()
 
     def test_conditioning_isolates_metadata_and_uses_source_runtime(self):
-        config = {**self.config, "caption_strategy": None}
+        config = {**self.config, "caption_strategy": None, "source_dataset_id": "source", "conditioning_type": "mask"}
         runtime = DatasetRuntime("images", self.data_backend, self.metadata_backend, config)
-        sampler = object.__new__(MultiAspectSampler)
-        sampler.id = "images"
-        sampler.model = None
-        sampler.dataset_runtime = runtime
-        sampler.data_backend = self.data_backend
-        sampler.metadata_backend = self.metadata_backend
-        sampler.metadata_backend.instance_data_dir = "/conditioning"
-        sampler.conditioning_type = "mask"
-        sampler.caption_strategy = None
-        sampler.source_dataset_id = "source"
-        sampler.logger = Mock()
-        sampler.debug_log = Mock()
-        source_runtime = SimpleNamespace(resolve_caption=Mock(return_value="source caption"))
+        self.metadata_backend.instance_data_dir = "/conditioning"
+        self.metadata_backend.conditioning_ref.return_value = "sample.jpg"
+        source_runtime = SimpleNamespace(id="source", resolve_caption=Mock(return_value="source caption"))
 
         def training_sample(**kwargs):
             kwargs["image_metadata"]["webshart"]["sample_idx"] = 99
@@ -581,11 +571,11 @@ class DatasetRuntimeTests(unittest.TestCase):
             return sample
 
         with (
-            patch("simpletuner.helpers.multiaspect.sampler.TrainingSample", side_effect=training_sample),
-            patch.object(StateTracker, "get_dataset", return_value=source_runtime),
-            patch.object(StateTracker, "get_data_backend_config", return_value={}),
+            patch("simpletuner.helpers.data_backend.dataset_runtime.TrainingSample", side_effect=training_sample),
+            patch.object(StateTracker, "get_dataset", side_effect=AssertionError("global dataset lookup")),
         ):
-            sample = sampler.get_conditioning_sample("sample.jpg")
+            sample = runtime.read_conditioning_sample("sample.jpg", source=source_runtime, source_ref="source.jpg")
+        self.assertEqual(sample.paired_source, ("source", "source.jpg"))
         sample.set_caption.assert_called_once_with("source caption")
         source_runtime.resolve_caption.assert_called_once_with("source.jpg")
         self.assertEqual(self.metadata["webshart"]["sample_idx"], 19)

@@ -5,6 +5,7 @@ import json
 import logging
 import math
 import os
+import random
 import subprocess
 import sys
 from contextlib import contextmanager, nullcontext
@@ -559,13 +560,22 @@ def retrieve_validation_edit_images() -> list[ValidationPrompt]:
     for dataset in _selected_validation_datasets(args, "image validation", *_PREVIEW_DATASET_TYPES):
         if not dataset.conditioning_datasets:
             continue
+        source_view = dataset.published_read_view()
         for shortname, edited_prompt, sample_ref, _ in dataset.validation_samples(batch_size=args.num_eval_images):
             pairing_key = dataset.pairing_key(sample_ref)
             if not pairing_key or os.path.isabs(pairing_key) or ".." in Path(pairing_key).parts:
                 continue
             references = []
             for target in dataset.conditioning_datasets:
-                reference = target.read_conditioning_sample(pairing_key, paired_source=(dataset.id, sample_ref))
+                revision = source_view.revision if source_view is not None else None
+                reference = target.read_conditioning_sample(
+                    pairing_key,
+                    source=dataset,
+                    source_ref=sample_ref,
+                    source_view=source_view,
+                    model=model,
+                    rng=random.Random(f"{dataset.id}:{revision}:{sample_ref}:{target.id}"),
+                )
                 if reference is not None:
                     references.append(reference)
             if len(references) != len(dataset.conditioning_datasets):

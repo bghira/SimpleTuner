@@ -2,19 +2,28 @@
 
 import hashlib
 import json
+import logging
 import os
+import random
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from copy import deepcopy
 from itertools import batched, islice
 from typing import Any
 
+import numpy as np
+from PIL import Image
+
 from simpletuner.helpers.data_backend.base import BaseDataBackend, ordered_sample_payloads
 from simpletuner.helpers.data_backend.dataset_types import get_arg_value
+from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.helpers.metadata.preparation import DatasetReadView
 from simpletuner.helpers.prompts import CaptionNotFoundError, PromptHandler
 from simpletuner.helpers.training import video_file_extensions
+from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.utils.pathing import normalize_data_path
+
+logger = logging.getLogger(__name__)
 
 
 class DatasetRuntime:
@@ -229,7 +238,7 @@ class DatasetRuntime:
         return self.epoch_provider.open_epoch(spec)
 
     def published_read_view(self):
-        if not self.uses_native_schedule:
+        if not self.uses_native_schedule and self.requires_complete_preparation is not True:
             return None
         revision = self.metadata_backend.view_revision
         if revision is None:
@@ -288,11 +297,55 @@ class DatasetRuntime:
         """Resolve a training sample's pairing key inside this conditioning dataset."""
         return self.metadata_backend.conditioning_ref(relative_ref)
 
-    def read_conditioning_sample(self, relative_ref, *, paired_source, rng=None):
-        options = {"paired_source": paired_source}
-        if rng is not None:
-            options["rng"] = rng
-        return self.sampler.get_conditioning_sample(relative_ref, **options)
+    def read_conditioning_sample(
+        self, relative_ref, *, source=None, source_ref=None, source_view=None, model=None, rng=None
+    ):
+        """Resolve and read one conditioning input for the supplied source occurrence."""
+        if source_view is not None:
+            source.metadata_backend.validate_read_view(source_view)
+        view = self.published_read_view()
+        ref = self.conditioning_ref(relative_ref)
+        if ref is None:
+            return None
+        (metadata,) = self.read_samples([ref], view=view)
+        try:
+            image = self.data_backend.read_image(ref)
+        except Exception as error:
+            logger.error("Could not read conditioning sample %s: %s", ref, error)
+            return None
+        if image is None:
+            return None
+
+        sample = TrainingSample(
+            image=image,
+            data_backend_id=self.id,
+            image_metadata=metadata,
+            image_path=ref,
+            conditioning_type=self.config.get("conditioning_type"),
+            data_backend_config=self.config,
+            model=model,
+        )
+        if source is not None:
+            sample.paired_source = (source.id, source_ref)
+        if isinstance(sample.image, np.ndarray) and sample.image.ndim >= 4:
+            sample.image = sample.image[0]
+        elif isinstance(sample.image, list) and sample.image:
+            sample.image = sample.image[0]
+        if isinstance(sample.image, np.ndarray) and sample.image.ndim == 3:
+            sample.image = Image.fromarray(sample.image.astype(np.uint8))
+
+        caption_dataset, caption_ref = self, ref
+        source_id = self.config.get("source_dataset_id")
+        if source_id is not None and self.config.get("caption_strategy") is None:
+            caption_dataset = (
+                source if source is not None and source.id == source_id else StateTracker.get_dataset(source_id)
+            )
+            caption_ref = sample.training_sample_path(training_dataset_id=source_id)
+        caption = caption_dataset.resolve_caption(caption_ref)
+        if isinstance(caption, list):
+            caption = (random if rng is None else rng).choice(caption)
+        sample.set_caption(caption)
+        return sample
 
     def resolve_s2v_audio(self, video_ref):
         """Resolve a video to its attached audio dataset and sample reference."""

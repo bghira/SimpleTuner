@@ -980,7 +980,6 @@ class TestWebshartParquetBackend(unittest.TestCase):
         from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBackend
         from simpletuner.helpers.metadata.backends.webshart_exclusions import Exclusions, _publish
         from simpletuner.helpers.models.common import TextEmbedCacheKey
-        from simpletuner.helpers.multiaspect.sampler import MultiAspectSampler
         from simpletuner.helpers.training.state_tracker import StateTracker
 
         config = {
@@ -1048,11 +1047,8 @@ class TestWebshartParquetBackend(unittest.TestCase):
             self.assertIsNone(runtime.conditioning_ref(excluded))
             self.assertTrue(self.backend.exists(excluded))
 
-            sampler = MultiAspectSampler.__new__(MultiAspectSampler)
-            sampler.dataset_runtime = runtime
-            sampler.metadata_backend = metadata
             with patch.object(self.backend, "read_image", side_effect=AssertionError("excluded payload read")):
-                self.assertIsNone(sampler.get_conditioning_sample(excluded))
+                self.assertIsNone(runtime.read_conditioning_sample(excluded))
 
             model = SimpleNamespace(text_embed_cache_key=lambda: TextEmbedCacheKey.CAPTION)
             source = DatasetRuntime("source", self.backend, metadata, config)

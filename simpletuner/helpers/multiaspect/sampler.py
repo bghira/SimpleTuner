@@ -4,10 +4,8 @@ import os
 import random
 from collections import Counter
 
-import numpy as np
 import torch
 from accelerate.logging import get_logger
-from PIL import Image
 
 from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
@@ -220,7 +218,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             records[0]["dataset_continuation"] = state
             records[0]["dataset_read_view"] = view
             records[0]["caption_dropout_seed"] = rng.getrandbits(64)
-            yield tuple(self.connect_s2v_samples(self.connect_conditioning_samples(records, rng=rng)))
+            yield tuple(self.connect_s2v_samples(self.connect_conditioning_samples(records, rng=rng, view=view)))
 
     def close(self):
         self.validation_cursor.close()
@@ -902,68 +900,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
     def _clear_batch_accumulator(self):
         self.batch_accumulator = []
 
-    def get_conditioning_sample(self, original_sample_path: str, *, rng=random, paired_source=None) -> TrainingSample | None:
-        """
-        Given an original dataset sample path, return a TrainingSample
-        """
-        relative = original_sample_path
-        conditioning_dir = self.metadata_backend.instance_data_dir
-        if os.path.isabs(relative):
-            source_dir = (
-                StateTracker.get_dataset(self.source_dataset_id).config.get("instance_data_dir")
-                if self.source_dataset_id
-                else None
-            )
-            root = source_dir or conditioning_dir
-            if root and os.path.commonpath([os.path.abspath(root), relative]) == os.path.abspath(root):
-                relative = os.path.relpath(relative, root)
-            else:
-                relative = os.path.basename(relative)
-        full_path = self.dataset_runtime.conditioning_ref(relative)
-        if full_path is None:
-            return None
-        try:
-            conditioning_sample_data = self.data_backend.read_image(full_path)
-        except Exception as e:
-            self.logger.error(f"Could not fetch conditioning sample: {e}")
-            return None
-        if conditioning_sample_data is None:
-            self.debug_log(f"Could not fetch conditioning sample from {full_path}.")
-            return None
-
-        conditioning_sample_metadata = self.dataset_runtime.read_samples([full_path])[0]
-        conditioning_sample = TrainingSample(
-            image=conditioning_sample_data,
-            data_backend_id=self.id,
-            image_metadata=conditioning_sample_metadata,
-            image_path=full_path,
-            conditioning_type=self.conditioning_type,
-            model=self.model,
-        )
-
-        conditioning_sample.paired_source = paired_source
-        sample_image = conditioning_sample.image
-        if isinstance(sample_image, np.ndarray) and sample_image.ndim >= 4:
-            conditioning_sample.image = sample_image[0]
-        elif isinstance(sample_image, list) and len(sample_image) > 0:
-            conditioning_sample.image = sample_image[0]
-        if isinstance(conditioning_sample.image, np.ndarray) and conditioning_sample.image.ndim == 3:
-            conditioning_sample.image = Image.fromarray(conditioning_sample.image.astype(np.uint8))
-        # Use the magic prompt handler to retrieve the captions.
-        caption_dataset = self.dataset_runtime
-        caption_path = full_path
-        if self.source_dataset_id is not None and self.caption_strategy is None:
-            caption_path = conditioning_sample.training_sample_path(training_dataset_id=self.source_dataset_id)
-            caption_dataset = StateTracker.get_dataset(self.source_dataset_id)
-        instance_prompt = caption_dataset.resolve_caption(caption_path)
-        if type(instance_prompt) == list:
-            instance_prompt = rng.choice(instance_prompt)
-            self.debug_log(f"Selecting random prompt from list: {instance_prompt}")
-        conditioning_sample.set_caption(instance_prompt)
-
-        return conditioning_sample
-
-    def connect_conditioning_samples(self, samples: tuple, *, rng=None):
+    def connect_conditioning_samples(self, samples: tuple, *, rng=None, view=None):
         # Locate the conditioning data
         conditioning_datasets = self.dataset_runtime.conditioning_datasets
         if not len(conditioning_datasets):
@@ -981,7 +918,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         outputs = list(samples)
 
         def read_pair(dataset, sample_path, source_path):
-            return dataset.read_conditioning_sample(sample_path, paired_source=(self.id, source_path), rng=rng)
+            return dataset.read_conditioning_sample(
+                sample_path, source=self.dataset_runtime, source_ref=source_path, source_view=view, model=self.model, rng=rng
+            )
 
         if sampling_mode == "random" and len(conditioning_datasets) > 1:
             # Random mode: select one conditioning dataset per training sample
