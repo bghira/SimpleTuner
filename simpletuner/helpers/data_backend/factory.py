@@ -15,8 +15,6 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime, TextRequestBuilder
 
-from .runtime import BatchFetcher
-
 
 class _ArgsProxy(SimpleNamespace):
     """Lightweight namespace that proxies unknown attributes to a backing object."""
@@ -942,14 +940,6 @@ def from_instance_representation(representation: dict) -> "BaseDataBackend":
         return S3DataBackend.from_instance_representation(representation)
     else:
         raise ValueError(f"Unknown backend type: {backend_type}")
-
-
-# Legacy callers may refer to from_instance_representation without importing it
-# explicitly. Expose the function via builtins to preserve that behaviour.
-import builtins  # noqa: E402  (delay import until after function definition)
-
-if not hasattr(builtins, "from_instance_representation"):
-    builtins.from_instance_representation = from_instance_representation
 
 
 def _validate_unique_dataset_ids(configs):
@@ -4561,9 +4551,3 @@ def run_distillation_cache_generation(
     cycle = DistillationArtifactCycle(selected)
     distiller.bind_artifact_cycle(cycle)
     return cycle
-
-
-for _name in ("from_instance_representation", "get_backend_weight", "select_dataloader_index"):
-    _func = globals().get(_name)
-    if _func is not None and not hasattr(builtins, _name):
-        setattr(builtins, _name, _func)
