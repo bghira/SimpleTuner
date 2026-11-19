@@ -2750,9 +2750,7 @@ class Trainer:
                 distiller_profile=distiller_profile,
                 distillation_method=getattr(self.config, "distillation_method", None),
             )
-            self._distillation_caches = tuple(
-                backend["distillation_cache"] for backend in configured_backends["distillation_cache_backends"].values()
-            )
+            self._distillation_caches = configured_backends.distillation_caches
             self._emit_event(
                 lifecycle_stage_event(
                     key="init_data_backend",

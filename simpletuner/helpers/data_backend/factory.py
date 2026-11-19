@@ -6,6 +6,7 @@ import time
 import tracemalloc
 from contextlib import contextmanager, nullcontext
 from copy import deepcopy
+from dataclasses import dataclass
 from functools import partial
 from math import sqrt
 from pathlib import Path
@@ -1235,6 +1236,12 @@ def build_text_preparation_listing(config, store, directory, args, accelerator):
     if output_dir is None:
         raise ValueError("text_cache_use_listing requires an output directory for the scratch index.")
     return ArtifactListing(store, directory.rstrip("/") + "/", output_dir, accelerator)
+
+
+@dataclass(frozen=True)
+class ConfiguredDatasets:
+    datasets: dict[str, DatasetRuntime]
+    distillation_caches: tuple[DistillationCache, ...]
 
 
 class FactoryRegistry:
@@ -4232,31 +4239,8 @@ class FactoryRegistry:
 
         self.data_backends[init_backend["id"]] = init_backend
 
-    def configure(self, data_backend_config: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
-        """
-        Configure all backends using the new factory implementation.
-
-        This method provides a high-level interface for configuring all types of backends
-        in the correct order. It matches the API expected by test suites.
-
-        Args:
-            data_backend_config: Optional pre-loaded configuration. If not provided,
-                                will load from args.data_backend_config
-
-        Returns:
-            Dict containing:
-            - 'data_backends': Dictionary of configured data backends
-            - 'text_embed_backends': Dictionary of text embedding backends
-            - 'image_embed_backends': Dictionary of image embedding backends
-            - 'conditioning_image_embed_backends': Dictionary of conditioning image embedding backends
-            - 'distillation_cache_backends': Dictionary of distillation cache backends
-            - 'default_text_embed_backend_id': ID of default text embedding backend
-
-        Example:
-            >>> factory = FactoryRegistry(args, accelerator, text_encoders, tokenizers, model)
-            >>> result = factory.configure()
-            >>> print(f"Configured {len(result['data_backends'])} backends")
-        """
+    def configure(self, data_backend_config: Optional[List[Dict[str, Any]]] = None) -> ConfiguredDatasets:
+        """Open and prepare the resolved dataset plan and its bound artifacts."""
         if data_backend_config is None:
             data_backend_config = self.load_configuration()
         else:
@@ -4290,34 +4274,21 @@ class FactoryRegistry:
                 cache.finish_preparation()
         self._configure_grounding_image_embed_caches(data_backend_config)
 
-        training_types = {DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.AUDIO, DatasetType.CAPTION}
-        result = {
-            "data_backends": {
-                dataset_id: backend
-                for dataset_id, backend in {**self.data_backends, **self.caption_backends}.items()
-                if _backend_dataset_type(backend) in training_types
-            },
-            "text_embed_backends": self.text_embed_backends,
-            "image_embed_backends": self.image_embed_backends,
-            "conditioning_image_embed_backends": self.conditioning_image_embed_backends,
-            "distillation_cache_backends": self.distillation_cache_backends,
-            "caption_backends": self.caption_backends,
-            "default_text_embed_backend_id": self.default_text_embed_backend_id,
-        }
-
         self._log_performance_metrics(
             "factory_configure_complete",
             {
-                "backends_configured": len(result["data_backends"]),
-                "text_embed_backends": len(result["text_embed_backends"]),
-                "image_embed_backends": len(result["image_embed_backends"]),
-                "conditioning_image_embed_backends": len(result["conditioning_image_embed_backends"]),
-                "distillation_cache_backends": len(result["distillation_cache_backends"]),
-                "caption_backends": len(result["caption_backends"]),
+                "backends_configured": len(self.data_backends),
+                "text_embed_backends": len(self.text_embed_backends),
+                "image_embed_backends": len(self.image_embed_backends),
+                "conditioning_image_embed_backends": len(self.conditioning_image_embed_backends),
+                "distillation_cache_backends": len(self.distillation_cache_backends),
+                "caption_backends": len(self.caption_backends),
             },
         )
-
-        return result
+        return ConfiguredDatasets(
+            datasets=StateTracker.get_datasets(),
+            distillation_caches=tuple(entry["distillation_cache"] for entry in self.distillation_cache_backends.values()),
+        )
 
     def _validate_with_config_registry(self, config: Dict[str, Any], model_family: str) -> None:
         """
@@ -4432,7 +4403,7 @@ class FactoryRegistry:
         return None
 
 
-def configure_multi_databackend_new(
+def configure_multi_databackend(
     args: Dict[str, Any],
     accelerator: Any,
     text_encoders: Any,
@@ -4441,9 +4412,8 @@ def configure_multi_databackend_new(
     data_backend_config: Optional[List[Dict[str, Any]]] = None,
     distiller_profile: Optional[DistillerRequirementProfile] = None,
     distillation_method: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Configure multiple data backends using modular factory components."""
-    start_time = time.time()
+) -> ConfiguredDatasets:
+    """Configure the dataset runtimes for a training run."""
 
     StateTracker.clear_data_backends()
     StateTracker.set_accelerator(accelerator)
@@ -4461,24 +4431,12 @@ def configure_multi_databackend_new(
         distillation_method=distillation_method,
     )
 
-    if data_backend_config is None:
-        data_backend_config = factory.load_configuration()
-
     result = factory.configure(data_backend_config)
 
     factory._log_performance_metrics("implementation_complete")
 
     factory._finalize_metrics()
-    total_time = time.time() - start_time
-
-    return {
-        "data_backends": result["data_backends"],
-        "text_embed_backends": result["text_embed_backends"],
-        "image_embed_backends": result["image_embed_backends"],
-        "conditioning_image_embed_backends": result["conditioning_image_embed_backends"],
-        "distillation_cache_backends": result["distillation_cache_backends"],
-        "default_text_embed_backend_id": result["default_text_embed_backend_id"],
-    }
+    return result
 
 
 def check_huggingface_config(backend: dict) -> None:
@@ -4603,29 +4561,6 @@ def run_distillation_cache_generation(
     cycle = DistillationArtifactCycle(selected)
     distiller.bind_artifact_cycle(cycle)
     return cycle
-
-
-def configure_multi_databackend(
-    args: dict,
-    accelerator,
-    text_encoders,
-    tokenizers,
-    model: ModelFoundation,
-    data_backend_config: Optional[List[Dict[str, Any]]] = None,
-    distiller_profile: Optional[DistillerRequirementProfile] = None,
-    distillation_method: Optional[str] = None,
-):
-    """Configure multiple dataloaders using the FactoryRegistry implementation."""
-    return configure_multi_databackend_new(
-        args,
-        accelerator,
-        text_encoders,
-        tokenizers,
-        model,
-        data_backend_config=data_backend_config,
-        distiller_profile=distiller_profile,
-        distillation_method=distillation_method,
-    )
 
 
 for _name in ("from_instance_representation", "get_backend_weight", "select_dataloader_index"):

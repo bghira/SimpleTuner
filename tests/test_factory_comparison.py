@@ -70,7 +70,7 @@ class TestFactoryComparison(unittest.TestCase):
         mock_state_tracker.get_args.return_value = self.args
         mock_state_tracker.get_accelerator.return_value = self.accelerator
         mock_state_tracker.get_webhook_handler.return_value = None
-        mock_state_tracker.get_data_backends.return_value = {}
+        mock_state_tracker.get_datasets.return_value = {}
         mock_state_tracker.get_model_family.return_value = "sdxl"
 
         config = [
@@ -93,7 +93,8 @@ class TestFactoryComparison(unittest.TestCase):
                 model=self.model,
                 data_backend_config=config,
             )
-            self.assertIsNotNone(result)
+            self.assertEqual(result.datasets, {})
+            self.assertEqual(result.distillation_caches, ())
             # Check StateTracker calls
             self.assertTrue(mock_state_tracker.set_data_backend_config.called)
         except Exception as e:
@@ -111,7 +112,7 @@ class TestFactoryComparison(unittest.TestCase):
             mock_state_tracker.get_args.return_value = self.args
             mock_state_tracker.get_accelerator.return_value = self.accelerator
             mock_state_tracker.get_webhook_handler.return_value = None
-            mock_state_tracker.get_data_backends.return_value = {}
+            mock_state_tracker.get_datasets.return_value = {}
             mock_state_tracker.get_model_family.return_value = "sdxl"
 
             config = [
@@ -139,7 +140,8 @@ class TestFactoryComparison(unittest.TestCase):
             )
 
             result = factory.configure(data_backend_config=config)
-            self.assertIsNotNone(result)
+            self.assertEqual(result.datasets, {})
+            self.assertEqual(result.distillation_caches, ())
             # Check StateTracker calls
             self.assertTrue(mock_state_tracker.set_data_backend_config.called)
         except Exception as e:
