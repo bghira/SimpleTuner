@@ -10,7 +10,7 @@ import torch
 
 from simpletuner.helpers.data_backend.runtime.schedule import dataset_is_active
 from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
-from simpletuner.helpers.training.multi_process import should_log
+from simpletuner.helpers.training.multi_process import gather_across_processes, should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger("DataBackendFactory")
@@ -286,6 +286,16 @@ def _get_scaled_sampler(backends: Dict[str, Any]) -> Optional[ScaledDatasetSampl
     return sampler
 
 
+def agree_training_batch_counts(local_counts):
+    """Report the number of batches each dataset can supply on every rank."""
+    counts_by_rank = gather_across_processes(local_counts)
+    if any(counts.keys() != local_counts.keys() for counts in counts_by_rank):
+        raise ValueError("Training ranks must have the same dataset bindings.")
+    agreed = {name: min(counts[name] for counts in counts_by_rank) for name in local_counts}
+    uneven = {name: limit for name, limit in agreed.items() if any(counts[name] != limit for counts in counts_by_rank)}
+    return agreed, uneven
+
+
 class DatasetMixer:
     """Keep the fetched selection phase separate from the trainer's acknowledged frontier."""
 
@@ -305,14 +315,18 @@ class DatasetMixer:
         self.seed = args.seed
         self.sampling_method = getattr(args, "data_backend_sampling", "uniform")
         self.gradient_accumulation_steps = max(1, int(getattr(args, "gradient_accumulation_steps", 1)))
-        self.dataset_batches = (
-            {name: dataset.training_batch_count() for name, dataset in backends.items()}
-            if self.sampling_method == "auto-weighting"
-            else {}
-        )
+        counts, limits = {}, {}
+        if self.sampling_method == "auto-weighting" or torch.distributed.is_initialized():
+            counts, limits = agree_training_batch_counts(
+                {name: dataset.training_batch_count() for name, dataset in backends.items()}
+            )
+        self.dataset_batches = counts if self.sampling_method == "auto-weighting" else {}
+        self.remaining_batches = limits.copy()
         identity = [settings, self.seed, self.sampling_method, self.gradient_accumulation_steps]
         if self.dataset_batches:
             identity.append(self.dataset_batches)
+        if limits:
+            identity.append({"rank_agreed_limits": limits})
         self.revision = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
         self.epoch = epoch
         self.step = step
@@ -328,18 +342,29 @@ class DatasetMixer:
             self.accumulated_microbatches = saved["accumulated_microbatches"]
             for name in saved["exhausted_backends"]:
                 del self.active_backends[name]
+            if limits:
+                self.remaining_batches = saved["remaining_batches"].copy()
             self.sampler.rebuild(self.active_backends)
             self.sampler._phase_index = saved["phase"]
+        else:
+            for name, limit in limits.items():
+                if limit == 0:
+                    del self.active_backends[name]
 
-    def advance(self):
+    def advance(self, dataset_id):
         self.step += 1
         completed, self.accumulated_microbatches = divmod(
             self.accumulated_microbatches + 1, self.gradient_accumulation_steps
         )
         self.optimizer_step += completed
+        if dataset_id in self.remaining_batches:
+            self.remaining_batches[dataset_id] -= 1
+            if self.remaining_batches[dataset_id] == 0:
+                del self.active_backends[dataset_id]
+                self.sampler.remove_backend(dataset_id)
 
     def state_dict(self):
-        return {
+        state = {
             "version": 2,
             "revision": self.revision,
             "epoch": self.epoch,
@@ -349,6 +374,9 @@ class DatasetMixer:
             "phase": self.sampler._phase_index,
             "exhausted_backends": sorted(self.dataset_ids.difference(self.active_backends)),
         }
+        if self.remaining_batches:
+            state["remaining_batches"] = self.remaining_batches.copy()
+        return state
 
 
 def random_dataloader_iterator(
@@ -400,7 +428,7 @@ def random_dataloader_iterator(
             else:
                 batch = next(iter(backend))
             if mixer is not None:
-                mixer.advance()
+                mixer.advance(chosen_backend_id)
                 batch["dataset_mixer_state"] = mixer.state_dict()
             return batch
         except MultiDatasetExhausted:

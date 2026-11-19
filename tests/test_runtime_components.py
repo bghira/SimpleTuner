@@ -24,6 +24,49 @@ from simpletuner.helpers.data_backend.runtime import get_backend_weight, random_
 
 
 class TestDatasetMixer(unittest.TestCase):
+    def test_rank_agreed_limits_keep_selection_and_resume_in_sync(self):
+        from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        counts_by_rank = [{"a": 4, "b": 3}, {"a": 3, "b": 3}]
+
+        def create_fetcher(counts, consumed, saved=None):
+            backends = {}
+            for name, count in counts.items():
+                remaining = iter(range(consumed.count(name), count))
+
+                def read(remaining=remaining, name=name):
+                    try:
+                        return {"dataset": name, "position": next(remaining)}
+                    except StopIteration as exc:
+                        raise MultiDatasetExhausted() from exc
+
+                backends[name] = SimpleNamespace(
+                    config={}, training_batch_count=lambda count=count: count, get_data_loader=read
+                )
+            mixer = dataloader_module.DatasetMixer(backends, 1, 0, saved)
+            fetcher = BatchFetcher(step=mixer.step, max_size=8, datasets=backends, mixer=mixer)
+            fetcher.fetch_responses()
+            return fetcher
+
+        args = SimpleNamespace(seed=17, data_backend_sampling="auto-weighting")
+        results_by_rank = []
+        with (
+            patch.object(StateTracker, "get_args", return_value=args),
+            patch.object(dataloader_module, "gather_across_processes", return_value=counts_by_rank),
+        ):
+            for counts in counts_by_rank:
+                initial = create_fetcher(counts, [])
+                batches = [initial.next_response(step) for step in range(1, 7)]
+                self.assertIs(initial.next_response(7), False)
+                self.assertCountEqual((batch["dataset"] for batch in batches), ["a"] * 3 + ["b"] * 3)
+                consumed = [batch["dataset"] for batch in batches[:2]]
+                resumed = create_fetcher(counts, consumed, batches[1]["dataset_mixer_state"])
+                self.assertEqual([resumed.next_response(step) for step in range(3, 7)], batches[2:])
+                self.assertIs(resumed.next_response(7), False)
+                results_by_rank.append(batches)
+        self.assertEqual(*results_by_rank)
+
     def test_resume_uses_consumed_phase_and_exhaustion_with_prefetch(self):
         import json
         import tempfile

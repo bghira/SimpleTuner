@@ -54,7 +54,7 @@ from simpletuner.helpers.data_backend.runtime.context_parallel_sync import (
     ContextParallelBatchSynchronizer,
     gather_sample_weighted_scalar,
 )
-from simpletuner.helpers.data_backend.runtime.dataloader_iterator import DatasetMixer
+from simpletuner.helpers.data_backend.runtime.dataloader_iterator import DatasetMixer, agree_training_batch_counts
 from simpletuner.helpers.data_backend.runtime.schedule import (
     normalize_end_epoch,
     normalize_end_step,
@@ -3825,6 +3825,9 @@ class Trainer:
 
         epoch_batches_map: dict[int, int] = {}
         batch_windows: list[tuple[int, int | None, int, int | None, int]] = []
+        batch_counts, _ = agree_training_batch_counts(
+            {name: dataset.training_batch_count() for name, dataset in datasets.items()}
+        )
         for dataset_id, dataset in datasets.items():
             config = dataset.config
             if config["dataset_type"] == DatasetType.CAPTION and not caption_batches_supported:
@@ -3842,7 +3845,7 @@ class Trainer:
             end_step = normalize_end_step(config.get("end_step"))
             if (end_epoch is not None and end_epoch < start_epoch) or (end_step is not None and end_step < start_step):
                 continue
-            dataset_batches = dataset.training_batch_count()
+            dataset_batches = batch_counts[dataset_id]
             if dataset_batches:
                 batch_windows.append((start_epoch, end_epoch, start_step, end_step, dataset_batches))
             total_num_batches += dataset_batches
