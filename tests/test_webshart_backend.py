@@ -309,18 +309,13 @@ class TestWebshartDataBackend(unittest.TestCase):
 
 
 class TestWebshartMetadataCaptionFiltering(unittest.TestCase):
-    def setUp(self):
-        self.enterContext(
-            patch(
-                "simpletuner.helpers.metadata.backends.webshart.StateTracker.get_args",
-                return_value=SimpleNamespace(only_instance_prompt=False),
-            )
-        )
-
     def _build_backend(self, entries):
         backend = WebshartMetadataBackend.__new__(WebshartMetadataBackend)
         backend.id = "test-backend"
         backend.dataset_type = DatasetType.IMAGE
+        backend.native_policy = None
+        backend._runtime_args = SimpleNamespace(only_instance_prompt=False)
+        backend.bind_dataset_config({"caption_strategy": "webshart"})
         backend.max_num_samples = None
         backend.metadata_update_interval = 3600
         backend.aspect_ratio_bucket_indices = {}
@@ -351,11 +346,7 @@ class TestWebshartMetadataCaptionFiltering(unittest.TestCase):
 
     def test_webshart_caption_strategy_skips_caption_less_samples(self):
         backend = self._build_backend(self._entries())
-        with patch(
-            "simpletuner.helpers.metadata.backends.webshart.StateTracker.get_data_backend_config",
-            return_value={"caption_strategy": "webshart"},
-        ):
-            backend.compute_aspect_ratio_bucket_indices()
+        backend.compute_aspect_ratio_bucket_indices()
 
         self.assertEqual(
             backend.aspect_ratio_bucket_indices,
@@ -376,11 +367,7 @@ class TestWebshartMetadataCaptionFiltering(unittest.TestCase):
                 "uncaptioned.txt": {"path": "uncaptioned.txt", "offset": 0, "length": 10},
             }
         )
-        with patch(
-            "simpletuner.helpers.metadata.backends.webshart.StateTracker.get_data_backend_config",
-            return_value={"caption_strategy": "webshart"},
-        ):
-            backend.compute_aspect_ratio_bucket_indices()
+        backend.compute_aspect_ratio_bucket_indices()
 
         self.assertEqual(
             backend.aspect_ratio_bucket_indices["1.0"],
@@ -394,22 +381,15 @@ class TestWebshartMetadataCaptionFiltering(unittest.TestCase):
         backend = self._build_backend(self._entries())
         backend.data_backend.caption_key = "short"
         backend.data_backend.get_caption.side_effect = [RuntimeError("source read failed"), "caption"]
-        with patch(
-            "simpletuner.helpers.metadata.backends.webshart.StateTracker.get_data_backend_config",
-            return_value={"caption_strategy": "webshart"},
-        ):
-            backend.compute_aspect_ratio_bucket_indices()
+        backend.compute_aspect_ratio_bucket_indices()
         self.assertEqual(backend.filtering_statistics["skipped"]["error"], 1)
         self.assertEqual(backend.filtering_statistics["total_processed"], 1)
         self.assertEqual(backend.aspect_ratio_bucket_indices, {"1.0": ["webshart://0/0/uncaptioned.webp"]})
 
     def test_other_caption_strategies_keep_caption_less_samples(self):
         backend = self._build_backend(self._entries())
-        with patch(
-            "simpletuner.helpers.metadata.backends.webshart.StateTracker.get_data_backend_config",
-            return_value={"caption_strategy": "filename"},
-        ):
-            backend.compute_aspect_ratio_bucket_indices()
+        backend.bind_dataset_config({"caption_strategy": "filename"})
+        backend.compute_aspect_ratio_bucket_indices()
 
         self.assertEqual(
             backend.aspect_ratio_bucket_indices["1.0"],
@@ -597,10 +577,8 @@ class TestWebshartCaptionKeyIntegration(unittest.TestCase):
             "aws_access_key_id": "test-value",
             "aws_secret_access_key": "test-value",
         }
-        with patch(
-            "simpletuner.helpers.metadata.backends.webshart.StateTracker.get_data_backend_config", return_value=config
-        ):
-            metadata.save_cache()
+        metadata.bind_dataset_config(config)
+        metadata.save_cache()
         publication = json.loads(source.read(metadata.cache_file))
         self.assertEqual(publication["config"], {"webshart": {"source": "s3://test"}})
 
