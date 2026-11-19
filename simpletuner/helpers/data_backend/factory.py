@@ -865,8 +865,7 @@ def print_bucket_info(metadata_backend, dataset_type: str = "image"):
         tqdm.write("-" * 40)
 
         # Print each bucket's information
-        for bucket in metadata_backend.aspect_ratio_bucket_indices:
-            sample_count = len(metadata_backend.aspect_ratio_bucket_indices[bucket])
+        for bucket, sample_count in metadata_backend.rank_bucket_counts().items():
             if sample_count == 0:
                 continue
             tqdm.write(f"{rank_info()} | {bucket:<10} | {sample_count:<20}")
@@ -3035,7 +3034,7 @@ class FactoryRegistry:
             if (
                 not skip_bucket_split
                 and init_backend.get("dataset_type") == "conditioning"
-                and sum(len(bucket) for bucket in init_backend["metadata_backend"].aspect_ratio_bucket_indices.values()) == 0
+                and not any(metadata.rank_bucket_counts().values())
             ):
                 if self.accelerator.is_main_process:
                     logger.warning(
