@@ -1947,6 +1947,72 @@ class TestWebshartParquetBackend(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "object changed since the accepted dataset view"):
                         self.backend.read_caption_batch(refs)
 
+            pinned_view = runtime.published_read_view()
+
+            def interrupted(*_):
+                self.assertEqual(runtime.published_read_view(), pinned_view)
+                with self.assertRaisesRegex(ValueError, "object changed since the accepted dataset view"):
+                    self.backend.read_caption_batch(all_refs[:1])
+                raise OSError("rescan interrupted")
+
+            with self.assertRaisesRegex(OSError, "rescan interrupted"):
+                metadata.compute_aspect_ratio_bucket_indices(ignore_existing_cache=True, progress_callback=interrupted)
+            self.assertEqual(runtime.published_read_view(), pinned_view)
+            self.assertEqual(runtime.read_page(), ([all_refs[0]], 1))
+
+            metadata.compute_aspect_ratio_bucket_indices(ignore_existing_cache=True)
+            self.assertNotEqual(runtime.published_read_view(), pinned_view)
+            self.assertEqual(runtime.read_page(), (all_refs, 2))
+            self.assertEqual(self.backend.read_caption_batch(all_refs), ["other", "third"])
+            self.assertFalse(metadata._published.get("exclusion_revision"))
+
+    def test_native_refresh_reuses_exclusions_only_for_unchanged_shard_content(self):
+        from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBackend
+
+        original = self.source / "part.parquet"
+        shutil.copyfile(original, self.source / "second.parquet")
+        backend = WebshartDataBackend(
+            None, "parquet", str(self.source), format="parquet", cache_dir=str(self.root / "cache")
+        )
+        metadata = WebshartMetadataBackend(
+            id=backend.id,
+            instance_data_dir=backend.cache_dir,
+            cache_file=str(self.root / "buckets"),
+            metadata_file=str(self.root / "metadata"),
+            data_backend=backend,
+            accelerator=None,
+            batch_size=1,
+            resolution=64,
+            resolution_type="pixel",
+            dataset_config={
+                "caption_strategy": "webshart",
+                "webshart": {"sampling_policy": "shard_local"},
+                "resolution": 64,
+                "resolution_type": "pixel",
+                "crop": False,
+            },
+            runtime_args=SimpleNamespace(seed=123, disable_bucket_pruning=False),
+        )
+        self.addCleanup(metadata.close)
+        metadata.compute_aspect_ratio_bucket_indices()
+        refs, count = metadata.read_page()
+        self.assertEqual(count, 4)
+        rejected = {backend.shard_of(ref): ref for ref in refs if backend.parse_sample_id(ref).sample_idx == 0}
+        with metadata.collect_exclusions() as ledger:
+            for ref in rejected.values():
+                ledger.add(ref, next(iter(metadata.published_bucket_counts())), "decode")
+
+        replacement = self.root / "replacement.parquet"
+        pq.write_table(
+            pa.Table.from_pylist([{**self.rows[0], "captions": "other"}, *self.rows[1:]]), replacement, row_group_size=2
+        )
+        replacement.replace(original)
+        metadata.compute_aspect_ratio_bucket_indices(ignore_existing_cache=True)
+        visible, count = metadata.read_page()
+        self.assertEqual(count, 3)
+        self.assertEqual(visible, [ref for ref in refs if ref != rejected[1]])
+        self.assertEqual(metadata._published["exclusion_counts"], {"decode": 1})
+
     def test_text_preparation_after_real_rank_split_still_covers_all_accepted_rows(self):
         from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
         from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBackend

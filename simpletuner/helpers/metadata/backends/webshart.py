@@ -10,7 +10,7 @@ import time
 from collections import deque
 from concurrent.futures import CancelledError, ThreadPoolExecutor
 from contextlib import ExitStack, closing, contextmanager, nullcontext
-from copy import deepcopy
+from copy import copy, deepcopy
 from hashlib import file_digest, sha256
 from itertools import batched, chain, islice
 from pathlib import Path
@@ -31,7 +31,11 @@ from simpletuner.helpers.data_backend.webshart import CaptionValue, WebshartData
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.metadata.backends.base import MetadataBackend, get_cp_aware_dp_info
 from simpletuner.helpers.metadata.backends.webshart_epoch import EpochSpec, WebshartEpoch
-from simpletuner.helpers.metadata.backends.webshart_exclusions import collect_exclusions, exclusion_path
+from simpletuner.helpers.metadata.backends.webshart_exclusions import (
+    collect_exclusions,
+    exclusion_path,
+    retain_source_exclusions,
+)
 from simpletuner.helpers.metadata.backends.webshart_geometry import (
     _read_index,
     accepted_geometry_predicate,
@@ -950,7 +954,12 @@ class WebshartMetadataBackend(MetadataBackend):
         require_captions = captions["caption_strategy"] == "webshart" and captions["use_captions"]
 
         if getattr(self, "native_policy", None):
-            self._publish_native_view(backend_config, statistics, require_captions, ignore_existing_cache, progress_callback)
+            if ignore_existing_cache and self._published and self._published.get("source_pins"):
+                self._refresh_native_view(backend_config, statistics, require_captions, progress_callback)
+            else:
+                self._publish_native_view(
+                    backend_config, statistics, require_captions, ignore_existing_cache, progress_callback
+                )
             return
 
         if not ignore_existing_cache:
@@ -1268,7 +1277,21 @@ class WebshartMetadataBackend(MetadataBackend):
                 stop.set()
                 executor.shutdown(wait=True, cancel_futures=True)
 
-    def _publish_native_view(self, config, statistics, require_captions, refresh, progress_callback):
+    def _refresh_native_view(self, config, statistics, require_captions, progress_callback):
+        fresh = self.data_backend.open_refresh_source()
+        with closing(copy(self)) as staged:
+            staged.data_backend = fresh
+            staged._snapshot = None
+            staged._accepted_geometry = None
+            staged._transforms = None
+            staged._publish_native_view(
+                config, statistics, require_captions, True, progress_callback, previous_pins=self._lookup.shard_revision
+            )
+        self.close()
+        self.data_backend.adopt_refresh_source(fresh)
+        self.reload_cache()
+
+    def _publish_native_view(self, config, statistics, require_captions, refresh, progress_callback, *, previous_pins=None):
         public_config = make_public_config_serializable(config)
         geometry_keys = (
             "dataset_type",
@@ -1338,11 +1361,22 @@ class WebshartMetadataBackend(MetadataBackend):
             stack.enter_context(self._prepare_transforms(transform_settings))
             exclusion_file = None
             exclusion_info = {}
-            if self._published and self._published.get("exclusion_revision"):
-                exclusion_info = {key: self._published[key] for key in ("exclusion_revision", "exclusion_counts")}
-                exclusion_file = exclusion_path(
-                    self.data_backend._cache_path(self.cache_file), exclusion_info["exclusion_revision"]
-                )
+            publication = self.membership_path
+            if self._published and (excluded := self._published.get("exclusion_revision")):
+                counts = self._published["exclusion_counts"]
+                if previous_pins is not None:
+                    exclusion_file, excluded, counts = retain_source_exclusions(
+                        publication,
+                        excluded,
+                        staging.parent,
+                        shard_of=self.data_backend.shard_of,
+                        old_pin=previous_pins,
+                        new_pin=self.data_backend.dataset.source_revision_for_shard,
+                    )
+                else:
+                    exclusion_file = exclusion_path(publication, excluded)
+                if excluded is not None:
+                    exclusion_info = {"exclusion_revision": excluded, "exclusion_counts": counts}
             pin_source = self.data_backend.format == "parquet"
             if shards_per_partition is None:
                 rows = self._scan_rows((), statistics, require_captions, progress_callback, recipe=recipe)
@@ -1379,7 +1413,6 @@ class WebshartMetadataBackend(MetadataBackend):
             digest = writer.digest.hexdigest()
             writer.db.commit()
             destination = snapshot_path(path, digest)
-            publication = self.data_backend._cache_path(self.cache_file)
             expected = self._published.get("view_revision") if self._published else None
             with FileLock(str(publication) + ".publish.lock"):
                 if publication.is_file():

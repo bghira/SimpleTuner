@@ -4,19 +4,51 @@ import hashlib
 import json
 import os
 import sqlite3
+from collections import Counter
 from contextlib import closing, contextmanager
+from itertools import groupby
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import torch.distributed as dist
 from filelock import FileLock
 
-from .webshart_geometry import _read_index, geometry_lookup, prepared_geometry_path, snapshot_path
+from .webshart_geometry import _read_index, geometry_lookup, link_snapshot, prepared_geometry_path, snapshot_path
 from .webshart_membership import IndexedMembership, MembershipPages, publish_indexed_membership, write_membership
 
 
 def exclusion_path(publication, digest):
     return snapshot_path(Path(publication).with_suffix(".sqlite"), digest).with_suffix(".excluded.sqlite")
+
+
+def retain_source_exclusions(publication, revision, staging, *, shard_of, old_pin, new_pin):
+    """Retain exclusions only for shards with the same physical content revision."""
+    original = exclusion_path(publication, revision)
+    retained = Path(staging) / "retained-exclusions.sqlite"
+    counts = Counter()
+    digest = hashlib.sha256(f"source-refresh:{revision}".encode())
+    changed = False
+    with closing(_read_index(original)) as source, closing(sqlite3.connect(retained)) as destination:
+        writer = Exclusions(destination)
+        entries = source.execute("SELECT ref, bucket, reason FROM exclusions ORDER BY ref")
+        for shard, group in groupby(entries, key=lambda row: shard_of(row[0])):
+            previous = old_pin(shard)
+            if previous is None or new_pin(shard) != previous:
+                changed = True
+                continue
+            for ref, bucket, reason in group:
+                writer.add(ref, bucket, reason)
+                counts[reason] += 1
+                digest.update(json.dumps([ref, bucket, reason], separators=(",", ":")).encode())
+        if not changed:
+            return original, revision, dict(counts)
+        if not counts:
+            return None, None, {}
+        destination.commit()
+    updated = digest.hexdigest()
+    path = exclusion_path(publication, updated)
+    link_snapshot(retained, path)
+    return path, updated, dict(counts)
 
 
 def read_exclusion_page(publication, header, reason, limit, offset):

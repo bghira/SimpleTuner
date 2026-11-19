@@ -3,6 +3,7 @@ import logging
 import os
 import random
 import time
+from copy import copy
 from dataclasses import dataclass
 from hashlib import sha256
 from io import BytesIO
@@ -151,22 +152,8 @@ class WebshartDataBackend(BaseDataBackend):
                     }.items()
                     if v is not None
                 }
-        self.dataset = self.webshart.discover_dataset(
-            source=self.source,
-            hf_token=self.hf_token,
-            subfolder=self.subfolder,
-            metadata=self.metadata,
-            **discovery,
-        )
-        if self.format == "tar":
-            self.dataset.enable_metadata_cache(location=self.metadata_cache_dir)
-        if self.shard_cache_dir is not None:
-            Path(self.shard_cache_dir).mkdir(parents=True, exist_ok=True)
-            self.dataset.enable_shard_cache(
-                location=self.shard_cache_dir,
-                cache_limit_gb=self.shard_cache_gb,
-                parallel_downloads=self.parallel_downloads,
-            )
+        self._discovery_options = discovery
+        self.dataset = self._open_source()
         if self.format == "parquet":
             self.loader = self.webshart.ParquetDataLoader(self.dataset)
         else:
@@ -191,6 +178,39 @@ class WebshartDataBackend(BaseDataBackend):
             )
         if self.optimize_captions and self.format == "tar":
             self._optimize_caption_metadata()
+
+    def _open_source(self):
+        dataset = self.webshart.discover_dataset(
+            source=self.source,
+            hf_token=self.hf_token,
+            subfolder=self.subfolder,
+            metadata=self.metadata,
+            **self._discovery_options,
+        )
+        if self.format == "tar":
+            dataset.enable_metadata_cache(location=self.metadata_cache_dir)
+        if self.shard_cache_dir is not None:
+            Path(self.shard_cache_dir).mkdir(parents=True, exist_ok=True)
+            dataset.enable_shard_cache(
+                location=self.shard_cache_dir,
+                cache_limit_gb=self.shard_cache_gb,
+                parallel_downloads=self.parallel_downloads,
+            )
+        return dataset
+
+    def open_refresh_source(self):
+        """An unpinned Parquet reader using the same transport and cache settings."""
+        fresh = copy(self)
+        fresh._shard_metadata_cache = {}
+        fresh.dataset = fresh._open_source()
+        if fresh.dataset.fingerprint != self.dataset.fingerprint:
+            raise ValueError("The Webshart catalogue changed. Reopen the dataset before preparing the new catalogue.")
+        fresh.loader = self.webshart.ParquetDataLoader(fresh.dataset)
+        return fresh
+
+    def adopt_refresh_source(self, fresh):
+        self.dataset, self.loader = fresh.dataset, fresh.loader
+        self._shard_metadata_cache.clear()
 
     def _optimize_caption_metadata(self) -> None:
         """Fold sidecar captions into the local metadata cache via webshart's coalescer.
