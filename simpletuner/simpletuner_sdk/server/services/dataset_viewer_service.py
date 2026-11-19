@@ -32,7 +32,12 @@ from simpletuner.helpers.metadata.backends.webshart_geometry import (
     read_snapshot,
 )
 from simpletuner.helpers.metadata.backends.webshart_membership import IncompleteWebshartMembership, MembershipPages
-from simpletuner.helpers.metadata.preparation import read_bucket_groups, read_bucket_page
+from simpletuner.helpers.metadata.preparation import (
+    DatasetViewChangedError,
+    LegacyMetadataPublication,
+    read_bucket_groups,
+    read_bucket_page,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +79,7 @@ class DatasetSummary(BaseModel):
     auto_generated: bool = False
 
 
-class DatasetViewChanged(ValueError):
+class DatasetViewChanged(DatasetViewChangedError):
     """The indexed dataset was replaced between page requests."""
 
 
@@ -116,6 +121,7 @@ class FileMetadata(BaseModel):
     caption: Optional[str] = None
     view_revision: Optional[str] = None
     metadata_editable: bool = True
+    metadata_revision: Optional[str] = None
     bbox_entities: Optional[List[Dict[str, Any]]] = None
     extra: Dict[str, Any] = Field(default_factory=dict)
 
@@ -664,6 +670,7 @@ class DatasetViewerService:
         self, dataset_config: Dict[str, Any], file_path: str, *, view_revision: Optional[str] = None
     ) -> Optional[FileMetadata]:
         """Read per-file metadata from the metadata cache."""
+        metadata_revision = None
         with self._webshart_view(dataset_config, view_revision) as (indices, index):
             current_revision = index.header["view_revision"] if index is not None else None
             editable = not self._uses_indexed_geometry(dataset_config, index)
@@ -692,7 +699,7 @@ class DatasetViewerService:
                 if cache_path is None:
                     return None
                 try:
-                    meta = self._load_cache(cache_path).get(file_path)
+                    meta, metadata_revision = LegacyMetadataPublication(cache_path).read(file_path)
                 except (json.JSONDecodeError, OSError):
                     return None
         if meta is None:
@@ -721,6 +728,7 @@ class DatasetViewerService:
             bbox_entities=meta.get("bbox_entities"),
             view_revision=current_revision,
             metadata_editable=editable,
+            metadata_revision=metadata_revision,
             extra=extra,
         )
         result.caption = self._get_file_caption(dataset_config, file_path, view_revision=current_revision)
@@ -740,6 +748,16 @@ class DatasetViewerService:
                     "This dataset uses a prepared view. Rescan it to recompute metadata or clear its artifacts."
                 )
 
+    def _edit_file_metadata(self, config, path, update, *, view_revision, metadata_revision):
+        self._require_editable_file(config, view_revision)
+        cache_path = self._find_cache_file(config, "metadata")
+        if cache_path is None:
+            return None
+        try:
+            return LegacyMetadataPublication(cache_path).edit(path, update, expected_revision=metadata_revision)
+        except (json.JSONDecodeError, FileNotFoundError):
+            return None
+
     def update_crop_coordinates(
         self,
         dataset_config: Dict[str, Any],
@@ -747,28 +765,15 @@ class DatasetViewerService:
         crop_coordinates: List[int],
         *,
         view_revision: Optional[str] = None,
-    ) -> bool:
-        """Update crop_coordinates for a file in the metadata cache.
-
-        Returns True if the update succeeded.
-        """
-        self._require_editable_file(dataset_config, view_revision)
-        cache_path = self._find_cache_file(dataset_config, "metadata")
-        if cache_path is None:
-            return False
-
-        try:
-            data = self._load_cache(cache_path)
-        except (json.JSONDecodeError, OSError):
-            return False
-
-        if file_path not in data:
-            return False
-
-        data[file_path]["crop_coordinates"] = crop_coordinates
-        with open(cache_path, "w") as f:
-            json.dump(data, f)
-        return True
+        metadata_revision: Optional[str] = None,
+    ):
+        return self._edit_file_metadata(
+            dataset_config,
+            file_path,
+            lambda record: dict(record, crop_coordinates=crop_coordinates),
+            view_revision=view_revision,
+            metadata_revision=metadata_revision,
+        )
 
     def update_bbox_entities(
         self,
@@ -777,32 +782,22 @@ class DatasetViewerService:
         bbox_entities: Optional[List[Dict[str, Any]]],
         *,
         view_revision: Optional[str] = None,
-    ) -> bool:
-        """Update bbox_entities for a file in the metadata cache.
+        metadata_revision: Optional[str] = None,
+    ):
+        def update(record):
+            if bbox_entities:
+                record["bbox_entities"] = bbox_entities
+            else:
+                record.pop("bbox_entities", None)
+            return record
 
-        Returns True if the update succeeded.
-        """
-        self._require_editable_file(dataset_config, view_revision)
-        cache_path = self._find_cache_file(dataset_config, "metadata")
-        if cache_path is None:
-            return False
-
-        try:
-            data = self._load_cache(cache_path)
-        except (json.JSONDecodeError, OSError):
-            return False
-
-        if file_path not in data:
-            return False
-
-        if bbox_entities:
-            data[file_path]["bbox_entities"] = bbox_entities
-        else:
-            data[file_path].pop("bbox_entities", None)
-
-        with open(cache_path, "w") as f:
-            json.dump(data, f)
-        return True
+        return self._edit_file_metadata(
+            dataset_config,
+            file_path,
+            update,
+            view_revision=view_revision,
+            metadata_revision=metadata_revision,
+        )
 
     def rebuild_file_metadata(
         self,
@@ -811,43 +806,21 @@ class DatasetViewerService:
         file_path: str,
         *,
         view_revision: Optional[str] = None,
-    ) -> Optional[Dict[str, Any]]:
-        """Recalculate metadata for a single file using TrainingSample.
-
-        Recompute target size, intermediary size, crop and aspect ratio
-        from the original size and the resolved dataset settings.
-
-        Returns the updated metadata dict on success, None on failure.
-        """
+        metadata_revision: Optional[str] = None,
+    ):
+        """Recalculate per-file geometry using the resolved dataset settings."""
         from simpletuner.helpers.data_backend.config import create_backend_config
         from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
         from simpletuner.helpers.multiaspect.image import ImageGeometry, MultiaspectImage
         from simpletuner.simpletuner_sdk.server.services.dataset_scan_service import DatasetScanService
 
-        self._require_editable_file(dataset_config, view_revision)
-        # Load existing metadata
-        cache_path = self._find_cache_file(dataset_config, "metadata")
-        if cache_path is None:
-            return None
-        try:
-            all_metadata = self._load_cache(cache_path)
-        except (json.JSONDecodeError, OSError):
-            return None
-        if file_path not in all_metadata:
-            return None
-
-        existing = all_metadata[file_path]
-        original_size = existing.get("original_size")
-        if not original_size:
-            return None
-
-        scan_args = DatasetScanService._build_scan_args(dataset_config, global_config)
-
-        # Apply pixel_area conversion
-        dataset_config = DatasetScanService._convert_pixel_area(dataset_config, scan_args)
-
-        try:
-            config = create_backend_config(dataset_config, vars(scan_args))
+        def rebuild(existing):
+            original_size = existing.get("original_size")
+            if not original_size:
+                return None
+            scan_args = DatasetScanService._build_scan_args(dataset_config, global_config)
+            resolved = DatasetScanService._convert_pixel_area(dataset_config, scan_args)
+            config = create_backend_config(resolved, vars(scan_args))
             geometry = ImageGeometry(
                 MultiaspectImage._get_alignment(args=scan_args),
                 MultiaspectImage._get_rounding(2, args=scan_args),
@@ -876,14 +849,15 @@ class DatasetViewerService:
             existing["crop_coordinates"] = list(prepared.crop_coordinates)
             existing["aspect_ratio"] = prepared.aspect_ratio
 
-            with open(cache_path, "w") as f:
-                json.dump(all_metadata, f)
-
             return existing
 
-        except Exception as e:
-            logger.warning("Failed to rebuild metadata for %s: %s", file_path, e)
-            return None
+        return self._edit_file_metadata(
+            dataset_config,
+            file_path,
+            rebuild,
+            view_revision=view_revision,
+            metadata_revision=metadata_revision,
+        )
 
     def delete_vae_cache_file(
         self,

@@ -941,6 +941,27 @@ class TestUpdateCropCoordinates(unittest.TestCase):
         meta = self.service.get_file_metadata(self._config(), "photo.jpg")
         self.assertEqual(meta.crop_coordinates, [50, 30])
 
+    def test_edits_reject_stale_metadata_and_publish_the_new_revision(self):
+        from simpletuner.helpers.metadata.preparation import DatasetViewChangedError
+
+        config = self._config()
+        original = self.service.get_file_metadata(config, "photo.jpg")
+        edit = self.service.update_crop_coordinates(
+            config, "photo.jpg", [12, 34], metadata_revision=original.metadata_revision
+        )
+        current = self.service.get_file_metadata(config, "photo.jpg")
+        self.assertEqual(current.metadata_revision, edit.revision)
+        self.assertNotEqual(current.metadata_revision, original.metadata_revision)
+        with self.assertRaises(DatasetViewChangedError):
+            self.service.update_bbox_entities(config, "photo.jpg", [], metadata_revision=original.metadata_revision)
+        with self.assertRaises(TypeError):
+            self.service.update_bbox_entities(
+                config, "photo.jpg", [{"invalid": object()}], metadata_revision=current.metadata_revision
+            )
+        self.assertEqual(self.service.get_file_metadata(config, "photo.jpg"), current)
+        newer = self.service.update_crop_coordinates(config, "photo.jpg", [45, 67], metadata_revision=edit.revision)
+        self.assertEqual(self.service.get_file_metadata(config, "photo.jpg").metadata_revision, newer.revision)
+
     def test_rebuild_uses_viewer_settings_without_changing_the_registered_dataset(self):
         from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
         from simpletuner.helpers.training.state_tracker import StateTracker
@@ -955,7 +976,7 @@ class TestUpdateCropCoordinates(unittest.TestCase):
             updated = self.service.rebuild_file_metadata(
                 config, {"resolution": 64, "resolution_type": "pixel", "aspect_bucket_alignment": 8}, "photo.jpg"
             )
-            self.assertEqual(updated["target_size"], [64, 64])
+            self.assertEqual(updated.record["target_size"], [64, 64])
             self.assertEqual(StateTracker.get_dataset(active.id).config["resolution"], 1024)
         self.assertEqual(self.service.get_file_metadata(config, "photo.jpg").target_size, [64, 64])
 

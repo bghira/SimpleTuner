@@ -2096,6 +2096,7 @@ class DatasetViewerRevisionTestCase(_TrainerPageMixin, WebUITestCase):
                             path: window.detailQuery.file_path,
                             found: true,
                             metadata_editable: window.detailQuery.dataset_id !== 'first',
+                            metadata_revision: 'file-revision',
                             view_revision: window.detailQuery.view_revision,
                         }));
                     }
@@ -2138,7 +2139,12 @@ class DatasetViewerRevisionTestCase(_TrainerPageMixin, WebUITestCase):
             click_when_visible((By.XPATH, "//button[@type='button' and contains(., 'Rebuild Metadata')]"))
             self.assertEqual(
                 driver.execute_script("return window.rebuildRequest;"),
-                {"dataset_id": "second", "file_path": "page-6.jpg", "view_revision": "second-view"},
+                {
+                    "dataset_id": "second",
+                    "file_path": "page-6.jpg",
+                    "view_revision": "second-view",
+                    "metadata_revision": "file-revision",
+                },
             )
             self.assertEqual(
                 driver.execute_async_script(

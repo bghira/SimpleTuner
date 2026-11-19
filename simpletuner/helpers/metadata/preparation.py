@@ -12,6 +12,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Protocol
 
+from atomicwrites import atomic_write
 from filelock import FileLock
 
 
@@ -27,6 +28,48 @@ class DatasetDescription:
 
 class DatasetViewChangedError(ValueError):
     """A consumer requested a view which is no longer open in its provider."""
+
+
+@dataclass(frozen=True)
+class LegacyMetadataEdit:
+    record: dict
+    revision: str
+
+
+class LegacyMetadataPublication:
+    """A file-backed metadata view with serialized, atomic file edits."""
+
+    def __init__(self, path):
+        self.path = Path(path)
+
+    @staticmethod
+    def _revision(stat):
+        version = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
+        return hashlib.sha256(repr(version).encode()).hexdigest()
+
+    def _read_snapshot(self):
+        with self.path.open(encoding="utf-8") as source:
+            return json.load(source), self._revision(os.fstat(source.fileno()))
+
+    def read(self, sample_ref):
+        records, revision = self._read_snapshot()
+        return records.get(sample_ref), revision
+
+    def edit(self, sample_ref, update, *, expected_revision=None):
+        with FileLock(str(self.path) + ".lock"):
+            records, revision = self._read_snapshot()
+            if expected_revision is not None and expected_revision != revision:
+                raise DatasetViewChangedError("The metadata changed. Reopen the file before editing it.")
+            if sample_ref not in records or (record := update(records[sample_ref])) is None:
+                return None
+            records[sample_ref] = record
+            with atomic_write(self.path, overwrite=True, encoding="utf-8") as output:
+                json.dump(records, output)
+                output.flush()
+                published_revision = self._revision(os.fstat(output.fileno()))
+                if self._revision(self.path.stat()) != revision:
+                    raise DatasetViewChangedError("The metadata changed. Reopen the file before editing it.")
+            return LegacyMetadataEdit(record, published_revision)
 
 
 @dataclass(frozen=True)

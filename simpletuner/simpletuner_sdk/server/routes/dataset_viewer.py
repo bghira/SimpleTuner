@@ -12,6 +12,7 @@ from typing import Annotated, Any, Dict, List, Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, conlist
 
+from simpletuner.helpers.metadata.preparation import DatasetViewChangedError
 from simpletuner.simpletuner_sdk.server.services.cache_job_service import get_cache_service
 from simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware import get_current_user
 from simpletuner.simpletuner_sdk.server.services.cloud.auth.models import User
@@ -201,13 +202,14 @@ class SingleFileAction(BaseModel):
     dataset_id: str
     file_path: str
     view_revision: Optional[str] = None
+    metadata_revision: Optional[str] = None
 
 
 @contextmanager
 def _viewer_file_action():
     try:
         yield
-    except DatasetViewChanged as exc:
+    except DatasetViewChangedError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except DatasetFileMutationUnavailable as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -226,20 +228,23 @@ async def update_viewer_crop_coordinates(
     config = _require_dataset_config(request.dataset_id)
 
     with _viewer_file_action():
-        if not service.update_crop_coordinates(
-            config, request.file_path, request.crop_coordinates, view_revision=request.view_revision
-        ):
-            raise HTTPException(status_code=404, detail="Metadata entry not found")
+        edit = service.update_crop_coordinates(
+            config,
+            request.file_path,
+            request.crop_coordinates,
+            view_revision=request.view_revision,
+            metadata_revision=request.metadata_revision,
+        )
+    if edit is None:
+        raise HTTPException(status_code=404, detail="Metadata entry not found")
 
-    # Re-generate the cropped preview with the new coordinates
-    meta = service.get_file_metadata(config, request.file_path)
-    meta_dict = meta.model_dump() if meta else None
-    result = service.get_image_preview(config, request.file_path, metadata=meta_dict)
+    result = service.get_image_preview(config, request.file_path, metadata=edit.record)
 
     return {
         "saved": True,
         "crop_coordinates": request.crop_coordinates,
         "cropped": result.get("cropped") if result else None,
+        "metadata_revision": edit.revision,
     }
 
 
@@ -256,14 +261,20 @@ async def update_viewer_bbox_entities(
     config = _require_dataset_config(request.dataset_id)
 
     with _viewer_file_action():
-        if not service.update_bbox_entities(
-            config, request.file_path, request.bbox_entities, view_revision=request.view_revision
-        ):
-            raise HTTPException(status_code=404, detail="Metadata entry not found")
+        edit = service.update_bbox_entities(
+            config,
+            request.file_path,
+            request.bbox_entities,
+            view_revision=request.view_revision,
+            metadata_revision=request.metadata_revision,
+        )
+    if edit is None:
+        raise HTTPException(status_code=404, detail="Metadata entry not found")
 
     return {
         "saved": True,
         "bbox_entities": request.bbox_entities,
+        "metadata_revision": edit.revision,
     }
 
 
@@ -411,11 +422,17 @@ async def rebuild_file_metadata(request: SingleFileAction, _user: User = Depends
     global_config = _get_global_config()
 
     with _viewer_file_action():
-        result = service.rebuild_file_metadata(config, global_config, request.file_path, view_revision=request.view_revision)
-    if result is None:
+        edit = service.rebuild_file_metadata(
+            config,
+            global_config,
+            request.file_path,
+            view_revision=request.view_revision,
+            metadata_revision=request.metadata_revision,
+        )
+    if edit is None:
         raise HTTPException(status_code=404, detail="Could not rebuild metadata for this file")
 
-    return {"rebuilt": True, "metadata": result}
+    return {"rebuilt": True, "metadata": edit.record, "metadata_revision": edit.revision}
 
 
 @router.post("/viewer/delete-vae-cache")

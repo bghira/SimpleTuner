@@ -938,6 +938,7 @@ window.datasetViewerComponent = function () {
                     dataset_id: datasetId,
                     file_path: file.path,
                     view_revision: file.view_revision,
+                    metadata_revision: file.metadata_revision,
                     ...fields,
                 }),
             });
@@ -950,6 +951,7 @@ window.datasetViewerComponent = function () {
             const data = await response.json().catch(() => null);
             if (request !== this._fileRequest) return null;
             if (!response.ok) throw new Error(data?.detail || 'File action failed');
+            if (data?.metadata_revision) file.metadata_revision = data.metadata_revision;
             return data;
         },
 
