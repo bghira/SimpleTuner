@@ -1511,7 +1511,7 @@ Parquet 分桶缓存按目录指纹隔离。序列化工作进程会拒绝目录
 - 未设置 `max_num_samples`、`scan_for_errors` 和 `vae_cache_clear_each_epoch`。
 - 模型不需要条件图像 embed。
 - 数据集的分片数不少于 rank 数。
-- 对于使用分片缓存的远程数据源，`shard_cache_gb` 能容纳所有打开的分片，以及每个 rank 下载的下一个分片：rank 数 × (`shuffle_window` + 1) × 第一个窗口中最大的分片。消息会给出可容纳的窗口或所需的大小。之后的窗口可能包含比第一个窗口更大的分片，请预留余量。
+- 对于使用分片缓存的远程数据源，`shard_cache_gb` 能容纳所有打开的分片，以及每个 rank 下载的下一个分片：rank 数 × (`shuffle_window` + 1) × 第一个窗口中最大的分片。消息会给出可容纳的窗口或所需的大小。之后的窗口可能包含比第一个窗口更大的分片，请预留余量。正在下载的分片会写入缓存目录，下载完成后才计入 `shard_cache_gb`，因此该目录可能短暂地比上限多出每个 rank 至多一个分片。
 
 以这种方式读取的数据集无法为 `--validation_using_datasets` 提供图像。
 

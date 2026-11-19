@@ -1567,7 +1567,7 @@ What it requires. Configuration stops with a message naming the setting when one
 - `max_num_samples`, `scan_for_errors` and `vae_cache_clear_each_epoch` are not set.
 - The model does not need conditioning image embeds.
 - The dataset has at least as many shards as there are ranks.
-- For a remote source with a shard cache, `shard_cache_gb` holds every open shard and the next one each rank downloads: ranks × (`shuffle_window` + 1) × the largest shard of the first window. The message gives a window that fits or the size needed. Later windows can hold larger shards than the first, so leave headroom.
+- For a remote source with a shard cache, `shard_cache_gb` holds every open shard and the next one each rank downloads: ranks × (`shuffle_window` + 1) × the largest shard of the first window. The message gives a window that fits or the size needed. Later windows can hold larger shards than the first, so leave headroom. A shard being downloaded is written into the cache directory and counts toward `shard_cache_gb` once it is complete, so the directory briefly holds up to one more shard per rank than the limit.
 
 A dataset read this way cannot supply images to `--validation_using_datasets`.
 
