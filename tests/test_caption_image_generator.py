@@ -355,6 +355,7 @@ class CaptionGeneratorConfigTests(unittest.TestCase):
             factory = FactoryRegistry.__new__(FactoryRegistry)
             factory.args = SimpleNamespace(cache_dir=directory, distillation_method=None)
             factory.model = _Model(_Pipeline())
+            factory.model.configure_data_signals = MagicMock()
             factory.accelerator = SimpleNamespace(is_main_process=True, wait_for_everyone=MagicMock())
             factory.metrics = {"backend_counts": {}}
             factory.text_embed_backends = {"text": {}}
@@ -366,8 +367,6 @@ class CaptionGeneratorConfigTests(unittest.TestCase):
             for name in (
                 "_requires_conditioning_dataset",
                 "_requires_s2v_datasets",
-                "_connect_conditioning_datasets",
-                "_connect_s2v_datasets",
             ):
                 setattr(factory, name, MagicMock(return_value=False))
             for name in (

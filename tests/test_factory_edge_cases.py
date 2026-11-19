@@ -127,6 +127,61 @@ class TestFactoryEdgeCases(unittest.TestCase):
                         factory.configure(None if use_file else config)
                     configure_artifacts.assert_not_called()
 
+    def test_invalid_explicit_dataset_links_fail_before_artifact_open(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        for use_file in (True, False):
+            for field, role in (("conditioning_data", "conditioning"), ("s2v_datasets", "audio")):
+                for target in (
+                    [],
+                    [{"id": "target", "dataset_type": role, "type": "local", "disabled": True}],
+                    [{"id": "target", "dataset_type": "image", "type": "local"}],
+                ):
+                    with self.subTest(use_file=use_file, field=field, target=target):
+                        config = [
+                            {"id": "videos", "dataset_type": "video", "type": "local", field: "target"},
+                            *target,
+                        ]
+                        self.args.data_backend_config = self._create_temp_config(config)
+                        factory = FactoryRegistry(
+                            self.args, self.accelerator, self.text_encoders, self.tokenizers, self.model
+                        )
+                        with patch.object(factory, "configure_text_embed_backends") as configure_artifacts:
+                            with self.assertRaisesRegex(ValueError, f"{field} references 'target'.*enabled {role}"):
+                                factory.configure(None if use_file else config)
+                            configure_artifacts.assert_not_called()
+
+    def test_held_out_dataset_receives_its_conditioning_and_audio_bindings(self):
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        config = [
+            {"id": "training", "dataset_type": "image"},
+            {"id": "held-out", "dataset_type": "eval", "conditioning_data": "reference", "s2v_datasets": ["audio"]},
+            {"id": "reference", "dataset_type": "conditioning"},
+            {"id": "audio", "dataset_type": "audio"},
+        ]
+        factory = FactoryRegistry(self.args, self.accelerator, self.text_encoders, self.tokenizers, self.model)
+        factory.text_embed_backends["text"] = {}
+        self.model.requires_s2v_datasets.return_value = False
+
+        def register(backend, *_):
+            dataset = DatasetRuntime(backend["id"], None, None, backend)
+            StateTracker.register_dataset(dataset)
+            factory.data_backends[dataset.id] = backend
+
+        with (
+            patch.object(StateTracker, "datasets", {}),
+            patch.object(StateTracker, "data_backends", {}),
+            patch.object(factory, "_configure_single_data_backend", side_effect=register),
+        ):
+            factory.configure_data_backends(config)
+            held_out = StateTracker.get_dataset("held-out")
+            self.assertEqual(held_out.conditioning_datasets, (StateTracker.get_dataset("reference"),))
+            self.assertEqual(held_out.audio_datasets, (StateTracker.get_dataset("audio"),))
+            self.assertFalse(StateTracker.get_dataset("training").audio_datasets)
+
     def test_sort_prepares_all_shared_conditioning_sources_before_the_target(self):
         from simpletuner.helpers.data_backend.factory import sort_dataset_configs_by_dependencies
 

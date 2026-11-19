@@ -2652,6 +2652,7 @@ class FactoryRegistry:
             self._materialize_caption_generators(data_backend_config)
             self._prevalidate_backend_ids(data_backend_config)
 
+        conditioning, audio = self._resolve_dataset_relationships(data_backend_config)
         self._resolve_conditioning_geometry(data_backend_config)
         self._configure_model_data_signals(data_backend_config)
 
@@ -2697,8 +2698,18 @@ class FactoryRegistry:
 
         requirement_result = self._evaluate_distiller_requirements(data_backend_config)
         relax_primary_requirement = self._should_relax_primary_dataset_requirement(requirement_result)
-        has_conditioning_dataset = self._connect_conditioning_datasets(data_backend_config)
-        has_s2v_dataset = self._connect_s2v_datasets(data_backend_config)
+        for source_id, targets in conditioning.items():
+            StateTracker.set_conditioning_datasets(source_id, targets)
+            info_log(f"(id={source_id}) Connected conditioning datasets: {targets}")
+        for source_id, targets in audio.items():
+            StateTracker.set_s2v_datasets(source_id, targets)
+            info_log(f"(id={source_id}) Connected S2V audio datasets: {targets}")
+
+        held_out = {
+            backend.get("id") for backend in data_backend_config if _backend_dataset_type(backend) is DatasetType.EVAL
+        }
+        has_conditioning_dataset = bool(conditioning.keys() - held_out)
+        has_s2v_dataset = bool(audio.keys() - held_out)
 
         declared_backends = getattr(self, "_declared_data_backends", None)
         if total_data_backends_seen == 0:
@@ -2914,7 +2925,7 @@ class FactoryRegistry:
             if source is not None and source.uses_native_schedule is True:
                 aligned_source = source
         elif backend.get("type") == "local" and backend.get("conditioning_type") in ("mask", "reference_strict"):
-            sources = StateTracker.get_datasets(DatasetType.IMAGE, DatasetType.VIDEO)
+            sources = StateTracker.get_datasets(DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.EVAL)
             target = backend["id"]
             linked = [
                 dataset
@@ -3860,64 +3871,49 @@ class FactoryRegistry:
         if self._is_multi_process():
             self.accelerator.wait_for_everyone()
 
-    def _connect_conditioning_datasets(self, data_backend_config: List[Dict[str, Any]]) -> bool:
-        """Connect conditioning datasets to their main datasets."""
-        has_conditioning_dataset = False
-        available_conditioning = {
-            backend_id
-            for backend_id, backend_obj in self.data_backends.items()
-            if backend_obj.get("dataset_type") == "conditioning"
+    @staticmethod
+    def _resolve_dataset_relationships(data_backend_config):
+        """Resolve explicit conditioning and audio links before opening dataset providers."""
+        enabled = [
+            backend
+            for backend in data_backend_config
+            if backend.get("id") and not (backend.get("disabled") or backend.get("disable"))
+        ]
+        roles = {
+            backend["id"]: (
+                DatasetType.CONDITIONING if backend.get("conditioning_type") is not None else _backend_dataset_type(backend)
+            )
+            for backend in enabled
         }
-        for backend in data_backend_config:
-            dataset_type = backend.get("dataset_type", "image")
-            if dataset_type is not None and dataset_type not in ["image", "video", "audio"]:
-                continue
-            if backend.get("disabled", False) or backend.get("disable", False):
-                info_log(f"Skipping disabled data backend {backend['id']} in config file.")
-                continue
-            backend_conditionings = backend.get("conditioning_data", [])
-            if isinstance(backend_conditionings, str):
-                backend_conditionings = [backend_conditionings]
-            for x in backend_conditionings:
-                if x not in available_conditioning:
-                    raise ValueError(
-                        f"Conditioning data backend {x} not found in data backend list: {available_conditioning}."
-                    )
-
-            if backend_conditionings:
-                has_conditioning_dataset = True
-                StateTracker.set_conditioning_datasets(backend["id"], backend_conditionings)
-                info_log(f"(id={backend['id']}) Connected conditioning datasets: {backend_conditionings}")
-
-        return has_conditioning_dataset
-
-    def _connect_s2v_datasets(self, data_backend_config: List[Dict[str, Any]]) -> bool:
-        """Connect S2V (Speech-to-Video) audio datasets to their main video datasets."""
-        has_s2v_dataset = False
-        available_audio = {
-            backend_id
-            for backend_id, backend_obj in self.data_backends.items()
-            if backend_obj.get("dataset_type") == "audio"
-        }
-        for backend in data_backend_config:
-            dataset_type = backend.get("dataset_type", "image")
-            if dataset_type != "video":
-                continue
-            if backend.get("disabled", False) or backend.get("disable", False):
-                continue
-            backend_s2v = backend.get("s2v_datasets", [])
-            if isinstance(backend_s2v, str):
-                backend_s2v = [backend_s2v]
-            for x in backend_s2v:
-                if x not in available_audio:
-                    raise ValueError(f"S2V audio dataset {x} not found in available audio backends: {available_audio}.")
-
-            if backend_s2v:
-                has_s2v_dataset = True
-                StateTracker.set_s2v_datasets(backend["id"], backend_s2v)
-                info_log(f"(id={backend['id']}) Connected S2V audio datasets: {backend_s2v}")
-
-        return has_s2v_dataset
+        conditioning = {}
+        audio = {}
+        for backend in enabled:
+            dataset_id = backend["id"]
+            role = roles[dataset_id]
+            for field, target_role, source_roles, result in (
+                (
+                    "conditioning_data",
+                    DatasetType.CONDITIONING,
+                    (DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.AUDIO, DatasetType.EVAL),
+                    conditioning,
+                ),
+                ("s2v_datasets", DatasetType.AUDIO, (DatasetType.VIDEO, DatasetType.EVAL), audio),
+            ):
+                targets = backend.get(field)
+                if role not in source_roles or not targets:
+                    continue
+                if isinstance(targets, str):
+                    targets = [targets]
+                if not isinstance(targets, (list, tuple)):
+                    raise ValueError(f"(id={dataset_id}) {field} must be a dataset ID or a list of IDs.")
+                for target_id in targets:
+                    if not isinstance(target_id, str) or roles.get(target_id) is not target_role:
+                        raise ValueError(
+                            f"(id={dataset_id}) {field} references {target_id!r}, "
+                            f"which is not an enabled {target_role.value} dataset."
+                        )
+                result[dataset_id] = list(targets)
+        return conditioning, audio
 
     def _resolve_conditioning_geometry(self, data_backend_config: List[Dict[str, Any]]) -> None:
         """Resolve shared geometry before constructing metadata providers or scanning membership."""
@@ -3929,7 +3925,7 @@ class FactoryRegistry:
         settings = ("resolution", "resolution_type", "maximum_image_size", "target_downsample_size", "minimum_image_size")
         assignments = {}
         for source in active.values():
-            if _backend_dataset_type(source) not in (DatasetType.IMAGE, DatasetType.VIDEO):
+            if _backend_dataset_type(source) not in (DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.EVAL):
                 continue
             targets = source.get("conditioning_data") or ()
             if isinstance(targets, str):
@@ -4278,6 +4274,7 @@ class FactoryRegistry:
             accelerator=self.accelerator,
         )
 
+        self._resolve_dataset_relationships(data_backend_config)
         self.configure_text_embed_backends(data_backend_config)
         self.configure_image_embed_backends(data_backend_config)
         self.configure_conditioning_image_embed_backends(data_backend_config)
