@@ -2422,6 +2422,26 @@ class TestMetadataBackendEmptyStringHandling(unittest.TestCase):
                 self.assertEqual(references["minimum_image_size"], source["minimum_image_size"])
                 self.assertEqual(references["resolution"], 1.048576)
 
+    def test_shared_conditioning_geometry_is_validated_before_applying_assignments(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        factory = FactoryRegistry.__new__(FactoryRegistry)
+        factory.args = SimpleNamespace(resolution_type="pixel")
+        for edges in ((128, 128), (128, 512), (512, 128)):
+            with self.subTest(edges=edges):
+                target = {"id": "mask", "dataset_type": "conditioning", "resolution": 256}
+                sources = [
+                    {"id": name, "conditioning_data": "mask", "resolution": edge}
+                    for name, edge in zip(("first", "second"), edges, strict=True)
+                ]
+                if edges[0] == edges[1]:
+                    factory._resolve_conditioning_geometry([*sources, target])
+                    self.assertEqual(target["resolution"], 128)
+                else:
+                    with self.assertRaisesRegex(ValueError, "mask has conflicting geometry from first and second"):
+                        factory._resolve_conditioning_geometry([*sources, target])
+                    self.assertEqual(target["resolution"], 256)
+
     def test_configure_metadata_backend_empty_string_uses_discovery(self):
         """_configure_metadata_backend should treat empty string as 'discovery'."""
         from simpletuner.helpers.data_backend.factory import FactoryRegistry

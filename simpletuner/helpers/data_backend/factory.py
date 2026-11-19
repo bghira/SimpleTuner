@@ -3941,6 +3941,7 @@ class FactoryRegistry:
             if not (backend.get("disabled") or backend.get("disable"))
         }
         settings = ("resolution", "resolution_type", "maximum_image_size", "target_downsample_size", "minimum_image_size")
+        assignments = {}
         for source in active.values():
             if _backend_dataset_type(source) not in (DatasetType.IMAGE, DatasetType.VIDEO):
                 continue
@@ -3959,7 +3960,15 @@ class FactoryRegistry:
                     raise ValueError(
                         f"Conditioning data backend {target_id} for {source['id']} is not an enabled conditioning dataset."
                     )
-                target.update(geometry)
+                previous_source, previous_geometry = assignments.setdefault(target_id, (source["id"], geometry))
+                conflicting_settings = [key for key in settings if geometry[key] != previous_geometry[key]]
+                if conflicting_settings:
+                    raise ValueError(
+                        f"Conditioning dataset {target_id} has conflicting geometry from {previous_source} and {source['id']} "
+                        f"({', '.join(conflicting_settings)}). Configure a separate conditioning dataset ID for each geometry."
+                    )
+        for target_id, (_, geometry) in assignments.items():
+            active[target_id].update(geometry)
 
     def _build_caption_backend(self, backend: Dict[str, Any]) -> Dict[str, Any]:
         """Build and ingest captions without registering a training dataloader."""
