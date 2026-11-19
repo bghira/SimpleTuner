@@ -411,6 +411,7 @@ class AssistantCaptionCacheTests(unittest.TestCase):
             is_local_main_process=False, num_processes=2, process_index=1, wait_for_everyone=lambda: None
         )
         factory.caption_backends = {}
+        factory.datasets = {}
         metadata = _CaptionMetadata(events)
         metadata.caption_records = {
             "one": CaptionRecord("one", "a fox", "captions"),
@@ -455,6 +456,7 @@ class AssistantCaptionCacheTests(unittest.TestCase):
         self.assertEqual(cached, [{"prompt": "a rabbit"}])
         self.assertEqual(events, ["load", "cache", "loader"])
         runtime = tracker.register_dataset.call_args.args[0]
+        self.assertIs(factory.datasets["captions"], runtime)
         self.assertIs(runtime.text_embed_cache, cache)
         self.assertIs(runtime.sampler, sampler)
         self.assertIs(runtime.training_dataloader, loader)

@@ -44,6 +44,7 @@ class FactoryCaptionBackendTests(unittest.TestCase):
         )
         factory.accelerator = accelerator
         factory.caption_backends = {}
+        factory.datasets = {}
 
         backend = {
             "id": "captions",
