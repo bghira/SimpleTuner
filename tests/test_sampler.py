@@ -889,6 +889,23 @@ class TestIterationUnseenIndex(unittest.TestCase):
             sampler._iteration_unseen_images = sampler._get_unseen_images
         return sampler
 
+    def test_persistent_sampler_keeps_the_next_bucket_after_a_padded_batch(self):
+        from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
+
+        full_bucket = [f"full-{index}.jpg" for index in range(8)]
+        buckets = {"0.5": ["short.jpg"], "1.0": full_bucket}
+        sampler = self._sampler(buckets, {}, True)
+        sampler.buckets = list(buckets)
+        sampler.current_bucket = None
+        batches = iter(sampler)
+        self.assertEqual([record["image_path"] for record in next(batches)], ["short.jpg"] * 4)
+        self.assertCountEqual(
+            [record["image_path"] for _ in range(2) for record in next(batches)],
+            full_bucket,
+        )
+        with self.assertRaises(MultiDatasetExhausted):
+            next(batches)
+
     def test_consumed_checkpoint_ignores_prefetch_across_repeat_boundaries(self):
         from simpletuner.helpers.data_backend.runtime.batch_fetcher import BatchFetcher
         from simpletuner.helpers.data_backend.runtime.dataloader_iterator import DatasetMixer
