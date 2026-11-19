@@ -1133,7 +1133,7 @@ class TestUpdateBboxEntities(unittest.TestCase):
 
 
 class TestConditioningFileMatch(unittest.TestCase):
-    """Verify conditioning file matching by stem."""
+    """Verify conditioning file matching by provider identity."""
 
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
@@ -1151,14 +1151,14 @@ class TestConditioningFileMatch(unittest.TestCase):
         self.cond_dir.mkdir(parents=True)
         # Create a matching conditioning image
         cond_img = Image.new("RGB", (64, 64), color="green")
-        cond_img.save(self.cond_dir / "photo123.png")
+        cond_img.save(self.cond_dir / "photo123.jpg")
 
         # Bucket cache for conditioning dataset
         cond_cache = self.cond_dir / "aspect_ratio_bucket_indices_cond-ds.json"
         cond_cache.write_text(
             json.dumps(
                 {
-                    "aspect_ratio_bucket_indices": {"1.0": ["photo123.png"]},
+                    "aspect_ratio_bucket_indices": {"1.0": ["photo123.jpg"]},
                 }
             )
         )
@@ -1187,10 +1187,34 @@ class TestConditioningFileMatch(unittest.TestCase):
         self.assertEqual(result["conditioning_type"], "controlnet")
         self.assertIn("thumbnail", result)
 
-    def test_no_match_for_missing_stem(self):
+    def test_no_match_for_missing_path(self):
         all_datasets = [self._src_config(), self._cond_config()]
         result = self.service.get_conditioning_file_match(self._src_config(), all_datasets, "nonexistent.jpg")
         self.assertIsNone(result)
+
+    def test_nested_relative_paths_keep_same_name_pairs_and_orphans_distinct(self):
+        source, target = self._src_config(), self._cond_config()
+        for directory in (self.src_dir, self.cond_dir):
+            for prefix in ("first", "second"):
+                (directory / prefix).mkdir()
+                Image.new("RGB", (64, 64), color="red").save(directory / prefix / "same.png")
+        for directory, config, refs in (
+            (self.src_dir, source, ["first/same.png", "second/same.png", "source_only/same.png"]),
+            (self.cond_dir, target, ["first/same.png", "second/same.png", "target_only/same.png"]),
+        ):
+            (directory / f"aspect_ratio_bucket_indices_{config['id']}.json").write_text(
+                json.dumps({"aspect_ratio_bucket_indices": {"1.0": refs}})
+            )
+
+        page = self.service.get_conditioning_pairs(source, target, offset=1, limit=1)
+        self.assertEqual(page["total_pairs"], 2)
+        self.assertEqual(page["pairs"][0]["conditioning_path"], "second/same.png")
+        report = self.service.get_orphaned_files(source, target)
+        self.assertEqual(report.source_orphans, ["source_only/same.png"])
+        self.assertEqual(report.conditioning_orphans, ["target_only/same.png"])
+        match = self.service.get_conditioning_file_match(source, [target], "second/same.png")
+        self.assertEqual(Path(match["file_path"]), self.cond_dir / "second/same.png")
+        self.assertIsNone(self.service.get_conditioning_file_match(source, [target], "source_only/same.png"))
 
     def test_no_match_without_conditioning(self):
         config = {"id": "plain-ds", "type": "local", "instance_data_dir": str(self.src_dir)}
@@ -1202,7 +1226,7 @@ class TestConditioningFileMatch(unittest.TestCase):
         gen_dir = Path(self.tmpdir) / "conditioning_data" / "auto-gen-canny"
         gen_dir.mkdir(parents=True)
         gen_img = Image.new("RGB", (64, 64), color="blue")
-        gen_img.save(gen_dir / "photo123.png")
+        gen_img.save(gen_dir / "photo123.jpg")
 
         src_config = {
             "id": "src-ds",
@@ -1223,7 +1247,7 @@ class TestConditioningFileMatch(unittest.TestCase):
         gen_dir = Path(self.tmpdir) / "conditioning_data" / "src-ds_conditioning_canny"
         gen_dir.mkdir(parents=True)
         gen_img = Image.new("RGB", (64, 64), color="blue")
-        gen_img.save(gen_dir / "photo123.png")
+        gen_img.save(gen_dir / "photo123.jpg")
 
         src_config = {
             "id": "src-ds",

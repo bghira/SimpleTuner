@@ -12,6 +12,7 @@ import subprocess
 from collections import OrderedDict
 from contextlib import ExitStack, closing, contextmanager
 from glob import escape
+from itertools import islice
 from pathlib import Path
 from threading import Lock
 from typing import Any, Dict, List, Optional, Tuple
@@ -38,6 +39,7 @@ from simpletuner.helpers.metadata.preparation import (
     read_bucket_groups,
     read_bucket_page,
 )
+from simpletuner.helpers.utils.pathing import normalize_data_path
 
 logger = logging.getLogger(__name__)
 
@@ -1793,31 +1795,12 @@ class DatasetViewerService:
                     "source_view_revision": source[0].header["view_revision"] if source else None,
                     "conditioning_view_revision": target[0].header["view_revision"] if target else None,
                 }
-        source_files = self.get_dataset_files(source_config, limit=1_000_000).files
-        cond_files = self.get_dataset_files(conditioning_config, limit=1_000_000).files
-
-        source_by_name = {Path(f).stem: f for f in source_files}
-        cond_by_name = {Path(f).stem: f for f in cond_files}
-
-        pairs = []
-        for name, source_path in source_by_name.items():
-            if name in cond_by_name:
-                pairs.append(
-                    ConditioningPair(
-                        source_path=source_path,
-                        conditioning_path=cond_by_name[name],
-                    )
-                )
-
-        total = len(pairs)
-        page = pairs[offset : offset + limit]
-
-        source_orphans = [f for name, f in source_by_name.items() if name not in cond_by_name]
-        cond_orphans = [f for name, f in cond_by_name.items() if name not in source_by_name]
+        pairs, source_orphans, cond_orphans = self._legacy_conditioning_relationship(source_config, conditioning_config)
+        page = islice(pairs.items(), offset, offset + limit)
 
         return {
-            "pairs": [p.model_dump() for p in page],
-            "total_pairs": total,
+            "pairs": [ConditioningPair(source_path=ref, conditioning_path=match).model_dump() for ref, match in page],
+            "total_pairs": len(pairs),
             "source_orphan_count": len(source_orphans),
             "conditioning_orphan_count": len(cond_orphans),
             "limit": limit,
@@ -1859,22 +1842,50 @@ class DatasetViewerService:
                         ref for ref in target[0].iter_refs(None, offset, limit) if match_source(ref) is None
                     ]
                 return result
-        source_files = self.get_dataset_files(source_config, limit=1_000_000).files
-        cond_files = self.get_dataset_files(conditioning_config, limit=1_000_000).files
-
-        source_by_name = {Path(f).stem: f for f in source_files}
-        cond_by_name = {Path(f).stem: f for f in cond_files}
-
+        _, source_orphans, cond_orphans = self._legacy_conditioning_relationship(source_config, conditioning_config)
         return OrphanReport(
             offset=offset,
             limit=limit,
             source_id=source_config.get("id", ""),
             conditioning_id=conditioning_config.get("id", ""),
-            source_orphans=[f for name, f in source_by_name.items() if name not in cond_by_name][offset : offset + limit],
-            conditioning_orphans=[f for name, f in cond_by_name.items() if name not in source_by_name][
-                offset : offset + limit
-            ],
+            source_orphans=source_orphans[offset : offset + limit],
+            conditioning_orphans=cond_orphans[offset : offset + limit],
         )
+
+    def _iter_legacy_membership_refs(self, config):
+        cache = self._find_cache_file(config, "indices")
+        if cache is None:
+            return
+        try:
+            with cache.open("rb") as stream:
+                for _, refs in read_bucket_groups(stream):
+                    yield from refs
+        except (ijson.JSONError, ValueError, OSError):
+            return
+
+    @staticmethod
+    def _legacy_pairing_key(config, ref):
+        root = config.get("instance_data_dir") or config.get("aws_data_prefix")
+        return normalize_data_path(ref, root)
+
+    def _legacy_conditioning_key(self, source, target, ref):
+        from simpletuner.helpers.data_backend.base import conditioning_file_path
+
+        return conditioning_file_path(self._legacy_pairing_key(source, ref), None, target)
+
+    def _legacy_conditioning_relationship(self, source, target):
+        target_refs = {self._legacy_pairing_key(target, ref): ref for ref in self._iter_legacy_membership_refs(target)}
+        pairs = {}
+        missing = []
+        matched = set()
+        for ref in self._iter_legacy_membership_refs(source):
+            key = self._legacy_conditioning_key(source, target, ref)
+            if key in target_refs:
+                pairs[ref] = target_refs[key]
+                matched.add(key)
+            else:
+                missing.append(ref)
+        return pairs, missing, [ref for key, ref in target_refs.items() if key not in matched]
 
     def get_conditioning_file_match(
         self,
@@ -1884,7 +1895,7 @@ class DatasetViewerService:
         *,
         view_revision: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Find the conditioning image matching a source file by stem.
+        """Find the conditioning image matched by the configured providers.
 
         Checks linked conditioning datasets in the plan and also attempts
         to discover auto-generated conditioning images on disk.
@@ -1899,7 +1910,7 @@ class DatasetViewerService:
                 if not source[1](source_file_path):
                     return None
                 source_revision = source[0].header.get("source_revision")
-        source_stem = Path(source_file_path).stem
+        pairing_key = self._legacy_pairing_key(source_config, source_file_path)
 
         # 1. Check conditioning_data references (datasets in the plan)
         cond_ids = source_config.get("conditioning_data") or []
@@ -1914,11 +1925,6 @@ class DatasetViewerService:
                 target = stack.enter_context(self._indexed_read_view(cond_config))
                 if target is not None:
                     match = self._bind_conditioning_matcher(stack, cond_config, target, source_revision)
-                    pairing_key = source_file_path
-                    if not native_ref:
-                        from simpletuner.helpers.utils.pathing import normalize_data_path
-
-                        pairing_key = normalize_data_path(source_file_path, source_config.get("instance_data_dir"))
                     if (matched := match(pairing_key)) is None:
                         continue
                     revision = target[0].header["view_revision"]
@@ -1937,16 +1943,27 @@ class DatasetViewerService:
                 path = Path(conditioning_file_path(source_file_path, root, cond_config)).resolve()
                 if not path.is_relative_to(Path(root).resolve()) or not path.is_file():
                     continue
-                match = {"path": path}
+                matched = str(path)
             else:
-                match = self._find_conditioning_file_by_stem(cond_config, source_stem)
-            if match:
-                thumbnail = generate_thumbnail(match["path"])
+                key = self._legacy_conditioning_key(source_config, cond_config, source_file_path)
+                matched = next(
+                    (
+                        ref
+                        for ref in self._iter_legacy_membership_refs(cond_config)
+                        if self._legacy_pairing_key(cond_config, ref) == key
+                    ),
+                    None,
+                )
+            if matched is not None:
+                image = self._load_pil_image(cond_config, matched)
+                local = (
+                    self._resolve_image_path(cond_config, matched) if cond_config.get("type", "local") == "local" else None
+                )
                 return {
                     "conditioning_id": cond_id,
                     "conditioning_type": cond_config.get("conditioning_type"),
-                    "file_path": str(match["path"]),
-                    "thumbnail": thumbnail,
+                    "file_path": str(local) if local is not None else matched,
+                    "thumbnail": generate_thumbnail_from_pil(image, self.DEFAULT_THUMBNAIL_SIZE) if image else None,
                 }
 
         # 2. Try auto-generated conditioning from 'conditioning' generators
@@ -1969,7 +1986,9 @@ class DatasetViewerService:
                 instance_dir = self._derive_conditioning_dir(source_config, gen_id)
 
             if instance_dir and Path(instance_dir).is_dir():
-                match = self._scan_directory_for_stem(instance_dir, source_stem)
+                generated = {"instance_data_dir": instance_dir, "conditioning_config": gen}
+                ref = conditioning_file_path(pairing_key, instance_dir, generated)
+                match = self._resolve_image_path(generated, ref)
                 if match:
                     thumbnail = generate_thumbnail(str(match))
                     return {
@@ -1987,16 +2006,6 @@ class DatasetViewerService:
 
         return None
 
-    def _find_conditioning_file_by_stem(self, cond_config: Dict[str, Any], stem: str) -> Optional[Dict[str, Any]]:
-        """Look up a file matching *stem* in a conditioning dataset's cache."""
-        files = self.get_dataset_files(cond_config, limit=1_000_000).files
-        for f in files:
-            if Path(f).stem == stem:
-                resolved = self._resolve_image_path(cond_config, f)
-                if resolved:
-                    return {"path": resolved}
-        return None
-
     @staticmethod
     def _derive_conditioning_dir(source_config: Dict[str, Any], gen_id: str) -> Optional[str]:
         """Best-effort derivation of where auto-generated conditioning images live."""
@@ -2012,16 +2021,6 @@ class DatasetViewerService:
                 return os.path.join(cache_root, "conditioning_data", gen_id)
             except (ValueError, TypeError):
                 pass
-        return None
-
-    @staticmethod
-    def _scan_directory_for_stem(directory: str, stem: str) -> Optional[Path]:
-        """Find the first image file in *directory* whose stem matches."""
-        dir_path = Path(directory)
-        for ext in (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff"):
-            candidate = dir_path / (stem + ext)
-            if candidate.is_file():
-                return candidate
         return None
 
     def _generate_conditioning_preview(
