@@ -164,7 +164,8 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                 raise ValueError("HuggingfaceMetadataBackend requires HuggingfaceDatasetsBackend")
             self._caption_rows = self._select_caption_columns(data_backend.dataset)
             self.reload_cache()
-            self.load_image_metadata()
+            if self._published_geometry is None:
+                self.load_image_metadata()
         accelerator.wait_for_everyone()
 
     def _select_caption_columns(self, dataset):
@@ -331,8 +332,6 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         return getattr(getattr(self.data_backend, "dataset", None), "_fingerprint", None)
 
     def reload_cache(self, set_config: bool = True):
-        self._stale_geometry = False
-        self._published_geometry = None
         if self.data_backend.exists(self.cache_file):
             try:
                 cache_data_raw = self.data_backend.read(self.cache_file)
@@ -342,18 +341,28 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                 logger.warning(f"Error loading aspect ratio bucket cache, creating new one: {e}")
                 cache_data = {}
             stored_revision = cache_data.get("source_revision")
-            self._stale_geometry = stored_revision is not None and stored_revision != self._source_revision()
-            if not self._stale_geometry:
-                self._published_geometry = cache_data.get("huggingface_geometry")
-            self.aspect_ratio_bucket_indices = (
-                {} if self._stale_geometry else cache_data.get("aspect_ratio_bucket_indices", {})
-            )
-            if set_config:
-                self.config = cache_data.get("config", {})
-            # Load filtering statistics if present
-            self.filtering_statistics = cache_data.get("filtering_statistics")
+            stale_geometry = stored_revision is not None and stored_revision != self._source_revision()
+            publication = None if stale_geometry else cache_data.get("huggingface_geometry")
+            transforms = self._open_transform_store(publication) if publication is not None else None
+            with self.metadata_semaphor:
+                self._stale_geometry = stale_geometry
+                self._published_geometry = publication
+                if transforms is not None:
+                    self.image_metadata = transforms
+                    self.image_metadata_loaded = True
+                elif stale_geometry or isinstance(self.image_metadata, HuggingFaceTransformStore):
+                    self.image_metadata = {}
+                    self.image_metadata_loaded = False
+                self.aspect_ratio_bucket_indices = (
+                    {} if stale_geometry else cache_data.get("aspect_ratio_bucket_indices", {})
+                )
+                if set_config:
+                    self.config = cache_data.get("config", {})
+                self.filtering_statistics = cache_data.get("filtering_statistics")
         else:
             logger.debug("No cache file found, starting fresh.")
+            self._stale_geometry = False
+            self._published_geometry = None
 
     def save_cache(self, enforce_constraints: bool = False):
         if enforce_constraints:
@@ -446,15 +455,9 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             return
         publication = getattr(self, "_published_geometry", None)
         if publication is not None:
-            shards = self.data_backend.preparation_shards
-            if shards is None or [shard.stop for shard in shards] != publication["shard_ends"]:
-                raise ValueError("Hugging Face transform cache requires the same Arrow shard layout. Reprocess the dataset.")
-            generation = UUID(hex=publication["generation"]).hex
-            directory = self._transform_directory(generation)
-            if not directory.is_dir():
-                raise FileNotFoundError("Hugging Face transform cache is missing. Reprocess the dataset.")
+            transforms = self._open_transform_store(publication)
             with self.metadata_semaphor:
-                self.image_metadata = HuggingFaceTransformStore(directory, shards, self.data_backend._get_index_from_path)
+                self.image_metadata = transforms
                 self.image_metadata_loaded = True
             return
         full_metadata_path = self.metadata_file
@@ -480,6 +483,16 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                 self.image_metadata_loaded = False
             logger.debug(f"Metadata file does not exist: {full_metadata_path}")
 
+    def _open_transform_store(self, publication):
+        shards = self.data_backend.preparation_shards
+        if shards is None or [shard.stop for shard in shards] != publication["shard_ends"]:
+            raise ValueError("Hugging Face transform cache requires the same Arrow shard layout. Reprocess the dataset.")
+        generation = UUID(hex=publication["generation"]).hex
+        directory = self._transform_directory(generation)
+        if not directory.is_dir():
+            raise FileNotFoundError("Hugging Face transform cache is missing. Reprocess the dataset.")
+        return HuggingFaceTransformStore(directory, shards, self.data_backend._get_index_from_path)
+
     def _transform_directory(self, generation):
         publication = self.data_backend.cache_write_path(self.cache_file).resolve()
         return publication.with_suffix(".transforms") / generation
@@ -494,8 +507,9 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         self.image_metadata_loaded = True
 
     def get_metadata_batch(self, refs):
-        if isinstance(self.image_metadata, HuggingFaceTransformStore):
-            return self.image_metadata.read_batch(refs)
+        metadata = self.image_metadata
+        if isinstance(metadata, HuggingFaceTransformStore):
+            return metadata.read_batch(refs)
         return super().get_metadata_batch(refs)
 
     def _passes_quality_filter(self, quality_assessment: Dict) -> bool:
@@ -538,7 +552,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         }
         return [captions.get(position) for position in positions]
 
-    def _sharded_preparation_index(self):
+    def _sharded_preparation_index(self, *, metadata=None):
         shards = self.data_backend.preparation_shards
         publication = getattr(self, "cache_file", None)
         if shards is None or publication is None or not self.data_backend.exists(publication):
@@ -554,8 +568,9 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                 raise ValueError("Prepared Hugging Face membership contains a row outside the current split.")
             return bisect_right(boundaries, row)
 
+        metadata = self.image_metadata if metadata is None else metadata
         with self.data_backend.open_read_stream(publication) as source:
-            if isinstance(self.image_metadata, HuggingFaceTransformStore):
+            if isinstance(metadata, HuggingFaceTransformStore):
                 generation = None
                 for field, _, value in ijson.parse(source):
                     if field == "huggingface_geometry.generation":
@@ -563,7 +578,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                         break
                     if field == "aspect_ratio_bucket_indices":
                         break
-                if generation != self.image_metadata.directory.name:
+                if generation != metadata.directory.name:
                     raise DatasetViewChangedError("Hugging Face prepared geometry changed. Reload the dataset.")
                 source.seek(0)
             return ShardedPreparationIndex.open(
@@ -572,7 +587,8 @@ class HuggingfaceMetadataBackend(MetadataBackend):
 
     @contextmanager
     def open_preparation_view(self, *, worker=0, workers=1):
-        index = None if self._preparation_source is not None else self._sharded_preparation_index()
+        metadata = self.image_metadata
+        index = None if self._preparation_source is not None else self._sharded_preparation_index(metadata=metadata)
         if index is None:
             with super().open_preparation_view(worker=worker, workers=workers) as view:
                 yield view
@@ -580,8 +596,8 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         if not index.accepted_samples:
             raise ValueError("No accepted samples in dataset metadata; scan the dataset before preparing text embeddings.")
         lookup = self
-        if isinstance(self.image_metadata, HuggingFaceTransformStore):
-            lookup = SimpleNamespace(get_metadata_by_filepath=self.image_metadata.get)
+        if isinstance(metadata, HuggingFaceTransformStore):
+            lookup = SimpleNamespace(get_metadata_by_filepath=metadata.get)
         with closing(index.groups(worker, workers)) as groups:
             yield PreparationView(chain.from_iterable(refs for _, refs in groups), lookup)
 

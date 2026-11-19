@@ -1,5 +1,6 @@
 import json
 import unittest
+from contextlib import nullcontext
 from unittest.mock import Mock, patch
 
 from simpletuner.helpers.metadata.backends.caption import CaptionMetadataBackend
@@ -43,6 +44,8 @@ class MetadataRuntimeConfigTests(unittest.TestCase):
                 backend.id = "runtime-config"
                 backend.cache_file = "buckets.json"
                 backend.config = {}
+                backend.image_metadata = {}
+                backend.metadata_semaphor = nullcontext()
                 backend.data_backend = Mock()
                 backend.data_backend.exists.return_value = True
                 backend.data_backend.read.return_value = json.dumps(payload)

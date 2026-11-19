@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
 from queue import Queue
 from types import SimpleNamespace
@@ -202,6 +203,8 @@ class TestMetadataBackend(unittest.TestCase):
                 backend.id = "cache-keys"
                 backend.cache_file = "buckets.json"
                 backend.data_backend = self.data_backend
+                backend.image_metadata = {}
+                backend.metadata_semaphor = nullcontext()
                 backend.load_image_metadata = Mock()
                 backend._sync_image_files_with_buckets = Mock()
                 with patch.object(

@@ -259,12 +259,20 @@ class HuggingfaceMetadataBackendTests(unittest.TestCase):
                 self.assertIsNone(first[-1])
                 provider.enqueue_prepared_metadata({"0.jpg": {**first[1], "target_size": [128, 64]}})
 
-            with contextlib.closing(HuggingfaceMetadataBackend(**options)) as reopened:
+            with (
+                contextlib.closing(HuggingfaceMetadataBackend(**options)) as reopened,
+                contextlib.closing(HuggingfaceMetadataBackend(**options)) as peer,
+            ):
                 self.assertEqual(reopened.image_metadata.directory, original)
-                with reopened.open_preparation_view(worker=0, workers=3) as view:
+                with peer.open_preparation_view(worker=0, workers=3) as view:
                     self.assertEqual(list(view), ["0.jpg", "1.jpg"])
                     self.assertEqual(view.metadata.get_metadata_by_filepath("0.jpg")["target_size"], [128, 64])
                     reopened.compute_aspect_ratio_bucket_indices(ignore_existing_cache=True)
+                    peer.reload_cache(set_config=False)
+                    self.assertEqual(peer.get_metadata_batch(refs), first)
+                    with peer.open_preparation_view(worker=0, workers=3) as refreshed:
+                        self.assertEqual(list(refreshed), ["0.jpg", "1.jpg"])
+                        self.assertEqual(refreshed.metadata.get_metadata_by_filepath("0.jpg"), first[1])
                     self.assertEqual(view.metadata.get_metadata_by_filepath("0.jpg")["target_size"], [128, 64])
                 self.assertNotEqual(reopened.image_metadata.directory, original)
                 self.assertEqual(reopened.get_metadata_batch(refs), first)
