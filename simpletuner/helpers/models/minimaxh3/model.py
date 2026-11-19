@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 from types import SimpleNamespace
@@ -73,6 +74,7 @@ from simpletuner.helpers.training.lora_format import (
 )
 from simpletuner.helpers.training.multi_process import should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
+from simpletuner.helpers.utils.pathing import canonicalize_data_uri
 
 logger = logging.getLogger(__name__)
 if should_log():
@@ -876,6 +878,17 @@ class MiniMaxH3(VideoModelFoundation):
     def requires_text_embed_image_context(self) -> bool:
         return True
 
+    def requires_text_embed_conditioning_pixels(self) -> bool:
+        # Read the same original reference as offline preparation.
+        return False
+
+    def text_embed_cache_context_key(self, metadata: dict, *, prompt=None) -> str | None:
+        reference = self._prompt_image_reference(metadata)
+        if reference is None:
+            return None
+        dataset_id, path = reference
+        return json.dumps(("h3-reference-v1", dataset_id, canonicalize_data_uri(path)), separators=(",", ":"))
+
     def should_precompute_dropout_caption(self) -> bool:
         return False
 
@@ -988,22 +1001,23 @@ class MiniMaxH3(VideoModelFoundation):
         direct_image = context.get("conditioning_pixel_values")
         if direct_image is not None:
             return self._coerce_prompt_image(direct_image)
-        image_paths = context.get("image_paths")
-        data_backend_ids = context.get("data_backend_ids")
-        if isinstance(image_paths, (list, tuple)) and image_paths:
-            image_path = image_paths[0]
-            if isinstance(data_backend_ids, (list, tuple)) and data_backend_ids:
-                data_backend_id = data_backend_ids[0]
-            else:
-                data_backend_id = context.get("data_backend_id")
-        else:
-            # `image_path` alone identifies the target sample in ordinary T2V
-            # backends. Only plural paths or direct pixels denote reference context.
+        reference = self._prompt_image_reference(context)
+        if reference is None:
             return None
-        if not image_path or not data_backend_id:
+        dataset_id, image_path = reference
+        dataset = StateTracker.get_dataset(dataset_id)
+        return self._coerce_prompt_image(dataset.read_sample_images([image_path])[0])
+
+    @staticmethod
+    def _prompt_image_reference(context: dict) -> tuple[str, str] | None:
+        paths = context.get("image_paths")
+        if not isinstance(paths, (list, tuple)) or not paths or not paths[0]:
             return None
-        dataset = StateTracker.get_dataset(data_backend_id)
-        return self._coerce_prompt_image(dataset.data_backend.read_image(image_path))
+        dataset_ids = context.get("data_backend_ids")
+        dataset_id = (
+            dataset_ids[0] if isinstance(dataset_ids, (list, tuple)) and dataset_ids else context.get("data_backend_id")
+        )
+        return (dataset_id, paths[0]) if dataset_id else None
 
     @staticmethod
     def _coerce_prompt_image(image) -> Image.Image | None:
