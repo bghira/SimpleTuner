@@ -1440,7 +1440,7 @@ Webshart 数据集通过 `webshart` 包加载 WebDataset 风格的 tar shards。
 
 #### S3 上的 Parquet 图像字节
 
-设置 `webshart.format: "parquet"` 可读取本地、Hub 或 S3 兼容存储中 Parquet 分片内的图像字节。S3 地址为 `s3://bucket` 或 `s3://bucket/prefix`；可选的 `webshart.manifest` 是相对于数据源的捕获描述文件路径。需要 webshart 0.9.0 或更高版本。由捕获清单索引得到的分片目录保存在 `webshart.metadata_cache_dir`（默认为 `webshart.cache_dir` 下的 `metadata_cache`）；共享该目录的所有进程都会复用它，因此同一节点上的各个 rank 只下载并索引清单一次，清单变更后会重新索引。
+设置 `webshart.format: "parquet"` 可读取本地、Hub 或 S3 兼容存储中 Parquet 分片内的图像字节。S3 地址为 `s3://bucket` 或 `s3://bucket/prefix`；可选的 `webshart.manifest` 是相对于数据源的捕获描述文件路径。需要 webshart 0.9.1 或更高版本。由捕获清单索引得到的分片目录保存在 `webshart.metadata_cache_dir`（默认为 `webshart.cache_dir` 下的 `metadata_cache`）；共享该目录的所有进程都会复用它，因此同一节点上的各个 rank 只下载并索引清单一次，清单变更后会重新索引。
 
 `webshart.columns` 将 `image`、`captions`、`width`、`height` 映射到源列名；省略时使用这些默认名称。图像列可以是二进制数据或包含 `bytes` 的结构体。`url_status != "ok"` 或 `stored_bytes` 为空的捕获行会被排除，物理行号保持不变。缺少尺寸的行不参与分桶。不会请求原始 URL；成功捕获仍可能包含无法完整解码的图像。预先缓存 VAE 时会记录并跳过这类样本；在训练中编码 latent 时（所有窗口化数据集都是如此），这类样本会使训练停止，并在错误中给出其名称。JPEG XL 图像需要安装 `jxl` 扩展（见 [INSTALL](INSTALL.zh.md)）。
 

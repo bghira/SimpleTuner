@@ -1442,7 +1442,7 @@ Webshart データセットは `webshart` パッケージで WebDataset 形式�
 
 #### S3 の Parquet 画像バイト
 
-`webshart.format: "parquet"` で、ローカル、Hub、S3 互換ストレージの Parquet に埋め込まれた画像を読み込みます。S3 は `s3://bucket` または `s3://bucket/prefix`。任意の `webshart.manifest` はソースからの相対キャプチャ記述子です。webshart 0.9.0 以降が必要です。キャプチャマニフェストから作成したシャードカタログは `webshart.metadata_cache_dir`（既定は `webshart.cache_dir` 内の `metadata_cache`）に保存され、このディレクトリを共有するすべてのプロセスが再利用します。そのため同じノードの各ランクがマニフェストをダウンロードしてインデックスするのは 1 回だけで、マニフェストが変わると再インデックスされます。
+`webshart.format: "parquet"` で、ローカル、Hub、S3 互換ストレージの Parquet に埋め込まれた画像を読み込みます。S3 は `s3://bucket` または `s3://bucket/prefix`。任意の `webshart.manifest` はソースからの相対キャプチャ記述子です。webshart 0.9.1 以降が必要です。キャプチャマニフェストから作成したシャードカタログは `webshart.metadata_cache_dir`（既定は `webshart.cache_dir` 内の `metadata_cache`）に保存され、このディレクトリを共有するすべてのプロセスが再利用します。そのため同じノードの各ランクがマニフェストをダウンロードしてインデックスするのは 1 回だけで、マニフェストが変わると再インデックスされます。
 
 `webshart.columns` は `image`、`captions`、`width`、`height` をソース列名に対応させます。省略時は同名です。画像はバイナリ列または `bytes` を含む構造体です。`url_status != "ok"` や空の `stored_bytes` の行は物理行番号を変えずに除外されます。寸法のない行はバケット対象外です。元 URL は取得しません。取得成功でも完全にデコードできない画像の場合があります。事前の VAE キャッシュではそのサンプルをログに記録してスキップしますが、学習中に latent をエンコードする場合（ウィンドウ化したデータセットはすべてこれに該当）は、そのサンプル名を示すエラーで学習が停止します。JPEG XL 画像には `jxl` エクストラが必要です（[INSTALL](INSTALL.ja.md) を参照）。
 
