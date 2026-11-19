@@ -1442,7 +1442,7 @@ Webshart datasets `webshart` package के जरिए WebDataset-style tar sh
 
 #### S3 पर Parquet इमेज बाइट्स
 
-`webshart.format: "parquet"` से स्थानीय, Hub या S3 में संग्रहीत इमेज पढ़ें। `source` में `s3://bucket` या `s3://bucket/prefix` दें। वैकल्पिक `webshart.manifest` स्रोत के सापेक्ष कैप्चर विवरण फ़ाइल चुनता है। SimpleTuner के लिए Webshart 0.9.0 या नया संस्करण चाहिए।
+`webshart.format: "parquet"` से स्थानीय, Hub या S3 में संग्रहीत इमेज पढ़ें। `source` में `s3://bucket` या `s3://bucket/prefix` दें। वैकल्पिक `webshart.manifest` स्रोत के सापेक्ष कैप्चर विवरण फ़ाइल चुनता है। SimpleTuner के लिए Webshart 0.9.1 या नया संस्करण चाहिए।
 
 `webshart.columns` से `image`, `captions`, `width`, `height` को स्रोत कॉलम से जोड़ें; छोड़े गए नाम यही डिफ़ॉल्ट लेते हैं। इमेज बाइनरी कॉलम या `bytes` वाला स्ट्रक्चर हो सकती है। `url_status != "ok"` या खाली `stored_bytes` वाली पंक्तियाँ वास्तविक पंक्ति सूचकांक बदले बिना हटती हैं। आयाम रहित पंक्तियाँ बकेट में नहीं आतीं। मूल URL डाउनलोड नहीं होते। बैच पढ़ते समय डिकोड न होने वाली इमेज छोड़ दी जाती हैं।
 
