@@ -171,9 +171,8 @@ class DatasetRuntimeTests(unittest.TestCase):
             csv_file.write_text("url,caption\nhttps://example.com/sample.png,caption\n")
             local = LocalDataBackend(None, "local")
             csv = CSVDataBackend(None, "csv", csv_file)
-            aws = S3DataBackend.__new__(S3DataBackend)
-            aws.id, aws.bucket_name = "aws", "datasets"
-            aws.client = Mock()
+            with patch("simpletuner.helpers.data_backend.aws.boto3.client"):
+                aws = S3DataBackend("aws", "datasets", None)
             aws.client.get_object.side_effect = lambda **kwargs: {"Body": BytesIO(published.encode())}
 
             for backend in (local, csv, aws):
