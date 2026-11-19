@@ -581,14 +581,7 @@ class DatasetViewerService:
             return DatasetSummary(dataset_id=dataset_id, has_cache=False, **cond_fields)
 
         try:
-            with cache_path.open("rb") as source:
-                index = MembershipPages.open(source)
-                if index is None:
-                    data, counts = self._read_legacy_bucket_summary(source)
-                    if data.get("scan_in_progress") and dataset_config.get("type") == "webshart":
-                        raise IncompleteWebshartMembership(data)
-                else:
-                    data, counts = index.header, index.counts
+            data, counts = self.read_membership_summary(cache_path)
         except IncompleteWebshartMembership:
             return DatasetSummary(dataset_id=dataset_id, scan_incomplete=True, **cond_fields)
         except (ijson.JSONError, ValueError, OSError) as e:
@@ -614,6 +607,18 @@ class DatasetViewerService:
             cache_file_path=str(cache_path),
             **cond_fields,
         )
+
+    @classmethod
+    def read_membership_summary(cls, path: Path):
+        """Read an indexed summary or count a legacy publication without loading its references."""
+        with path.open("rb") as source:
+            index = MembershipPages.open(source)
+            if index is not None:
+                return index.header, index.counts
+            header, counts = cls._read_legacy_bucket_summary(source)
+            if header.get("scan_in_progress"):
+                raise IncompleteWebshartMembership(header)
+            return header, counts
 
     @staticmethod
     def _read_legacy_bucket_summary(source):

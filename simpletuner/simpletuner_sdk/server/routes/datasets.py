@@ -7,10 +7,13 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
+import ijson
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ConfigDict
 
+from simpletuner.helpers.metadata.backends.webshart_membership import IncompleteWebshartMembership
 from simpletuner.simpletuner_sdk.api_state import APIState
 from simpletuner.simpletuner_sdk.server.data.dataset_blueprints import get_dataset_blueprints
 from simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware import get_current_user
@@ -32,6 +35,7 @@ from simpletuner.simpletuner_sdk.server.services.dataset_upload_service import (
     FolderCreateResult,
     UploadResult,
 )
+from simpletuner.simpletuner_sdk.server.services.dataset_viewer_service import DatasetViewerService
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore
 from simpletuner.simpletuner_sdk.server.utils.paths import resolve_config_path
 
@@ -434,11 +438,10 @@ async def browse_directories(path: Optional[str] = None, _user: User = Depends(g
             }
 
             # Check for aspect bucket metadata files
-            bucket_files = list(item.glob("aspect_ratio_bucket_indices_*.json"))
-            if bucket_files:
+            bucket_file = next(item.glob("aspect_ratio_bucket_indices_*.json"), None)
+            if bucket_file is not None:
                 # Extract dataset ID from filename
                 # Format: aspect_ratio_bucket_indices_{dataset_id}.json
-                bucket_file = bucket_files[0]
                 filename = bucket_file.stem  # Remove .json
                 dataset_id = filename.replace("aspect_ratio_bucket_indices_", "")
 
@@ -446,8 +449,7 @@ async def browse_directories(path: Optional[str] = None, _user: User = Depends(g
                 dir_info["datasetId"] = dataset_id
 
                 # Count files in the directory (excluding json metadata)
-                all_files = [f for f in item.iterdir() if f.is_file() and f.suffix != ".json"]
-                dir_info["fileCount"] = len(all_files)
+                dir_info["fileCount"] = sum(1 for f in item.iterdir() if f.is_file() and f.suffix != ".json")
 
             directories.append(dir_info)
 
@@ -497,25 +499,15 @@ async def detect_dataset(path: str, _user: User = Depends(get_current_user)) -> 
         path_obj, _, _ = _resolve_datasets_dir_and_validate_path(path)
 
         # Look for aspect bucket indices file
-        bucket_files = list(path_obj.glob("aspect_ratio_bucket_indices_*.json"))
-        if not bucket_files:
+        bucket_file = next(path_obj.glob("aspect_ratio_bucket_indices_*.json"), None)
+        if bucket_file is None:
             return {"hasDataset": False, "path": str(path_obj)}
 
-        bucket_file = bucket_files[0]
         filename = bucket_file.stem
         dataset_id = filename.replace("aspect_ratio_bucket_indices_", "")
 
-        # Read the bucket indices file to get config
-        with open(bucket_file, "r") as f:
-            bucket_data = json.load(f)
-
+        bucket_data, bucket_counts = await run_in_threadpool(DatasetViewerService.read_membership_summary, bucket_file)
         config = bucket_data.get("config", {})
-
-        # Count total files from aspect ratio buckets
-        aspect_buckets = bucket_data.get("aspect_ratio_bucket_indices", {})
-        total_files = sum(len(files) for files in aspect_buckets.values())
-
-        # Get filtering statistics if available
         filtering_statistics = bucket_data.get("filtering_statistics")
 
         result = {
@@ -523,8 +515,8 @@ async def detect_dataset(path: str, _user: User = Depends(get_current_user)) -> 
             "datasetId": dataset_id,
             "path": str(path_obj),
             "config": config,
-            "totalFiles": total_files,
-            "aspectRatios": list(aspect_buckets.keys()),
+            "totalFiles": sum(bucket_counts.values()),
+            "aspectRatios": list(bucket_counts),
         }
         if filtering_statistics:
             result["filteringStatistics"] = filtering_statistics
@@ -537,7 +529,9 @@ async def detect_dataset(path: str, _user: User = Depends(get_current_user)) -> 
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Permission denied accessing path: {path}",
         )
-    except json.JSONDecodeError as e:
+    except IncompleteWebshartMembership:
+        return {"hasDataset": False, "path": str(path_obj)}
+    except (ijson.JSONError, json.JSONDecodeError) as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error parsing dataset metadata: {str(e)}",
