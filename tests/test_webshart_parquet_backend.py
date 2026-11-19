@@ -165,6 +165,7 @@ class TestWebshartParquetBackend(unittest.TestCase):
         from simpletuner.helpers.data_backend.local import LocalDataBackend
         from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
         from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBackend
+        from simpletuner.helpers.metadata.preparation import DatasetReadView
         from simpletuner.helpers.multiaspect.sampler import MultiAspectSampler
         from simpletuner.helpers.training.state_tracker import StateTracker
 
@@ -233,8 +234,8 @@ class TestWebshartParquetBackend(unittest.TestCase):
         tensor = torch.zeros(1)
         store.write_batch([prior_key, foreign_key, unscoped_key], [tensor] * 3)
 
-        def encode(*, image_pixel_values, disable_queue):
-            return [(cache.cache_path_for_image(path), path, value) for value, path, _, _ in image_pixel_values]
+        def encode(*, image_pixel_values, disable_queue, view):
+            return [(cache.cache_path_for_image(path, view=view), path, value) for value, path, _, _ in image_pixel_values]
 
         with (
             patch.object(provider, "_scan_rows", side_effect=AssertionError("epoch scanned source rows")),
@@ -247,21 +248,23 @@ class TestWebshartParquetBackend(unittest.TestCase):
         ):
             coordinates = []
             for epoch in range(2, 5):
+                epoch_view = DatasetReadView(revision, epoch, args.seed)
                 runtime.prepare_epoch(epoch, rebuild_random_aspect=True, gradient_accumulation_steps=1, apply_padding=False)
                 runtime.start_epoch(epoch)
                 read.assert_not_called()
                 self.assertFalse(store.exists(prior_key))
                 self.assertTrue(store.exists(foreign_key))
                 self.assertTrue(store.exists(unscoped_key))
-                prior_key = cache.cache_path_for_image(ref)
+                prior_key = cache.cache_path_for_image(ref, view=epoch_view)
                 self.assertFalse(store.exists(prior_key))
-                latent = cache.encode_images([torch.tensor([epoch])], [ref])[0]
-                repeated = cache.encode_images([torch.tensor([-1])], [ref])[0]
+                latent = cache.encode_images([torch.tensor([epoch])], [ref], view=epoch_view)[0]
+                repeated = cache.encode_images([torch.tensor([-1])], [ref], view=epoch_view)[0]
                 torch.testing.assert_close(latent, repeated)
                 encoder.assert_called_once()
+                self.assertEqual(encoder.call_args.kwargs["view"], epoch_view)
                 encoder.reset_mock()
                 read.reset_mock()
-                transformed = runtime.read_samples([ref, ref])
+                transformed = runtime.read_samples([ref, ref], view=epoch_view)
                 read.assert_called_once_with([ref, ref])
                 read.reset_mock()
                 self.assertEqual(transformed[0], transformed[1])
@@ -269,15 +272,24 @@ class TestWebshartParquetBackend(unittest.TestCase):
                 self.assertEqual(transformed[0]["intermediary_size"], base["intermediary_size"])
                 coordinates.append(transformed[0]["crop_coordinates"])
             self.assertTrue(any(offset != base["crop_coordinates"] for offset in coordinates))
-            self.assertNotEqual(provider.image_artifact_key(ref, "vae", model), base_vae_key)
-            self.assertEqual(provider.image_artifact_key(ref, "conditioning", model), base_embed_key)
+            self.assertNotEqual(provider.image_artifact_key(ref, "vae", model, view=epoch_view), base_vae_key)
+            self.assertEqual(provider.image_artifact_key(ref, "conditioning", model, view=epoch_view), base_embed_key)
             with provider.open_preparation_view() as view:
                 self.assertEqual(view.metadata.get_metadata_by_filepath(ref)["crop_coordinates"], base["crop_coordinates"])
+                with (
+                    patch.object(provider, "_published", {**provider._published, "view_revision": "replacement"}),
+                    patch.object(store, "read_cached_tensors", side_effect=AssertionError("stale view read the store")),
+                ):
+                    with self.assertRaisesRegex(ValueError, "view changed"):
+                        view.metadata.get_metadata_by_filepath(ref)
+                    with self.assertRaisesRegex(ValueError, "view changed"):
+                        cache.encode_images([None], [ref], view=epoch_view)
             self.assertTrue(all(other not in call.args[0] for call in read.call_args_list))
             resumed_cache = new_cache("training-run")
-            runtime.start_epoch(epoch)
-            self.assertEqual(resumed_cache.cache_path_for_image(ref), prior_key)
-            torch.testing.assert_close(resumed_cache.encode_images([torch.tensor([-1])], [ref])[0], latent)
+            runtime.start_epoch(epoch + 1)
+            self.assertEqual(resumed_cache.cache_path_for_image(ref, view=epoch_view), prior_key)
+            self.assertNotEqual(resumed_cache.cache_path_for_image(ref), prior_key)
+            torch.testing.assert_close(resumed_cache.encode_images([torch.tensor([-1])], [ref], view=epoch_view)[0], latent)
         self.assertEqual(runtime.describe().view_revision, revision)
         self.assertEqual(runtime.read_page(limit=2), ([ref, other], 2))
 
@@ -286,7 +298,13 @@ class TestWebshartParquetBackend(unittest.TestCase):
             epoch for epoch, offset in enumerate(coordinates, 2) if offset != base["crop_coordinates"]
         )
         runtime.start_epoch(epoch_with_changed_crop)
-        (updated,) = runtime.read_samples([ref])
+        changed_view = DatasetReadView(revision, epoch_with_changed_crop, args.seed)
+        (updated,) = runtime.read_samples([ref], view=changed_view)
+        with patch.object(StateTracker, "get_metadata_by_filepath", side_effect=AssertionError("global metadata lookup")):
+            self.assertEqual(
+                cache._gather_sample_metadata([ref], view=changed_view)[0]["metadata"]["crop_coordinates"],
+                updated["crop_coordinates"],
+            )
         cropped = TrainingSample(image, self.backend.id, updated, ref, data_backend_config=runtime.config).prepare()
         top, left = updated["crop_coordinates"]
         width, height = updated["target_size"]
@@ -332,8 +350,8 @@ class TestWebshartParquetBackend(unittest.TestCase):
         store.write(stable_key, tensor)
         runtime.prepare_epoch(2, rebuild_random_aspect=True, gradient_accumulation_steps=1, apply_padding=False)
         runtime.start_epoch(2)
-        self.assertEqual(cache.cache_path_for_image(ref), stable_key)
-        self.assertEqual(runtime.read_samples([ref]), [base])
+        self.assertEqual(cache.cache_path_for_image(ref, view=changed_view), stable_key)
+        self.assertEqual(runtime.read_samples([ref], view=changed_view), [base])
         with patch.object(cache, "_encode_images_in_batch", side_effect=AssertionError("re-encoded a stable latent")):
             torch.testing.assert_close(cache.encode_images([torch.ones(1)], [ref])[0], tensor)
 
@@ -1708,6 +1726,7 @@ class TestWebshartParquetBackend(unittest.TestCase):
     def test_native_scan_partition_sampler_and_consumed_checkpoint(self):
         from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
         from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBackend
+        from simpletuner.helpers.metadata.preparation import DatasetReadView
         from simpletuner.helpers.multiaspect.sampler import MultiAspectSampler
         from simpletuner.helpers.training.state_tracker import StateTracker
 
@@ -1838,6 +1857,7 @@ class TestWebshartParquetBackend(unittest.TestCase):
                 sampler._open_training_cursor()
             first = next(iter(sampler))[0]
             second = next(iter(sampler))[0]
+            self.assertEqual(first["dataset_read_view"], DatasetReadView(runtime.describe().view_revision, 1, args.seed))
             self.assertNotEqual(first["image_path"], second["image_path"])
             runtime.acknowledge_batch(first["dataset_continuation"])
             name = str(self.root / "checkpoint.json")

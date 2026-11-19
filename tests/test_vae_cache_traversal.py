@@ -65,7 +65,7 @@ class TestVaeCacheTraversal(unittest.TestCase):
         cache.vae_cache_ondemand = True
         cache.cache_data_backend = Mock()
         cache.cache_data_backend.read_cached_tensors.side_effect = lambda keys: [None for _ in keys]
-        cache.generate_vae_cache_filename = lambda ref: (f"vae/{ref}.pt", "unused")
+        cache.generate_vae_cache_filename = lambda ref, *, view=None: (f"vae/{ref}.pt", "unused")
         cache._read_from_storage_concurrently = Mock(
             side_effect=[iter([("b", 2), ("a", 1), ("a", 3)]), iter([("b", 2), ("a", 1)])]
         )
@@ -76,7 +76,7 @@ class TestVaeCacheTraversal(unittest.TestCase):
         cache._write_latents_in_batch = Mock(side_effect=lambda entries: [value for _, _, value in entries])
 
         self.assertEqual(cache.encode_images([None, None, None], ["a", "b", "a"]), [10, 20, 30])
-        cache._process_images_in_batch.assert_called_once_with(["a", "b", "a"], [1, 2, 3], disable_queue=True)
+        cache._process_images_in_batch.assert_called_once_with(["a", "b", "a"], [1, 2, 3], disable_queue=True, view=None)
         with self.assertRaisesRegex(OSError, "Dataset ondemand could not read the requested image a"):
             cache.encode_images([None, None, None], ["a", "b", "a"])
         self.assertEqual(cache._process_images_in_batch.call_count, 1)
@@ -90,7 +90,7 @@ class TestVaeCacheTraversal(unittest.TestCase):
         cache.cache_data_backend.read_cached_tensors.side_effect = lambda keys: [
             torch.tensor(42) if key == "vae/warm.pt" else None for key in keys
         ]
-        cache.generate_vae_cache_filename = lambda ref: (f"vae/{ref}.pt", ref)
+        cache.generate_vae_cache_filename = lambda ref, *, view=None: (f"vae/{ref}.pt", ref)
         cache._read_from_storage_concurrently = Mock(return_value=iter([("last", "pixels"), ("first", "pixels")]))
         cache._process_images_in_batch = Mock(return_value=[])
         cache._encode_images_in_batch = Mock(
@@ -167,17 +167,18 @@ class TestVaeCacheTraversal(unittest.TestCase):
         metadata = WebshartMetadataBackend.__new__(WebshartMetadataBackend)
         metadata.native_policy = "global"
         metadata.vae_output_scaling_factor = 8
+        metadata._published = {"view_revision": "prepared-v1"}
         metadata.iter_preparation_batches = Mock(return_value=iter([("wide", ("ok", "bad")), ("wide", ("nan", "missing"))]))
         metadata.scan_for_metadata = Mock(side_effect=AssertionError("read source catalogue"))
         source = Mock()
         dataset = DatasetRuntime("prepared", source, metadata, {})
-        dataset.read_samples = Mock(side_effect=lambda refs: [{"target_size": (64, 32)} for _ in refs])
+        dataset.read_samples = Mock(side_effect=lambda refs, *, view: [{"target_size": (64, 32)} for _ in refs])
         cache = dataset.vae_cache = VAECache.__new__(VAECache)
         cache.metadata_backend = metadata
         cache.model = SimpleNamespace(vae_output_scaling_factor=4)
         cache.cache_data_backend = Mock()
         cache.read_batch_size = 2
-        cache.cache_path_for_image = lambda ref: f"vae/{ref}.pt"
+        cache.cache_path_for_image = lambda ref, *, view=None: f"vae/{ref}.pt"
         contents = {
             "vae/ok.pt": {"latents": torch.zeros(4, 8, 16)},
             "vae/bad.pt": torch.zeros(4, 8, 32),
@@ -192,6 +193,9 @@ class TestVaeCacheTraversal(unittest.TestCase):
             [item.args[0] for item in cache.cache_data_backend.delete.call_args_list], ["vae/bad.pt", "vae/nan.pt"]
         )
         self.assertEqual([item.args[0] for item in dataset.read_samples.call_args_list], [["ok", "bad"], ["nan"]])
+        self.assertTrue(
+            all(item.kwargs["view"] == dataset.published_read_view() for item in dataset.read_samples.call_args_list)
+        )
         cache.cache_data_backend.iter_file_keys.assert_not_called()
         source.delete.assert_not_called()
         with self.assertRaisesRegex(ValueError, "require.*recreate"):
@@ -220,7 +224,7 @@ class TestVaeCacheTraversal(unittest.TestCase):
         metadata.is_cache_inconsistent = lambda *args: MetadataBackend.is_cache_inconsistent(metadata, *args)
         cache = VAECache.__new__(VAECache)
         cache.cache_data_backend = store
-        cache.generate_vae_cache_filename = lambda ref: ("vae/known.pt", "known.pt")
+        cache.generate_vae_cache_filename = lambda ref, *, view=None: ("vae/known.pt", "known.pt")
         cache.build_vae_cache_filename_map(["images/sample.jpg"])
         self.assertEqual(cache._image_filename_from_vaecache_filename("vae/known.pt"), "images/sample.jpg")
         invalid = torch.tensor([float("nan")])
@@ -284,7 +288,7 @@ class TestVaeCacheTraversal(unittest.TestCase):
         stored = {"b"}
         cache = VAECache.__new__(VAECache)
         cache.vae_batch_size = 2
-        cache.cache_path_for_image = lambda ref: "cache-" + ref
+        cache.cache_path_for_image = lambda ref, *, view=None: "cache-" + ref
         cache.cache_data_backend = Mock()
         cache.cache_data_backend.bulk_exists.side_effect = lambda keys: [
             key.removeprefix("cache-") in stored for key in keys
@@ -292,10 +296,12 @@ class TestVaeCacheTraversal(unittest.TestCase):
         cache.init_vae = Mock()
         cache.nsfw_check_enabled = False
         cache.delete_problematic_images = False
-        cache._process_images_in_batch = lambda refs, images, disable_queue: [
+        cache._process_images_in_batch = lambda refs, images, disable_queue, *, view=None: [
             (image, ref) for ref, image in zip(refs, images)
         ]
-        cache._encode_images_in_batch = lambda pixels, disable_queue: [("cache-" + ref, ref, image) for image, ref in pixels]
+        cache._encode_images_in_batch = lambda pixels, disable_queue, *, view=None: [
+            ("cache-" + ref, ref, image) for image, ref in pixels
+        ]
         cache._write_latents_in_batch = lambda latents: stored.update(ref for _, ref, _ in latents)
         cache.prepare_dataset(dataset, worker=1, workers=2)
         self.assertEqual(stored, {"a", "b", "c"})
@@ -339,7 +345,7 @@ class TestVaeCacheTraversal(unittest.TestCase):
         cache = VAECache.__new__(VAECache)
         cache.vae_batch_size = 2
         cache.nsfw_check_enabled = False
-        cache.cache_path_for_image = lambda ref: "cache-" + ref
+        cache.cache_path_for_image = lambda ref, *, view=None: "cache-" + ref
         cache.cache_data_backend = Mock()
         cache.cache_data_backend.bulk_exists.side_effect = lambda keys: [False for _ in keys]
         cache._read_from_storage_concurrently = Mock(return_value=iter([("available.wav", "waveform")]))
@@ -349,7 +355,9 @@ class TestVaeCacheTraversal(unittest.TestCase):
         cache._write_latents_in_batch = Mock()
 
         self.assertEqual(cache.prepare_dataset(dataset), 2)
-        cache._process_images_in_batch.assert_called_once_with(["available.wav"], ["waveform"], disable_queue=True)
+        cache._process_images_in_batch.assert_called_once_with(
+            ["available.wav"], ["waveform"], disable_queue=True, view=None
+        )
         cache._write_latents_in_batch.assert_called_once_with([("artifact", "available.wav", "latent")])
         dataset.read_sample_images.assert_not_called()
 
@@ -370,7 +378,7 @@ class TestVaeCacheTraversal(unittest.TestCase):
         cache.metadata_backend.read_cache.return_value = buckets
         cache.metadata_backend.get_metadata_attribute_by_filepath.return_value = "wide"
         cache.local_unprocessed_files = [wide0, wide1, square0, square1, "cached", restored]
-        cache.generate_vae_cache_filename = lambda path: (path + ".pt", path)
+        cache.generate_vae_cache_filename = lambda path, *, view=None: (path + ".pt", path)
         cache.cache_path_for_image = lambda path: path + ".pt"
         cache._image_filename_from_vaecache_filename = lambda key: key.removesuffix(".pt")
         cache.already_cached = Mock(return_value=False)

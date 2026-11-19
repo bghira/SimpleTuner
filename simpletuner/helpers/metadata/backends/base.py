@@ -26,6 +26,7 @@ from simpletuner.helpers.data_backend.filters import build_dataset_filter
 from simpletuner.helpers.data_backend.runtime.context_parallel_sync import get_cp_info
 from simpletuner.helpers.metadata.preparation import (
     DatasetDescription,
+    DatasetViewChangedError,
     PreparationView,
     read_bucket_groups,
     read_bucket_page,
@@ -1567,10 +1568,13 @@ class MetadataBackend:
         """Read metadata in request order, preserving duplicates and missing entries."""
         return (self.get_metadata_by_filepath(ref) for ref in refs)
 
-    def get_prepared_metadata_batch(self, refs, *, view_revision):
-        """Read geometry for a specific published dataset view."""
-        if self.view_revision != view_revision:
-            raise ValueError("Prepared dataset view changed. Reopen the dataset cursor.")
+    def validate_read_view(self, view):
+        if self.view_revision != view.revision:
+            raise DatasetViewChangedError("Prepared dataset view changed. Reopen the dataset cursor.")
+
+    def get_view_metadata(self, refs, view):
+        """Read geometry for a specific dataset view."""
+        self.validate_read_view(view)
         return self.get_metadata_batch(refs)
 
     def get_metadata_by_filepath(self, filepath: str):

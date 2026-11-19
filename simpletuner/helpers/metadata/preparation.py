@@ -25,6 +25,19 @@ class DatasetDescription:
     batches: int | None = None
 
 
+class DatasetViewChangedError(ValueError):
+    """A consumer requested a view which is no longer open in its provider."""
+
+
+@dataclass(frozen=True)
+class DatasetReadView:
+    """A published view and, for training, its deterministic epoch transform."""
+
+    revision: str
+    epoch: int | None = None
+    seed: int = 0
+
+
 class MetadataLookup(Protocol):
     def get_metadata_by_filepath(self, filepath: str) -> dict | None: ...
 

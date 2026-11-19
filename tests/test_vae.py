@@ -354,9 +354,11 @@ class TestVaeCacheAudio(unittest.TestCase):
         vae_cache.vae_batch_size = 4
         vae_cache.vae_input_queue = Queue()
         vae_cache._cache_vae_dtype = MagicMock(return_value=torch.float32)
-        vae_cache.generate_vae_cache_filename = MagicMock(side_effect=lambda filepath: (f"{filepath}.pt", f"{filepath}.pt"))
+        vae_cache.generate_vae_cache_filename = MagicMock(
+            side_effect=lambda filepath, *, view=None: (f"{filepath}.pt", f"{filepath}.pt")
+        )
         vae_cache.encode_images = MagicMock(
-            side_effect=lambda images, filepaths, load_from_cache: [torch.zeros(1) for _ in images]
+            side_effect=lambda images, filepaths, load_from_cache, *, view=None: [torch.zeros(1) for _ in images]
         )
         vae_cache._handle_metadata_filtered_sample = MagicMock()
         vae_cache.debug_log = MagicMock()

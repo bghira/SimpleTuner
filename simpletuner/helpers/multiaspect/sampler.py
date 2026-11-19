@@ -12,6 +12,7 @@ from PIL import Image
 from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.metadata.backends.base import get_cp_aware_dp_info
+from simpletuner.helpers.metadata.preparation import DatasetReadView
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
 from simpletuner.helpers.multiaspect.progress import LegacySamplerProgress
 from simpletuner.helpers.multiaspect.state import BucketStateManager
@@ -214,8 +215,10 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             state = cursor.state_dict()
             spec = cursor.spec
             rng = random.Random(f"{self.id}:{spec.seed}:{spec.epoch}:{spec.dp_rank}:{cursor.position}")
-            records = self._validate_and_yield_images_from_samples(refs, bucket, rng=rng)
+            view = DatasetReadView(state["view"], spec.epoch, spec.seed)
+            records = self._validate_and_yield_images_from_samples(refs, bucket, rng=rng, view=view)
             records[0]["dataset_continuation"] = state
+            records[0]["dataset_read_view"] = view
             records[0]["caption_dropout_seed"] = rng.getrandbits(64)
             yield tuple(self.connect_s2v_samples(self.connect_conditioning_samples(records, rng=rng)))
 
@@ -443,7 +446,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         if not positions:
             return results
         revision = self.validation_cursor.state_dict()["view"] if self.dataset_runtime.uses_native_schedule else None
-        records = self.dataset_runtime.read_samples(list(positions), fields=("metadata", "image"), view_revision=revision)
+        view = DatasetReadView(revision) if revision is not None else None
+        records = self.dataset_runtime.read_samples(list(positions), fields=("metadata", "image"), view=view)
         prepared = []
         caption_paths = []
         caption_dataset = (
@@ -867,11 +871,11 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
         return printed_state
 
-    def _validate_and_yield_images_from_samples(self, samples, bucket, *, rng=random):
+    def _validate_and_yield_images_from_samples(self, samples, bucket, *, rng=random, view=None):
         """
         Validate and yield images from given samples. Return a list of valid image paths.
         """
-        records = self.dataset_runtime.read_samples(samples)
+        records = self.dataset_runtime.read_samples(samples, view=view)
         for image_metadata in records:
             image_path = image_metadata["image_path"]
             requires_crop = (

@@ -11,6 +11,7 @@ from typing import Any
 from simpletuner.helpers.data_backend.base import BaseDataBackend, ordered_sample_payloads
 from simpletuner.helpers.data_backend.dataset_types import get_arg_value
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
+from simpletuner.helpers.metadata.preparation import DatasetReadView
 from simpletuner.helpers.prompts import CaptionNotFoundError, PromptHandler
 from simpletuner.helpers.utils.pathing import normalize_data_path
 
@@ -111,8 +112,6 @@ class DatasetRuntime:
 
     def start_epoch(self, epoch):
         if self.uses_native_schedule:
-            if self.recrops_lazily:
-                self.metadata_backend.set_training_epoch(epoch)
             self.sampler.start_native_epoch(epoch)
         elif self.tracks_consumed_batches:
             self.sampler.start_training_epoch(epoch)
@@ -158,8 +157,6 @@ class DatasetRuntime:
     def restore_checkpoint(self, state_path):
         if self.sampler is not None:
             self.sampler.load_states(state_path=state_path)
-            if self.recrops_lazily:
-                self.metadata_backend.set_training_epoch(self.sampler.current_epoch)
 
     def log_sampling_state(self):
         if self.sampler is not None:
@@ -230,6 +227,14 @@ class DatasetRuntime:
     def open_epoch(self, spec):
         return self.epoch_provider.open_epoch(spec)
 
+    def published_read_view(self):
+        if not self.uses_native_schedule:
+            return None
+        revision = self.metadata_backend.view_revision
+        if revision is None:
+            raise ValueError("Prepare the dataset before opening its published view.")
+        return DatasetReadView(revision)
+
     def open_validation(self):
         if self.uses_native_schedule:
             return self.epoch_provider.open_validation()
@@ -242,18 +247,22 @@ class DatasetRuntime:
         paths, images = self.data_backend.read_image_batch(refs)
         return list(ordered_sample_payloads(self.id, refs, zip(paths, images, strict=True), allow_missing=allow_missing))
 
-    def read_samples(self, sample_refs: Sequence[str], *, fields=("metadata",), view_revision=None) -> list[dict[str, Any]]:
-        """Read sample fields, using published geometry when a view revision is specified."""
+    def read_samples(
+        self, sample_refs: Sequence[str], *, fields=("metadata",), view: DatasetReadView | None = None
+    ) -> list[dict[str, Any]]:
+        """Read fields for the selected view. Unscoped reads use the provider's published geometry."""
         fields = frozenset(fields)
         unknown = fields.difference({"metadata", "image", "caption"})
         if unknown:
             raise ValueError(f"Unknown sample fields: {sorted(unknown)}")
         if "metadata" not in fields:
+            if view is not None:
+                self.metadata_backend.validate_read_view(view)
             geometry = (None for _ in sample_refs)
-        elif view_revision is None:
+        elif view is None:
             geometry = self.metadata_backend.get_metadata_batch(sample_refs)
         else:
-            geometry = self.metadata_backend.get_prepared_metadata_batch(sample_refs, view_revision=view_revision)
+            geometry = self.metadata_backend.get_view_metadata(sample_refs, view)
         payloads = None
         if "image" in fields:
             payloads = iter(self.read_sample_images(sample_refs))
