@@ -189,8 +189,9 @@ class CacheJobService:
         if self._broadcast_fn:
             self._broadcast_fn(data=data, event_type=event_type)
 
-    @staticmethod
+    @classmethod
     def get_capabilities(
+        cls,
         model_family: str,
         dataset_configs: List[Dict[str, Any]],
         global_config: Dict[str, Any],
@@ -220,7 +221,77 @@ class CacheJobService:
             "text_embeds": has_text_embeds,
             "vae": has_vae,
             "conditioning_types": conditioning_types,
+            "datasets": cls._dataset_cache_capabilities(dataset_configs, global_config, has_text_embeds),
         }
+
+    @staticmethod
+    def _dataset_cache_capabilities(plan, global_config, has_text_embeds):
+        if not plan:
+            return {}
+        from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
+        from simpletuner.helpers.data_backend.factory import _as_bool, init_backend_config, select_text_embed_backend
+
+        args = _CacheArgsNamespace(global_config)
+        entries = {}
+        stores, default_id = {}, None
+        store_error = None
+        try:
+            if has_text_embeds:
+                stores, default_id = CacheJobService._text_embed_plan(plan, args)
+        except ValueError as exc:
+            store_error = str(exc)
+        for dataset in plan:
+            dataset_id = dataset.get("id")
+            if not dataset_id or dataset.get("disabled") or dataset.get("disable"):
+                continue
+            try:
+                role = ensure_dataset_type(dataset.get("dataset_type"), default=DatasetType.IMAGE)
+            except ValueError:
+                continue
+            if role not in {
+                DatasetType.IMAGE,
+                DatasetType.VIDEO,
+                DatasetType.AUDIO,
+                DatasetType.EVAL,
+                DatasetType.CONDITIONING,
+                DatasetType.CAPTION,
+            }:
+                continue
+            text = {"prepare": False}
+            if has_text_embeds:
+                try:
+                    if store_error:
+                        raise ValueError(store_error)
+                    store = select_text_embed_backend(dataset, stores, default_id)
+                    settings = init_backend_config(store, args, None)["config"]
+                    mode, reason = "precomputed", None
+                    if settings.get("text_cache_encode_only"):
+                        mode, reason = "encode_only", "Encode-only training does not use stored text embeddings."
+                    elif settings["text_cache_disable"]:
+                        mode, reason = "read_existing", "Training can read existing text embeddings with writes disabled."
+                    elif settings["text_cache_ondemand"]:
+                        mode, reason = (
+                            "on_demand",
+                            "Training encodes and stores misses. You can also prepare embeddings now.",
+                        )
+                    text.update(
+                        prepare=not settings["text_cache_disable"],
+                        mode=mode,
+                        reason=reason,
+                        store_id=store["id"],
+                        uses_s3_listing=store.get("type") == "aws" and settings.get("text_cache_use_listing", False),
+                    )
+                except ValueError as exc:
+                    text["reason"] = str(exc)
+            disabled = _as_bool(args.vae_cache_disable) or _as_bool(dataset.get("vae_cache_disable"))
+            entries[dataset_id] = {
+                "text_embeds": text,
+                "vae": {
+                    "prepare": not disabled and role is not DatasetType.CAPTION,
+                    "reason": "VAE cache writes are disabled." if disabled else None,
+                },
+            }
+        return entries
 
     @staticmethod
     def _check_training_running() -> bool:
@@ -510,7 +581,7 @@ class CacheJobService:
     def _load_model(self, global_config: Dict[str, Any], args, accelerator):
         from simpletuner.helpers.models.registry import ModelRegistry
 
-        model_family = global_config.get("model_family")
+        model_family = args.model_family
         if not model_family:
             raise ValueError("No model_family in active config")
 
@@ -693,23 +764,28 @@ class CacheJobService:
             del vae_cache, model
             self._cleanup_gpu()
 
-    def _text_embed_store(self, dataset, plan, global_config, args, accelerator):
+    @staticmethod
+    def _text_embed_plan(plan, args):
         from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
-        from simpletuner.helpers.data_backend.factory import (
-            build_text_embed_store,
-            ensure_text_embed_backends_present,
-            init_backend_config,
-            select_text_embed_backend,
-        )
+        from simpletuner.helpers.data_backend.factory import ensure_text_embed_backends_present
 
-        entries = ensure_text_embed_backends_present(args, [dict(entry) for entry in (plan or [dataset])])
+        entries = ensure_text_embed_backends_present(args, [dict(entry) for entry in plan])
         stores = {
             entry["id"]: entry
             for entry in entries
             if ensure_dataset_type(entry.get("dataset_type"), default=DatasetType.IMAGE) is DatasetType.TEXT_EMBEDS
             and not (entry.get("disable") or entry.get("disabled"))
         }
-        default_id = next(entry["id"] for entry in stores.values() if entry.get("default"))
+        return stores, next(entry["id"] for entry in stores.values() if entry.get("default"))
+
+    def _text_embed_store(self, dataset, plan, global_config, args, accelerator):
+        from simpletuner.helpers.data_backend.factory import (
+            build_text_embed_store,
+            init_backend_config,
+            select_text_embed_backend,
+        )
+
+        stores, default_id = self._text_embed_plan(plan or [dataset], args)
         config = select_text_embed_backend(dataset, stores, default_id)
         settings = init_backend_config(config, args, accelerator)["config"]
         if settings["text_cache_disable"]:
@@ -739,6 +815,9 @@ class CacheJobService:
 
         try:
             self._check_cancelled(job)
+            store_config, store, cache_dir_text = self._text_embed_store(
+                dataset_config, dataset_plan, global_config, args, accelerator
+            )
 
             job.stage = "Loading text encoders"
             self._broadcast("dataset_cache", self._job_to_dict(job))
@@ -755,10 +834,6 @@ class CacheJobService:
             source_runtime = self._create_dataset_runtime(dataset_config, args, accelerator, preparation_only=True)
             scope.callback(source_runtime.close)
 
-            store_config, store, cache_dir_text = self._text_embed_store(
-                dataset_config, dataset_plan, global_config, args, accelerator
-            )
-
             from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
 
             text_cache = TextEmbeddingCache(
@@ -768,7 +843,7 @@ class CacheJobService:
                 tokenizers=model.tokenizers,
                 accelerator=accelerator,
                 cache_dir=cache_dir_text,
-                model_type=global_config.get("model_family", ""),
+                model_type=args.model_family,
                 write_batch_size=int(store_config.get("write_batch_size", args.write_batch_size) or 64),
                 text_encoder_batch_size=int(store_config.get("text_encoder_batch_size", args.text_encoder_batch_size) or 1),
                 model=model,

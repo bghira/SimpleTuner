@@ -19,6 +19,36 @@ from simpletuner.simpletuner_sdk.server.services.cache_job_service import (
 
 
 class TestCacheCapabilities(unittest.TestCase):
+    def test_cache_preparation_modes_follow_each_datasets_selected_store(self):
+        stores = [
+            {"id": "offline", "default": True},
+            {"id": "on-demand", "text_cache_ondemand": True},
+            {"id": "read-existing", "text_cache_disable": True},
+            {"id": "encode-only", "text_cache_encode_only": True},
+        ]
+        plan = [
+            {
+                **entry,
+                "type": "local",
+                "dataset_type": "text_embeds",
+                "cache_dir": "cache/" + entry["id"],
+            }
+            for entry in stores
+        ]
+        plan += [{"id": entry["id"] + "-images", "type": "local", "text_embeds": entry["id"]} for entry in stores]
+        caps = CacheJobService.get_capabilities("flux", plan, {"vae_cache_disable": True})["datasets"]
+        for store, mode, prepare in (
+            ("offline", "precomputed", True),
+            ("on-demand", "on_demand", True),
+            ("read-existing", "read_existing", False),
+            ("encode-only", "encode_only", False),
+        ):
+            with self.subTest(store=store):
+                role = caps[store + "-images"]
+                text = role["text_embeds"]
+                self.assertEqual((text["store_id"], text["mode"], text["prepare"]), (store, mode, prepare))
+                self.assertFalse(role["vae"]["prepare"])
+
     def test_flux_has_text_and_vae(self):
         caps = CacheJobService.get_capabilities("flux", [], {})
         self.assertTrue(caps["text_embeds"])

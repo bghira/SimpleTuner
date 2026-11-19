@@ -693,7 +693,7 @@ def _cache_plan():
 async def get_cache_capabilities(_user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Available cache types based on model family and dataset configuration."""
     datasets, global_config, scope = _cache_plan()
-    model_family = global_config.get("model_family", "")
+    model_family = global_config.get("model_family") or global_config.get("--model_family", "")
 
     from simpletuner.simpletuner_sdk.server.services.cache_job_service import CacheJobService
 
@@ -709,8 +709,15 @@ async def start_cache_job(request: CacheStartRequest, _user: User = Depends(get_
     config = next((entry for entry in plan if entry.get("id") == request.dataset_id), None)
     if config is None:
         raise HTTPException(status_code=404, detail=f"Dataset '{request.dataset_id}' not found in plan")
+    service = get_cache_service()
+    if request.cache_type != "conditioning":
+        model_family = global_config.get("model_family") or global_config.get("--model_family", "")
+        capabilities = service.get_capabilities(model_family, plan, global_config)
+        available = capabilities["datasets"].get(request.dataset_id, {}).get(request.cache_type, {})
+        if not available.get("prepare"):
+            raise HTTPException(status_code=422, detail=available.get("reason") or "This dataset cannot prepare that cache.")
     try:
-        job_id = get_cache_service().start_cache_job(
+        job_id = service.start_cache_job(
             request.dataset_id,
             request.cache_type,
             config,

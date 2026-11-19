@@ -1958,6 +1958,66 @@ class DatasetManagementTestCase(_TrainerPageMixin, WebUITestCase):
 class DatasetViewerRevisionTestCase(_TrainerPageMixin, WebUITestCase):
     MAX_BROWSERS = 1
 
+    def test_text_cache_actions_follow_each_datasets_saved_store(self) -> None:
+        root = self.home_path / "cache-capabilities"
+        root.mkdir()
+        plan = []
+        for name in ("cached", "online"):
+            plan.extend(
+                [
+                    {"id": name, "type": "local", "instance_data_dir": str(root), "text_embeds": name + "-store"},
+                    {
+                        "id": name + "-store",
+                        "type": "local",
+                        "dataset_type": "text_embeds",
+                        "cache_dir": str(root / name),
+                        "text_cache_encode_only": name == "online",
+                    },
+                ]
+            )
+            (root / f"aspect_ratio_bucket_indices_{name}.json").write_text(
+                json.dumps({"aspect_ratio_bucket_indices": {"square": ["image.jpg"]}})
+            )
+        (self.config_dir / "default" / "multidatabackend.json").write_text(json.dumps(plan))
+        self.seed_defaults()
+
+        def scenario(driver, _browser):
+            trainer = self._trainer_page(driver)
+            trainer.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer.switch_to_datasets_tab()
+            trainer.wait_for_tab("datasets")
+            wait = WebDriverWait(driver, 15)
+            wait.until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, "//button[contains(@class,'dataset-subtab-btn') and contains(.,'Viewer')]")
+                )
+            ).click()
+            for dataset_id, enabled in (("online", False), ("cached", True)):
+                card = f"//div[contains(@class,'viewer-dataset-card')][div[contains(@class,'viewer-card-header')]//span[normalize-space(.)='{dataset_id}']]"
+                wait.until(
+                    EC.element_to_be_clickable((By.XPATH, card + "/div[contains(@class,'viewer-card-header')]"))
+                ).click()
+                button = wait.until(
+                    EC.visibility_of_element_located((By.XPATH, card + "//button[contains(., 'Text Embeds')]"))
+                )
+                wait.until(lambda _d: button.is_enabled() == enabled)
+                if not enabled:
+                    self.assertIn("Encode-only", button.get_attribute("title"))
+            status = driver.execute_async_script(
+                """
+                const done = arguments[0];
+                fetch('/api/datasets/cache/start', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({dataset_id: 'online', cache_type: 'text_embeds'}),
+                }).then(response => done(response.status)).catch(error => done(String(error)));
+                """
+            )
+            self.assertEqual(status, 422)
+
+        self.for_each_browser("test_text_cache_actions_follow_each_datasets_saved_store", scenario)
+
     def test_cache_progress_stays_bound_to_the_active_job_until_shutdown(self) -> None:
         self.seed_defaults()
 

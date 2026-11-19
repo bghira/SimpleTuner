@@ -272,16 +272,16 @@
                                             class="btn btn-sm btn-outline-primary py-0 px-2"
                                             x-show="cacheCapabilities.text_embeds"
                                             @click.stop="startCacheJob(ds.dataset_id, 'text_embeds')"
-                                            :disabled="caching || scanning"
-                                            title="Pre-compute text encoder embeddings for this dataset's captions">
+                                            :disabled="caching || scanning || !cacheCapabilities.datasets?.[ds.dataset_id]?.text_embeds?.prepare"
+                                            :title="cacheCapabilities.datasets?.[ds.dataset_id]?.text_embeds?.reason || 'Prepare text embeddings for this dataset'">
                                         <i class="fas fa-font viewer-text-xs me-1"></i>Text Embeds
                                     </button>
                                     <button type="button"
                                             class="btn btn-sm btn-outline-primary py-0 px-2"
                                             x-show="cacheCapabilities.vae"
                                             @click.stop="startCacheJob(ds.dataset_id, 'vae')"
-                                            :disabled="caching || scanning"
-                                            title="Pre-compute VAE latents for this dataset's images">
+                                            :disabled="caching || scanning || !cacheCapabilities.datasets?.[ds.dataset_id]?.vae?.prepare"
+                                            :title="cacheCapabilities.datasets?.[ds.dataset_id]?.vae?.reason || 'Prepare VAE latents for this dataset'">
                                         <i class="fas fa-image viewer-text-xs me-1"></i>VAE Latents
                                     </button>
                                     <button type="button"
