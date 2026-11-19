@@ -429,8 +429,12 @@ class DatasetRuntime:
 
             sample_rate = audio.get("sample_rate", 16000)
             channels = audio.get("channels", 1)
+            source_id = self.config.get("source_dataset_id") or audio.get("source_dataset_id")
+            if source_id and self.source_dataset is None:
+                raise ValueError(f"Dataset {self.id} requires a bound video source {source_id}.")
+            provider = self.source_dataset.data_backend if self.source_dataset is not None else self.data_backend
             try:
-                return self.data_backend.read_embedded_audio(ref, sample_rate=sample_rate, channels=channels)
+                return provider.read_embedded_audio(ref, sample_rate=sample_rate, channels=channels)
             except NoAudioStreamError:
                 if not audio.get("allow_zero_audio"):
                     raise

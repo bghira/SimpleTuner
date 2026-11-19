@@ -665,11 +665,14 @@ class VAECache(WebhookMixin):
                     file_ext = os.path.splitext(filename)[1].lower().lstrip(".")
 
                     if source_from_video and file_ext in video_file_extensions:
-                        waveform, sample_rate = self.image_data_backend.read_embedded_audio(
-                            filename,
-                            sample_rate=audio_config.get("sample_rate", 16000),
-                            channels=audio_config.get("channels", 1),
-                        )
+                        if self.dataset is None:
+                            waveform, sample_rate = self.image_data_backend.read_embedded_audio(
+                                filename,
+                                sample_rate=audio_config.get("sample_rate", 16000),
+                                channels=audio_config.get("channels", 1),
+                            )
+                        else:
+                            waveform, sample_rate = self.dataset.read_audio_sample(filename)
                         sample = {"waveform": waveform, "sample_rate": sample_rate}
                     elif self.image_data_backend.type == "local":
                         # For local audio files, use load_audio which has ffmpeg fallback

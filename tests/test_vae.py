@@ -358,6 +358,32 @@ class TestVaeCacheAudio(unittest.TestCase):
         self.assertEqual(waveform.shape, (2, 150))
         self.assertEqual(metadata["duration_seconds"], 1.5)
 
+    def test_embedded_audio_cache_reads_media_through_the_video_provider(self):
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+
+        metadata = SimpleNamespace(audio_config={"source_from_video": True, "sample_rate": 8000, "channels": 1})
+        waveform = torch.zeros(1, 800)
+        video = DatasetRuntime("video", MagicMock(), None, {})
+        video.data_backend.read_embedded_audio.return_value = waveform, 8000
+        artifact_source = MagicMock()
+        artifact_source.read_embedded_audio.side_effect = AssertionError("audio artifact storage read as video")
+        audio = DatasetRuntime(
+            "audio", artifact_source, metadata, {"source_dataset_id": "video", "audio": metadata.audio_config}
+        )
+        audio.source_dataset = video
+        cache = VAECache.__new__(VAECache)
+        cache.dataset = audio
+        cache.image_data_backend = artifact_source
+        cache.dataset_type_enum = DatasetType.AUDIO
+        cache.metadata_backend = metadata
+
+        sample = cache._read_from_storage("videos/clip.mp4")
+
+        self.assertIs(sample["waveform"], waveform)
+        self.assertEqual(sample["sample_rate"], 8000)
+        video.data_backend.read_embedded_audio.assert_called_once_with("videos/clip.mp4", sample_rate=8000, channels=1)
+        artifact_source.read_embedded_audio.assert_not_called()
+
     def test_audio_vae_queue_partitions_variable_length_waveforms(self):
         vae_cache = VAECache.__new__(VAECache)
         vae_cache.dataset_type_enum = DatasetType.AUDIO
