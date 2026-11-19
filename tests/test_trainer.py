@@ -2383,7 +2383,9 @@ class TestTrainer(unittest.TestCase):
         metadata_backend.reload_cache = Mock()
         metadata_backend.split_buckets_between_processes = Mock()
         vaecache = MagicMock()
-        dataset = DatasetRuntime("train", None, metadata_backend, {"crop": True, "crop_aspect": "random"})
+        dataset = DatasetRuntime(
+            "train", None, metadata_backend, {"crop": True, "crop_aspect": "random", "vae_cache_clear_each_epoch": True}
+        )
         dataset.vae_cache = vaecache
         backends = {"train": dataset}
         return trainer, metadata_backend, vaecache, backends
@@ -2405,6 +2407,7 @@ class TestTrainer(unittest.TestCase):
         trainer.accelerator.process_index = 2
         trainer.accelerator.num_processes = 8
         dataset = backends["train"]
+        dataset.config["vae_cache_clear_each_epoch"] = False
         with self._rollover_patches(backends):
             trainer._epoch_rollover(2)
             vae_cache.rebuild_prepared_cache.assert_not_called()
@@ -2415,6 +2418,16 @@ class TestTrainer(unittest.TestCase):
         metadata.reload_cache.assert_not_called()
         metadata.split_buckets_between_processes.assert_not_called()
         vae_cache.rebuild_prepared_cache.assert_called_once_with(dataset, worker=2, workers=8)
+
+    def test_epoch_rollover_reuses_legacy_random_aspect_crops_when_clearing_is_disabled(self):
+        trainer, metadata, cache, backends = self._rollover_fixture({"1.0": ["image.jpg"]})
+        backends["train"].config["vae_cache_clear_each_epoch"] = False
+        with self._rollover_patches(backends):
+            trainer._epoch_rollover(2)
+        metadata.compute_aspect_ratio_bucket_indices.assert_not_called()
+        metadata.reload_cache.assert_not_called()
+        metadata.split_buckets_between_processes.assert_not_called()
+        cache.rebuild_cache.assert_not_called()
 
     def test_epoch_rollover_rejects_a_rank_the_resplit_left_empty(self):
         trainer, metadata_backend, vaecache, backends = self._rollover_fixture({"1.0": [], "1.5": []})
@@ -2442,7 +2455,7 @@ class TestTrainer(unittest.TestCase):
     def test_epoch_rollover_rebuilds_legacy_fixed_shape_random_crops_when_opted_in(self):
         trainer, metadata, cache, backends = self._rollover_fixture({"1.0": ["image.jpg"]})
         config = backends["train"].config
-        config.update(crop_aspect="square", crop_style="random")
+        config.update(crop_aspect="square", crop_style="random", vae_cache_clear_each_epoch=False)
         with self._rollover_patches(backends):
             trainer._epoch_rollover(2)
             metadata.compute_aspect_ratio_bucket_indices.assert_not_called()

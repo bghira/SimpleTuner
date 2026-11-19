@@ -811,12 +811,12 @@ class MetadataBackend:
     def refresh_epoch_geometry(self, epoch, *, rebuild_random_aspect, gradient_accumulation_steps, apply_padding):
         """Rebuild and split a mutable randomized view, reporting whether it changed."""
         config = self.active_dataset_config
-        if not config.get("crop"):
+        if not config.get("crop") or not config.get("vae_cache_clear_each_epoch"):
             return False
         if config.get("crop_aspect") == "random":
             recrop = rebuild_random_aspect
         else:
-            recrop = config.get("vae_cache_clear_each_epoch") and config.get("crop_style", "random") == "random"
+            recrop = config.get("crop_style", "random") == "random"
         if not recrop:
             return False
         if self.accelerator.is_main_process:

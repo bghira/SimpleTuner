@@ -290,10 +290,10 @@ class TestVaeCacheTraversal(unittest.TestCase):
         cache.nsfw_check_enabled = False
         cache.delete_problematic_images = False
         self.assertFalse(cache.needs_legacy_cache_inventory({}))
-        self.assertTrue(cache.needs_legacy_cache_inventory({"crop": True, "crop_aspect": "random"}))
+        self.assertFalse(cache.needs_legacy_cache_inventory({"crop": True, "crop_aspect": "random"}))
         self.assertTrue(cache.needs_legacy_cache_inventory({"scan_for_errors": True}))
         cache.vae_cache_ondemand = True
-        self.assertTrue(cache.needs_legacy_cache_inventory({"crop": True, "crop_aspect": "random"}))
+        self.assertTrue(cache.needs_legacy_cache_inventory({"vae_cache_clear_each_epoch": True}))
         cache.vae_cache_ondemand = False
         cache.nsfw_check_enabled = True
         self.assertTrue(cache.needs_legacy_cache_inventory({}))

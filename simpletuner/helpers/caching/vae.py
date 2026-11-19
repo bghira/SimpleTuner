@@ -2003,11 +2003,7 @@ class VAECache(WebhookMixin):
     def needs_legacy_cache_inventory(self, config):
         if self.metadata_backend.requires_complete_preparation is True:
             return False
-        maintenance = (
-            config.get("scan_for_errors")
-            or config.get("vae_cache_clear_each_epoch")
-            or (config.get("crop") and config.get("crop_aspect") == "random")
-        )
+        maintenance = config.get("scan_for_errors") or config.get("vae_cache_clear_each_epoch")
         return bool(
             maintenance or (not self.vae_cache_ondemand and (self.nsfw_check_enabled or self.delete_problematic_images))
         )
