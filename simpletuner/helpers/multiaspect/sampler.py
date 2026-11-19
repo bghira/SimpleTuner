@@ -991,9 +991,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 # Deterministic selection based on hash of image path and current epoch
                 # This ensures the same image gets the same conditioning dataset within an epoch
                 # but different datasets across epochs
-                if rng is None:
-                    selected_idx = hash(f"{sample_path}_{self.current_epoch}") % len(conditioning_datasets)
-                elif self.tracks_consumed_batches:
+                if rng is None or self.tracks_consumed_batches:
                     selected_idx = random.Random(f"{self.id}:{self.current_epoch}:{sample_path}").randrange(
                         len(conditioning_datasets)
                     )

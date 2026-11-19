@@ -421,6 +421,29 @@ class TestMultiAspectSampler(unittest.TestCase):
                             )
                         self.sampler.logger.warning.assert_not_called()
 
+    def test_legacy_random_conditioning_uses_reproducible_sample_choices(self):
+        self.sampler.current_epoch = 3
+        samples = [{"image_path": f"sample-{index}.png"} for index in range(24)]
+        source = self.sampler.dataset_runtime
+        source.metadata_backend.instance_data_dir = ""
+        targets = tuple(
+            SimpleNamespace(id=f"mask-{index}", read_conditioning_sample=Mock(side_effect=lambda *a, **kw: Mock()))
+            for index in range(2)
+        )
+        with (
+            patch.object(source, "conditioning_datasets", targets),
+            patch.object(
+                StateTracker, "get_args", return_value=SimpleNamespace(conditioning_multidataset_sampling="random")
+            ),
+        ):
+            output = self.sampler.connect_conditioning_samples(samples)
+        selected = [record._source_dataset_id for record in output[len(samples) :]]
+        expected = [
+            targets[random.Random(f"{self.sampler.id}:3:{source.pairing_key(sample['image_path'])}").randrange(2)].id
+            for sample in samples
+        ]
+        self.assertEqual(selected, expected)
+
     def test_load_states_with_matching_batch_size_restores_schedule_before_normalizing_legacy_seen_flags(self):
         self.sampler.state_manager.load_state.return_value = {
             "aspect_ratio_bucket_indices": {"1.0": ["same.jpg", "same.jpg", "other.jpg"]},
