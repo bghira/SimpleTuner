@@ -2143,8 +2143,8 @@ class DatasetViewerRevisionTestCase(_TrainerPageMixin, WebUITestCase):
         }
         (self.config_dir / "default" / "multidatabackend.json").write_text(json.dumps([config]))
         publication = root / "aspect_ratio_bucket_indices_source_0123456789abcdef_indexed.json"
-        properties = {"config": config, "geometry_format": "sqlite-v1"}
-        write_membership(publication, {"square": ["old"]}, properties)
+        properties = {"config": config, "geometry_format": "sqlite-v1", "physical_rows": 3}
+        write_membership(publication, {"square": ["partial"]}, {**properties, "scan_in_progress": True})
         self.seed_defaults()
 
         def scenario(driver, _browser):
@@ -2159,6 +2159,22 @@ class DatasetViewerRevisionTestCase(_TrainerPageMixin, WebUITestCase):
                     (By.XPATH, "//button[contains(@class,'dataset-subtab-btn') and contains(.,'Viewer')]")
                 )
             ).click()
+            status = (By.CSS_SELECTOR, ".viewer-preparation-status")
+            wait.until(EC.text_to_be_present_in_element(status, "Scan incomplete"))
+            self.assertFalse(
+                any(element.is_displayed() for element in driver.find_elements(By.CSS_SELECTOR, ".viewer-bucket-btn"))
+            )
+            write_membership(publication, {"square": ["old"]}, properties)
+            driver.execute_async_script(
+                """
+                const viewer = Alpine.$data(document.querySelector('[x-data="datasetViewerComponent()"]'));
+                viewer.loadAllSummaries().then(arguments[0]);
+                """
+            )
+            wait.until(EC.text_to_be_present_in_element(status, "Cached"))
+            wait.until(
+                EC.text_to_be_present_in_element((By.CSS_SELECTOR, ".viewer-prepared-count"), "1 accepted / 3 source rows")
+            )
             wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, ".viewer-card-header"))).click()
             wait.until(lambda d: "Unavailable" in d.find_element(By.CSS_SELECTOR, ".viewer-dataset-card").text)
             bucket = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, ".viewer-bucket-btn")))

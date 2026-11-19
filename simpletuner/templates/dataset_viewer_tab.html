@@ -137,17 +137,19 @@
                             <i class="fas fa-chevron-right viewer-expand-icon"
                                :class="{ 'rotated': expandedDataset === ds.dataset_id }"></i>
                             <span class="fw-semibold" x-text="ds.dataset_id"></span>
-                            <span class="badge"
-                                  :class="ds.has_cache ? 'bg-success' : 'bg-secondary'"
-                                  x-text="ds.has_cache ? 'Cached' : 'No Cache'"></span>
+                            <span class="badge viewer-preparation-status"
+                                  :class="ds.has_cache ? 'bg-success' : ds.scan_incomplete ? 'bg-warning text-dark' : 'bg-secondary'"
+                                  x-text="ds.has_cache ? 'Cached' : ds.scan_incomplete ? 'Scan incomplete' : 'No Cache'"></span>
                             <span class="badge bg-info" x-show="ds.conditioning_type"
                                   x-text="ds.conditioning_type"></span>
                             <span class="badge bg-warning text-dark" x-show="ds.auto_generated">auto-generated</span>
                         </div>
                         <div class="d-flex align-items-center gap-3">
                             <span class="text-muted small" x-show="ds.has_cache">
-                                <span x-text="ds.total_files"></span> files &middot;
-                                <span x-text="ds.bucket_count"></span> buckets
+                                <span x-show="ds.physical_rows == null" x-text="ds.total_files + ' files'"></span>
+                                <span class="viewer-prepared-count" x-show="ds.physical_rows != null"
+                                      x-text="ds.accepted_samples + ' accepted / ' + ds.physical_rows + ' source rows'"></span>
+                                &middot; <span x-text="ds.bucket_count"></span> buckets
                             </span>
                             <button type="button"
                                     class="btn btn-outline-warning btn-sm py-0 px-2"
@@ -174,7 +176,7 @@
                     <div x-show="!ds.has_cache" class="text-center py-4 px-3">
                         <p class="text-muted small mb-2">
                             <i class="fas fa-info-circle text-warning me-1"></i>
-                            No scan data available. Run a metadata scan to populate bucket cache.
+                            <span x-text="ds.scan_incomplete ? 'The metadata scan has no completed publication yet.' : 'Run a metadata scan to browse this dataset.'"></span>
                         </p>
                         <button type="button"
                                 class="btn btn-outline-warning btn-sm"
