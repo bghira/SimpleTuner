@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import subprocess
+import tempfile
 from collections import OrderedDict
 from contextlib import ExitStack, closing, contextmanager
 from glob import escape
@@ -2078,9 +2079,74 @@ class DatasetViewerService:
 
     # --- Stage 6: Audio/Video Preview ---
 
-    def get_video_preview(self, dataset_config: Dict[str, Any], file_path: str, frame_count: int = 4) -> VideoPreview:
-        """Extract evenly-spaced frames from a video file using ffmpeg."""
-        resolved = self._resolve_image_path(dataset_config, file_path)
+    @contextmanager
+    def _open_media_preview_path(self, dataset_config, file_path, view_revision):
+        backend_type = dataset_config.get("type", "local")
+        if backend_type == "local":
+            yield self._resolve_image_path(dataset_config, file_path)
+            return
+
+        suffix = Path(file_path).suffix.lower()
+        from simpletuner.helpers.training import audio_file_extensions
+
+        if suffix not in _VIDEO_EXTENSIONS and suffix.lstrip(".") not in audio_file_extensions:
+            yield None
+            return
+
+        with ExitStack() as stack:
+            path = None
+            try:
+                max_bytes = 64 * 1024 * 1024
+                if backend_type == "aws":
+                    from simpletuner.helpers.data_backend.aws import normalise_s3_prefixes
+
+                    prefixes = normalise_s3_prefixes(dataset_config.get("aws_data_prefix"))
+                    if file_path.startswith(tuple(prefixes)):
+                        backend = self._get_or_create_data_backend(dataset_config)
+                        stream = stack.enter_context(backend.open_read_stream(file_path))
+                        data = stream.read(max_bytes + 1)
+                    else:
+                        data = None
+                elif backend_type == "webshart":
+                    from simpletuner.helpers.data_backend.webshart import WebshartDataBackend
+
+                    data = None
+                    if WebshartDataBackend.is_sample_id(file_path):
+                        indexed = stack.enter_context(self._indexed_read_view(dataset_config, view_revision))
+                        if indexed is None:
+                            data = self._get_or_create_data_backend(dataset_config).read(file_path)
+                        else:
+                            pages, contains, publication = indexed
+                            if contains(file_path):
+                                backend = (
+                                    stack.enter_context(self._bind_view_data_backend(dataset_config, publication, pages))
+                                    if pages.header.get("source_pins")
+                                    else self._get_or_create_data_backend(dataset_config)
+                                )
+                                data = backend.read(file_path)
+                elif backend_type == "huggingface":
+                    data = self._get_or_create_data_backend(dataset_config).read(file_path)
+                else:
+                    data = None
+
+                if data and len(data) <= max_bytes:
+                    directory = stack.enter_context(tempfile.TemporaryDirectory())
+                    path = Path(directory) / f"preview{suffix}"
+                    path.write_bytes(data)
+            except DatasetViewChanged:
+                raise
+            except (ValueError, OSError) as exc:
+                logger.warning("Failed to read media for dataset %s: %s", dataset_config.get("id"), exc)
+            yield path
+
+    def get_video_preview(
+        self, dataset_config: Dict[str, Any], file_path: str, frame_count: int = 4, *, view_revision: Optional[str] = None
+    ) -> VideoPreview:
+        """Extract evenly-spaced frames from the selected source sample."""
+        with self._open_media_preview_path(dataset_config, file_path, view_revision) as path:
+            return self._video_preview_from_path(file_path, path, frame_count)
+
+    def _video_preview_from_path(self, file_path, resolved, frame_count):
         if resolved is None:
             return VideoPreview(path=file_path)
 
@@ -2121,6 +2187,8 @@ class DatasetViewerService:
                         str(resolved),
                         "-vframes",
                         "1",
+                        "-vf",
+                        "scale=640:640:force_original_aspect_ratio=decrease",
                         "-f",
                         "image2pipe",
                         "-vcodec",
@@ -2148,9 +2216,14 @@ class DatasetViewerService:
             resolution=resolution,
         )
 
-    def get_audio_preview(self, dataset_config: Dict[str, Any], file_path: str) -> AudioPreview:
-        """Generate a waveform PNG for an audio file."""
-        resolved = self._resolve_image_path(dataset_config, file_path)
+    def get_audio_preview(
+        self, dataset_config: Dict[str, Any], file_path: str, *, view_revision: Optional[str] = None
+    ) -> AudioPreview:
+        """Generate a waveform PNG from the selected source sample."""
+        with self._open_media_preview_path(dataset_config, file_path, view_revision) as path:
+            return self._audio_preview_from_path(file_path, path)
+
+    def _audio_preview_from_path(self, file_path, resolved):
         if resolved is None:
             return AudioPreview(path=file_path)
 
@@ -2160,30 +2233,11 @@ class DatasetViewerService:
         waveform = None
 
         try:
-            import numpy as np
+            from simpletuner.helpers.audio import load_audio
 
-            # Try torchaudio first, fall back to soundfile
-            audio_data = None
-            sr = None
-
-            try:
-                import torchaudio
-
-                waveform_tensor, sr = torchaudio.load(str(resolved))
-                audio_data = waveform_tensor.numpy()
-                channels = audio_data.shape[0]
-            except (ImportError, Exception):
-                try:
-                    import soundfile as sf
-
-                    data, sr = sf.read(str(resolved))
-                    if data.ndim == 1:
-                        audio_data = data.reshape(1, -1)
-                    else:
-                        audio_data = data.T
-                    channels = audio_data.shape[0]
-                except ImportError:
-                    pass
+            waveform_tensor, sr = load_audio(str(resolved))
+            audio_data = waveform_tensor.numpy()
+            channels = audio_data.shape[0]
 
             if audio_data is not None and sr:
                 sample_rate = sr
@@ -2193,7 +2247,9 @@ class DatasetViewerService:
                 mono = audio_data.mean(axis=0) if channels > 1 else audio_data[0]
 
                 # Downsample for visualization
-                target_width = 800
+                target_width = min(800, len(mono))
+                if not target_width:
+                    return AudioPreview(path=file_path, duration=duration, sample_rate=sample_rate, channels=channels)
                 chunk_size = max(1, len(mono) // target_width)
                 chunks = mono[: chunk_size * target_width].reshape(-1, chunk_size)
                 envelope_max = chunks.max(axis=1)

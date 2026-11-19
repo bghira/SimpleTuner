@@ -579,16 +579,35 @@ async def get_viewer_conditioning_orphans(
 
 @router.get("/viewer/video-preview", response_model=VideoPreview)
 async def get_viewer_video_preview(
-    dataset_id: str, file_path: str, frame_count: int = 4, _user: User = Depends(get_current_user)
+    dataset_id: str,
+    file_path: str,
+    frame_count: Annotated[int, Query(ge=1, le=16)] = 4,
+    view_revision: Optional[str] = None,
+    _user: User = Depends(get_current_user),
 ) -> VideoPreview:
     """Video preview with extracted frames."""
-    return _get_viewer_service().get_video_preview(_require_dataset_config(dataset_id), file_path, frame_count=frame_count)
+    try:
+        return _get_viewer_service().get_video_preview(
+            _require_dataset_config(dataset_id), file_path, frame_count=frame_count, view_revision=view_revision
+        )
+    except DatasetViewChanged as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/viewer/audio-preview", response_model=AudioPreview)
-async def get_viewer_audio_preview(dataset_id: str, file_path: str, _user: User = Depends(get_current_user)) -> AudioPreview:
+async def get_viewer_audio_preview(
+    dataset_id: str,
+    file_path: str,
+    view_revision: Optional[str] = None,
+    _user: User = Depends(get_current_user),
+) -> AudioPreview:
     """Audio preview with waveform."""
-    return _get_viewer_service().get_audio_preview(_require_dataset_config(dataset_id), file_path)
+    try:
+        return _get_viewer_service().get_audio_preview(
+            _require_dataset_config(dataset_id), file_path, view_revision=view_revision
+        )
+    except DatasetViewChanged as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------

@@ -4,8 +4,11 @@ import base64
 import io
 import json
 import os
+import shutil
+import subprocess
 import tempfile
 import unittest
+import wave
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from unittest.mock import MagicMock, patch
@@ -374,6 +377,53 @@ class TestWebshartMembershipPages(unittest.TestCase):
 
 
 class TestPreviewSourceScope(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("ffmpeg"), "ffmpeg is required for media preview")
+    def test_remote_audio_preview_uses_provider_stream_and_renders_short_clips(self):
+        service = DatasetViewerService()
+        config = {"id": "audio", "type": "aws", "aws_data_prefix": "clips/"}
+        audio = io.BytesIO()
+        with wave.open(audio, "wb") as stream:
+            stream.setparams((1, 2, 8000, 0, "NONE", "not compressed"))
+            stream.writeframes(b"\x00\x00" * 80)
+        audio.seek(0)
+        backend = MagicMock()
+        backend.open_read_stream.return_value = audio
+        with patch.object(service, "_get_or_create_data_backend", return_value=backend):
+            self.assertIsNone(service.get_audio_preview(config, "other/clip.wav").waveform)
+            result = service.get_audio_preview(config, "clips/clip.wav")
+        backend.open_read_stream.assert_called_once_with("clips/clip.wav")
+        self.assertTrue(audio.closed)
+        self.assertEqual((result.sample_rate, result.channels, result.duration), (8000, 1, 0.01))
+        self.assertTrue(result.waveform.startswith("data:image/png;base64,"))
+
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "ffmpeg and ffprobe are required")
+    def test_remote_video_preview_extracts_frames_from_provider_bytes(self):
+        service = DatasetViewerService()
+        config = {"id": "video", "type": "aws", "aws_data_prefix": ["videos/"]}
+        with tempfile.TemporaryDirectory() as folder:
+            video = Path(folder) / "clip.mp4"
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=size=32x32:rate=4:duration=1",
+                    "-c:v",
+                    "mpeg4",
+                    str(video),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            with patch.object(service, "_get_or_create_data_backend") as open_backend:
+                open_backend.return_value.open_read_stream.return_value = io.BytesIO(video.read_bytes())
+                result = service.get_video_preview(config, "videos/clip.mp4", frame_count=2)
+        self.assertEqual((result.resolution, result.fps, result.duration), ([32, 32], 4.0, 1.0))
+        self.assertEqual(len(result.frames), 2)
+
     def test_local_preview_resolves_dataset_entries_and_explicit_links(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
