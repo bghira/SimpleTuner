@@ -11,3 +11,4 @@
 - [Midjourney v6 520k](../data_presets/preset_midjourney.md)
 - [Nijijourney v6 520k](../data_presets/preset_nijijourney.md)
 - [Subjects200K](../data_presets/preset_subjects200k.md)：展示 `datasets` 库用法的示例
+- [ScaleEdit-12M](../data_presets/preset_scaleedit.md), 配对 Parquet 编辑图像与仅元数据索引

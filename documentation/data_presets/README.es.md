@@ -11,3 +11,4 @@ Para añadir un nuevo preset, usa [esta plantilla](../data_presets/preset.md) pa
 - [Midjourney v6 520k](../data_presets/preset_midjourney.md)
 - [Nijijourney v6 520k](../data_presets/preset_nijijourney.md)
 - [Subjects200K](../data_presets/preset_subjects200k.md), un ejemplo de uso de la librería `datasets`
+- [ScaleEdit-12M](../data_presets/preset_scaleedit.md), imágenes de edición Parquet emparejadas con índices de metadatos

@@ -11,3 +11,4 @@ Hugging Face Hub 上の大規模データセット向けに、動作させるた
 - [Midjourney v6 520k](../data_presets/preset_midjourney.md)
 - [Nijijourney v6 520k](../data_presets/preset_nijijourney.md)
 - [Subjects200K](../data_presets/preset_subjects200k.md): `datasets` ライブラリの利用例
+- [ScaleEdit-12M](../data_presets/preset_scaleedit.md), メタデータ索引付きペア Parquet 編集画像

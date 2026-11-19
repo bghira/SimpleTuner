@@ -84,6 +84,14 @@
 
     [:octicons-arrow-right-24: AnyFlow](experimental/ANYFLOW.md) · [:octicons-arrow-right-24: MixFlow](experimental/MIXFLOW.md) · [:octicons-arrow-right-24: XM](experimental/EXPLORATION_MODELING.es.md) · [:octicons-arrow-right-24: NextLat](experimental/NEXTLAT.es.md) · [:octicons-arrow-right-24: Clonacion de voz](experimental/VOICE_CLONING.es.md) · [:octicons-arrow-right-24: DiffusionBlocks](experimental/DIFFUSION_BLOCKS.md) · [:octicons-arrow-right-24: Self-Transcendence](experimental/SELF_TRANSCENDENCE.md) · [:octicons-arrow-right-24: iREPA](experimental/IREPA.es.md) · [:octicons-arrow-right-24: ConvRot / Hadamard SDNQ](experimental/CONVROT.md) · [:octicons-arrow-right-24: Segmented Checkpointing](experimental/SEGMENTED_CHECKPOINTING.md) · [:octicons-arrow-right-24: Unsloth Checkpointing](experimental/UNSLOTH_CHECKPOINTING.md) · [:octicons-arrow-right-24: Metal Flash Attention](experimental/METAL_FLASH_ATTENTION.md)
 
+-   :material-database:{ .lg .middle } __Presets de datasets__
+
+    ---
+
+    Configura datasets del Hub, incluida la edición con pares de imágenes ScaleEdit.
+
+    [:octicons-arrow-right-24: Todos los presets](data_presets/README.md) · [:octicons-arrow-right-24: ScaleEdit-12M](data_presets/preset_scaleedit.md)
+
 </div>
 
 ## Funcionalidades
