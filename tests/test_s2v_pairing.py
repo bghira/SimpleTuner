@@ -88,13 +88,45 @@ class TestS2VConnectSamples(unittest.TestCase):
         self.assertEqual(result[0]["s2v_audio_path"], str(self.audio_dir / "video_001.wav"))
         self.assertEqual(result[1]["s2v_audio_path"], str(self.audio_dir / "video_002.wav"))
 
+    def test_flat_sidecar_stem_resolution_works_for_nested_local_and_s3_videos(self):
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+        from simpletuner.helpers.data_backend.local import LocalDataBackend
+
+        key = "audio/clip.wav"
+        for provider_type, video_root, video_ref, expected, store in (
+            ("local", "/videos", "/videos/one/clip.mp4", str(self.audio_dir / "clip.wav"), None),
+            (
+                "aws",
+                ["video", "archive"],
+                "archive/one/clip.mp4",
+                key,
+                SimpleNamespace(type="aws", exists=lambda ref: ref == key),
+            ),
+        ):
+            with self.subTest(provider_type=provider_type):
+                self._create_audio_file("clip")
+                video = DatasetRuntime("video", SimpleNamespace(type=provider_type), None, {"instance_data_dir": video_root})
+                audio = DatasetRuntime(
+                    "audio",
+                    store if store is not None else LocalDataBackend(None, "audio"),
+                    None,
+                    {"instance_data_dir": "audio" if store is not None else str(self.audio_dir)},
+                )
+                video.audio_datasets = (audio,)
+                self.assertEqual(video.resolve_s2v_audio(video_ref), (audio, expected))
+
     def test_connect_s2v_samples_preserves_relative_video_directories(self):
         for subdirectory in ("first", "second"):
             (self.audio_dir / subdirectory).mkdir()
             (self.audio_dir / subdirectory / "clip.wav").touch()
         self._create_audio_file("clip")
         self._register_dataset({"id": "video-backend"})
-        self._register_dataset({"id": "audio-backend", "config": {"instance_data_dir": str(self.audio_dir)}})
+        self._register_dataset(
+            {
+                "id": "audio-backend",
+                "config": {"instance_data_dir": str(self.audio_dir), "audio": {"sidecar_match": "relative_path"}},
+            }
+        )
         StateTracker.set_s2v_datasets("video-backend", ["audio-backend"])
         sampler = self._create_mock_sampler()
 

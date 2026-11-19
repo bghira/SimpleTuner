@@ -282,6 +282,8 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     def _prepare_audio_settings(source: Dict[str, Any]) -> Dict[str, Any]:
         """Normalize audio configuration settings from backend definitions."""
         audio_block = deepcopy(source.get("audio", {}) or {})
+        if audio_block.get("sidecar_match", "stem") not in ("stem", "relative_path"):
+            raise ValueError(f"(id={source['id']}) audio.sidecar_match must be 'stem' or 'relative_path'.")
         alias_map = {
             "min_duration_seconds": ["audio_min_duration_seconds"],
             "max_duration_seconds": ["audio_max_duration_seconds"],

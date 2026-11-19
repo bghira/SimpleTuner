@@ -93,7 +93,7 @@ class EvalDatasetSelectionTests(unittest.TestCase):
         args = self._build_args(eval_dataset_id="video")
         sampler = MagicMock()
         image = Image.new("RGB", (8, 8))
-        sampler.retrieve_validation_set.return_value = [("clip", "prompt", "clip.mp4", image)]
+        sampler.retrieve_validation_set.return_value = [("clip", "prompt", "/videos/nested/clip.mp4", image)]
         with TemporaryDirectory() as tmpdir:
             audio_file = Path(tmpdir) / "clip.flac"
             audio_file.touch()

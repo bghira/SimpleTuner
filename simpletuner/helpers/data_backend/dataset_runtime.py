@@ -354,9 +354,9 @@ class DatasetRuntime:
 
     def resolve_s2v_audio(self, video_ref):
         """Resolve a video to its attached audio dataset and sample reference."""
-        key = self._s2v_sidecar_key(video_ref)
         for audio in self.audio_datasets:
-            if audio.config.get("audio", {}).get("source_from_video"):
+            options = audio.config.get("audio") or {}
+            if options.get("source_from_video"):
                 if audio.metadata_backend is None or audio.metadata_backend.get_metadata_by_filepath(video_ref) is not None:
                     root = audio.config.get("instance_data_dir")
                     is_local = getattr(audio.data_backend, "type", None) == "local"
@@ -364,6 +364,7 @@ class DatasetRuntime:
                     return audio, ref
                 continue
             root = audio.config.get("instance_data_dir")
+            key = self._s2v_sidecar_key(video_ref, options.get("sidecar_match", "stem"))
             if root is None or key is None:
                 continue
             roots = (root,) if isinstance(root, str) else root
@@ -374,13 +375,20 @@ class DatasetRuntime:
                         return audio, ref
         return None
 
-    def _s2v_sidecar_key(self, video_ref):
+    def _s2v_sidecar_key(self, video_ref, match):
+        video_ref = os.fspath(video_ref)
+        if match == "stem":
+            return os.path.splitext(os.path.basename(video_ref))[0] or None
+        if match != "relative_path":
+            raise ValueError("audio.sidecar_match must be 'stem' or 'relative_path'.")
+
         root = self.config.get("instance_data_dir") or getattr(self.metadata_backend, "instance_data_dir", None)
         if getattr(self.data_backend, "type", None) == "aws":
-            if isinstance(root, (list, tuple)):
-                root = root[0] if len(root) == 1 else None
-            prefix = root.rstrip("/") if root else ""
-            relative_ref = video_ref.removeprefix(prefix + "/") if prefix else video_ref
+            prefixes = (root,) if isinstance(root, str) else root or ()
+            prefixes = [
+                prefix.rstrip("/") + "/" for prefix in prefixes if prefix and video_ref.startswith(prefix.rstrip("/") + "/")
+            ]
+            relative_ref = video_ref.removeprefix(max(prefixes, key=len)) if prefixes else video_ref
         else:
             relative_ref = normalize_data_path(video_ref, root)
         if not relative_ref or os.path.isabs(relative_ref) or "://" in relative_ref or ".." in relative_ref.split("/"):
