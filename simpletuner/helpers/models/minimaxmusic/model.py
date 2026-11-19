@@ -517,20 +517,17 @@ class MiniMaxMusic(AudioModelFoundation):
 
         return self._prompt_context_from_audio_metadata(sample_metadata, str(prompt))
 
-    def text_embed_cache_metadata_for_filepath(
+    def text_embed_cache_metadata_for_preparation(
         self,
         *,
-        init_backend: dict,
+        read_metadata,
         image_path: str,
         prompt: str,
         data_backend_id: str | None,
         dataset_relative_path: str | None,
     ) -> dict:
         del data_backend_id, dataset_relative_path
-        metadata_backend = init_backend.get("metadata_backend") if isinstance(init_backend, dict) else None
-        if metadata_backend is None:
-            return {"prompt": str(prompt)}
-        sample_metadata = metadata_backend.get_metadata_by_filepath(image_path) or {}
+        sample_metadata = read_metadata(image_path) or {}
         return self._prompt_context_from_audio_metadata(sample_metadata, str(prompt))
 
     def flow_matching_target_direction(self) -> float:

@@ -402,11 +402,12 @@ class TestFactoryEdgeCases(unittest.TestCase):
                     ),
                 )
                 factory.text_encoders = []
-                factory._deferred_text_embed_backends = []
+                factory._deferred_text_embed_datasets = []
                 refs = [f"{index}.png" for index in range(16)]
                 published = json.dumps({"aspect_ratio_bucket_indices": {"square": refs}}).encode()
                 metadata = object.__new__(Provider)
                 metadata.cache_file = "membership.json"
+                metadata.instance_data_dir = None
                 metadata.read_only = True
                 backend = MagicMock(
                     id="images",
@@ -456,7 +457,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
                         metadata.aspect_ratio_bucket_indices = {"square": [refs[0], refs[0]]}
                         factory._process_text_embeddings(config, bundle, None)
                         if deferred:
-                            self.assertEqual(factory._deferred_text_embed_backends, [bundle])
+                            self.assertEqual(factory._deferred_text_embed_datasets, [runtime])
                             factory._process_deferred_text_embeddings()
                 if random_captions:
                     self.assertCountEqual(

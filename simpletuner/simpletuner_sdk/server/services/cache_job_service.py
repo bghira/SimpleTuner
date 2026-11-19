@@ -477,20 +477,10 @@ class CacheJobService:
     def _iter_prompt_records(model, runtime, *, batch_size=1, args=None, conditioning_datasets=None):
         from simpletuner.helpers.data_backend.dataset_runtime import TextRequestBuilder
 
-        root = runtime.config.get("instance_data_dir")
-        init_backend = {
-            "id": runtime.id,
-            "config": runtime.config,
-            "instance_data_dir": root,
-            "data_backend": runtime.data_backend,
-            "metadata_backend": runtime.metadata_backend,
-            "dataset_runtime": runtime,
-        }
         yield from runtime.iter_preparation_text_records(
             model,
-            init_backend=init_backend,
             batch_size=batch_size,
-            builder=TextRequestBuilder(model, runtime.id, root, args=args, conditioning_datasets=conditioning_datasets),
+            builder=TextRequestBuilder(model, runtime, args=args, conditioning_datasets=conditioning_datasets),
             on_missing_caption=lambda ref: logger.warning("Could not find caption for sample %s", ref),
         )
 

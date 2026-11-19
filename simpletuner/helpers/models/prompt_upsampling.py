@@ -170,10 +170,10 @@ class ImagePromptUpsamplingMixin:
             return original_image
         return super().validation_prompt_image_context(original_image, prepared_image)
 
-    def text_embed_cache_metadata_for_filepath(self, *, init_backend, image_path, **kwargs):
+    def text_embed_cache_metadata_for_preparation(self, *, read_metadata, image_path, **kwargs):
         if not self.prompt_upsampling_enabled():
             return {}
-        metadata = init_backend["metadata_backend"].get_metadata_by_filepath(image_path)
+        metadata = read_metadata(image_path)
         size = metadata.get("target_size")
         return {"width": int(size[0]), "height": int(size[1])} if size else {}
 

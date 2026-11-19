@@ -446,24 +446,25 @@ class MiniMaxMusicModelTests(unittest.TestCase):
         self.assertEqual(metadata["lyrics"], "la la")
         self.assertEqual(metadata["duration"], 8.0)
 
-    def test_text_embed_cache_metadata_for_filepath_uses_audio_metadata_backend(self):
+    def test_text_embed_cache_metadata_for_preparation_uses_audio_metadata(self):
         model = self._build_model()
-        metadata_backend = MagicMock()
-        metadata_backend.get_metadata_by_filepath.return_value = {
-            "lyrics": "[chorus]\nshine",
-            "duration_seconds": 1.0,
-            "bucket_duration_seconds": 1.0,
-        }
+        read_metadata = MagicMock(
+            return_value={
+                "lyrics": "[chorus]\nshine",
+                "duration_seconds": 1.0,
+                "bucket_duration_seconds": 1.0,
+            }
+        )
 
-        metadata = model.text_embed_cache_metadata_for_filepath(
-            init_backend={"metadata_backend": metadata_backend},
+        metadata = model.text_embed_cache_metadata_for_preparation(
+            read_metadata=read_metadata,
             image_path="track.wav",
             prompt="bright synth pop",
             data_backend_id="music",
             dataset_relative_path="track.wav",
         )
 
-        metadata_backend.get_metadata_by_filepath.assert_called_once_with("track.wav")
+        read_metadata.assert_called_once_with("track.wav")
         self.assertEqual(metadata["prompt"], "bright synth pop")
         self.assertEqual(metadata["lyrics"], "[chorus]\nshine")
         self.assertEqual(metadata["duration_seconds"], 1.0)

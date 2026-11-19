@@ -154,11 +154,9 @@ class JSONSchemaConverterTests(unittest.TestCase):
     def test_moss_caption_metadata_uses_real_target_images_and_bucket_size(self):
         foundation = model()
         foundation.config.moss_image_prompt_upsample = True
-        backend = {
-            "id": "images",
-            "metadata_backend": SimpleNamespace(get_metadata_by_filepath=Mock(return_value={"target_size": (384, 672)})),
-        }
-        result = foundation.text_embed_cache_metadata_for_filepath(init_backend=backend, image_path="photo.png")
+        result = foundation.text_embed_cache_metadata_for_preparation(
+            read_metadata=Mock(return_value={"target_size": (384, 672)}), image_path="photo.png", data_backend_id="images"
+        )
         self.assertEqual(result, {"width": 384, "height": 672, "image_paths": ["photo.png"], "data_backend_ids": ["images"]})
         lookup = foundation.text_embed_cache_metadata_for_sample(
             example={"target_size": (384, 672), "image_path": "photo.png", "data_backend_id": "images"}

@@ -11,7 +11,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Barrier, Event, get_ident
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -857,20 +857,21 @@ class TestWebshartParquetBackend(unittest.TestCase):
                 self.assertIsNone(sampler.get_conditioning_sample(excluded))
 
             model = SimpleNamespace(text_embed_cache_key=lambda: TextEmbedCacheKey.CAPTION)
-            builder = TextRequestBuilder(model, "source", None, conditioning_datasets=[runtime])
-            records = list(builder.records([("kept", accepted), ("other", excluded)], {}))
+            source = DatasetRuntime("source", self.backend, metadata, config)
+            read_metadata = Mock(side_effect=AssertionError("unexpected geometry read"))
+            builder = TextRequestBuilder(model, source, conditioning_datasets=[runtime])
+            records = list(builder.records([("kept", accepted), ("other", excluded)], read_metadata=read_metadata))
             self.assertEqual(records[0]["metadata"]["image_paths"], [accepted])
             self.assertNotIn("image_paths", records[1]["metadata"])
 
             other = SimpleNamespace(id="other", config={}, conditioning_ref=lambda _: None)
             builder = TextRequestBuilder(
                 model,
-                "source",
-                None,
+                source,
                 conditioning_datasets=[runtime, other],
                 args=SimpleNamespace(conditioning_multidataset_sampling="random"),
             )
-            records = list(builder.records([("missing every reference", excluded)], {}))
+            records = list(builder.records([("missing every reference", excluded)], read_metadata=read_metadata))
             self.assertEqual([record["prompt"] for record in records], ["missing every reference"])
             self.assertNotIn("image_paths", records[0]["metadata"])
 
@@ -1780,7 +1781,7 @@ class TestWebshartParquetBackend(unittest.TestCase):
             factory = FactoryRegistry.__new__(FactoryRegistry)
             factory.args, factory.accelerator, factory.model = args, accelerator, model
             factory.text_encoders = None
-            factory._deferred_text_embed_backends = []
+            factory._deferred_text_embed_datasets = []
             runtime = DatasetRuntime(self.backend.id, self.backend, metadata, config)
             with (
                 patch.object(metadata, "read_cache", side_effect=AssertionError("rank-local inventory")),
@@ -1824,7 +1825,7 @@ class TestWebshartParquetBackend(unittest.TestCase):
                         accelerator.process_index = rank
                         factory._process_text_embeddings(config, bundle, None)
                         if deferred:
-                            self.assertEqual(len(factory._deferred_text_embed_backends), 1)
+                            self.assertEqual(factory._deferred_text_embed_datasets, [runtime])
                             factory._process_deferred_text_embeddings()
                         self.assertEqual(prepared[-1], records[rank])
                     self.assertEqual(prepared, records)

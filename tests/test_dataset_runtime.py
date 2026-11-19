@@ -1,5 +1,5 @@
 import unittest
-from contextlib import closing
+from contextlib import closing, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -225,13 +225,23 @@ class DatasetRuntimeTests(unittest.TestCase):
 
         self.metadata["bbox_entities"] = [{"label": "cat"}, {"label": ""}]
         config = {**self.config, "instance_data_dir": "dataset"}
+        self.metadata_backend.instance_data_dir = "dataset"
+        prepared_metadata = Mock(get_metadata_by_filepath=Mock(return_value=self.metadata))
+        view = Mock(metadata=prepared_metadata)
+        view.__iter__ = lambda _: iter(["sample.jpg"])
+        self.metadata_backend.open_preparation_view.return_value = nullcontext(view)
+        self.metadata_backend.get_metadata_by_filepath.side_effect = AssertionError("live metadata read")
         runtime = DatasetRuntime("images", self.data_backend, self.metadata_backend, config)
+
+        def metadata_for_preparation(*, read_metadata, image_path, **kwargs):
+            return {"height": read_metadata(image_path)["target_size"][1]}
+
         model = SimpleNamespace(
             text_embed_cache_key=lambda: TextEmbedCacheKey.DATASET_AND_FILENAME,
-            text_embed_cache_metadata_for_filepath=lambda **kwargs: {"height": 512},
+            text_embed_cache_metadata_for_preparation=metadata_for_preparation,
             text_embed_cache_key_value=lambda prompt, default_key, metadata: f"{default_key}:{metadata['height']}",
         )
-        records = list(runtime.iter_text_embed_records(model, iter(["sample.jpg"]), init_backend={}))
+        records = list(runtime.iter_preparation_text_records(model))
         self.assertEqual([record["prompt"] for record in records], ["first", "cat", "second", "cat"])
         self.assertEqual(records[0]["key"], "images:sample.jpg:512")
         self.assertEqual(records[0]["metadata"]["dataset_relative_path"], "sample.jpg")
@@ -245,7 +255,9 @@ class DatasetRuntimeTests(unittest.TestCase):
             text_embed_cache_key=lambda: TextEmbedCacheKey.CAPTION, uses_image_context_dropout_caption_cache=lambda: True
         )
         args = SimpleNamespace(conditioning_multidataset_sampling="random", caption_dropout_probability=0)
-        source = SimpleNamespace(resolve_caption=lambda path: ["source A", "source B"])
+        self.metadata_backend.instance_data_dir = ""
+        source = DatasetRuntime("images", self.data_backend, self.metadata_backend, self.config)
+        source.resolve_caption = lambda path: ["source A", "source B"]
         mask = SimpleNamespace(
             id="mask",
             config={"conditioning_type": "mask", "source_dataset_id": "images", "caption_strategy": None},
@@ -261,8 +273,10 @@ class DatasetRuntimeTests(unittest.TestCase):
             "simpletuner.helpers.distillation.factory.DistillerFactory.training_batch_requirements",
             return_value={"unconditional_text_embeddings"},
         ):
-            builder = TextRequestBuilder(model, "images", "", conditioning_datasets=[mask, reference], args=args)
-        requests = list(builder.records([("source A", "file.png")], {"dataset_runtime": source}))
+            builder = TextRequestBuilder(model, source, conditioning_datasets=[mask, reference], args=args)
+        requests = list(
+            builder.records([("source A", "file.png")], read_metadata=self.metadata_backend.get_metadata_by_filepath)
+        )
         contexts = [(item["prompt"], item["metadata"].get("image_paths")) for item in requests]
         self.assertEqual(
             contexts,
@@ -281,17 +295,19 @@ class DatasetRuntimeTests(unittest.TestCase):
         from simpletuner.helpers.models.common import TextEmbedCacheKey
 
         model = SimpleNamespace(text_embed_cache_key=lambda: TextEmbedCacheKey.CAPTION)
-        metadata = Mock(get_metadata_by_filepath=Mock(return_value={"bbox_entities": [{"label": "cat"}]}))
-        init_backend = {"metadata_backend": metadata}
+        self.metadata_backend.instance_data_dir = ""
+        read_metadata = Mock(return_value={"bbox_entities": [{"label": "cat"}]})
         caption = [("caption", "image.jpg")]
-        builder = TextRequestBuilder(model, "images", "", args=SimpleNamespace(max_grounding_entities=0))
-        self.assertEqual([record["prompt"] for record in builder.records(caption, init_backend)], ["caption"])
-        metadata.get_metadata_by_filepath.assert_not_called()
+        builder = TextRequestBuilder(model, self.runtime, args=SimpleNamespace(max_grounding_entities=0))
+        self.assertEqual([record["prompt"] for record in builder.records(caption, read_metadata=read_metadata)], ["caption"])
+        read_metadata.assert_not_called()
         builder = TextRequestBuilder(
-            model, "images", "", conditioning_datasets=[], args=SimpleNamespace(max_grounding_entities=1)
+            model, self.runtime, conditioning_datasets=[], args=SimpleNamespace(max_grounding_entities=1)
         )
-        self.assertEqual([record["prompt"] for record in builder.records(caption, init_backend)], ["caption", "cat"])
-        metadata.get_metadata_by_filepath.assert_called_once_with("image.jpg")
+        self.assertEqual(
+            [record["prompt"] for record in builder.records(caption, read_metadata=read_metadata)], ["caption", "cat"]
+        )
+        read_metadata.assert_called_once_with("image.jpg")
 
     def test_projected_payloads_preserve_order_duplicates_and_identify_failed_references(self):
         self.data_backend.read_image_batch.return_value = (["a", "a", "b"], [1, 2, 3])

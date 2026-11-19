@@ -1333,7 +1333,7 @@ class FactoryRegistry:
         self.data_backends = {}
         self.default_text_embed_backend_id = None
         # Queue for backends needing deferred text embed processing (models requiring image context)
-        self._deferred_text_embed_backends: List[Dict[str, Any]] = []
+        self._deferred_text_embed_datasets: list[DatasetRuntime] = []
         self.distiller_requirement_profile: DistillerRequirementProfile = distiller_profile or EMPTY_PROFILE
         self.distillation_method = (
             distillation_method.lower() if isinstance(distillation_method, str) and distillation_method else None
@@ -3511,13 +3511,13 @@ class FactoryRegistry:
                 info_log(
                     f"(id={init_backend['id']}) Deferring text embed pre-computation until conditioning datasets are connected."
                 )
-                self._deferred_text_embed_backends.append(init_backend)
+                self._deferred_text_embed_datasets.append(init_backend["dataset_runtime"])
                 # hash_filenames is always enabled
                 init_backend["config"]["hash_filenames"] = True
                 StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
                 return
 
-            self._prepare_text_artifacts(init_backend)
+            self._prepare_text_artifacts(init_backend["dataset_runtime"])
 
         # hash_filenames is always enabled
         init_backend["config"]["hash_filenames"] = True
@@ -3530,37 +3530,29 @@ class FactoryRegistry:
         """
         if not self._uses_text_embeddings_cache():
             return
-        if not self._deferred_text_embed_backends:
+        if not self._deferred_text_embed_datasets:
             return
 
-        info_log(f"Processing {len(self._deferred_text_embed_backends)} deferred text embed backend(s) with conditioning.")
+        info_log(f"Processing {len(self._deferred_text_embed_datasets)} deferred text embed datasets with conditioning.")
 
-        for init_backend in self._deferred_text_embed_backends:
-            dataset_id = init_backend["id"]
-            info_log(f"(id={dataset_id}) Processing deferred text embeddings with conditioning image context.")
+        for runtime in self._deferred_text_embed_datasets:
+            info_log(f"(id={runtime.id}) Processing deferred text embeddings with conditioning image context.")
+            self._prepare_text_artifacts(runtime, conditioning_datasets=runtime.conditioning_datasets)
 
-            self._prepare_text_artifacts(
-                init_backend, conditioning_datasets=init_backend["dataset_runtime"].conditioning_datasets
-            )
+        self._deferred_text_embed_datasets.clear()
 
-        # Clear the deferred queue
-        self._deferred_text_embed_backends.clear()
-
-    def _prepare_text_artifacts(self, init_backend, *, conditioning_datasets=None):
-        runtime = init_backend["dataset_runtime"]
+    def _prepare_text_artifacts(self, runtime, *, conditioning_datasets=None):
         cache = runtime.text_embed_cache
         move_text_encoders(self.args, self.text_encoders, self.accelerator.device)
         expand = TextRequestBuilder(
             self.model,
-            runtime.id,
-            init_backend.get("instance_data_dir"),
+            runtime,
             conditioning_datasets=conditioning_datasets,
             args=self.args,
         )
         batch_size = max(cache.read_batch_size, cache.text_encoder_batch_size)
         records = runtime.iter_preparation_text_records(
             self.model,
-            init_backend=init_backend,
             builder=expand,
             worker=self.accelerator.process_index,
             workers=self.accelerator.num_processes,

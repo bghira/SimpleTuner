@@ -296,7 +296,9 @@ class CollateFunctionTests(unittest.TestCase):
             id="backend-1",
             instance_data_dir="/train",
             text_embed_cache=precache,
-            metadata_backend=SimpleNamespace(get_metadata_by_filepath=lambda _: {"target_size": (32, 32)}),
+            metadata_backend=SimpleNamespace(
+                instance_data_dir="/train", get_metadata_by_filepath=lambda _: {"target_size": (32, 32)}
+            ),
         )
         from contextlib import nullcontext
 
@@ -312,7 +314,7 @@ class CollateFunctionTests(unittest.TestCase):
         prefetched = []
         precache.read_batch_size = precache.text_encoder_batch_size = 2
         precache.precompute_embeddings.side_effect = lambda records, **kwargs: prefetched.extend(records)
-        registry._deferred_text_embed_backends = [init_backend]
+        registry._deferred_text_embed_datasets = [runtime]
         with patch("simpletuner.helpers.data_backend.factory.move_text_encoders"):
             registry._process_deferred_text_embeddings()
         self.assertEqual(cache.hash_prompt_with_path(record), cache.hash_prompt_with_path(prefetched[0]))
@@ -322,7 +324,7 @@ class CollateFunctionTests(unittest.TestCase):
         reference_captions = {"first": ["first edit", "alternate first edit"], "second": ["second edit"]}
         for entry in references:
             entry["dataset_runtime"].resolve_caption.return_value = reference_captions[entry["id"]]
-        registry._deferred_text_embed_backends = [init_backend]
+        registry._deferred_text_embed_datasets = [runtime]
         prefetched.clear()
         with patch("simpletuner.helpers.data_backend.factory.move_text_encoders"):
             registry._process_deferred_text_embeddings()

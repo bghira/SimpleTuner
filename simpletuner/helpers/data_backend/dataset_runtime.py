@@ -327,7 +327,6 @@ class DatasetRuntime:
         self,
         model,
         *,
-        init_backend: dict[str, Any],
         builder=None,
         worker: int = 0,
         workers: int = 1,
@@ -337,22 +336,10 @@ class DatasetRuntime:
         if workers < 1 or not 0 <= worker < workers:
             raise ValueError("Preparation worker must be in the range [0, workers).")
         if builder is None:
-            builder = TextRequestBuilder(model, self.id, self.config.get("instance_data_dir"))
+            builder = TextRequestBuilder(model, self)
         with self.metadata_backend.open_preparation_view(worker=worker, workers=workers) as view:
             captions = self.iter_caption_records(view, batch_size=batch_size, on_missing_caption=on_missing_caption)
-            yield from builder.records(captions, {**init_backend, "metadata_backend": view.metadata})
-
-    def iter_text_embed_records(
-        self,
-        model,
-        sample_refs: Iterable[str],
-        *,
-        init_backend: dict[str, Any],
-        on_missing_caption: Callable[[str], None] | None = None,
-    ) -> Iterator[dict[str, Any]]:
-        builder = TextRequestBuilder(model, self.id, self.config.get("instance_data_dir"))
-        captions = self.iter_caption_records(sample_refs, on_missing_caption=on_missing_caption)
-        yield from builder.records(captions, {"metadata_backend": self.metadata_backend, **init_backend})
+            yield from builder.records(captions, read_metadata=view.metadata.get_metadata_by_filepath)
 
 
 class ValidationCursor:
@@ -416,15 +403,14 @@ class TextRequestBuilder:
     def __init__(
         self,
         model,
-        dataset_id,
-        dataset_root,
+        dataset,
         *,
         conditioning_datasets=None,
         args=None,
     ):
         self.model = model
-        self.dataset_id = dataset_id
-        self.dataset_root = dataset_root
+        self.dataset = dataset
+        self.dataset_root = dataset.metadata_backend.instance_data_dir
         ordered = sorted(
             conditioning_datasets or (),
             key=lambda entry: entry.config.get("conditioning_type") not in ("reference_strict", "reference_loose"),
@@ -449,7 +435,7 @@ class TextRequestBuilder:
                 0.1 if probability is None else probability
             ) > 0 or "unconditional_text_embeddings" in needs
 
-    def _contexts(self, metadata, caption, image_path, init_backend, related_samples):
+    def _contexts(self, metadata, caption, image_path, related_samples):
         if self.sampling != "random" or len(self.conditioning_datasets) <= 1 or not related_samples:
             yield metadata, caption
             return
@@ -461,18 +447,20 @@ class TextRequestBuilder:
                 context.pop("image_paths", None)
                 context.pop("data_backend_ids", None)
             if dataset.config.get("source_dataset_id") is not None and dataset.config.get("caption_strategy") is None:
-                dataset, path = init_backend["dataset_runtime"], image_path
+                dataset, path = self.dataset, image_path
             alternatives = dataset.resolve_caption(path) or [caption]
             for alternative in alternatives if isinstance(alternatives, list) else [alternatives]:
                 yield context, alternative or caption
 
-    def records(self, captions, init_backend):
+    def records(self, captions, *, read_metadata):
         key_type = self.model.text_embed_cache_key()
+        dataset_id = self.dataset.id
+        metadata_builder = getattr(self.model, "text_embed_cache_metadata_for_preparation", None)
         for caption, sample_ref in captions:
             image_path = str(sample_ref)
             relative_path = normalize_data_path(image_path, self.dataset_root)
             metadata = dict(
-                image_path=image_path, data_backend_id=self.dataset_id, prompt=caption, dataset_relative_path=relative_path
+                image_path=image_path, data_backend_id=dataset_id, prompt=caption, dataset_relative_path=relative_path
             )
             relation_sources = (
                 self.conditioning_datasets
@@ -490,28 +478,27 @@ class TextRequestBuilder:
                     image_paths=[path for _, path in references],
                     data_backend_ids=[dataset_id for dataset_id, _ in references],
                 )
-            metadata_builder = getattr(self.model, "text_embed_cache_metadata_for_filepath", None)
 
             def request(context, text):
                 details = dict(context, prompt=text)
                 if callable(metadata_builder):
                     details.update(
                         metadata_builder(
-                            init_backend=init_backend,
+                            read_metadata=read_metadata,
                             image_path=image_path,
                             prompt=text,
-                            data_backend_id=self.dataset_id,
+                            data_backend_id=dataset_id,
                             dataset_relative_path=relative_path,
                         )
                     )
-                return text_embed_request(self.model, key_type, text, details, self.dataset_id, image_path, relative_path)
+                return text_embed_request(self.model, key_type, text, details, dataset_id, image_path, relative_path)
 
-            for context, text in self._contexts(metadata, caption, image_path, init_backend, related_samples):
+            for context, text in self._contexts(metadata, caption, image_path, related_samples):
                 yield request(context, text)
                 if self.include_dropout and text:
                     yield request(context, "")
             if self.include_grounding:
-                sample = init_backend["metadata_backend"].get_metadata_by_filepath(image_path)
+                sample = read_metadata(image_path)
                 if isinstance(sample, dict):
                     for index, entity in enumerate(sample.get("bbox_entities") or ()):
                         if label := entity.get("label"):

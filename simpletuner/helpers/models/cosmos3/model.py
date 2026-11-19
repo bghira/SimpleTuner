@@ -254,19 +254,16 @@ class Cosmos3Image(Cosmos2Image):
         metadata["cosmos3_cache_signature"] = self._cosmos3_text_cache_signature(prompt=prompt, metadata=metadata)
         return metadata
 
-    def text_embed_cache_metadata_for_filepath(
+    def text_embed_cache_metadata_for_preparation(
         self,
         *,
-        init_backend: dict,
+        read_metadata,
         image_path: str,
         prompt: str,
         data_backend_id: str | None,
         dataset_relative_path: str | None,
     ) -> dict:
-        metadata_backend = init_backend.get("metadata_backend")
-        sample_metadata = {}
-        if metadata_backend is not None:
-            sample_metadata = metadata_backend.get_metadata_by_filepath(image_path) or {}
+        sample_metadata = read_metadata(image_path) or {}
         target_size = sample_metadata.get("target_size") or sample_metadata.get("original_size")
         if not target_size or len(target_size) != 2:
             raise ValueError(f"Cosmos3 text cache precompute requires target_size metadata for {image_path}.")

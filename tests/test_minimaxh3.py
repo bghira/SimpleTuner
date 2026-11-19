@@ -924,14 +924,15 @@ class MiniMaxH3Tests(unittest.TestCase):
         ]
         for target in targets:
             target.resolve_caption = Mock(return_value="caption")
+        source = DatasetRuntime("video_backend", None, SimpleNamespace(instance_data_dir="/source"), {})
         builder = TextRequestBuilder(
             model,
-            "video_backend",
-            "/source",
+            source,
             args=SimpleNamespace(conditioning_multidataset_sampling="random", caption_dropout_probability=0),
             conditioning_datasets=targets,
         )
-        requests = list(builder.records([("caption", "/source/nested/11.mp4")], {}))
+        read_metadata = Mock(side_effect=AssertionError("unexpected geometry read"))
+        requests = list(builder.records([("caption", "/source/nested/11.mp4")], read_metadata=read_metadata))
 
         self.assertEqual(
             [request["metadata"]["image_paths"] for request in requests],
