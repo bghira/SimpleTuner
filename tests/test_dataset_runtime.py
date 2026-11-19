@@ -95,6 +95,33 @@ class DatasetRuntimeTests(unittest.TestCase):
             self.assertNotIn(self.runtime.id, StateTracker._pending_dataset_configs)
             self.assertIs(StateTracker.get_data_backend_config(self.runtime.id), self.runtime.config)
 
+    def test_factory_failure_closes_opened_datasets_and_clears_pending_state(self):
+        from contextlib import ExitStack
+
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry, configure_multi_databackend
+
+        def fail_startup(_):
+            StateTracker.own_dataset_resource(self.runtime)
+            StateTracker.register_dataset(self.runtime)
+            StateTracker.set_data_backend_config("second", {})
+            raise ValueError("preparation failed")
+
+        with (
+            patch.object(StateTracker, "_dataset_resources", ExitStack()),
+            patch.object(StateTracker, "datasets", {}),
+            patch.object(StateTracker, "_pending_dataset_configs", {}),
+            patch.object(StateTracker, "dataset_schedule", {}),
+            patch.object(StateTracker, "default_text_embed_cache", None),
+            patch.object(StateTracker, "consumed_dataset_mixer", None),
+            patch.object(FactoryRegistry, "__init__", return_value=None),
+            patch.object(FactoryRegistry, "configure", side_effect=fail_startup),
+        ):
+            with self.assertRaisesRegex(ValueError, "preparation failed"):
+                configure_multi_databackend({}, SimpleNamespace(is_main_process=True), None, None, None)
+            self.assertEqual(StateTracker.get_datasets(), {})
+            self.assertEqual(StateTracker._pending_dataset_configs, {})
+        self.metadata_backend.close.assert_called_once_with()
+
     def test_run_closes_shared_writer_once_after_dataset_handles(self):
         from contextlib import ExitStack
 

@@ -3876,6 +3876,7 @@ class FactoryRegistry:
             init_backend["metadata_backend"],
             {**init_backend["config"], "dataset_type": DatasetType.CAPTION},
         )
+        StateTracker.own_dataset_resource(runtime)
         if getattr(self.args, "distillation_method", None) == "assistant_lora":
             self._assign_text_embed_cache(backend, init_backend)
             cache = init_backend["text_embed_cache"]
@@ -3894,7 +3895,6 @@ class FactoryRegistry:
         runtime.training_dataloader = init_backend["train_dataloader"]
         runtime.sampler = init_backend["sampler"]
         runtime.text_embed_cache = init_backend.get("text_embed_cache")
-        StateTracker.own_dataset_resource(runtime)
         StateTracker.register_dataset(runtime)
         self.datasets[runtime.id] = runtime
         self.caption_backends[init_backend["id"]] = init_backend
@@ -4268,11 +4268,16 @@ def configure_multi_databackend(
         distillation_method=distillation_method,
     )
 
-    result = factory.configure(data_backend_config)
-
-    factory._log_performance_metrics("implementation_complete")
-
-    factory._finalize_metrics()
+    try:
+        result = factory.configure(data_backend_config)
+        factory._log_performance_metrics("implementation_complete")
+        factory._finalize_metrics()
+    except BaseException:
+        try:
+            StateTracker.clear_data_backends()
+        except Exception:
+            logger.exception("Failed to close dataset resources after startup failed")
+        raise
     return result
 
 
