@@ -286,7 +286,7 @@ class BooguImage(ImageModelFoundation):
         data_backend_id = context.get("data_backend_id") if isinstance(context, dict) else None
         if not image_path or not data_backend_id:
             raise ValueError("Boogu edit prompt image context must include conditioning pixels or image backend metadata.")
-        image = load_prompt_images([image_path], [data_backend_id])[0]
+        image = load_prompt_images([image_path], [data_backend_id], dataset_bindings=context.get("dataset_bindings"))[0]
         if isinstance(image, Image.Image):
             return image.convert("RGB")
         if isinstance(image, np.ndarray):

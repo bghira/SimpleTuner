@@ -972,11 +972,11 @@ class MiniMaxH3Tests(unittest.TestCase):
             reference = Image.new("RGB", (32, 48), "white")
             with patch.object(targets[0], "read_sample_images", return_value=[reference]) as read_images:
                 with patch(
-                    "simpletuner.helpers.models.minimaxh3.model.StateTracker.get_dataset", return_value=targets[0]
-                ) as lookup:
+                    "simpletuner.helpers.models.prompt_upsampling.StateTracker.get_dataset",
+                    side_effect=AssertionError("unexpected dataset registry lookup"),
+                ):
                     image = model._extract_prompt_image_from_context(online_record["metadata"])
-                lookup.assert_called_once_with("first")
-                read_images.assert_called_once_with(["/cache/first/nested/11.png"])
+                read_images.assert_called_once_with(["/cache/first/nested/11.png"], allow_missing=False)
                 self.assertEqual(image.size, reference.size)
 
     def test_encode_prompts_passes_image_context_to_h3_conditioner(self):

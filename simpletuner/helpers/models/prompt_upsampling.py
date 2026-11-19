@@ -27,7 +27,7 @@ class PromptUpsampler(ABC):
         """Return one rewritten prompt for each image-generation request."""
 
 
-def load_prompt_images(paths, dataset_ids, *, allow_missing=False):
+def load_prompt_images(paths, dataset_ids, *, dataset_bindings=None, allow_missing=False):
     if len(paths) != len(dataset_ids):
         raise ValueError("Reference image paths and backend IDs must have equal lengths.")
     grouped = defaultdict(list)
@@ -36,7 +36,7 @@ def load_prompt_images(paths, dataset_ids, *, allow_missing=False):
 
     images = [None] * len(paths)
     for dataset_id, requests in grouped.items():
-        dataset = StateTracker.get_dataset(dataset_id)
+        dataset = StateTracker.get_dataset(dataset_id) if dataset_bindings is None else dataset_bindings[dataset_id]
         selected = dataset.read_sample_images([path for _, path in requests], allow_missing=allow_missing)
         for (position, _), image in zip(requests, selected, strict=True):
             images[position] = image
@@ -53,7 +53,8 @@ def reference_images_from_context(context: dict) -> tuple[Image.Image, ...]:
     if pixels is None:
         paths = context.get("image_paths")
         if paths:
-            return tuple(image.convert("RGB") for image in load_prompt_images(paths, context["data_backend_ids"]))
+            images = load_prompt_images(paths, context["data_backend_ids"], dataset_bindings=context.get("dataset_bindings"))
+            return tuple(image.convert("RGB") for image in images)
 
         return ()
     if torch.is_tensor(pixels):

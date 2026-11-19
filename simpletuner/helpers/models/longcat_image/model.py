@@ -521,7 +521,9 @@ class LongCatImage(ImageModelFoundation):
         data_backend_id = context.get("data_backend_id")
         if not image_path or not data_backend_id:
             return None
-        image = load_prompt_images([image_path], [data_backend_id], allow_missing=True)[0]
+        image = load_prompt_images(
+            [image_path], [data_backend_id], dataset_bindings=context.get("dataset_bindings"), allow_missing=True
+        )[0]
         tensor = self._convert_image_to_tensor(image)
         if tensor is None:
             return None

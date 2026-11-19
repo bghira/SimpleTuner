@@ -567,14 +567,16 @@ class TestStreamingTextPreparation(unittest.TestCase):
             text_embed_cache_key=lambda: TextEmbedCacheKey.CAPTION,
         )
         captured = []
+        active_dataset = object()
 
         def consume(records, *, batch_size, progress_callback):
-            self.assertIs(StateTracker.get_dataset("stream-test"), runtime)
+            self.assertIs(StateTracker.get_dataset("stream-test"), active_dataset)
             self.assertNotIn("stream-test", StateTracker._pending_dataset_configs)
             self.assertEqual(batch_size, 2)
             self.assertNotIsInstance(records, list)
             progress_callback(0)
             for index, record in enumerate(records, 1):
+                self.assertIs(record["metadata"]["dataset_bindings"]["stream-test"], runtime)
                 captured.append(record)
                 progress_callback(index)
             return len(captured)
@@ -591,6 +593,7 @@ class TestStreamingTextPreparation(unittest.TestCase):
             config = {"id": "stream-test", "caption_strategy": "filename", "cache_dir_text": cache_dir}
             runtime = DatasetRuntime(config["id"], data_backend, metadata, config)
             with (
+                patch.object(StateTracker, "datasets", {"stream-test": active_dataset}),
                 patch.object(service, "_load_model", return_value=model),
                 patch.object(service, "_create_dataset_runtime", return_value=runtime),
                 patch.object(service, "_cleanup_gpu"),

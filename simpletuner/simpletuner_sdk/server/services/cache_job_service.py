@@ -663,19 +663,6 @@ class CacheJobService:
             del vae_cache, model
             self._cleanup_gpu()
 
-    @staticmethod
-    @contextmanager
-    def _job_registration(dataset_id):
-        from simpletuner.helpers.training.state_tracker import StateTracker
-
-        previous_dataset = StateTracker.datasets.pop(dataset_id, None)
-        try:
-            yield
-        finally:
-            StateTracker.datasets.pop(dataset_id, None)
-            if previous_dataset is not None:
-                StateTracker.register_dataset(previous_dataset)
-
     def _text_embed_store(self, dataset, plan, global_config, args, accelerator):
         from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
         from simpletuner.helpers.data_backend.factory import (
@@ -717,7 +704,6 @@ class CacheJobService:
         StateTracker.set_args(args)
         StateTracker.set_accelerator(accelerator)
         scope = ExitStack()
-        scope.enter_context(self._job_registration(dataset_config["id"]))
         model = None
         text_cache = None
 
@@ -768,7 +754,6 @@ class CacheJobService:
 
             batch_size = max(text_cache.read_batch_size, text_cache.text_encoder_batch_size)
             source_runtime.text_embed_cache = text_cache
-            StateTracker.register_dataset(source_runtime)
             conditioning = None
             ids = dataset_config.get("conditioning_data")
             from simpletuner.helpers.data_backend.dataset_runtime import TextRequestBuilder
@@ -782,10 +767,8 @@ class CacheJobService:
                     if ref_id not in available:
                         raise ValueError(f"Missing conditioning dataset {ref_id!r} in the standalone cache plan.")
                     ref_config = available[ref_id]
-                    scope.enter_context(self._job_registration(ref_id))
                     runtime = self._create_dataset_runtime(ref_config, args, accelerator, preparation_only=True)
                     scope.callback(runtime.close)
-                    StateTracker.register_dataset(runtime)
                     conditioning.append(runtime)
                 source_runtime.conditioning_datasets = tuple(conditioning)
             prompt_records = self._iter_prompt_records(

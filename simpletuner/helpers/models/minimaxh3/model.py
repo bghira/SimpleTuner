@@ -62,6 +62,7 @@ from simpletuner.helpers.models.minimaxh3.pipeline_ref import MiniMaxH3Ref2VAPip
 from simpletuner.helpers.models.minimaxh3.scheduler import MiniMaxH3Scheduler
 from simpletuner.helpers.models.minimaxh3.sparse_attention import initialize_minimax_h3_flex_attention
 from simpletuner.helpers.models.minimaxh3.transformer import MiniMaxH3Transformer3DModel
+from simpletuner.helpers.models.prompt_upsampling import load_prompt_images
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.musubi_block_swap import apply_musubi_pretrained_defaults
 from simpletuner.helpers.training.explorative_modeling import reduce_loss_to_samples, reshape_candidate_batch
@@ -1005,8 +1006,8 @@ class MiniMaxH3(VideoModelFoundation):
         if reference is None:
             return None
         dataset_id, image_path = reference
-        dataset = StateTracker.get_dataset(dataset_id)
-        return self._coerce_prompt_image(dataset.read_sample_images([image_path])[0])
+        image = load_prompt_images([image_path], [dataset_id], dataset_bindings=context.get("dataset_bindings"))[0]
+        return self._coerce_prompt_image(image)
 
     @staticmethod
     def _prompt_image_reference(context: dict) -> tuple[str, str] | None:

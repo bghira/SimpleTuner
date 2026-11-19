@@ -617,6 +617,7 @@ class TextRequestBuilder:
         self.references = {
             entry.id: entry for entry in ordered if entry.config.get("conditioning_type") not in ("mask", "segmentation")
         }
+        self.dataset_bindings = {**self.references, dataset.id: dataset}
         self.conditioning_datasets = ordered
         self.include_grounding = (
             conditioning_datasets is None if args is None else bool(getattr(args, "max_grounding_entities", 0))
@@ -659,7 +660,11 @@ class TextRequestBuilder:
             image_path = str(sample_ref)
             relative_path = normalize_data_path(image_path, self.dataset_root)
             metadata = dict(
-                image_path=image_path, data_backend_id=dataset_id, prompt=caption, dataset_relative_path=relative_path
+                image_path=image_path,
+                data_backend_id=dataset_id,
+                prompt=caption,
+                dataset_relative_path=relative_path,
+                dataset_bindings=self.dataset_bindings,
             )
             relation_sources = (
                 self.conditioning_datasets

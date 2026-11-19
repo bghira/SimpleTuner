@@ -749,6 +749,7 @@ class QwenImage(ImageModelFoundation):
             if self._is_edit_v1_flavour():
                 context = {
                     "image_path": image_paths[0],
+                    "dataset_bindings": context.get("dataset_bindings"),
                     "data_backend_id": (
                         data_backend_ids[0]
                         if isinstance(data_backend_ids, (list, tuple)) and data_backend_ids
@@ -766,7 +767,9 @@ class QwenImage(ImageModelFoundation):
                 if not all(image_paths) or not all(resolved_backend_ids):
                     return None
                 tensors = []
-                for image in load_prompt_images(image_paths, resolved_backend_ids, allow_missing=True):
+                for image in load_prompt_images(
+                    image_paths, resolved_backend_ids, dataset_bindings=context.get("dataset_bindings"), allow_missing=True
+                ):
                     tensor = self._convert_image_to_tensor(image)
                     if tensor is None:
                         return None
@@ -777,7 +780,9 @@ class QwenImage(ImageModelFoundation):
         data_backend_id = context.get("data_backend_id")
         if not image_path or not data_backend_id:
             return None
-        image = load_prompt_images([image_path], [data_backend_id], allow_missing=True)[0]
+        image = load_prompt_images(
+            [image_path], [data_backend_id], dataset_bindings=context.get("dataset_bindings"), allow_missing=True
+        )[0]
         logger.debug(
             f"Loaded prompt image from backend: path={image_path}, type={type(image)}, size={image.size if isinstance(image, Image.Image) else (image.shape if hasattr(image, 'shape') else 'unknown')}"
         )
