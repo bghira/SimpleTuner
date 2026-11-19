@@ -6872,6 +6872,15 @@ class Trainer:
             if dataset.training_dataloader is not None and name not in eval_ids
         }
 
+    def _acknowledge_training_batch(self, dataset_id, epoch, *, mixer_state, dataset, continuation):
+        if mixer_state is not None:
+            StateTracker.consumed_dataset_mixer = mixer_state
+            StateTracker.set_exhausted_backends(mixer_state["exhausted_backends"].copy())
+            if not (StateTracker.get_dataset_schedule(dataset_id) or {}).get("reached", False):
+                StateTracker.mark_dataset_schedule_reached(dataset_id, epoch=epoch, step=self.state["global_step"] + 1)
+        if dataset is not None:
+            dataset.acknowledge_batch(continuation)
+
     def _execute_eval_loss(self):
         with ExitStack() as stack:
             if self.accelerator.is_main_process:
@@ -7346,16 +7355,14 @@ class Trainer:
                                     for key, val in saved.items():
                                         module.scaling[key] = val
 
-                if mixer_state is not None:
-                    StateTracker.consumed_dataset_mixer = mixer_state
-                    StateTracker.set_exhausted_backends(mixer_state["exhausted_backends"].copy())
-                    used_dataset_id = prepared_batch["data_backend_id"]
-                    if not (StateTracker.get_dataset_schedule(used_dataset_id) or {}).get("reached", False):
-                        StateTracker.mark_dataset_schedule_reached(
-                            used_dataset_id, epoch=epoch, step=self.state["global_step"] + 1
-                        )
-                if continuation_dataset is not None:
-                    continuation_dataset.acknowledge_batch(continuation)
+                if mixer_state is not None or continuation_dataset is not None:
+                    self._acknowledge_training_batch(
+                        prepared_batch["data_backend_id"],
+                        epoch,
+                        mixer_state=mixer_state,
+                        dataset=continuation_dataset,
+                        continuation=continuation,
+                    )
 
                 # Checks if the accelerator has performed an optimization step behind the scenes
                 wandb_logs = {}

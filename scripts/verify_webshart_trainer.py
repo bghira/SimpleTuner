@@ -47,8 +47,7 @@ def make_model(path, clip):
 
 
 def train(root, resume, prefetch, case, checkpoint_step, conditioning):
-    from simpletuner.helpers.multiaspect.sampler import MultiAspectSampler
-    from simpletuner.helpers.training.state_tracker import StateTracker
+    from simpletuner.helpers.data_backend import factory
     from simpletuner.train import Trainer, _run_training
 
     run = root / case
@@ -64,8 +63,8 @@ def train(root, resume, prefetch, case, checkpoint_step, conditioning):
         torch.backends.cuda.enable_mem_efficient_sdp(False)
         torch.backends.cuda.enable_cudnn_sdp(False)
 
-    acknowledge = MultiAspectSampler.acknowledge_batch
-    traverse = MultiAspectSampler._iterate_native
+    collate = factory.collate_fn
+    acknowledge = Trainer._acknowledge_training_batch
     prepare = Trainer.prepare_batch
     compute_loss = Trainer._compute_model_prediction_loss
     losses = []
@@ -73,25 +72,24 @@ def train(root, resume, prefetch, case, checkpoint_step, conditioning):
     occurrences = {}
     inputs = {}
 
-    def traverse_with_trace(sampler):
-        for batch in traverse(sampler):
-            token = batch[0]["dataset_continuation"]
-            choices = [
-                (entry["image_path"], entry.get("instance_prompt_text"), entry.get("caption_dropout_seed"))
-                for entry in batch
-                if isinstance(entry, dict)
-            ]
-            references = [entry for entry in batch if not isinstance(entry, dict)]
-            if conditioning and not references:
-                raise AssertionError("A conditioned batch must include a selected reference")
-            choices.extend(
-                (entry.data_backend_id, entry.image_path(), entry.caption, entry.training_sample_path(sampler.id))
-                for entry in references
-            )
-            occurrences[sampler.id, token["layout"]["epoch"], token["position"]] = hashlib.sha256(
-                json.dumps(choices).encode()
-            ).hexdigest()
-            yield batch
+    def collate_with_trace(batch, *, dataset):
+        collated = collate(batch, dataset=dataset)
+        token = collated["dataset_continuation"]
+        choices = [
+            (entry["image_path"], entry.get("instance_prompt_text"), entry.get("caption_dropout_seed"))
+            for entry in batch[0]["training_samples"]
+        ]
+        references = batch[0]["conditioning_samples"]
+        if conditioning and not references:
+            raise AssertionError("A conditioned batch must include a selected reference")
+        choices.extend(
+            (entry.data_backend_id, entry.image_path(), entry.caption, entry.training_sample_path(dataset.id))
+            for entry in references
+        )
+        occurrences[dataset.id, token["layout"]["epoch"], token["position"]] = hashlib.sha256(
+            json.dumps(choices).encode()
+        ).hexdigest()
+        return collated
 
     def prepare_with_trace(trainer, raw):
         result = prepare(trainer, raw)
@@ -127,15 +125,16 @@ def train(root, resume, prefetch, case, checkpoint_step, conditioning):
 
     trace = run / f"consumed-{resume}-{os.environ['RANK']}.jsonl"
 
-    def record(sampler, token):
-        acknowledge(sampler, token)
+    def record(trainer, dataset_id, epoch, *, mixer_state, dataset, continuation):
+        acknowledge(trainer, dataset_id, epoch, mixer_state=mixer_state, dataset=dataset, continuation=continuation)
+        token = continuation
         with trace.open("a") as out:
             out.write(
                 json.dumps(
                     [
                         token,
-                        StateTracker.consumed_dataset_mixer,
-                        occurrences.pop((sampler.id, token["layout"]["epoch"], token["position"])),
+                        mixer_state,
+                        occurrences.pop((dataset_id, token["layout"]["epoch"], token["position"])),
                         dict(inputs),
                         list(losses),
                         dict(diagnostics),
@@ -184,8 +183,8 @@ def train(root, resume, prefetch, case, checkpoint_step, conditioning):
     if resume:
         config["resume_from_checkpoint"] = f"checkpoint-{checkpoint_step}"
     with ExitStack() as stack:
-        stack.enter_context(patch.object(MultiAspectSampler, "_iterate_native", traverse_with_trace))
-        stack.enter_context(patch.object(MultiAspectSampler, "acknowledge_batch", record))
+        stack.enter_context(patch.object(factory, "collate_fn", collate_with_trace))
+        stack.enter_context(patch.object(Trainer, "_acknowledge_training_batch", record))
         stack.enter_context(patch.object(Trainer, "prepare_batch", prepare_with_trace))
         stack.enter_context(patch.object(Trainer, "_compute_model_prediction_loss", loss_with_trace))
         trainer = Trainer(config=config, exit_on_error=True)
