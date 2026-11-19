@@ -241,21 +241,23 @@ class DatasetRuntime:
         paths, images = self.data_backend.read_image_batch(refs)
         return list(ordered_sample_payloads(self.id, refs, zip(paths, images, strict=True), allow_missing=allow_missing))
 
-    def read_samples(self, sample_refs: Sequence[str], *, fields=("metadata",)) -> list[dict[str, Any]]:
-        """Read a batch of occurrence records with the requested metadata, image or caption."""
+    def read_samples(self, sample_refs: Sequence[str], *, fields=("metadata",), view_revision=None) -> list[dict[str, Any]]:
+        """Read sample fields, using published geometry when a view revision is specified."""
         fields = frozenset(fields)
         unknown = fields.difference({"metadata", "image", "caption"})
         if unknown:
             raise ValueError(f"Unknown sample fields: {sorted(unknown)}")
+        if "metadata" not in fields:
+            geometry = (None for _ in sample_refs)
+        elif view_revision is None:
+            geometry = self.metadata_backend.get_metadata_batch(sample_refs)
+        else:
+            geometry = self.metadata_backend.get_prepared_metadata_batch(sample_refs, view_revision=view_revision)
         payloads = None
         if "image" in fields:
             payloads = iter(self.read_sample_images(sample_refs))
         captions = iter(self.resolve_captions(sample_refs)) if "caption" in fields else None
         records = []
-        if "metadata" not in fields:
-            geometry = (None for _ in sample_refs)
-        else:
-            geometry = self.metadata_backend.get_metadata_batch(sample_refs)
         for sample_ref, metadata in zip(sample_refs, geometry, strict=True):
             record = deepcopy(metadata) if metadata is not None else {}
             record.setdefault("dataset_type", self.config["dataset_type"])

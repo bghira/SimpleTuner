@@ -165,6 +165,8 @@ class TestWebshartParquetBackend(unittest.TestCase):
         from simpletuner.helpers.data_backend.local import LocalDataBackend
         from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
         from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBackend
+        from simpletuner.helpers.multiaspect.sampler import MultiAspectSampler
+        from simpletuner.helpers.training.state_tracker import StateTracker
 
         config = {
             "webshart": {"sampling_policy": "global"},
@@ -289,6 +291,38 @@ class TestWebshartParquetBackend(unittest.TestCase):
         top, left = updated["crop_coordinates"]
         width, height = updated["target_size"]
         self.assertEqual(cropped.image.tobytes(), image.crop((left, top, left + width, top + height)).tobytes())
+
+        sampler = MultiAspectSampler.__new__(MultiAspectSampler)
+        sampler.dataset_runtime = runtime
+        sampler.id = runtime.id
+        sampler.model = None
+        sampler.source_dataset_id = None
+        with closing(runtime.open_validation()) as cursor:
+            sampler.validation_cursor = cursor
+            cursor.next_refs(1)
+            cursor.next_refs(1)
+            position = cursor.state_dict()
+            with (
+                patch.object(
+                    self.backend, "read_image_batch", side_effect=lambda refs: (refs, [image.copy() for _ in refs])
+                ),
+                patch.object(StateTracker, "get_model", return_value=None),
+                patch.object(StateTracker, "get_data_backend_config", side_effect=AssertionError("global dataset config")),
+                patch.object(StateTracker, "get_args", return_value=args),
+            ):
+                (later_preview,) = sampler.retrieve_validation_set(1)
+                runtime.start_epoch(1)
+                cursor.load_state_dict(position)
+                (first_preview,) = sampler.retrieve_validation_set(1)
+            self.assertEqual(later_preview[:3], first_preview[:3])
+            self.assertEqual(later_preview[3].tobytes(), first_preview[3].tobytes())
+            with (
+                patch.object(provider, "_published", {**provider._published, "view_revision": "new-revision"}),
+                patch.object(self.backend, "read_image_batch", side_effect=AssertionError("stale cursor fetched pixels")),
+                self.assertRaisesRegex(ValueError, "view changed"),
+            ):
+                sampler.retrieve_validation_set(1)
+
         runtime.start_epoch(1)
         self.assertEqual(runtime.read_samples([ref]), [base])
 

@@ -521,8 +521,12 @@ class WebshartMetadataBackend(MetadataBackend):
         ]
 
     def _published_metadata_for_ref(self, ref):
-        ref = self.data_backend.normalize_sample_id(ref)
-        return next(iter(self._published_metadata_batch((ref,))))
+        return self.get_prepared_metadata_batch((ref,), view_revision=self.view_revision)[0]
+
+    def get_prepared_metadata_batch(self, refs, *, view_revision):
+        if self.view_revision != view_revision:
+            raise ValueError("Prepared Webshart view changed. Reopen the dataset cursor.")
+        return self._published_metadata_batch([self.data_backend.normalize_sample_id(ref) for ref in refs])
 
     def _published_metadata_batch(self, refs):
         if self._transforms is None:

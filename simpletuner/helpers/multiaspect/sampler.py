@@ -440,7 +440,10 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         positions = {}
         for position, ref in enumerate(self.validation_cursor.next_refs(batch_size)):
             positions.setdefault(ref, position)
-        records = self.dataset_runtime.read_samples(list(positions), fields=("metadata", "image"))
+        if not positions:
+            return results
+        revision = self.validation_cursor.state_dict()["view"] if self.dataset_runtime.uses_native_schedule else None
+        records = self.dataset_runtime.read_samples(list(positions), fields=("metadata", "image"), view_revision=revision)
         prepared = []
         caption_paths = []
         caption_dataset = (
@@ -454,6 +457,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 image_metadata=image_metadata,
                 image_path=image_path,
                 model=self.model,
+                data_backend_config=self.dataset_runtime.config,
             )
             training_sample.prepare()
             caption_paths.append(
@@ -468,8 +472,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             validation_shortname = f"{self.id}_{positions[image_path]}"
             if type(validation_prompt) == list:
                 self.debug_log(f"Selecting random prompt from list: {validation_prompt}")
-                if self.epoch_provider is not None:
-                    revision = self.validation_cursor.state_dict()["view"]
+                if revision is not None:
                     selector = random.Random(f"{self.id}:{revision}:{image_path}")
                     validation_prompt = selector.choice(validation_prompt)
                 else:

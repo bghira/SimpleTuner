@@ -1567,6 +1567,12 @@ class MetadataBackend:
         """Read metadata in request order, preserving duplicates and missing entries."""
         return (self.get_metadata_by_filepath(ref) for ref in refs)
 
+    def get_prepared_metadata_batch(self, refs, *, view_revision):
+        """Read geometry for a specific published dataset view."""
+        if self.view_revision != view_revision:
+            raise ValueError("Prepared dataset view changed. Reopen the dataset cursor.")
+        return self.get_metadata_batch(refs)
+
     def get_metadata_by_filepath(self, filepath: str):
         """retrieve metadata by filepath, trying both relative and absolute paths"""
         if type(filepath) not in [tuple, list]:
