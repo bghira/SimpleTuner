@@ -279,6 +279,14 @@ def check_column_values(column_data, column_name, parquet_path, fallback_caption
         raise TypeError(f"Unsupported data type in column '{column_name}'. Expected strings or arrays of strings.")
 
 
+def _local_instance_data_dir(backend: dict) -> str:
+    """A local dataset's root, as everything that reads it must see it ("" when unset)."""
+    raw = backend.get("instance_data_dir")
+    if raw is None:
+        return ""
+    return str(raw).strip().rstrip("/")
+
+
 def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     # running this here sets it correctly for the ranks.
     if should_log():
@@ -629,6 +637,8 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         output["config"]["instance_data_dir"] = webshart_config.get(
             "cache_dir", backend.get("cache_dir", os.path.join("cache", "webshart", backend["id"]))
         )
+    elif backend.get("type") == "local":
+        output["config"]["instance_data_dir"] = _local_instance_data_dir(backend)
     else:
         output["config"]["instance_data_dir"] = backend.get("instance_data_dir", backend.get("aws_data_prefix", ""))
     # hash_filenames is always enabled and not user-configurable
@@ -1771,12 +1781,9 @@ class FactoryRegistry:
             if backend_type != "local":
                 continue
 
-            # Check instance_data_dir for all local backends
-            instance_data_dir = backend.get("instance_data_dir", backend.get("instance_data_root"))
-            if instance_data_dir and isinstance(instance_data_dir, str):
-                instance_data_dir = instance_data_dir.strip()
-                if instance_data_dir and not os.path.exists(instance_data_dir):
-                    missing_paths.append((backend_id, "instance_data_dir", instance_data_dir))
+            instance_data_dir = _local_instance_data_dir(backend)
+            if instance_data_dir and not os.path.exists(instance_data_dir):
+                missing_paths.append((backend_id, "instance_data_dir", instance_data_dir))
 
         if missing_paths:
             error_lines = ["The following dataset directories do not exist:"]
@@ -2958,18 +2965,11 @@ class FactoryRegistry:
             pass
 
         if backend["type"] == "local":
-            raw_instance_dir = backend.get("instance_data_dir", backend.get("instance_data_root"))
-            if raw_instance_dir is None:
-                raise ValueError(
-                    "A local backend requires instance_data_dir be defined and pointing to the image data directory."
-                )
-            instance_dir = str(raw_instance_dir).strip()
+            instance_dir = _local_instance_data_dir(backend)
             if not instance_dir:
                 raise ValueError(
                     "A local backend requires instance_data_dir be defined and pointing to the image data directory."
                 )
-            if instance_dir.endswith("/"):
-                instance_dir = instance_dir.rstrip("/")
             init_backend["instance_data_dir"] = instance_dir
             init_backend["bucket_report"].set_instance_data_dir(instance_dir)
         elif backend["type"] == "aws":
@@ -3786,7 +3786,7 @@ class FactoryRegistry:
             move_text_encoders(self.args, self.text_encoders, self.accelerator.device)
             prompt_records = []
             key_type = self.model.text_embed_cache_key()
-            dataset_root = init_backend.get("instance_data_dir")
+            dataset_root = init_backend["config"].get("instance_data_dir")
 
             for caption, image_path in caption_records:
                 image_path_str = str(image_path)

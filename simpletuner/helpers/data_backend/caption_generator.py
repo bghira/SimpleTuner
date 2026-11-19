@@ -225,7 +225,6 @@ def generated_image_backend_configs(backend, bucket_directories):
             "target_downsample_size",
             "crop_aspect_buckets",
             "cache_file_suffix",
-            "instance_data_root",
         ):
             generated.pop(key, None)
         generated.update(

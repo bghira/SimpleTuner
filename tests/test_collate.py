@@ -335,6 +335,18 @@ class CollateFunctionTests(unittest.TestCase):
         precomputed = precache.compute_embeddings_for_prompts.call_args.args[0][0]
         self.assertEqual(cache.hash_prompt_with_path(record), cache.hash_prompt_with_path(precomputed))
 
+        # Collate keys on the dataset config's root; the precompute must use the same one.
+        init_backend["instance_data_dir"] = "/elsewhere"
+        registry._deferred_text_embed_backends = [({"caption_strategy": "textfile"}, init_backend)]
+        with (
+            patch.object(StateTracker, "get_conditioning_datasets", return_value=references),
+            patch("simpletuner.helpers.data_backend.factory.move_text_encoders"),
+        ):
+            registry._process_deferred_text_embeddings()
+        precomputed = precache.compute_embeddings_for_prompts.call_args.args[0][0]
+        self.assertEqual(cache.hash_prompt_with_path(record), cache.hash_prompt_with_path(precomputed))
+        init_backend["instance_data_dir"] = "/train"
+
         self.base_args.conditioning_multidataset_sampling = "random"
         reference_captions = {"first": ["first edit", "alternate first edit"], "second": ["second edit"]}
         registry._deferred_text_embed_backends = [({"caption_strategy": "textfile"}, init_backend)]

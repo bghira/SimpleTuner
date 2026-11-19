@@ -567,6 +567,13 @@ class TestFactoryEdgeCases(unittest.TestCase):
         self.assertFalse(self.args.text_cache_disable)
         self.assertFalse(self.args.text_cache_ondemand)
 
+    def test_local_root_in_config_matches_the_configured_root(self):
+        from simpletuner.helpers.data_backend.factory import init_backend_config
+
+        backend = {"id": "edit", "type": "local", "instance_data_dir": " /data/edit/ "}
+        result = init_backend_config(backend, self.args, self.accelerator)
+        self.assertEqual(result["config"]["instance_data_dir"], "/data/edit")
+
     def test_webshart_path_filter_reaches_metadata_config(self):
         from simpletuner.helpers.data_backend.factory import init_backend_config
         from simpletuner.helpers.data_backend.filters import build_dataset_filter
