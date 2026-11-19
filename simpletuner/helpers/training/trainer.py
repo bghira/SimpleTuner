@@ -482,16 +482,22 @@ class Trainer:
             if original_exception_type is None and status.item():
                 raise RuntimeError("FSDP2 full-model export failed on another rank.")
 
-    def _any_rank_reached_epoch_end(self, reached_epoch_end: bool) -> bool:
-        if not self._distributed_collectives_ready():
-            return reached_epoch_end
-
-        device = getattr(self.accelerator, "device", None)
-        if device is None:
-            device = torch.device("cuda", torch.cuda.current_device()) if torch.cuda.is_available() else torch.device("cpu")
-        local_flag = torch.tensor(1 if reached_epoch_end else 0, device=device, dtype=torch.int32)
-        torch.distributed.all_reduce(local_flag, op=torch.distributed.ReduceOp.MAX)
-        return bool(local_flag.item())
+    def _any_rank_reached_epoch_end(self, reached_epoch_end: bool, *, batch_error: Exception | None = None) -> bool:
+        status = 2 if batch_error is not None else int(reached_epoch_end)
+        if self._distributed_collectives_ready():
+            device = getattr(self.accelerator, "device", None)
+            if device is None:
+                device = (
+                    torch.device("cuda", torch.cuda.current_device()) if torch.cuda.is_available() else torch.device("cpu")
+                )
+            local_flag = torch.tensor(status, device=device, dtype=torch.int32)
+            torch.distributed.all_reduce(local_flag, op=torch.distributed.ReduceOp.MAX)
+            status = int(local_flag.item())
+        if status == 2:
+            if batch_error is not None:
+                raise batch_error
+            raise RuntimeError("Another training rank failed while fetching its batch.")
+        return status == 1
 
     def _write_train_stage_breadcrumb(self, stage: str, step: int) -> None:
         output_dir = os.environ.get("SIMPLETUNER_TRAIN_STAGE_TRACE_DIR")
@@ -7026,6 +7032,16 @@ class Trainer:
                 self.bf.start_fetching()
                 iterator_fn = self.bf.next_response
 
+            batch_error = None
+
+            def fetch_or_signal_error(step, *args):
+                nonlocal batch_error
+                try:
+                    return iterator_fn(step, *args)
+                except Exception as error:
+                    batch_error = error
+                    return False
+
             while True:
                 checkpoint_saved_this_step = False
                 step_checkpoint_path = None
@@ -7036,7 +7052,7 @@ class Trainer:
                 # This ensures all ranks in a CP group receive the same batch before the
                 # model's _cp_plan splits it along the sequence dimension.
                 self._write_train_stage_breadcrumb("fetch_batch:start", step)
-                raw_batch = cp_batch_synchronizer.fetch_batch(iterator_fn, step, *iterator_args)
+                raw_batch = cp_batch_synchronizer.fetch_batch(fetch_or_signal_error, step, *iterator_args)
                 mixer_state = raw_batch.pop("dataset_mixer_state", None) if isinstance(raw_batch, dict) else None
                 continuation = raw_batch.pop("dataset_continuation", None) if isinstance(raw_batch, dict) else None
                 continuation_dataset = training_datasets[raw_batch["data_backend_id"]] if continuation is not None else None
@@ -7054,7 +7070,7 @@ class Trainer:
 
                 local_epoch_end = prepared_batch is False
                 self._write_train_stage_breadcrumb("epoch_end_sync:start", step)
-                epoch_end_reached = self._any_rank_reached_epoch_end(local_epoch_end)
+                epoch_end_reached = self._any_rank_reached_epoch_end(local_epoch_end, batch_error=batch_error)
                 self._write_train_stage_breadcrumb("epoch_end_sync:done", step)
                 # If any rank receives False from the enumerator, all ranks must leave the step loop together.
                 if epoch_end_reached:
