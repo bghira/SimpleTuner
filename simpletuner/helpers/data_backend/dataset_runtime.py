@@ -96,6 +96,16 @@ class DatasetRuntime:
             self.metadata_backend.bind_dataset_config(config)
 
     @property
+    def source_dataset(self):
+        return self._source_dataset
+
+    @source_dataset.setter
+    def source_dataset(self, source):
+        self._source_dataset = source
+        if isinstance(self.metadata_backend, MetadataBackend):
+            self.metadata_backend.source_dataset = source
+
+    @property
     def epoch_provider(self):
         return self.metadata_backend.epoch_provider
 

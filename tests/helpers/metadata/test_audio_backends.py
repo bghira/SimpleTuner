@@ -7,8 +7,11 @@ import unittest
 import wave
 from io import BytesIO
 from typing import Optional, Tuple
+from unittest.mock import Mock, patch
 
+from simpletuner.helpers.audio.load import NoAudioStreamError
 from simpletuner.helpers.data_backend.base import BaseDataBackend
+from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend
 from simpletuner.helpers.metadata.backends.parquet import ParquetMetadataBackend
@@ -602,6 +605,46 @@ class TestAudioMetadataBackends(unittest.TestCase):
         self.assertEqual(bucket_indices, {})
         self.assertEqual(metadata_updates, {})
         self.assertEqual(stats["skipped"].get("processing_error"), 1)
+
+    def test_discovery_embedded_audio_uses_bound_source_and_its_prepared_geometry(self):
+        dataset_id = "audio_embedded"
+        video_ref = os.path.join(self.tempdir.name, "clip.mp4")
+        self._register_dataset_config(
+            dataset_id, {"source_from_video": True, "allow_zero_audio": True, "sample_rate": 100, "duration_interval": 1.0}
+        )
+        backend = self._build_backend(dataset_id)
+        discovery = DiscoveryMetadataBackend(
+            id=dataset_id,
+            instance_data_dir=self.tempdir.name,
+            cache_file=os.path.join(self.tempdir.name, "buckets"),
+            metadata_file=os.path.join(self.tempdir.name, "metadata"),
+            data_backend=backend,
+            accelerator=None,
+            batch_size=1,
+            resolution=1.0,
+            resolution_type="pixel",
+        )
+        config = StateTracker.get_data_backend_config(dataset_id)
+        dataset = DatasetRuntime(dataset_id, backend, discovery, config)
+        source = Mock()
+        source.config = {"video": {"num_frames": 48}}
+        source.read_samples.return_value = [{"video_duration": 3.0}]
+        source.data_backend.read_embedded_audio.side_effect = [
+            NoAudioStreamError("silent clip"),
+            ValueError("malformed audio stream"),
+        ]
+        dataset.source_dataset = source
+        updates, stats = {}, {}
+        with patch.object(StateTracker, "get_data_backend_config", side_effect=AssertionError("global dataset config")):
+            discovery._process_audio_sample(video_ref, {}, updates, statistics=stats)
+            discovery._process_audio_sample(video_ref, {}, {}, statistics=stats, delete_problematic_images=True)
+
+        source.read_samples.assert_called_with([video_ref], view=source.published_read_view.return_value)
+        source.data_backend.read_embedded_audio.assert_called_with(video_ref, sample_rate=100, channels=1)
+        source.data_backend.read.assert_not_called()
+        self.assertEqual(updates[video_ref]["num_samples"], 300)
+        self.assertEqual(updates[video_ref]["original_duration_seconds"], 3.0)
+        self.assertEqual(stats["skipped"]["processing_error"], 1)
 
 
 class TestBucketReportAudioRecommendations(unittest.TestCase):

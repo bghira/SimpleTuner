@@ -10,7 +10,7 @@ import shutil
 import threading
 import time
 import uuid
-from contextlib import closing, contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -111,7 +111,7 @@ class _ScanArgsNamespace:
         return getattr(self, key, default)
 
 
-def _execute_scan_process(connection, cancelled, dataset_config, global_config, force_rescan):
+def _execute_scan_process(connection, cancelled, dataset_config, global_config, force_rescan, dataset_plan):
     def report(current, total):
         if cancelled.is_set():
             raise RuntimeError("Scan cancelled by user")
@@ -122,7 +122,9 @@ def _execute_scan_process(connection, cancelled, dataset_config, global_config, 
         if cancelled.is_set():
             return
         try:
-            DatasetScanService()._execute_scan(dataset_config, global_config, force_rescan, report)
+            DatasetScanService()._execute_scan(
+                dataset_config, global_config, force_rescan, report, dataset_plan=dataset_plan
+            )
         except Exception as e:
             if not cancelled.is_set():
                 logger.exception("Dataset metadata scan failed")
@@ -413,6 +415,8 @@ class DatasetScanService:
         datasets: List[Dict[str, Any]],
         global_config: Optional[Dict[str, Any]] = None,
         force_rescan: bool = False,
+        *,
+        dataset_plan=None,
     ) -> str:
         """Queue all datasets for sequential scanning. Returns queue_id."""
         try:
@@ -441,7 +445,7 @@ class DatasetScanService:
 
             self._scan_thread = threading.Thread(
                 target=self._run_queue,
-                args=(queue, datasets, global_config or {}, force_rescan),
+                args=(queue, datasets, global_config or {}, force_rescan, dataset_plan or datasets),
                 daemon=True,
             )
             self._scan_thread.start()
@@ -537,7 +541,7 @@ class DatasetScanService:
 
         try:
             with dataset_worker(
-                context, _execute_scan_process, cancelled, dataset_config, global_config, force_rescan
+                context, _execute_scan_process, cancelled, dataset_config, global_config, force_rescan, dataset_plan
             ) as messages:
                 for data in messages:
                     if "error" in data:
@@ -589,6 +593,7 @@ class DatasetScanService:
         datasets: List[Dict[str, Any]],
         global_config: Dict[str, Any],
         force_rescan: bool,
+        dataset_plan,
     ):
         for i, ds_config in enumerate(datasets):
             if queue.cancelled:
@@ -606,7 +611,7 @@ class DatasetScanService:
             with self._lock:
                 self._active_job = job
 
-            self._run_scan(job, ds_config, global_config, force_rescan)
+            self._run_scan(job, ds_config, global_config, force_rescan, dataset_plan=dataset_plan)
 
             self._broadcast(
                 "dataset_scan_queue",
@@ -624,6 +629,8 @@ class DatasetScanService:
         global_config: Dict[str, Any],
         force_rescan: bool,
         on_progress,
+        *,
+        dataset_plan=None,
     ):
         """Execute the actual metadata scan using existing infrastructure."""
         from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
@@ -638,7 +645,27 @@ class DatasetScanService:
         StateTracker.set_args(scan_args)
         StateTracker.set_accelerator(accelerator)
 
-        with closing(DatasetRuntime.from_config(dataset_config, scan_args, accelerator)) as dataset:
+        with ExitStack() as scope:
+            dataset = DatasetRuntime.from_config(dataset_config, scan_args, accelerator)
+            scope.callback(dataset.close)
+            audio = dataset_config.get("audio") or {}
+            source_id = dataset_config.get("source_dataset_id") or audio.get("source_dataset_id")
+            if audio.get("source_from_video") and source_id:
+                source_config = next(
+                    (
+                        source
+                        for source in dataset_plan or ()
+                        if source.get("id") == source_id and not (source.get("disabled") or source.get("disable"))
+                    ),
+                    None,
+                )
+                if source_config is None:
+                    raise ValueError(f"Dataset {dataset.id} requires an enabled video source {source_id}.")
+                source_config = self._convert_pixel_area(source_config, scan_args)
+                dataset.source_dataset = DatasetRuntime.from_config(
+                    source_config, scan_args, accelerator, preparation_only=True
+                )
+                scope.callback(dataset.source_dataset.close)
             dataset.prepare_view(force_rescan=force_rescan, progress_callback=on_progress)
 
 

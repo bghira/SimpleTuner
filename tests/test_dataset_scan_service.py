@@ -94,7 +94,7 @@ class TestDatasetScanServiceOutputDir(unittest.TestCase):
         self.assertEqual(resolved, "/var/tmp/simpletuner-scan")
 
 
-def wait_for_scan_cancel(connection, cancelled, dataset_config, global_config, force_rescan):
+def wait_for_scan_cancel(connection, cancelled, *_):
     with connection:
         connection.send({"current": 1, "total": 2})
         if not cancelled.wait(timeout=20):
@@ -165,6 +165,26 @@ class TestDatasetScanProcess(unittest.TestCase):
                 self.assertTrue((root / "output" / "all_image_files_example.json").is_file())
                 self.assertFalse(latent.exists())
                 self.assertTrue(other_file.is_file())
+
+    def test_scan_binds_embedded_audio_to_video_from_saved_plan(self):
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+
+        service = DatasetScanService()
+        video = {"id": "video", "type": "local", "dataset_type": "video"}
+        audio = {
+            "id": "audio",
+            "type": "local",
+            "dataset_type": "audio",
+            "audio": {"source_from_video": True, "source_dataset_id": "video"},
+        }
+        audio_runtime, video_runtime = Mock(), Mock()
+        audio_runtime.prepare_view.side_effect = lambda **_: self.assertIs(audio_runtime.source_dataset, video_runtime)
+        with patch.object(DatasetRuntime, "from_config", side_effect=[audio_runtime, video_runtime]) as open_dataset:
+            service._execute_scan(audio, {}, False, Mock(), dataset_plan=[audio, video])
+        self.assertEqual(open_dataset.call_args.args[0], video)
+        self.assertEqual(open_dataset.call_args.kwargs, {"preparation_only": True})
+        audio_runtime.close.assert_called_once_with()
+        video_runtime.close.assert_called_once_with()
 
     def test_latent_clear_checks_configured_store_and_source(self):
         service = DatasetScanService()

@@ -217,6 +217,8 @@ class MetadataBackend:
         self._bound_config = config
         self.dataset_config = config
 
+    source_dataset = None
+
     @contextmanager
     def edit_persisted_membership(self):
         """Temporarily open the complete legacy membership for a cache update."""

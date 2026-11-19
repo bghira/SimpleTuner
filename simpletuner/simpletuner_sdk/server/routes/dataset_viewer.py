@@ -642,7 +642,9 @@ async def start_scan_all(request: ScanAllRequest, _user: User = Depends(get_curr
         raise HTTPException(status_code=400, detail="No scannable datasets in plan")
 
     try:
-        queue_id = get_scan_service().scan_all(browsable, _get_global_config(), force_rescan=request.force_rescan)
+        queue_id = get_scan_service().scan_all(
+            browsable, _get_global_config(), force_rescan=request.force_rescan, dataset_plan=datasets
+        )
     except RuntimeError as e:
         raise HTTPException(status_code=409, detail=str(e))
     return {"queue_id": queue_id, "dataset_count": len(browsable)}
