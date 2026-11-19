@@ -292,7 +292,7 @@ class TestLTXVideo2AudioLoraTargets(unittest.TestCase):
 
 
 class TestFactoryDataSignals(unittest.TestCase):
-    """Test factory's _configure_model_data_signals method."""
+    """Test capability detection from the dataset plan."""
 
     def test_z_image_reference_embeds_available_before_dataset_preparation(self):
         from types import SimpleNamespace
@@ -327,18 +327,14 @@ class TestFactoryDataSignals(unittest.TestCase):
 
     def test_factory_detects_image_dataset(self):
         """Factory should detect image datasets and signal the model."""
-        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+        from simpletuner.helpers.data_backend.factory import configure_model_data_signals
 
         model = MagicMock()
-        args = MagicMock()
-        accelerator = MagicMock()
-
-        factory = FactoryRegistry(args, accelerator, None, None, model)
 
         config = [
             {"id": "images", "dataset_type": "image", "disabled": False},
         ]
-        factory._configure_model_data_signals(config)
+        configure_model_data_signals(model, config)
 
         model.configure_data_signals.assert_called_once_with(
             has_images=True, has_video=False, has_audio=False, has_grounding=False, has_conditioning=False
@@ -346,18 +342,14 @@ class TestFactoryDataSignals(unittest.TestCase):
 
     def test_factory_detects_video_dataset(self):
         """Factory should detect video datasets and signal the model."""
-        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+        from simpletuner.helpers.data_backend.factory import configure_model_data_signals
 
         model = MagicMock()
-        args = MagicMock()
-        accelerator = MagicMock()
-
-        factory = FactoryRegistry(args, accelerator, None, None, model)
 
         config = [
             {"id": "videos", "dataset_type": "video", "disabled": False},
         ]
-        factory._configure_model_data_signals(config)
+        configure_model_data_signals(model, config)
 
         model.configure_data_signals.assert_called_once_with(
             has_images=False, has_video=True, has_audio=False, has_grounding=False, has_conditioning=False
@@ -365,18 +357,14 @@ class TestFactoryDataSignals(unittest.TestCase):
 
     def test_factory_detects_audio_dataset(self):
         """Factory should detect audio datasets and signal the model."""
-        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+        from simpletuner.helpers.data_backend.factory import configure_model_data_signals
 
         model = MagicMock()
-        args = MagicMock()
-        accelerator = MagicMock()
-
-        factory = FactoryRegistry(args, accelerator, None, None, model)
 
         config = [
             {"id": "audio", "dataset_type": "audio", "disabled": False},
         ]
-        factory._configure_model_data_signals(config)
+        configure_model_data_signals(model, config)
 
         model.configure_data_signals.assert_called_once_with(
             has_images=False, has_video=False, has_audio=True, has_grounding=False, has_conditioning=False
@@ -384,20 +372,16 @@ class TestFactoryDataSignals(unittest.TestCase):
 
     def test_factory_detects_mixed_datasets(self):
         """Factory should detect multiple dataset types."""
-        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+        from simpletuner.helpers.data_backend.factory import configure_model_data_signals
 
         model = MagicMock()
-        args = MagicMock()
-        accelerator = MagicMock()
-
-        factory = FactoryRegistry(args, accelerator, None, None, model)
 
         config = [
             {"id": "images", "dataset_type": "image", "disabled": False},
             {"id": "videos", "dataset_type": "video", "disabled": False},
             {"id": "audio", "dataset_type": "audio", "disabled": False},
         ]
-        factory._configure_model_data_signals(config)
+        configure_model_data_signals(model, config)
 
         model.configure_data_signals.assert_called_once_with(
             has_images=True, has_video=True, has_audio=True, has_grounding=False, has_conditioning=False
@@ -405,19 +389,15 @@ class TestFactoryDataSignals(unittest.TestCase):
 
     def test_factory_ignores_disabled_datasets(self):
         """Factory should ignore disabled datasets."""
-        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+        from simpletuner.helpers.data_backend.factory import configure_model_data_signals
 
         model = MagicMock()
-        args = MagicMock()
-        accelerator = MagicMock()
-
-        factory = FactoryRegistry(args, accelerator, None, None, model)
 
         config = [
             {"id": "images", "dataset_type": "image", "disabled": True},
             {"id": "audio", "dataset_type": "audio", "disabled": False},
         ]
-        factory._configure_model_data_signals(config)
+        configure_model_data_signals(model, config)
 
         model.configure_data_signals.assert_called_once_with(
             has_images=False, has_video=False, has_audio=True, has_grounding=False, has_conditioning=False
@@ -425,19 +405,15 @@ class TestFactoryDataSignals(unittest.TestCase):
 
     def test_factory_ignores_disable_flag(self):
         """Factory should also check 'disable' flag (alternative spelling)."""
-        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+        from simpletuner.helpers.data_backend.factory import configure_model_data_signals
 
         model = MagicMock()
-        args = MagicMock()
-        accelerator = MagicMock()
-
-        factory = FactoryRegistry(args, accelerator, None, None, model)
 
         config = [
             {"id": "images", "dataset_type": "image", "disable": True},
             {"id": "audio", "dataset_type": "audio", "disabled": False},
         ]
-        factory._configure_model_data_signals(config)
+        configure_model_data_signals(model, config)
 
         model.configure_data_signals.assert_called_once_with(
             has_images=False, has_video=False, has_audio=True, has_grounding=False, has_conditioning=False
@@ -445,34 +421,25 @@ class TestFactoryDataSignals(unittest.TestCase):
 
     def test_factory_handles_no_model(self):
         """Factory should handle None model gracefully."""
-        from simpletuner.helpers.data_backend.factory import FactoryRegistry
-
-        args = MagicMock()
-        accelerator = MagicMock()
-
-        factory = FactoryRegistry(args, accelerator, None, None, None)
+        from simpletuner.helpers.data_backend.factory import configure_model_data_signals
 
         config = [
             {"id": "images", "dataset_type": "image", "disabled": False},
         ]
         # Should not raise
-        factory._configure_model_data_signals(config)
+        configure_model_data_signals(None, config)
 
     def test_factory_ignores_non_primary_datasets(self):
         """Factory should ignore text_embeds, image_embeds, etc."""
-        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+        from simpletuner.helpers.data_backend.factory import configure_model_data_signals
 
         model = MagicMock()
-        args = MagicMock()
-        accelerator = MagicMock()
-
-        factory = FactoryRegistry(args, accelerator, None, None, model)
 
         config = [
             {"id": "text", "dataset_type": "text_embeds", "disabled": False},
             {"id": "img_embeds", "dataset_type": "image_embeds", "disabled": False},
         ]
-        factory._configure_model_data_signals(config)
+        configure_model_data_signals(model, config)
 
         model.configure_data_signals.assert_called_once_with(
             has_images=False, has_video=False, has_audio=False, has_grounding=False, has_conditioning=False
@@ -541,13 +508,9 @@ class TestGroundingDataSignal(unittest.TestCase):
 
     def test_factory_detects_grounding(self):
         """Factory should detect grounding config and signal the model."""
-        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+        from simpletuner.helpers.data_backend.factory import configure_model_data_signals
 
         model = MagicMock()
-        args = MagicMock()
-        accelerator = MagicMock()
-
-        factory = FactoryRegistry(args, accelerator, None, None, model)
 
         config = [
             {
@@ -557,7 +520,7 @@ class TestGroundingDataSignal(unittest.TestCase):
                 "grounding": {"enabled": True},
             },
         ]
-        factory._configure_model_data_signals(config)
+        configure_model_data_signals(model, config)
 
         model.configure_data_signals.assert_called_once_with(
             has_images=True, has_video=False, has_audio=False, has_grounding=True, has_conditioning=False
@@ -565,13 +528,9 @@ class TestGroundingDataSignal(unittest.TestCase):
 
     def test_factory_grounding_disabled_not_signaled(self):
         """Factory should not signal grounding when grounding.enabled is False."""
-        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+        from simpletuner.helpers.data_backend.factory import configure_model_data_signals
 
         model = MagicMock()
-        args = MagicMock()
-        accelerator = MagicMock()
-
-        factory = FactoryRegistry(args, accelerator, None, None, model)
 
         config = [
             {
@@ -581,7 +540,7 @@ class TestGroundingDataSignal(unittest.TestCase):
                 "grounding": {"enabled": False},
             },
         ]
-        factory._configure_model_data_signals(config)
+        configure_model_data_signals(model, config)
 
         model.configure_data_signals.assert_called_once_with(
             has_images=True, has_video=False, has_audio=False, has_grounding=False, has_conditioning=False

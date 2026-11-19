@@ -836,6 +836,7 @@ class CacheJobService:
     def _execute_conditioning_cache(
         self, job: CacheJob, dataset_config: Dict[str, Any], global_config: Dict[str, Any], dataset_plan=None
     ):
+        from simpletuner.helpers.data_backend.factory import configure_model_data_signals
         from simpletuner.helpers.training.state_tracker import StateTracker
 
         args = self._build_args(global_config)
@@ -855,6 +856,7 @@ class CacheJobService:
             self._broadcast("dataset_cache", self._job_to_dict(job))
 
             model = self._load_model(global_config, args, accelerator)
+            configure_model_data_signals(model, dataset_plan or [dataset_config])
 
             if not model.requires_conditioning_image_embeds():
                 raise ValueError(

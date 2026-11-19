@@ -179,6 +179,41 @@ def _backend_dataset_type(backend: Dict[str, Any], *, default: DatasetType = Dat
     return ensure_dataset_type(backend.get("dataset_type"), default=default)
 
 
+def configure_model_data_signals(model, data_backend_config: List[Dict[str, Any]]) -> None:
+    """Bind the enabled dataset roles and capabilities before model preparation."""
+    if model is None:
+        return
+
+    has_images = False
+    has_video = False
+    has_audio = False
+    has_grounding = False
+    has_conditioning = False
+
+    for backend in data_backend_config:
+        if backend.get("disabled", False) or backend.get("disable", False):
+            continue
+        dataset_type = _backend_dataset_type(backend)
+        if dataset_type is DatasetType.IMAGE:
+            has_images = True
+        elif dataset_type is DatasetType.VIDEO:
+            has_video = True
+        elif dataset_type is DatasetType.AUDIO:
+            has_audio = True
+        has_conditioning |= bool(backend.get("conditioning_data"))
+        grounding_config = backend.get("grounding")
+        if isinstance(grounding_config, dict) and grounding_config.get("enabled", False):
+            has_grounding = True
+
+    model.configure_data_signals(
+        has_images=has_images,
+        has_video=has_video,
+        has_audio=has_audio,
+        has_grounding=has_grounding,
+        has_conditioning=has_conditioning,
+    )
+
+
 def _is_primary_training_backend(backend: Dict[str, Any]) -> bool:
     """Return True when backend participates in the core training dataloader."""
     primary_types = {
@@ -2651,7 +2686,7 @@ class FactoryRegistry:
 
         conditioning, audio = self._resolve_dataset_relationships(data_backend_config)
         self._resolve_conditioning_geometry(data_backend_config)
-        self._configure_model_data_signals(data_backend_config)
+        configure_model_data_signals(self.model, data_backend_config)
 
         if not self.text_embed_backends and self._uses_text_embeddings_cache():
             self.configure_text_embed_backends(data_backend_config)
@@ -2750,45 +2785,6 @@ class FactoryRegistry:
         # Process deferred text embeddings for models requiring image context
         # (must happen after conditioning datasets are connected)
         self._process_deferred_text_embeddings()
-
-    def _configure_model_data_signals(self, data_backend_config: List[Dict[str, Any]]) -> None:
-        """
-        Detect data types present in backends and signal the model.
-
-        This allows models to adjust behavior based on what data types are
-        available (e.g., adding audio LoRA targets when audio data is present).
-        """
-        if self.model is None:
-            return
-
-        has_images = False
-        has_video = False
-        has_audio = False
-        has_grounding = False
-        has_conditioning = False
-
-        for backend in data_backend_config:
-            if backend.get("disabled", False) or backend.get("disable", False):
-                continue
-            dataset_type = _backend_dataset_type(backend)
-            if dataset_type is DatasetType.IMAGE:
-                has_images = True
-            elif dataset_type is DatasetType.VIDEO:
-                has_video = True
-            elif dataset_type is DatasetType.AUDIO:
-                has_audio = True
-            has_conditioning |= bool(backend.get("conditioning_data"))
-            grounding_config = backend.get("grounding")
-            if isinstance(grounding_config, dict) and grounding_config.get("enabled", False):
-                has_grounding = True
-
-        self.model.configure_data_signals(
-            has_images=has_images,
-            has_video=has_video,
-            has_audio=has_audio,
-            has_grounding=has_grounding,
-            has_conditioning=has_conditioning,
-        )
 
     def _handle_resolution_conversion(self, backend: Dict[str, Any]) -> None:
         """Handle resolution type conversion from pixel_area to area."""
