@@ -1,6 +1,7 @@
 """Tests for cache_job_service: capabilities, job management, mutual exclusion."""
 
 import unittest
+from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
@@ -410,6 +411,38 @@ class _LegacyPreparationMetadata(SimpleNamespace):
 
 
 class TestImageArtifactPreparation(unittest.TestCase):
+    def test_vae_job_uses_training_defaults_and_the_modality_vae(self):
+        service = CacheJobService()
+        dataset = {"id": "audio", "type": "local", "dataset_type": "audio", "vae_batch_size": 2}
+        source = Mock(type="local")
+        chosen_vae = object()
+        model = Mock()
+        model.get_vae_for_dataset_type.return_value = chosen_vae
+        runtime = DatasetRuntime("audio", source, Mock(), {**dataset, "instance_data_dir": "audio"})
+        with TemporaryDirectory() as directory:
+            job = CacheJob("job", "audio", "vae")
+            with (
+                patch.object(service, "_load_model", return_value=model),
+                patch.object(service, "_create_dataset_runtime", return_value=runtime),
+                patch.object(service, "_prepare_image_artifacts"),
+                patch("simpletuner.helpers.caching.vae.VAECache") as cache,
+            ):
+                service._run_cache_job(job, dataset, {"model_family": "test", "output_dir": directory})
+            self.assertEqual(job.status, CacheJobStatus.COMPLETED, job.error)
+            self.assertEqual(Path(cache.call_args.kwargs["cache_dir"]), Path(directory) / "cache/audio/vae/test/audio")
+        model.get_vae_for_dataset_type.assert_called_once_with("audio")
+        self.assertIs(cache.call_args.kwargs["vae"], chosen_vae)
+        self.assertEqual(cache.call_args.kwargs["vae_batch_size"], 2)
+
+    def test_vae_job_rejects_disabled_writes_before_model_loading(self):
+        service = CacheJobService()
+        job = CacheJob("job", "images", "vae")
+        with patch.object(service, "_load_model") as load:
+            service._run_cache_job(job, {"id": "images", "type": "local"}, {"vae_cache_disable": True})
+        self.assertEqual(job.status, CacheJobStatus.FAILED)
+        self.assertIn("writes disabled", job.error)
+        load.assert_not_called()
+
     def test_conditioning_cache_job_binds_z_image_reference_capability(self):
         from simpletuner.helpers.models.z_image_omni.model import ZImageOmni
 
@@ -473,7 +506,13 @@ class TestImageArtifactPreparation(unittest.TestCase):
             ),
         ):
             with self.subTest(role=role):
-                dataset = {"id": "source", "type": "webshart", role: "artifacts", cache_dir_key: "cache/images"}
+                dataset = {
+                    "id": "source",
+                    "type": "webshart",
+                    "source": "s3://source",
+                    role: "artifacts",
+                    cache_dir_key: "cache/images",
+                }
                 entry = {
                     "id": "artifacts",
                     "type": "aws",

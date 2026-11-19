@@ -215,6 +215,14 @@ def configure_model_data_signals(model, data_backend_config: List[Dict[str, Any]
     )
 
 
+def default_vae_cache_dir(args, dataset_id, dataset_type):
+    """Keep each dataset's default latent store in its own media namespace."""
+    output_dir = _get_arg_value(args, "output_dir") or os.path.join(os.getcwd(), ".simpletuner_output")
+    model_family = _get_arg_value(args, "model_family") or "unknown_model"
+    media = ("audio",) if ensure_dataset_type(dataset_type) is DatasetType.AUDIO else ()
+    return os.path.join(str(output_dir), "cache", *media, "vae", model_family, dataset_id)
+
+
 def _is_primary_training_backend(backend: Dict[str, Any]) -> bool:
     """Return True when backend participates in the core training dataloader."""
     primary_types = {
@@ -1385,16 +1393,6 @@ class FactoryRegistry:
 
         metrics_logger.info(f"Factory metrics - {stage}: {log_data}")
 
-    def _default_vae_cache_dir(self, dataset_id: str, dataset_type: DatasetType) -> str:
-        """Return a cache directory path namespaced per media type to avoid collisions."""
-        output_dir = _get_arg_value(self.args, "output_dir", None)
-        if not output_dir:
-            output_dir = os.path.join(os.getcwd(), ".simpletuner_output")
-        model_family = getattr(self.args, "model_family", "unknown_model") or "unknown_model"
-        if dataset_type is DatasetType.AUDIO:
-            return os.path.join(str(output_dir), "cache", "audio", "vae", model_family, dataset_id)
-        return os.path.join(str(output_dir), "cache", "vae", model_family, dataset_id)
-
     def _attach_audio_backend(self, init_backend: Dict[str, Any], dataset_type: DatasetType) -> None:
         """Attach audio-specific runtime helpers when configuring audio datasets."""
         if dataset_type is not DatasetType.AUDIO:
@@ -1985,7 +1983,7 @@ class FactoryRegistry:
             if source_cache_dir_vae:
                 audio_vae_cache = os.path.join(os.path.dirname(source_cache_dir_vae), "audio", audio_backend_id)
             else:
-                audio_vae_cache = self._default_vae_cache_dir(audio_backend_id, DatasetType.AUDIO)
+                audio_vae_cache = default_vae_cache_dir(self.args, audio_backend_id, DatasetType.AUDIO)
 
             # Build the auto-generated audio dataset config
             default_audio_channels = getattr(self.model, "DEFAULT_AUDIO_CHANNELS", 1)
@@ -2843,7 +2841,7 @@ class FactoryRegistry:
             init_backend["bucket_report"].set_instance_data_dir(init_backend["instance_data_dir"])
 
             if "cache_dir_vae" not in backend:
-                backend["cache_dir_vae"] = self._default_vae_cache_dir(backend["id"], dataset_type_value)
+                backend["cache_dir_vae"] = default_vae_cache_dir(self.args, backend["id"], dataset_type_value)
         elif backend["type"] == "webshart":
             webshart_config = backend.get("webshart", {}) or {}
             init_backend["instance_data_dir"] = webshart_config.get(
@@ -2851,7 +2849,7 @@ class FactoryRegistry:
             )
             init_backend["bucket_report"].set_instance_data_dir(init_backend["instance_data_dir"])
             if "cache_dir_vae" not in backend:
-                backend["cache_dir_vae"] = self._default_vae_cache_dir(backend["id"], dataset_type_value)
+                backend["cache_dir_vae"] = default_vae_cache_dir(self.args, backend["id"], dataset_type_value)
         else:
             raise ValueError(f"Unknown data backend type: {backend['type']}")
 
@@ -3658,7 +3656,7 @@ class FactoryRegistry:
         if image_embed_data_backend["data_backend"].type == "memory" and image_embed_data_backend.get("cache_dir"):
             vae_cache_dir = image_embed_data_backend["cache_dir"]
         if not vae_cache_dir:
-            vae_cache_dir = self._default_vae_cache_dir(init_backend["id"], dataset_type_enum)
+            vae_cache_dir = default_vae_cache_dir(self.args, init_backend["id"], dataset_type_enum)
             backend["cache_dir_vae"] = vae_cache_dir
             init_backend.setdefault("config", {})["cache_dir_vae"] = vae_cache_dir
         if vae_cache_dir in vae_cache_dir_paths:
@@ -4091,7 +4089,7 @@ class FactoryRegistry:
             dataset_type_enum in {DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.CONDITIONING}
             and "cache_dir_vae" not in backend
         ):
-            backend["cache_dir_vae"] = self._default_vae_cache_dir(backend["id"], dataset_type_enum)
+            backend["cache_dir_vae"] = default_vae_cache_dir(self.args, backend["id"], dataset_type_enum)
         StateTracker.set_data_backend_config(
             data_backend_id=init_backend["id"],
             config=init_backend["config"],

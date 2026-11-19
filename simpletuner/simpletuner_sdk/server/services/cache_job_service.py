@@ -593,6 +593,7 @@ class CacheJobService:
     def _execute_vae_cache(
         self, job: CacheJob, dataset_config: Dict[str, Any], global_config: Dict[str, Any], dataset_plan=None
     ):
+        from simpletuner.helpers.data_backend.factory import default_vae_cache_dir, init_backend_config
         from simpletuner.helpers.training.state_tracker import StateTracker
 
         args = self._build_args(global_config)
@@ -607,6 +608,9 @@ class CacheJobService:
 
         try:
             self._check_cancelled(job)
+            settings = init_backend_config(dataset_config, args, accelerator)["config"]
+            if settings["vae_cache_disable"]:
+                raise ValueError("The selected dataset has VAE cache writes disabled.")
 
             job.stage = "Loading VAE"
             self._broadcast("dataset_cache", self._job_to_dict(job))
@@ -623,9 +627,13 @@ class CacheJobService:
             runtime = self._create_dataset_runtime(dataset_config, args, accelerator)
             scope.callback(runtime.close)
 
+            dataset_type = runtime.config["dataset_type"]
+            dataset_vae = model.get_vae_for_dataset_type(dataset_type)
+            if dataset_vae is not None:
+                vae = dataset_vae
             audio = runtime.config.get("audio") or {}
             source_id = runtime.config.get("source_dataset_id") or audio.get("source_dataset_id")
-            needs_source = runtime.config["dataset_type"] == "conditioning" or audio.get("source_from_video")
+            needs_source = dataset_type == "conditioning" or audio.get("source_from_video")
             if source_id and needs_source:
                 source_config = next(
                     (
@@ -646,19 +654,16 @@ class CacheJobService:
                 dataset_config, dataset_plan, args, accelerator, runtime.data_backend, "image_embeds"
             )
             cache_dir_vae = self._resolve_cache_dir(
-                dataset_config.get("cache_dir_vae") or self._resolve_global_key(global_config, "cache_dir_vae"),
+                dataset_config.get("cache_dir_vae") or default_vae_cache_dir(args, runtime.id, dataset_type),
                 global_config,
                 dataset_config,
                 absolute=cache_store.type != "aws",
             )
-            if not cache_dir_vae:
-                raise ValueError("No VAE cache directory configured for this dataset")
-
             from simpletuner.helpers.caching.vae import VAECache
 
             vae_cache = VAECache(
                 id=runtime.id,
-                dataset_type=runtime.config["dataset_type"],
+                dataset_type=dataset_type,
                 model=model,
                 vae=vae,
                 accelerator=accelerator,
@@ -667,10 +672,10 @@ class CacheJobService:
                 cache_data_backend=cache_store,
                 instance_data_dir=runtime.config["instance_data_dir"],
                 cache_dir=cache_dir_vae,
-                vae_batch_size=int(global_config.get("vae_batch_size", 4) or 4),
-                write_batch_size=int(global_config.get("write_batch_size", 64) or 64),
-                read_batch_size=int(global_config.get("read_batch_size", 25) or 25),
-                process_queue_size=int(global_config.get("process_queue_size", 16) or 16),
+                vae_batch_size=dataset_config.get("vae_batch_size", args.vae_batch_size),
+                write_batch_size=dataset_config.get("write_batch_size", args.write_batch_size),
+                read_batch_size=dataset_config.get("read_batch_size", args.read_batch_size),
+                process_queue_size=dataset_config.get("image_processing_batch_size", args.image_processing_batch_size or 16),
                 hash_filenames=True,
                 cache_inventory_dir=args.output_dir,
                 dataset_config=runtime.config,
