@@ -603,6 +603,23 @@ class CacheJobService:
             runtime = self._create_dataset_runtime(dataset_config, args, accelerator)
             scope.callback(runtime.close)
 
+            source_id = runtime.config.get("source_dataset_id")
+            if source_id and runtime.config["dataset_type"] == "conditioning":
+                source_config = next(
+                    (
+                        item
+                        for item in dataset_plan or ()
+                        if item.get("id") == source_id and not (item.get("disabled") or item.get("disable"))
+                    ),
+                    None,
+                )
+                if source_config is None:
+                    raise ValueError(f"Dataset {runtime.id} requires an enabled geometry source {source_id}.")
+                runtime.source_dataset = self._create_dataset_runtime(
+                    source_config, args, accelerator, preparation_only=True
+                )
+                scope.callback(runtime.source_dataset.close)
+
             cache_store, _ = self._image_artifact_store(
                 dataset_config, dataset_plan, args, accelerator, runtime.data_backend, "image_embeds"
             )
@@ -635,6 +652,7 @@ class CacheJobService:
                 hash_filenames=True,
                 cache_inventory_dir=args.output_dir,
                 dataset_config=runtime.config,
+                dataset=runtime,
             )
 
             self._check_cancelled(job)

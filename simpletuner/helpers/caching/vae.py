@@ -55,7 +55,7 @@ else:
 WAN_STYLE_LATENT_MODEL_FAMILIES = ("wan", "wan_s2v", "infinitetalk", "sanavideo", "anima")
 
 
-def prepare_sample(image, data_backend_id, filepath, model, *, metadata, config):
+def prepare_sample(image, data_backend_id, filepath, model, *, metadata, config, dataset=None):
     sample = TrainingSample(
         image=image,
         data_backend_id=data_backend_id,
@@ -64,34 +64,30 @@ def prepare_sample(image, data_backend_id, filepath, model, *, metadata, config)
         model=model,
         data_backend_config=config,
     )
-    prepared_sample = None
-    if config.get("dataset_type") == "conditioning" and not metadata:
-        source_id = next(
-            (source for source, target in StateTracker.get_conditioning_mappings() if target == data_backend_id),
-            None,
-        )
-        if source_id is not None:
-            source = StateTracker.get_dataset(source_id)
-            source_ref = sample.training_sample_path(training_dataset_id=source_id)
-            source_metadata = source.metadata_backend.get_metadata_by_filepath(source_ref)
-            prepared_sample = sample.prepare_like(
-                TrainingSample(
-                    image=None,
-                    data_backend_id=source_id,
-                    image_metadata=source_metadata,
-                    image_path=source_ref,
-                    model=model,
-                    data_backend_config=source.config,
-                )
+    source = dataset.source_dataset if dataset is not None else None
+    if config.get("dataset_type") == "conditioning" and not metadata and source is not None:
+        source_ref = sample.training_sample_path(source.id, training_dataset=source, conditioning_dataset=dataset)
+        (source_metadata,) = source.read_samples([source_ref], view=source.published_read_view())
+        source_metadata["prepared_geometry"] = True
+        prepared = sample.prepare_like(
+            TrainingSample(
+                image=None,
+                data_backend_id=source.id,
+                image_metadata=source_metadata,
+                image_path=source_ref,
+                model=model,
+                data_backend_config=source.config,
             )
-    if prepared_sample is None:
-        prepared_sample = sample.prepare()
+        )
+    else:
+        prepared = sample.prepare()
 
-    return prepared_sample.image, prepared_sample.crop_coordinates, prepared_sample.aspect_ratio
+    return prepared.image, prepared.crop_coordinates, prepared.aspect_ratio
 
 
 class VAECache(WebhookMixin):
     _epoch_cache_dir: str | None = None
+    dataset = None
 
     def __init__(
         self,
@@ -127,8 +123,10 @@ class VAECache(WebhookMixin):
         delete_nsfw_images: bool = False,
         cache_inventory_dir: str | None = None,
         dataset_config: dict | None = None,
+        dataset=None,
     ):
         self.id = id
+        self.dataset = dataset
         self.dataset_type_enum = ensure_dataset_type(dataset_type, default=DatasetType.IMAGE)
         self.dataset_type = self.dataset_type_enum.value
         _base_search_types = ["image", "video", "conditioning"]
@@ -1500,6 +1498,7 @@ class VAECache(WebhookMixin):
                             model=self.model,
                             metadata=geometry[filepath],
                             config=self.dataset_config,
+                            dataset=self.dataset,
                         )
                         if result:
                             processed_images.append((filepath, result))
@@ -1518,6 +1517,7 @@ class VAECache(WebhookMixin):
                             model=self.model,
                             metadata=geometry[filepath],
                             config=self.dataset_config,
+                            dataset=self.dataset,
                         )
                         if result:
                             processed_images.append((filepath, result))

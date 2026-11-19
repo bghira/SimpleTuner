@@ -3793,6 +3793,7 @@ class FactoryRegistry:
             delete_nsfw_images=backend.get("delete_nsfw_images", getattr(self.args, "delete_nsfw_images", False)),
             cache_inventory_dir=getattr(self.args, "output_dir", None),
             dataset_config=init_backend["config"],
+            dataset=init_backend["dataset_runtime"],
         )
         init_backend["vaecache"].set_webhook_handler(StateTracker.get_webhook_handler())
 

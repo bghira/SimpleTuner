@@ -12,14 +12,62 @@ from unittest.mock import Mock, patch
 
 import torch
 from diffusers.models.autoencoders.vae import DiagonalGaussianDistribution
+from PIL import Image
 
-from simpletuner.helpers.caching.vae import VAECache
+from simpletuner.helpers.caching.vae import VAECache, prepare_sample
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 from simpletuner.helpers.data_backend.local import LocalDataBackend
 from simpletuner.helpers.data_backend.webshart import WebshartDataBackend
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBackend
+from simpletuner.helpers.metadata.preparation import DatasetReadView
+from simpletuner.helpers.training.state_tracker import StateTracker
+
+
+class TestConditioningGeometry(unittest.TestCase):
+    def test_missing_conditioning_geometry_is_read_from_the_bound_source_view(self):
+        with TemporaryDirectory() as directory:
+            parent = Path(directory)
+            source_root, reference_root = parent / "source", parent / "reference"
+            geometry = {
+                "original_size": (256, 256),
+                "target_size": (128, 128),
+                "intermediary_size": (256, 256),
+                "crop_coordinates": (32, 64),
+                "aspect_ratio": 1.0,
+            }
+            metadata = Mock(epoch_provider=None, requires_complete_preparation=True, view_revision="pinned")
+            metadata.get_view_metadata.return_value = [geometry]
+            config = {"resolution": 256, "resolution_type": "pixel", "crop": True, "crop_style": "center"}
+            source = DatasetRuntime(
+                "source",
+                LocalDataBackend(None, "source"),
+                metadata,
+                {**config, "instance_data_dir": str(source_root)},
+            )
+            reference = DatasetRuntime(
+                "reference",
+                LocalDataBackend(None, "reference"),
+                None,
+                {**config, "dataset_type": "conditioning", "instance_data_dir": str(reference_root)},
+            )
+            reference.source_dataset = source
+            with (
+                patch.object(StateTracker, "get_conditioning_mappings", side_effect=AssertionError("global relationships")),
+                patch.object(StateTracker, "get_dataset", side_effect=AssertionError("global dataset lookup")),
+            ):
+                image, crop, aspect = prepare_sample(
+                    Image.new("RGB", (256, 256)),
+                    reference.id,
+                    str(reference_root / "clip.png"),
+                    None,
+                    metadata=None,
+                    config=reference.config,
+                    dataset=reference,
+                )
+            metadata.get_view_metadata.assert_called_once_with([str(source_root / "clip.png")], DatasetReadView("pinned"))
+            self.assertEqual((image.size, crop, aspect), ((128, 128), (32, 64), 1.0))
 
 
 class TestCacheGroups(unittest.TestCase):
