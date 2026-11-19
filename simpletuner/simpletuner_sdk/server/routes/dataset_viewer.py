@@ -4,8 +4,10 @@ and cache operations (text embeds, VAE, conditioning)."""
 
 from __future__ import annotations
 
+import hashlib
 import importlib.metadata
 import importlib.util
+import json
 from contextlib import contextmanager
 from typing import Annotated, Any, Dict, List, Literal, Optional
 
@@ -671,34 +673,42 @@ async def cancel_scan(_user: User = Depends(get_current_user)) -> Dict[str, Any]
 class CacheStartRequest(BaseModel):
     dataset_id: str
     cache_type: Literal["text_embeds", "vae", "conditioning"]
+    plan_scope: Optional[str] = None
+
+
+def _cache_plan():
+    from .datasets import _store
+
+    store = _store()
+    try:
+        plan, _, _ = store.load()
+    except ValueError:
+        plan = []
+    config = _get_global_config()
+    identity = json.dumps([str(store.path.resolve()), plan, config], sort_keys=True, default=str)
+    return plan, config, hashlib.sha256(identity.encode()).hexdigest()
 
 
 @router.get("/cache/capabilities")
 async def get_cache_capabilities(_user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Available cache types based on model family and dataset configuration."""
-    global_config = _get_global_config()
+    datasets, global_config, scope = _cache_plan()
     model_family = global_config.get("model_family", "")
-    try:
-        datasets = _load_plan()
-    except ValueError:
-        datasets = []
 
     from simpletuner.simpletuner_sdk.server.services.cache_job_service import CacheJobService
 
-    return CacheJobService.get_capabilities(model_family, datasets, global_config)
+    return {"plan_scope": scope, **CacheJobService.get_capabilities(model_family, datasets, global_config)}
 
 
 @router.post("/cache/start")
 async def start_cache_job(request: CacheStartRequest, _user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Start a background cache job for a dataset."""
-    try:
-        plan = _load_plan()
-    except ValueError:
-        plan = []
+    plan, global_config, scope = _cache_plan()
+    if request.plan_scope is not None and request.plan_scope != scope:
+        raise HTTPException(status_code=409, detail="The dataset plan changed. Refresh it before preparing artifacts.")
     config = next((entry for entry in plan if entry.get("id") == request.dataset_id), None)
     if config is None:
         raise HTTPException(status_code=404, detail=f"Dataset '{request.dataset_id}' not found in plan")
-    global_config = _get_global_config()
     try:
         job_id = get_cache_service().start_cache_job(
             request.dataset_id,
@@ -706,6 +716,7 @@ async def start_cache_job(request: CacheStartRequest, _user: User = Depends(get_
             config,
             global_config,
             dataset_plan=plan,
+            plan_scope=scope,
         )
     except RuntimeError as e:
         raise HTTPException(status_code=409, detail=str(e))
@@ -715,7 +726,8 @@ async def start_cache_job(request: CacheStartRequest, _user: User = Depends(get_
 @router.get("/cache/active")
 async def get_active_cache_job(_user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Current active cache job status, if any."""
-    result = get_cache_service().get_active_status()
+    _, _, scope = _cache_plan()
+    result = get_cache_service().get_active_status(plan_scope=scope)
     if result is None:
         return {"active": False}
     return {"active": True, **result}
@@ -724,13 +736,15 @@ async def get_active_cache_job(_user: User = Depends(get_current_user)) -> Dict[
 @router.get("/cache/status")
 async def get_cache_job_status(job_id: str, _user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Status of a cache job."""
-    result = get_cache_service().get_job_status(job_id)
+    _, _, scope = _cache_plan()
+    result = get_cache_service().get_job_status(job_id, plan_scope=scope)
     if result is None:
         raise HTTPException(status_code=404, detail=f"Cache job '{job_id}' not found")
     return result
 
 
 @router.post("/cache/cancel")
-async def cancel_cache_job(_user: User = Depends(get_current_user)) -> Dict[str, Any]:
+async def cancel_cache_job(job_id: Optional[str] = None, _user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Cancel the active cache job."""
-    return {"cancelled": get_cache_service().cancel()}
+    _, _, scope = _cache_plan()
+    return {"cancelled": get_cache_service().cancel(job_id=job_id, plan_scope=scope)}

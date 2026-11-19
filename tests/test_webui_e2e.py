@@ -1958,6 +1958,69 @@ class DatasetManagementTestCase(_TrainerPageMixin, WebUITestCase):
 class DatasetViewerRevisionTestCase(_TrainerPageMixin, WebUITestCase):
     MAX_BROWSERS = 1
 
+    def test_cache_progress_stays_bound_to_the_active_job_until_shutdown(self) -> None:
+        self.seed_defaults()
+
+        def scenario(driver, _browser):
+            trainer = self._trainer_page(driver)
+            trainer.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer.switch_to_datasets_tab()
+            trainer.wait_for_tab("datasets")
+            wait = WebDriverWait(driver, 15)
+            wait.until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, "//button[contains(@class,'dataset-subtab-btn') and contains(.,'Viewer')]")
+                )
+            ).click()
+            driver.execute_async_script(
+                """
+                const done = arguments[0];
+                const view = Alpine.$data(document.querySelector('[x-data="datasetViewerComponent()"]'));
+                window.cacheFixture = {
+                    active: true, job_id: 'active-job', dataset_id: 'images', cache_type: 'vae',
+                    status: 'running', stage: 'Preparing latents', current: 3, total: 10,
+                };
+                const originalFetch = window.fetch;
+                window.fetch = (url, options) => {
+                    const target = new URL(url, window.location.origin);
+                    const response = body => Promise.resolve(new Response(JSON.stringify(body)));
+                    if (target.pathname.endsWith('/cache/active')) return response(window.cacheFixture);
+                    if (target.pathname.endsWith('/cache/status')) return response(window.cacheFixture);
+                    if (target.pathname.endsWith('/cache/cancel')) {
+                        window.cancelledJob = target.searchParams.get('job_id');
+                        window.cacheFixture = {...window.cacheFixture, status: 'cancelling', stage: 'Cancelling'};
+                        return response({cancelled: true});
+                    }
+                    return originalFetch(url, options);
+                };
+                view._checkActiveCacheJob().then(done);
+                """
+            )
+            cancel = (By.CSS_SELECTOR, "button[aria-label='Cancel cache preparation']")
+            button = wait.until(EC.element_to_be_clickable(cancel))
+            driver.execute_script(
+                """
+                window.dispatchEvent(new CustomEvent('sse:dataset_cache', {
+                    detail: {job_id: 'old-job', status: 'completed'},
+                }));
+                """
+            )
+            self.assertTrue(button.is_displayed())
+            button.click()
+            wait.until(lambda d: not d.find_element(*cancel).is_enabled())
+            self.assertTrue(button.is_displayed())
+            self.assertEqual(driver.execute_script("return window.cancelledJob;"), "active-job")
+            driver.execute_script(
+                """
+                window.cacheFixture = {...window.cacheFixture, status: 'cancelled'};
+                window.dispatchEvent(new CustomEvent('sse:connected'));
+                """
+            )
+            wait.until(EC.invisibility_of_element_located(cancel))
+
+        self.for_each_browser("test_cache_progress_stays_bound_to_the_active_job_until_shutdown", scenario)
+
     def test_delayed_thumbnail_response_does_not_change_another_dataset(self) -> None:
         root = self.home_path / "viewer-race"
         root.mkdir()

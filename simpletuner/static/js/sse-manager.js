@@ -570,6 +570,7 @@
                     retryCount = 0; // Reset retry count on successful connection
                     updateConnectionStatus('connected', 'Connected');
                     setupHeartbeat();
+                    window.dispatchEvent(new CustomEvent('sse:connected'));
                 };
 
                 eventSource.onmessage = function(event) {

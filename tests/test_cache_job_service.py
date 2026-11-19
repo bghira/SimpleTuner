@@ -167,7 +167,14 @@ class TestCacheJobManagement(unittest.TestCase):
 
         ready = threading.Event()
         before = StateTracker.get_args()
-        self.service._broadcast_fn = lambda data, event_type: ready.set() if data["stage"] == "waiting" else None
+        statuses = []
+
+        def broadcast(data, event_type):
+            statuses.append(data["status"])
+            if data["stage"] == "waiting":
+                ready.set()
+
+        self.service._broadcast_fn = broadcast
         with (
             patch("simpletuner.simpletuner_sdk.server.services.dataset_scan_service.get_scan_service") as scan,
             patch.object(self.service, "_check_training_running", return_value=False),
@@ -186,6 +193,7 @@ class TestCacheJobManagement(unittest.TestCase):
             self.assertFalse(self.service._thread.is_alive())
             self.assertIsNone(self.service.get_active_status())
             self.assertEqual(self.service.get_job_status(job)["status"], "cancelled")
+            self.assertEqual(statuses[-2:], ["cancelling", "cancelled"])
 
     def test_spawned_worker_propagates_terminal_error(self):
         with (
@@ -201,6 +209,16 @@ class TestCacheJobManagement(unittest.TestCase):
 
     def test_cancel_when_idle(self):
         self.assertFalse(self.service.cancel())
+
+    def test_status_and_cancel_use_the_saved_plan_and_job(self):
+        job = CacheJob("job", "images", "vae", status=CacheJobStatus.RUNNING, plan_scope="first")
+        self.service._active_job = job
+        self.assertIsNone(self.service.get_active_status(plan_scope="second"))
+        self.assertIsNone(self.service.get_job_status("job", plan_scope="second"))
+        self.assertFalse(self.service.cancel(job_id="job", plan_scope="second"))
+        self.assertFalse(self.service.cancel(job_id="earlier", plan_scope="first"))
+        self.assertEqual(self.service.get_active_status(plan_scope="first")["job_id"], "job")
+        self.assertTrue(self.service.cancel(job_id="job", plan_scope="first"))
 
     def test_job_to_dict(self):
         job = CacheJob(

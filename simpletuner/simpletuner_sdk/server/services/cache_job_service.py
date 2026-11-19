@@ -31,6 +31,7 @@ class CacheJobStatus(str, Enum):
     PENDING = "pending"
     LOADING_MODEL = "loading_model"
     RUNNING = "running"
+    CANCELLING = "cancelling"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -48,6 +49,7 @@ class CacheJob:
     error: Optional[str] = None
     started_at: Optional[float] = None
     finished_at: Optional[float] = None
+    plan_scope: Optional[str] = None
 
 
 class _CacheAcceleratorStub:
@@ -257,6 +259,8 @@ class CacheJobService:
         dataset_config: Dict[str, Any],
         global_config: Dict[str, Any],
         dataset_plan=None,
+        *,
+        plan_scope=None,
     ) -> str:
         """Start a background cache job for a single dataset. Returns job_id."""
         from .dataset_scan_service import get_scan_service
@@ -272,13 +276,14 @@ class CacheJobService:
                 CacheJobStatus.PENDING,
                 CacheJobStatus.LOADING_MODEL,
                 CacheJobStatus.RUNNING,
+                CacheJobStatus.CANCELLING,
             ):
                 raise RuntimeError("A cache job is already in progress.")
             if self._thread is not None and self._thread.is_alive():
                 raise RuntimeError("The previous cache worker is still shutting down.")
 
             job_id = str(uuid.uuid4())[:8]
-            job = CacheJob(job_id=job_id, dataset_id=dataset_id, cache_type=cache_type)
+            job = CacheJob(job_id=job_id, dataset_id=dataset_id, cache_type=cache_type, plan_scope=plan_scope)
             self._active_job = job
 
             context = multiprocessing.get_context("spawn")
@@ -298,7 +303,7 @@ class CacheJobService:
             ) as messages:
                 for data in messages:
                     with self._lock:
-                        if job.status == CacheJobStatus.CANCELLED:
+                        if job.status == CacheJobStatus.CANCELLING:
                             continue
                         job.status = CacheJobStatus(data["status"])
                         job.started_at = data.get("started_at")
@@ -314,44 +319,62 @@ class CacheJobService:
                     CacheJobStatus.COMPLETED,
                     CacheJobStatus.FAILED,
                     CacheJobStatus.CANCELLED,
+                    CacheJobStatus.CANCELLING,
                 ):
                     raise RuntimeError("Cache worker exited before reporting completion.")
         except Exception as exc:
             logger.exception("Cache worker failed for %s", job.dataset_id)
             with self._lock:
-                if job.status != CacheJobStatus.CANCELLED:
+                if job.status != CacheJobStatus.CANCELLING:
                     job.status, job.error = CacheJobStatus.FAILED, str(exc)
                     self._broadcast("dataset_cache", self._job_to_dict(job))
         finally:
-            job.finished_at = time.time()
+            with self._lock:
+                job.finished_at = time.time()
+                if job.status == CacheJobStatus.CANCELLING:
+                    job.status = CacheJobStatus.CANCELLED
+                    job.stage = "Cancelled"
+                    self._broadcast("dataset_cache", self._job_to_dict(job))
 
-    def get_active_status(self) -> Optional[Dict[str, Any]]:
+    def get_active_status(self, *, plan_scope=None) -> Optional[Dict[str, Any]]:
         job = self._active_job
+        if job and plan_scope is not None and job.plan_scope != plan_scope:
+            return None
         if job and (
-            job.status in (CacheJobStatus.PENDING, CacheJobStatus.LOADING_MODEL, CacheJobStatus.RUNNING)
+            job.status
+            in (CacheJobStatus.PENDING, CacheJobStatus.LOADING_MODEL, CacheJobStatus.RUNNING, CacheJobStatus.CANCELLING)
             or (self._thread is not None and self._thread.is_alive())
         ):
             return self._job_to_dict(job)
         return None
 
-    def get_job_status(self, job_id: str) -> Optional[Dict[str, Any]]:
+    def get_job_status(self, job_id: str, *, plan_scope=None) -> Optional[Dict[str, Any]]:
         job = self._active_job
-        if job and job.job_id == job_id:
+        if job and job.job_id == job_id and (plan_scope is None or job.plan_scope == plan_scope):
             return self._job_to_dict(job)
         return None
 
-    def cancel(self) -> bool:
+    def cancel(self, *, job_id=None, plan_scope=None) -> bool:
         with self._lock:
-            if self._active_job and self._active_job.status in (
+            job = self._active_job
+            if job is None or (job_id is not None and job.job_id != job_id):
+                return False
+            if plan_scope is not None and job.plan_scope != plan_scope:
+                return False
+            if job.status in (
                 CacheJobStatus.PENDING,
                 CacheJobStatus.LOADING_MODEL,
                 CacheJobStatus.RUNNING,
             ):
                 if self._cancel_event is not None:
                     self._cancel_event.set()
-                self._active_job.status = CacheJobStatus.CANCELLED
-                self._active_job.finished_at = time.time()
-                self._broadcast("dataset_cache", self._job_to_dict(self._active_job))
+                if self._thread is not None and self._thread.is_alive():
+                    job.status = CacheJobStatus.CANCELLING
+                    job.stage = "Cancelling"
+                else:
+                    job.status = CacheJobStatus.CANCELLED
+                    job.finished_at = time.time()
+                self._broadcast("dataset_cache", self._job_to_dict(job))
                 return True
         return False
 

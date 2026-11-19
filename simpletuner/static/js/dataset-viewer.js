@@ -74,6 +74,11 @@ window.datasetViewerComponent = function () {
         cacheProgress: { dataset_id: '', cache_type: '', stage: '', current: 0, total: 0 },
         cacheCapabilities: { text_embeds: false, vae: false, conditioning_types: [] },
         _cacheHandler: null,
+        _cacheJobId: null,
+        _cacheRequest: 0,
+        _cacheStatusVersion: 0,
+        _cacheStarting: false,
+        _cacheReconnectHandler: null,
 
         init() {
             this._restoreNavState();
@@ -86,6 +91,7 @@ window.datasetViewerComponent = function () {
         },
 
         destroy() {
+            this._cacheRequest++;
             this._teardownSSEListener();
             this._teardownConfigListener();
         },
@@ -138,12 +144,18 @@ window.datasetViewerComponent = function () {
                 const data = this._parseSSEDetail(event);
                 if (data) this._handleCacheEvent(data);
             };
+            this._cacheReconnectHandler = () => this._checkActiveCacheJob();
+            window.addEventListener('sse:connected', this._cacheReconnectHandler);
             window.addEventListener('sse:dataset_scan', this._scanHandler);
             window.addEventListener('sse:dataset_scan_queue', this._queueHandler);
             window.addEventListener('sse:dataset_cache', this._cacheHandler);
         },
 
         _teardownSSEListener() {
+            if (this._cacheReconnectHandler) {
+                window.removeEventListener('sse:connected', this._cacheReconnectHandler);
+                this._cacheReconnectHandler = null;
+            }
             if (this._scanHandler) {
                 window.removeEventListener('sse:dataset_scan', this._scanHandler);
                 this._scanHandler = null;
@@ -168,7 +180,12 @@ window.datasetViewerComponent = function () {
                 this.captionStatus = {};
                 this.filterReport = {};
                 this.datasetGraph = null;
-                this._destroyBboxCanvas();
+                this._cacheRequest++;
+                this._cacheJobId = null;
+                this._cacheStarting = false;
+                this.caching = false;
+                this.cacheError = '';
+                this.cacheCapabilities = { text_embeds: false, vae: false, conditioning_types: [] };
                 this.loadAllSummaries();
                 this._checkActiveScan();
                 this._checkActiveCacheJob();
@@ -179,6 +196,7 @@ window.datasetViewerComponent = function () {
             this._viewerTabHandler = () => {
                 this.loadAllSummaries();
                 this._checkActiveScan();
+                this._checkActiveCacheJob();
             };
             window.addEventListener('viewer-tab-activated', this._viewerTabHandler);
         },
@@ -228,31 +246,28 @@ window.datasetViewerComponent = function () {
         },
 
         _handleCacheEvent(data) {
-            if (data.status === 'loading_model' || data.status === 'running') {
+            if (!data.job_id || data.job_id !== this._cacheJobId) return;
+            this._cacheStatusVersion++;
+            if (['pending', 'loading_model', 'running', 'cancelling'].includes(data.status)) {
                 this.caching = true;
-                this.cacheError = '';
                 this.cacheProgress = {
-                    dataset_id: data.dataset_id || this.cacheProgress.dataset_id,
-                    cache_type: data.cache_type || this.cacheProgress.cache_type,
+                    dataset_id: data.dataset_id,
+                    cache_type: data.cache_type,
+                    status: data.status,
                     stage: data.stage || '',
-                    current: data.current || 0,
-                    total: data.total || 0,
+                    current: data.current ?? 0,
+                    total: data.total ?? 0,
                 };
-            } else if (data.status === 'completed') {
-                this.caching = false;
-                this.cacheError = '';
-                this.cacheProgress = { dataset_id: '', cache_type: '', stage: '', current: 0, total: 0 };
-                if (window.showToast) {
-                    const label = (data.cache_type || '').replace(/_/g, ' ');
-                    window.showToast('Cache job completed: ' + label, 'success');
-                }
-            } else if (data.status === 'failed' || data.status === 'cancelled') {
-                this.caching = false;
-                this.cacheProgress = { dataset_id: '', cache_type: '', stage: '', current: 0, total: 0 };
-                this.cacheError = data.error || '';
-                if (data.error && window.showToast) {
-                    window.showToast('Cache job failed: ' + data.error, 'error');
-                }
+                return;
+            }
+            this._cacheJobId = null;
+            this.caching = false;
+            this.cacheError = data.status === 'failed' ? data.error || 'Cache job failed' : '';
+            if (data.status === 'completed') {
+                const label = (data.cache_type || '').replace(/_/g, ' ');
+                window.showToast?.('Cache job completed: ' + label, 'success');
+            } else if (this.cacheError) {
+                window.showToast?.('Cache job failed: ' + this.cacheError, 'error');
             }
         },
 
@@ -373,75 +388,85 @@ window.datasetViewerComponent = function () {
         // --- Cache operations ---
 
         async loadCacheCapabilities() {
+            const request = this._cacheRequest;
             try {
                 const resp = await fetch('/api/datasets/cache/capabilities');
                 if (!resp.ok) return;
-                this.cacheCapabilities = await resp.json();
+                const capabilities = await resp.json();
+                if (request === this._cacheRequest) this.cacheCapabilities = capabilities;
             } catch (e) { /* ignore */ }
         },
 
         async _checkActiveCacheJob() {
+            if (this._cacheStarting) return;
+            const request = this._cacheRequest;
+            const version = this._cacheStatusVersion;
+            const jobId = this._cacheJobId;
+            const endpoint = jobId ? '/status?job_id=' + encodeURIComponent(jobId) : '/active';
             try {
-                const resp = await fetch('/api/datasets/cache/active');
+                const resp = await fetch('/api/datasets/cache' + endpoint);
+                if (request !== this._cacheRequest || version !== this._cacheStatusVersion) return;
+                if (jobId && resp.status === 404) {
+                    this._cacheJobId = null;
+                    this.caching = false;
+                    return;
+                }
                 if (!resp.ok) return;
                 const data = await resp.json();
-                if (data.active) {
-                    this.caching = true;
-                    this.cacheProgress = {
-                        dataset_id: data.dataset_id || '',
-                        cache_type: data.cache_type || '',
-                        stage: data.stage || '',
-                        current: data.current || 0,
-                        total: data.total || 0,
-                    };
+                if (request !== this._cacheRequest || version !== this._cacheStatusVersion) return;
+                if (jobId || data.active) {
+                    this._cacheJobId = data.job_id;
+                    this._handleCacheEvent(data);
                 }
             } catch (e) { /* ignore */ }
         },
 
         async startCacheJob(datasetId, cacheType) {
+            const request = ++this._cacheRequest;
+            this._cacheStarting = true;
             this.caching = true;
             this.cacheError = '';
-            this.cacheProgress = { dataset_id: datasetId, cache_type: cacheType, stage: 'Starting...', current: 0, total: 0 };
+            this.cacheProgress = {
+                dataset_id: datasetId, cache_type: cacheType, stage: 'Starting...', current: 0, total: 0,
+            };
             try {
                 const resp = await fetch('/api/datasets/cache/start', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ dataset_id: datasetId, cache_type: cacheType }),
+                    body: JSON.stringify({
+                        dataset_id: datasetId,
+                        cache_type: cacheType,
+                        plan_scope: this.cacheCapabilities.plan_scope,
+                    }),
                 });
-                if (!resp.ok) {
-                    const err = await resp.json().catch(() => ({ detail: 'Unknown error' }));
-                    throw new Error(err.detail || 'Cache request failed');
-                }
+                const data = await resp.json();
+                if (request !== this._cacheRequest) return;
+                if (!resp.ok) throw new Error(data.detail || 'Cache request failed');
+                this._cacheJobId = data.job_id;
             } catch (err) {
-                console.error('Error starting cache job:', err);
+                if (request !== this._cacheRequest) return;
                 this.cacheError = err.message || 'Cache request failed';
                 this.caching = false;
-                this.cacheProgress = { dataset_id: '', cache_type: '', stage: '', current: 0, total: 0 };
-                if (window.showToast) {
-                    window.showToast(this.cacheError, 'error');
+                window.showToast?.(this.cacheError, 'error');
+            } finally {
+                if (request === this._cacheRequest) {
+                    this._cacheStarting = false;
+                    await this._checkActiveCacheJob();
                 }
             }
         },
 
         async cancelCacheJob() {
+            const jobId = this._cacheJobId;
+            if (!jobId) return;
             try {
-                const resp = await fetch('/api/datasets/cache/cancel', { method: 'POST' });
-                if (!resp.ok) {
-                    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-                    throw new Error(err.detail || 'Cancel request failed');
-                }
-                const data = await resp.json().catch(() => ({}));
-                if (data.cancelled) {
-                    this.caching = false;
-                    this.cacheProgress = { dataset_id: '', cache_type: '', stage: '', current: 0, total: 0 };
-                } else if (window.showToast) {
-                    window.showToast('No active cache job to cancel', 'warning');
-                }
+                const resp = await fetch('/api/datasets/cache/cancel?job_id=' + encodeURIComponent(jobId), { method: 'POST' });
+                const data = await resp.json();
+                if (jobId !== this._cacheJobId) return;
+                if (!resp.ok) throw new Error(data.detail || 'Cancel request failed');
+                if (data.cancelled) await this._checkActiveCacheJob();
             } catch (err) {
-                console.error('Error cancelling cache job:', err);
-                if (window.showToast) {
-                    window.showToast('Failed to cancel cache job: ' + err.message, 'error');
-                }
+                if (jobId === this._cacheJobId) window.showToast?.(err.message, 'error');
             }
         },
 

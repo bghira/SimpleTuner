@@ -64,6 +64,8 @@
                       x-text="cacheProgress.current + ' / ' + cacheProgress.total"></span>
                 <button type="button"
                         class="btn btn-outline-danger btn-sm py-0 px-2"
+                        aria-label="Cancel cache preparation"
+                        :disabled="!_cacheJobId || cacheProgress.status === 'cancelling'"
                         @click="cancelCacheJob()">
                     <i class="fas fa-stop viewer-text-xs"></i> Cancel
                 </button>
