@@ -386,7 +386,7 @@ A primeira tag "dog" permanece fixa enquanto as tags restantes são embaralhadas
 
 ### Onde ficam os tamanhos e cortes decididos {#where-decided-sizes-and-crops-are-kept}
 
-Quando um dataset é dividido em buckets, cada amostra recebe uma proporção, um tamanho alvo, um tamanho intermediário e coordenadas de corte. Com os backends de metadados `discovery` e `huggingface`:
+Quando um dataset é dividido em buckets, cada amostra recebe uma proporção, um tamanho alvo, um tamanho intermediário e coordenadas de corte. Com os backends de metadados `discovery`, `parquet` e `huggingface`:
 
 - O arquivo de metadados (`aspect_ratio_bucket_metadata_<id>.json`) guarda o que foi medido de cada amostra, como o tamanho original, o número de quadros e os bounding boxes.
 - Os tamanhos e cortes ficam em um diretório `transforms/` ao lado dele, um arquivo SQLite por dataset e receita. O índice de buckets (`aspect_ratio_bucket_indices_<id>.json`) nomeia a receita sob a qual seus buckets foram construídos, e todo processo lê tamanhos e cortes sob essa receita.
@@ -396,7 +396,7 @@ Quando um dataset é dividido em buckets, cada amostra recebe uma proporção, u
 - Um índice de buckets escrito por uma versão anterior não nomeia receita, então o dataset é dividido em buckets novamente uma vez após a atualização. Com `crop_style: "random"` seus cortes são escolhidos de novo e não correspondem mais aos latents armazenados antes da atualização; limpe o cache VAE desse dataset.
 - Edições de corte e reconstruções de metadados no visualizador de datasets da WebUI substituem o que está registrado.
 
-O backend de metadados `parquet` guarda tamanhos e cortes em seu arquivo de metadados. Um dataset Webshart registra os tamanhos e cortes de cada shard em `transforms/` dentro de `webshart.cache_dir`, um arquivo SQLite por shard, sob uma receita feita com as configurações do dataset (e a época, com `crop_aspect: "random"`). Sem `webshart.shuffle_window`, seu arquivo de metadados guarda o que foi medido e seu índice de buckets nomeia a receita, como acima. Um shard já decidido, em uma época posterior, após retomar ou em uma nova varredura com as mesmas configurações, dá às suas amostras os tamanhos e cortes que receberam da primeira vez; mudar as configurações cria uma nova receita. Um índice de buckets do Webshart escrito por uma versão anterior é reagrupado uma vez. O visualizador de datasets não pode editar os tamanhos e cortes de um dataset Webshart.
+Um dataset Webshart registra os tamanhos e cortes de cada shard em `transforms/` dentro de `webshart.cache_dir`, um arquivo SQLite por shard, sob uma receita feita com as configurações do dataset (e a época, com `crop_aspect: "random"`). Sem `webshart.shuffle_window`, seu arquivo de metadados guarda o que foi medido e seu índice de buckets nomeia a receita, como acima. Um shard já decidido, em uma época posterior, após retomar ou em uma nova varredura com as mesmas configurações, dá às suas amostras os tamanhos e cortes que receberam da primeira vez; mudar as configurações cria uma nova receita. Um índice de buckets do Webshart escrito por uma versão anterior é reagrupado uma vez. O visualizador de datasets não pode editar os tamanhos e cortes de um dataset Webshart.
 
 ### Opções de corte
 

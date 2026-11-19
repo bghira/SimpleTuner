@@ -385,7 +385,7 @@ LTX-2 使用原生纯音频分支；MiniMax-H3 在打包序列中为每个 laten
 
 ### 已决定的尺寸与裁剪保存在哪里 {#where-decided-sizes-and-crops-are-kept}
 
-数据集分桶时，每个样本都会被赋予宽高比、目标尺寸、中间尺寸和裁剪坐标。使用 `discovery` 和 `huggingface` 元数据后端时：
+数据集分桶时，每个样本都会被赋予宽高比、目标尺寸、中间尺寸和裁剪坐标。使用 `discovery`、`parquet` 和 `huggingface` 元数据后端时：
 
 - 元数据文件（`aspect_ratio_bucket_metadata_<id>.json`）保存对每个样本测得的信息，例如原始尺寸、帧数和边界框。
 - 尺寸与裁剪保存在它旁边的 `transforms/` 目录中，每个数据集和配方（recipe）对应一个 SQLite 文件。桶索引（`aspect_ratio_bucket_indices_<id>.json`）记录其桶所依据的配方，每个进程都按该配方读取尺寸与裁剪。
@@ -395,7 +395,7 @@ LTX-2 使用原生纯音频分支；MiniMax-H3 在打包序列中为每个 laten
 - 旧版本写入的桶索引没有记录配方，因此升级后该数据集会重新分桶一次。使用 `crop_style: "random"` 时裁剪会重新选择，与升级前缓存的 latents 不再一致；请清除该数据集的 VAE 缓存。
 - 在 WebUI 数据集查看器中编辑裁剪或重建元数据，会替换已记录的值。
 
-`parquet` 元数据后端将尺寸与裁剪保存在其元数据文件中。Webshart 数据集把每个分片的尺寸与裁剪记录在 `webshart.cache_dir` 下的 `transforms/` 中，每个分片一个 SQLite 文件，配方由数据集的设置生成（使用 `crop_aspect: "random"` 时还包含 epoch）。未设置 `webshart.shuffle_window` 时，其元数据文件保存测量值，分桶索引记录配方，与上文相同。已决定过的分片——无论是在之后的 epoch、恢复训练后，还是以相同设置重新扫描时——都会让样本使用最初决定的尺寸与裁剪；设置改变则会生成新的配方。由早期版本写入的 Webshart 分桶索引会重新分桶一次。数据集查看器无法编辑 Webshart 数据集的尺寸与裁剪。
+Webshart 数据集把每个分片的尺寸与裁剪记录在 `webshart.cache_dir` 下的 `transforms/` 中，每个分片一个 SQLite 文件，配方由数据集的设置生成（使用 `crop_aspect: "random"` 时还包含 epoch）。未设置 `webshart.shuffle_window` 时，其元数据文件保存测量值，分桶索引记录配方，与上文相同。已决定过的分片——无论是在之后的 epoch、恢复训练后，还是以相同设置重新扫描时——都会让样本使用最初决定的尺寸与裁剪；设置改变则会生成新的配方。由早期版本写入的 Webshart 分桶索引会重新分桶一次。数据集查看器无法编辑 Webshart 数据集的尺寸与裁剪。
 
 ### 裁剪选项
 

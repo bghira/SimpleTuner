@@ -386,7 +386,7 @@ Data augmentation के लिए tag-based captions के deterministic shuff
 
 ### तय किए गए आकार और क्रॉप कहाँ रखे जाते हैं {#where-decided-sizes-and-crops-are-kept}
 
-जब किसी डेटासेट को बकेट किया जाता है, तो हर सैंपल को एक aspect ratio, target size, intermediary size और crop coordinates दिए जाते हैं। `discovery` और `huggingface` metadata backends के साथ:
+जब किसी डेटासेट को बकेट किया जाता है, तो हर सैंपल को एक aspect ratio, target size, intermediary size और crop coordinates दिए जाते हैं। `discovery`, `parquet` और `huggingface` metadata backends के साथ:
 
 - मेटाडेटा फ़ाइल (`aspect_ratio_bucket_metadata_<id>.json`) हर सैंपल के बारे में मापी गई जानकारी रखती है, जैसे उसका मूल आकार, फ़्रेम संख्या और bounding boxes।
 - आकार और क्रॉप उसके पास की `transforms/` डायरेक्टरी में रखे जाते हैं, हर डेटासेट और recipe के लिए एक SQLite फ़ाइल। बकेट इंडेक्स (`aspect_ratio_bucket_indices_<id>.json`) उस recipe का नाम रखता है जिसके तहत उसके बकेट बने थे, और हर प्रोसेस उसी recipe के तहत आकार और क्रॉप पढ़ता है।
@@ -396,7 +396,7 @@ Data augmentation के लिए tag-based captions के deterministic shuff
 - पुराने संस्करण से लिखा गया बकेट इंडेक्स किसी recipe का नाम नहीं रखता, इसलिए अपग्रेड के बाद डेटासेट एक बार फिर से बकेट किया जाता है। `crop_style: "random"` के साथ उसके क्रॉप फिर से चुने जाते हैं और अपग्रेड से पहले कैश किए गए latents से मेल नहीं खाते; उस डेटासेट का VAE कैश साफ़ करें।
 - WebUI dataset viewer में क्रॉप संपादन और मेटाडेटा rebuild दर्ज मान को बदल देते हैं।
 
-`parquet` मेटाडेटा बैकएंड आकार और क्रॉप अपनी मेटाडेटा फ़ाइल में रखता है। Webshart डेटासेट हर shard के आकार और क्रॉप `webshart.cache_dir` के अंदर `transforms/` में दर्ज करता है, हर shard की एक SQLite फ़ाइल, डेटासेट की सेटिंग्स से बनी recipe के तहत (`crop_aspect: "random"` के साथ epoch भी)। `webshart.shuffle_window` के बिना उसकी मेटाडेटा फ़ाइल मापी गई जानकारी रखती है और bucket index recipe का नाम रखता है, जैसा ऊपर बताया गया है। पहले तय हो चुका shard — बाद के epoch में, resume के बाद या उन्हीं सेटिंग्स से दोबारा scan में — अपने samples को वही आकार और क्रॉप देता है जो पहली बार दिए गए थे; सेटिंग्स बदलने पर नई recipe बनती है। पुराने संस्करण का लिखा Webshart bucket index एक बार फिर से bucket होता है। डेटासेट व्यूअर Webshart डेटासेट के आकार और क्रॉप संपादित नहीं कर सकता।
+Webshart डेटासेट हर shard के आकार और क्रॉप `webshart.cache_dir` के अंदर `transforms/` में दर्ज करता है, हर shard की एक SQLite फ़ाइल, डेटासेट की सेटिंग्स से बनी recipe के तहत (`crop_aspect: "random"` के साथ epoch भी)। `webshart.shuffle_window` के बिना उसकी मेटाडेटा फ़ाइल मापी गई जानकारी रखती है और bucket index recipe का नाम रखता है, जैसा ऊपर बताया गया है। पहले तय हो चुका shard — बाद के epoch में, resume के बाद या उन्हीं सेटिंग्स से दोबारा scan में — अपने samples को वही आकार और क्रॉप देता है जो पहली बार दिए गए थे; सेटिंग्स बदलने पर नई recipe बनती है। पुराने संस्करण का लिखा Webshart bucket index एक बार फिर से bucket होता है। डेटासेट व्यूअर Webshart डेटासेट के आकार और क्रॉप संपादित नहीं कर सकता।
 
 ### Cropping Options
 

@@ -388,6 +388,115 @@ class DiscoveryTransformRecordTests(unittest.TestCase):
         self.assertEqual(local_copy.read_bytes(), self.storage.files[published[0]])
 
 
+class ParquetTransformRecordTests(unittest.TestCase):
+    """A Parquet-described dataset keeps decided geometry in the store and what it measured in its metadata file."""
+
+    SIZES = {"a.png": (128, 64), "b.png": (64, 128)}
+
+    def setUp(self):
+        import pandas as pd
+
+        temp = TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        self.images = self.root / "images"
+        self.images.mkdir()
+        rows = [dict(filename=name, caption=name, width=w, height=h) for name, (w, h) in self.SIZES.items()]
+        pd.DataFrame(rows).to_parquet(self.root / "captions.parquet")
+        StateTracker.set_args(
+            SimpleNamespace(
+                aspect_bucket_worker_count=1,
+                enable_multiprocessing=False,
+                aspect_bucket_disable_rebuild=False,
+                aspect_bucket_alignment=8,
+                aspect_bucket_rounding=2,
+                cache_dir=str(self.root / "cache"),
+                disable_bucket_pruning=True,
+                train_batch_size=1,
+                gradient_accumulation_steps=1,
+                ignore_missing_files=True,
+                model_type="",
+                resolution_type="pixel",
+            )
+        )
+        StateTracker.set_model(None)
+        StateTracker.set_epoch(1)
+        self.addCleanup(StateTracker.set_epoch, 1)
+        self.addCleanup(StateTracker.data_backends.pop, "images", None)
+        self.addCleanup(StateTracker.all_image_files.pop, "images", None)
+
+    def backend(self, process_index=0):
+        from simpletuner.helpers.metadata.backends.parquet import ParquetMetadataBackend
+
+        StateTracker.register_data_backend({"id": "images"})
+        StateTracker.set_data_backend_config("images", {"resolution": 64, "resolution_type": "pixel", "crop": False})
+        StateTracker.all_image_files["images"] = dict.fromkeys(str(self.images / name) for name in self.SIZES)
+        backend = ParquetMetadataBackend(
+            id="images",
+            instance_data_dir=str(self.images),
+            cache_file=str(self.images / "aspect_ratio_bucket_indices"),
+            metadata_file=str(self.images / "aspect_ratio_bucket_metadata"),
+            data_backend=LocalDataBackend(accelerator=None, id="images"),
+            accelerator=_Accelerator(process_index),
+            batch_size=1,
+            resolution=64,
+            resolution_type="pixel",
+            parquet_config={
+                "path": str(self.root / "captions.parquet"),
+                "filename_column": "filename",
+                "caption_column": "caption",
+                "width_column": "width",
+                "height_column": "height",
+                "identifier_includes_extension": True,
+            },
+            cache_file_suffix="images",
+        )
+        self.addCleanup(backend._close_transforms)
+        return backend
+
+    def saved(self, kind):
+        return json.loads((self.images / f"aspect_ratio_bucket_{kind}_images.json").read_text())
+
+    def test_the_metadata_file_holds_what_was_measured_and_the_store_what_was_decided(self):
+        main = self.backend()
+        main.compute_aspect_ratio_bucket_indices()
+        paths = sorted(str(self.images / name) for name in self.SIZES)
+        self.assertEqual(sorted(self.saved("metadata")), paths)
+        self.assertTrue(all(not set(DECIDED) & set(metadata) for metadata in self.saved("metadata").values()))
+        self.assertEqual(self.saved("indices")["transform_recipe"], "parquet")
+
+        reader = self.backend(process_index=1)
+        reader.reload_cache()
+        for path in paths:
+            self.assertEqual(
+                {key: reader.image_metadata[path][key] for key in DECIDED},
+                {key: main.image_metadata[path][key] for key in DECIDED},
+            )
+
+    def test_a_sample_takes_the_geometry_first_recorded_for_it(self):
+        path = str(self.images / "a.png")
+        recorded = PythonTransformCache(self.images / "transforms", "parquet")
+        recorded.enqueue("images", [(path, encode_transform(_geometry(2.0, (1, 1))))])
+        recorded.close()
+        main = self.backend()
+        main.compute_aspect_ratio_bucket_indices()
+        self.assertEqual({key: main.image_metadata[path][key] for key in DECIDED}, _geometry(2.0, (1, 1)))
+
+    def test_a_bucket_index_that_names_no_recipe_is_bucketed_again(self):
+        main = self.backend()
+        main.compute_aspect_ratio_bucket_indices()
+        buckets = main.aspect_ratio_bucket_indices
+        index = self.saved("indices")
+        del index["transform_recipe"]
+        index["aspect_ratio_bucket_indices"] = {"9.9": [path for paths in buckets.values() for path in paths]}
+        (self.images / "aspect_ratio_bucket_indices_images.json").write_text(json.dumps(index))
+        legacy = self.backend()
+        legacy.reload_cache()
+        legacy.compute_aspect_ratio_bucket_indices()
+        self.assertEqual(legacy.aspect_ratio_bucket_indices, buckets)
+        self.assertEqual(self.saved("indices")["transform_recipe"], "parquet")
+
+
 class _HubDataset:
     """A Hugging Face dataset in memory; its cache files are written where the real backend writes them."""
 

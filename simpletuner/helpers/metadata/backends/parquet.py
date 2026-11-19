@@ -14,6 +14,7 @@ from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.data_backend.filters import filter_file_list
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
+from simpletuner.helpers.metadata.transform_records import RecordedGeometry
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
 from simpletuner.helpers.training import audio_file_extensions, image_file_extensions, video_file_extensions
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -32,7 +33,9 @@ except ImportError:
     raise ImportError("Pandas is required for the ParquetMetadataBackend.")
 
 
-class ParquetMetadataBackend(MetadataBackend):
+class ParquetMetadataBackend(RecordedGeometry, MetadataBackend):
+    transform_recipe_name = "parquet"
+
     def __init__(
         self,
         id: str,
@@ -270,6 +273,7 @@ class ParquetMetadataBackend(MetadataBackend):
                 self.config = cache_data.get("config", {})
             # Load filtering statistics if present
             self.filtering_statistics = cache_data.get("filtering_statistics")
+            self._adopt_index_recipe(cache_data)
             try:
                 self.load_image_metadata()
             except Exception as e:
@@ -292,6 +296,8 @@ class ParquetMetadataBackend(MetadataBackend):
         cache_data = {
             "config": StateTracker.get_data_backend_config(data_backend_id=self.data_backend.id),
             "aspect_ratio_bucket_indices": aspect_ratio_bucket_indices_str,
+            # A process that reads this index must find the geometry of every sample it lists.
+            "transform_recipe": self._committed_recipe(),
         }
         # Include filtering statistics if available
         if self.filtering_statistics is not None:
@@ -300,18 +306,22 @@ class ParquetMetadataBackend(MetadataBackend):
         self.data_backend.write(self.cache_file, cache_data_str)
 
     def load_image_metadata(self):
+        """Load what was measured of each sample, with the geometry recorded for it."""
         self.image_metadata = {}
         self.image_metadata_loaded = False
         if self.data_backend.exists(self.metadata_file):
             raw = self.data_backend.read(self.metadata_file)
             self.image_metadata = json.loads(raw)
             self.image_metadata_loaded = True
+        self._merge_recorded_geometry()
 
     def save_image_metadata(self):
-        self.data_backend.write(self.metadata_file, json.dumps(self.image_metadata))
+        """Save what was measured of each sample. Its geometry is in the store."""
+        self.data_backend.write(self.metadata_file, json.dumps(self._metadata_to_save()))
 
     def compute_aspect_ratio_bucket_indices(self, ignore_existing_cache: bool = False, progress_callback=None):
         # build buckets from parquet metadata without loading actual files
+        ignore_existing_cache = self._begin_bucketing(ignore_existing_cache)
         new_files = self._discover_new_files(ignore_existing_cache=ignore_existing_cache)
         existing_files_set = set().union(*self.aspect_ratio_bucket_indices.values())
         if self.bucket_report:
@@ -359,6 +369,7 @@ class ParquetMetadataBackend(MetadataBackend):
 
         last_write_time = time.time()
         aspect_ratio_bucket_updates = {}
+        decided = {}
 
         total_files = len(new_files)
         for file_idx, file in enumerate(
@@ -395,9 +406,12 @@ class ParquetMetadataBackend(MetadataBackend):
             # If we have metadata updates, store them
             if metadata_updates and file in metadata_updates:
                 self.set_metadata_by_filepath(filepath=file, metadata=metadata_updates[file], update_json=False)
+                decided[file] = metadata_updates[file]
 
             # periodic save to avoid losing progress
             if (current_time - last_write_time) >= self.metadata_update_interval:
+                self.record_transforms(decided)
+                decided = {}
                 self.save_cache(enforce_constraints=False)
                 self.save_image_metadata()
                 last_write_time = current_time
@@ -406,10 +420,12 @@ class ParquetMetadataBackend(MetadataBackend):
         for key, value in aspect_ratio_bucket_updates.items():
             self.aspect_ratio_bucket_indices.setdefault(key, []).extend(value)
 
+        self.record_transforms(decided)
         logger.info(f"Sample processing statistics: {statistics}")
         self.filtering_statistics = statistics
         self.save_image_metadata()
         self.save_cache(enforce_constraints=True)
+        self._end_bucketing()
         if self.bucket_report:
             self.bucket_report.update_statistics(statistics)
             self.bucket_report.record_bucket_snapshot("post_refresh", self.aspect_ratio_bucket_indices)
