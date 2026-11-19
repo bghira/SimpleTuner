@@ -750,123 +750,20 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             f"Bucket {bucket} is empty or doesn't have enough samples for a full batch. Removing from bucket list. {len(self.buckets)} remain."
         )
 
-    @staticmethod
-    def _positive_int(value):
-        try:
-            value = int(value)
-        except (TypeError, ValueError):
-            return None
-        return value if value > 0 else None
-
-    def _configured_max_samples(self, data_backend_config):
-        configured_max_samples = self._positive_int(data_backend_config.get("max_num_samples"))
-        if configured_max_samples is not None:
-            return configured_max_samples
-        return self._positive_int(getattr(self.metadata_backend, "max_num_samples", None))
-
-    def _bucket_report_total(self, stage: str):
-        bucket_report = getattr(self.metadata_backend, "bucket_report", None)
-        bucket_summaries = getattr(bucket_report, "bucket_summaries", None)
-        if not isinstance(bucket_summaries, dict):
-            return None
-        summary = bucket_summaries.get(stage)
-        if not isinstance(summary, dict):
-            return None
-        return self._positive_int(summary.get("total_samples"))
-
-    def _model_card_sample_count(self, data_backend_config):
-        if data_backend_config.get("type") == "webshart":
-            count = self.dataset_runtime.describe().accepted_samples
-            return "unknown" if count is None else count
-        configured_max_samples = self._configured_max_samples(data_backend_config)
-        report_total = self._bucket_report_total("post_refresh")
-        if report_total is not None:
-            total_sample_count = report_total
-            approximate = False
-        else:
-            total_sample_count = sum(len(indices) for indices in self.metadata_backend.aspect_ratio_bucket_indices.values())
-            effective_dp_size, _dp_rank, _cp_size = get_cp_aware_dp_info(self.accelerator)
-            approximate = effective_dp_size > 1
-            if approximate:
-                total_sample_count *= effective_dp_size
-
-        if configured_max_samples is not None:
-            total_sample_count = min(total_sample_count, configured_max_samples)
-            approximate = False
-        return f"~{total_sample_count}" if approximate else total_sample_count
-
-    def log_state(self, show_rank: bool = True, alt_stats: bool = False):
+    def log_state(self, show_rank: bool = True):
         if self.epoch_provider is not None:
             desc = self.dataset_runtime.describe()
             overview = f"Dataset {self.id}: {desc.accepted_samples} accepted samples, {len(self)} batches per rank."
             self.logger.info(overview)
             return overview
-        # self.debug_log(
-        #     f'Active Buckets: {", ".join(self.convert_to_human_readable(float(b), self.metadata_backend.aspect_ratio_bucket_indices[b], self.resolution) for b in self.buckets)}'
-        # )
-        # self.debug_log(
-        #     f'Exhausted Buckets: {", ".join(self.convert_to_human_readable(float(b), self.metadata_backend.aspect_ratio_bucket_indices.get(b, "N/A"), self.resolution) for b in self.exhausted_buckets)}'
-        # )
-        if alt_stats:
-            # Return an overview instead of a snapshot.
-            # Eg. return totals, and not "as it is now"
-            data_backend_config = StateTracker.get_data_backend_config(self.id)
-            total_image_count = self._model_card_sample_count(data_backend_config)
-            printed_state = [f"- Repeats: {data_backend_config.get('repeats', 0)}"]
-            printed_state.append(f"- Total number of {self.sample_type_strs}: {total_image_count}")
-            printed_state.append(f"- Total number of aspect buckets: {len(self.buckets)}")
-            schedule_state = StateTracker.get_dataset_schedule(self.id) or {}
-            start_epoch = schedule_state.get("start_epoch", 1)
-            start_step = schedule_state.get("start_step", 0)
-            reached = schedule_state.get("reached", False)
-            reached_epoch = schedule_state.get("reached_at_epoch")
-            reached_step = schedule_state.get("reached_at_step")
-            if start_epoch > 1 or start_step > 0 or not reached:
-                status = "not reached"
-                if reached:
-                    epoch_str = reached_epoch if reached_epoch is not None else "?"
-                    step_str = reached_step if reached_step is not None else "?"
-                    status = f"reached at epoch {epoch_str}, step {step_str}"
-                printed_state.append(f"- Schedule: start_epoch={start_epoch}, start_step={start_step} ({status})")
-            if self.sample_type_strs == "images":
-                printed_state.append(
-                    f"- Resolution: {self.resolution} {'megapixels' if self.resolution_type == 'area' else 'px'}"
-                )
-                printed_state.append(f"- Cropped: {data_backend_config.get('crop')}")
-                printed_state.append(
-                    f"- Crop style: {'None' if not data_backend_config.get('crop') else data_backend_config.get('crop_style')}"
-                )
-                printed_state.append(
-                    f"- Crop aspect: {'None' if not data_backend_config.get('crop') else data_backend_config.get('crop_aspect')}"
-                )
-            elif self.sample_type_strs == "videos":
-                video_config = data_backend_config.get("video") or {}
-                target_frame_count = data_backend_config.get("frames_per_video") or video_config.get("num_frames")
-                fps = data_backend_config.get("fps") or video_config.get("fps")
-                printed_state.append(
-                    f"- Target frame count: {target_frame_count if target_frame_count is not None else 'unknown'}"
-                )
-                printed_state.append(f"- FPS: {fps if fps is not None else 'unknown'}")
-            elif self.sample_type_strs == "audio":
-                sample_rate = data_backend_config.get("sample_rate") or data_backend_config.get("audio_sample_rate")
-                target_len = data_backend_config.get("sample_size") or data_backend_config.get("audio_samples")
-                printed_state.append(f"- Sample rate: {sample_rate if sample_rate is not None else 'unknown'}")
-                printed_state.append(f"- Target samples: {target_len if target_len is not None else 'unknown'}")
-            printed_state.append(f"- Used for regularisation data: {'Yes' if self.is_regularisation_data else 'No'}")
-            if self.conditioning_type:
-                printed_state.append(f"- Conditioning type: {self.conditioning_type}")
-            printed_state = "\n".join(printed_state) + "\n"
-        else:
-            # Return a snapshot of the current state during training.
-            printed_state = (
-                f"\n{self.rank_info if show_rank else ''}    -> Number of seen {self.sample_type_strs}: {len(self.metadata_backend.seen_images)}"
-                f"\n{self.rank_info if show_rank else ''}    -> Number of unseen {self.sample_type_strs}: {len(self._get_unseen_images())}"
-                f"\n{self.rank_info if show_rank else ''}    -> Current Bucket: {self.current_bucket}"
-                f"\n{self.rank_info if show_rank else ''}    -> {len(self.buckets)} Buckets: {self.buckets}"
-                f"\n{self.rank_info if show_rank else ''}    -> {len(self.exhausted_buckets)} Exhausted Buckets: {self.exhausted_buckets}"
-            )
+        printed_state = (
+            f"\n{self.rank_info if show_rank else ''}    -> Number of seen {self.sample_type_strs}: {len(self.metadata_backend.seen_images)}"
+            f"\n{self.rank_info if show_rank else ''}    -> Number of unseen {self.sample_type_strs}: {len(self._get_unseen_images())}"
+            f"\n{self.rank_info if show_rank else ''}    -> Current Bucket: {self.current_bucket}"
+            f"\n{self.rank_info if show_rank else ''}    -> {len(self.buckets)} Buckets: {self.buckets}"
+            f"\n{self.rank_info if show_rank else ''}    -> {len(self.exhausted_buckets)} Exhausted Buckets: {self.exhausted_buckets}"
+        )
         self.logger.info(printed_state)
-
         return printed_state
 
     def _validate_and_yield_images_from_samples(self, samples, bucket, *, rng=random, view=None):

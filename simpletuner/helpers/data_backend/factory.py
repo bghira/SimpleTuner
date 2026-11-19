@@ -3380,6 +3380,8 @@ class FactoryRegistry:
             },
         )
         init_backend["dataset_runtime"].text_embed_cache = init_backend.get("text_embed_cache")
+        init_backend["dataset_runtime"].is_regularisation_data = is_regularisation_data
+        init_backend["dataset_runtime"].conditioning_type = conditioning_type
         if source_id := init_backend["config"].get("source_dataset_id"):
             init_backend["dataset_runtime"].source_dataset = StateTracker.get_dataset(source_id)
         init_backend["config"] = init_backend["dataset_runtime"].config

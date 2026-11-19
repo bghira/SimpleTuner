@@ -73,6 +73,8 @@ class DatasetRuntime:
         self.audio_datasets = ()
         self.conditioning_image_embed_cache = None
         self.grounding_image_embed_cache = None
+        self.is_regularisation_data = config.get("is_regularisation_data", config.get("is_regularization_data", False))
+        self.conditioning_type = config.get("conditioning_type")
         self.config = {
             "dataset_type": "image",
             "caption_strategy": "filename",
@@ -213,6 +215,18 @@ class DatasetRuntime:
         if spec is None:
             return self.metadata_backend.describe()
         return self.metadata_backend.describe(spec)
+
+    def rank_bucket_counts(self):
+        return self.metadata_backend.rank_bucket_counts()
+
+    def estimate_accepted_sample_count(self, bucket_counts):
+        return self.metadata_backend.estimate_accepted_sample_count(bucket_counts)
+
+    def sample_limit(self):
+        return self.metadata_backend.max_num_samples
+
+    def audio_metadata_summary(self):
+        return self.metadata_backend.audio_metadata_summary()
 
     def count_source_rows(self, *, exclude_null_images=False):
         """Request an exact source count. Providers may need to open shards."""

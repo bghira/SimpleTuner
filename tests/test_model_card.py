@@ -10,10 +10,15 @@ import torch
 import yaml
 from PIL import Image
 
+from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+from simpletuner.helpers.metadata.backends.base import MetadataBackend
+from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend
+from simpletuner.helpers.metadata.preparation import DatasetDescription
 from simpletuner.helpers.publishing.huggingface import HubManager
 from simpletuner.helpers.publishing.metadata import *
 from simpletuner.helpers.publishing.metadata import (
     _audio_dataset_overview,
+    _dataset_overview_for_model,
     _guidance_rescale,
     _license_metadata,
     _model_card_base_model,
@@ -124,24 +129,55 @@ class TestMetadataFunctions(unittest.TestCase):
             self.assertIn("from lycoris import create_lycoris_from_weights", output)
 
     def test_audio_dataset_overview_does_not_reload_live_metadata(self):
-        metadata_backend = MagicMock()
-        metadata_backend.image_metadata = {"0.wav": {"sample_rate": 44100, "num_channels": 2, "dataset_type": "audio"}}
-        metadata_backend.aspect_ratio_bucket_indices = {"180s": ["0.wav"]}
-        sampler = SimpleNamespace(is_regularisation_data=True, conditioning_type=None)
-
-        dataset = SimpleNamespace(
-            metadata_backend=metadata_backend,
-            sampler=sampler,
-            config={"repeats": 0},
-            describe=lambda: SimpleNamespace(accepted_samples=None),
-        )
-        overview = _audio_dataset_overview(dataset)
-
-        metadata_backend.load_image_metadata.assert_not_called()
-        metadata_backend.get_metadata.assert_not_called()
+        provider = DiscoveryMetadataBackend.__new__(DiscoveryMetadataBackend)
+        provider.image_metadata = {"0.wav": {"sample_rate": 44100, "num_channels": 2}}
+        provider.aspect_ratio_bucket_indices = {"180s": ["0.wav"]}
+        provider.bucket_report = None
+        dataset = DatasetRuntime("audio", None, provider, {"dataset_type": "audio", "is_regularisation_data": True})
+        with patch.object(provider, "load_image_metadata", side_effect=AssertionError("model card scanned metadata")):
+            overview = _audio_dataset_overview(dataset)
         self.assertIn("Total number of audio files: 1", overview)
         self.assertIn("Sample rate: 44.1 kHz", overview)
         self.assertIn("Channels: 2", overview)
+        self.assertIn("180s (1)", overview)
+        self.assertIn("Used for regularisation data: Yes", overview)
+
+    def test_legacy_model_card_reports_membership_without_traversing_samples(self):
+        class SizedBucket:
+            def __len__(self):
+                return 8192
+
+            def __iter__(self):
+                raise AssertionError("Model card traversed the dataset")
+
+        for dp, cp, cap, exact, expected in (
+            (8, 1, 4096, None, "4096"),
+            (8, 1, None, None, "~65536"),
+            (1, 4, None, None, "8192"),
+            (8, 1, None, 123, "123"),
+        ):
+            with self.subTest(dp=dp, cp=cp, cap=cap, exact=exact):
+                provider = MetadataBackend.__new__(MetadataBackend)
+                provider._aspect_ratio_bucket_indices = {"1.0": SizedBucket()}
+                provider.max_num_samples = cap
+                provider.accelerator = None
+                provider.bucket_report = SimpleNamespace(bucket_summaries={"post_refresh": {"total_samples": exact}})
+                config = {"dataset_type": "video", "video": {"num_frames": 39}, "max_num_samples": "invalid"}
+                dataset = DatasetRuntime("video", None, provider, config)
+                with patch("simpletuner.helpers.metadata.backends.base.get_cp_aware_dp_info", return_value=(dp, 0, cp)):
+                    overview = _dataset_overview_for_model(None, dataset)
+                self.assertIn(f"Total number of videos: {expected}\n", overview)
+                self.assertIn("Target frame count: 39", overview)
+                self.assertIn("FPS: unknown", overview)
+
+    def test_native_model_card_reports_accepted_samples_without_a_sampler(self):
+        provider = MagicMock(epoch_provider=object())
+        provider.describe.return_value = DatasetDescription(accepted_samples=700_000_000)
+        provider.rank_bucket_counts.side_effect = AssertionError("native model card opened legacy buckets")
+        dataset = DatasetRuntime("native", None, provider, {})
+        self.assertIn("- Accepted samples: 700000000", _dataset_overview_for_model(None, dataset))
+        dataset.training_dataloader = range(100)
+        self.assertIn("- Scheduled batches per rank: 100", _dataset_overview_for_model(None, dataset))
 
     def test_hub_manager_loads_standard_environment_token(self):
         manager = object.__new__(HubManager)

@@ -1501,6 +1501,21 @@ class MetadataBackend:
             source_revision=self._source_revision(), accepted_samples=summaries.get("post_refresh", {}).get("total_samples")
         )
 
+    def rank_bucket_counts(self):
+        return {bucket: len(refs) for bucket, refs in self.aspect_ratio_bucket_indices.items()}
+
+    def estimate_accepted_sample_count(self, bucket_counts):
+        dp_size, _, _ = get_cp_aware_dp_info(self.accelerator)
+        approximate = dp_size > 1
+        return sum(bucket_counts.values()) * dp_size, approximate
+
+    def audio_metadata_summary(self):
+        metadata = self.image_metadata
+        example = next(iter(metadata.values()), {}) if isinstance(metadata, dict) else {}
+        if not isinstance(example, dict):
+            example = {}
+        return len(metadata), example.get("sample_rate"), example.get("num_channels")
+
     @property
     def view_revision(self):
         return self.describe().view_revision
