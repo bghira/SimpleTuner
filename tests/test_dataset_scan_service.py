@@ -91,5 +91,73 @@ class TestDatasetScanServiceOutputDir(unittest.TestCase):
         self.assertEqual(resolved, "/var/tmp/simpletuner-scan")
 
 
+class TestScanUsesTrainingSettings(unittest.TestCase):
+    """A scan records geometry under the recipe training would use, and keeps its store where training would."""
+
+    def setUp(self):
+        from PIL import Image
+
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.images = Path(temp.name) / "images"
+        self.images.mkdir()
+        for index in range(2):
+            Image.new("RGB", (256 + 64 * index, 192)).save(self.images / f"{index}.png")
+            (self.images / f"{index}.txt").write_text("caption")
+        self.output_dir = str(Path(temp.name) / "output")
+        patcher = patch.object(DatasetScanService, "_resolve_scan_output_dir", return_value=self.output_dir)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        StateTracker.all_image_files.pop("images", None)
+        self.addCleanup(StateTracker.all_image_files.pop, "images", None)
+
+    def scan(self, global_config, compute=None):
+        from simpletuner.simpletuner_sdk.server.services.dataset_scan_service import ScanJob
+
+        dataset = {
+            "id": "images",
+            "type": "local",
+            "instance_data_dir": str(self.images),
+            "resolution": 128,
+            "resolution_type": "pixel_area",
+            "crop": True,
+            "crop_aspect": "random",
+            "crop_aspect_buckets": [1.0, 1.5],
+            "caption_strategy": "textfile",
+        }
+        DatasetScanService()._execute_scan(ScanJob(job_id="job", dataset_id="images"), dataset, global_config, False)
+
+    def recipe(self):
+        import json
+
+        return json.loads((self.images / "aspect_ratio_bucket_indices_images.json").read_text())["transform_recipe"]
+
+    def test_a_dataset_that_recrops_each_epoch_is_recorded_for_the_first_epoch(self):
+        self.scan({})
+        self.assertEqual(self.recipe(), "discovery-epoch-1")
+
+    def test_disabling_the_rebuild_records_one_recipe_for_every_epoch(self):
+        self.scan({"aspect_bucket_disable_rebuild": True})
+        self.assertEqual(self.recipe(), "discovery")
+
+    def test_the_store_directory_follows_the_training_cache_dir(self):
+        from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        seen = []
+
+        def compute(backend, **kwargs):
+            seen.append(StateTracker.get_args().cache_dir)
+
+        with patch.object(
+            DiscoveryMetadataBackend, "compute_aspect_ratio_bucket_indices", autospec=True, side_effect=compute
+        ):
+            self.scan({})
+            self.scan({"cache_dir": "/srv/cache"})
+        self.assertEqual(seen, [os.path.join(self.output_dir, "cache"), "/srv/cache"])
+
+
 if __name__ == "__main__":
     unittest.main()

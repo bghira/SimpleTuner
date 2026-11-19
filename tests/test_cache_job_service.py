@@ -112,6 +112,13 @@ class TestCacheArgsNamespace(unittest.TestCase):
         self.assertEqual(args.get("foo"), "bar")
         self.assertEqual(args.get("nonexistent", 42), 42)
 
+    def test_built_args_keep_the_transform_store_where_training_would(self):
+        from simpletuner.simpletuner_sdk.server.services.dataset_scan_service import DatasetScanService
+
+        with patch.object(DatasetScanService, "_resolve_scan_output_dir", side_effect=lambda path: path):
+            self.assertEqual(CacheJobService._build_args({"output_dir": "/srv/out"}).cache_dir, "/srv/out/cache")
+            self.assertEqual(CacheJobService._build_args({"--cache_dir": "/srv/cache"}).cache_dir, "/srv/cache")
+
 
 class TestCacheAcceleratorStub(unittest.TestCase):
     def test_properties(self):

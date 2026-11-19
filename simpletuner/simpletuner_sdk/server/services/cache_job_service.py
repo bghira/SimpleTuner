@@ -373,6 +373,8 @@ class CacheJobService:
         from .dataset_scan_service import DatasetScanService
 
         args.output_dir = DatasetScanService._resolve_scan_output_dir(args.output_dir or "output/cache")
+        if not args.cache_dir:
+            args.cache_dir = os.path.join(args.output_dir, "cache")
         return args
 
     @staticmethod

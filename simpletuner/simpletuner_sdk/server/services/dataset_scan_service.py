@@ -96,6 +96,8 @@ class _ScanArgsNamespace:
         self.data_backend_sampling = "uniform"
         self.framerate = 24
         self.gradient_accumulation_steps = 1
+        self.aspect_bucket_disable_rebuild = False
+        self.cache_dir = None
         if overrides:
             for k, v in overrides.items():
                 setattr(self, k, v)
@@ -540,9 +542,15 @@ class DatasetScanService:
                 args_overrides[key] = dataset_config[key]
             elif key in global_config:
                 args_overrides[key] = global_config[key]
+        # Training settings that name the recipe a scan records geometry under, and where its store is kept.
+        for key in ("aspect_bucket_disable_rebuild", "cache_dir"):
+            if key in global_config:
+                args_overrides[key] = global_config[key]
 
         scan_args = _ScanArgsNamespace(args_overrides)
         scan_args.output_dir = self._resolve_scan_output_dir(scan_args.output_dir)
+        if not scan_args.cache_dir:
+            scan_args.cache_dir = os.path.join(scan_args.output_dir, "cache")
         accelerator = _ScanAcceleratorStub()
 
         # Apply pixel_area -> area conversion (normally done by DataBackendFactory)
