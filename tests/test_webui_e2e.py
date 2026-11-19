@@ -1958,6 +1958,70 @@ class DatasetManagementTestCase(_TrainerPageMixin, WebUITestCase):
 class DatasetViewerRevisionTestCase(_TrainerPageMixin, WebUITestCase):
     MAX_BROWSERS = 1
 
+    def test_delayed_thumbnail_response_does_not_change_another_dataset(self) -> None:
+        root = self.home_path / "viewer-race"
+        root.mkdir()
+        datasets = []
+        for name in ("first", "second"):
+            datasets.append({"type": "local", "id": name, "dataset_type": "image", "instance_data_dir": str(root)})
+            (root / f"aspect_ratio_bucket_indices_{name}.json").write_text(
+                json.dumps({"aspect_ratio_bucket_indices": {"square": [f"{name}.jpg"]}})
+            )
+        (self.config_dir / "default" / "multidatabackend.json").write_text(json.dumps(datasets))
+        self.seed_defaults()
+
+        def scenario(driver, _browser):
+            trainer = self._trainer_page(driver)
+            trainer.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer.switch_to_datasets_tab()
+            trainer.wait_for_tab("datasets")
+            wait = WebDriverWait(driver, 15)
+            wait.until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, "//button[contains(@class,'dataset-subtab-btn') and contains(.,'Viewer')]")
+                )
+            ).click()
+            wait.until(lambda d: len(d.find_elements(By.CSS_SELECTOR, ".viewer-card-header")) == 2)
+            for status in (409, 200):
+                driver.execute_script(
+                    """
+                    const view = Alpine.$data(document.querySelector('[x-data="datasetViewerComponent()"]'));
+                    const originalFetch = window.fetch;
+                    window.fetch = (url, options) => {
+                        const target = new URL(url, window.location.origin);
+                        if (target.pathname.endsWith('/thumbnails') && target.searchParams.get('dataset_id') === 'first') {
+                            window.fetch = originalFetch;
+                            return new Promise(resolve => {
+                                window.releaseFirstRequest = () => resolve(new Response(
+                                    '[{"path":"old.jpg","filename":"old.jpg"}]',
+                                    {status: arguments[0], headers: {'Content-Type': 'application/json'}}
+                                ));
+                            });
+                        }
+                        return originalFetch(url, options);
+                    };
+                    view.toggleDataset('first');
+                    window.firstRequest = view.selectBucket('first', view.datasets[0].buckets[0]);
+                    view.toggleDataset('second');
+                    view.selectBucket('second', view.datasets[1].buckets[0]);
+                    """,
+                    status,
+                )
+                selectors = (By.CSS_SELECTOR, ".viewer-thumbnail-label")
+                wait.until(lambda d: any(label.text == "second.jpg" for label in d.find_elements(*selectors)))
+                driver.execute_async_script(
+                    """
+                    const done = arguments[0];
+                    window.releaseFirstRequest();
+                    window.firstRequest.then(done);
+                    """
+                )
+                self.assertEqual([label.text for label in driver.find_elements(*selectors) if label.text], ["second.jpg"])
+                self.assertEqual(len(driver.find_elements(By.CSS_SELECTOR, ".viewer-bucket-btn.active")), 1)
+
+        self.for_each_browser("test_delayed_thumbnail_response_does_not_change_another_dataset", scenario)
+
     def test_replaced_view_refreshes_bucket_choices_from_bucket_and_file(self) -> None:
         from simpletuner.helpers.metadata.backends.webshart_membership import write_membership
 

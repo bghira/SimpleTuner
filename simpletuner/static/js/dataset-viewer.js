@@ -16,8 +16,10 @@ window.datasetViewerComponent = function () {
         loadingThumbnails: false,
         thumbnailOffset: 0,
         thumbnailLimit: 24,
+        _thumbnailRequest: 0,
         selectedFile: null,
         loadingFileDetail: false,
+        _fileRequest: 0,
         previewOriginal: null,
         previewIntermediary: null,
         previewCropped: null,
@@ -548,20 +550,28 @@ window.datasetViewerComponent = function () {
 
         toggleDataset(datasetId) {
             this.expandedDataset = this.expandedDataset === datasetId ? null : datasetId;
-            this.selectedBucket = null;
-            this.thumbnails = [];
+            this._clearBucketSelection();
+            this.closeFileDetail();
             this.conditioningPairs = null;
             this.pairsOffset = 0;
             this._saveNavState();
         },
 
+        _clearBucketSelection() {
+            this._thumbnailRequest++;
+            this.loadingThumbnails = false;
+            this.selectedBucket = null;
+            this.thumbnails = [];
+            this.thumbnailOffset = 0;
+        },
+
         async selectBucket(datasetId, bucket) {
             if (this.selectedBucket?.key === bucket.key && this.expandedDataset === datasetId) {
-                this.selectedBucket = null;
-                this.thumbnails = [];
+                this._clearBucketSelection();
                 this._saveNavState();
                 return;
             }
+            this.thumbnails = [];
             this.selectedBucket = bucket;
             this.thumbnailOffset = 0;
             this._saveNavState();
@@ -570,6 +580,11 @@ window.datasetViewerComponent = function () {
 
         async loadBucketThumbnails(datasetId) {
             if (!this.selectedBucket) return;
+            const request = ++this._thumbnailRequest;
+            const revision = this.datasets.find(ds => ds.dataset_id === datasetId)?.view_revision;
+            const isCurrent = () => request === this._thumbnailRequest;
+            const isCurrentRevision = () =>
+                revision === this.datasets.find(ds => ds.dataset_id === datasetId)?.view_revision;
             this.loadingThumbnails = true;
             try {
                 const params = new URLSearchParams({
@@ -578,10 +593,10 @@ window.datasetViewerComponent = function () {
                     limit: String(this.thumbnailLimit),
                     offset: String(this.thumbnailOffset),
                 });
-                const revision = this.datasets.find(ds => ds.dataset_id === datasetId)?.view_revision;
                 if (revision) params.set('view_revision', revision);
                 const resp = await fetch('/api/datasets/viewer/thumbnails?' + params);
-                if (resp.status === 409) {
+                if (!isCurrent()) return;
+                if (resp.status === 409 || !isCurrentRevision()) {
                     await this._refreshStaleView(datasetId);
                     return;
                 }
@@ -590,22 +605,27 @@ window.datasetViewerComponent = function () {
                     this.thumbnails = [];
                     return;
                 }
-                this.thumbnails = await resp.json();
+                const thumbnails = await resp.json();
+                if (isCurrent() && isCurrentRevision()) this.thumbnails = thumbnails;
             } catch (err) {
-                console.error('Error loading thumbnails:', err);
-                this.thumbnails = [];
+                if (isCurrent()) {
+                    console.error('Error loading thumbnails:', err);
+                    this.thumbnails = [];
+                }
             } finally {
-                this.loadingThumbnails = false;
+                if (isCurrent()) this.loadingThumbnails = false;
             }
         },
 
         async _refreshStaleView(datasetId) {
-            this.thumbnails = [];
-            this.selectedBucket = null;
-            this.thumbnailOffset = 0;
-            this._saveNavState();
+            if (this.expandedDataset === datasetId) {
+                this._clearBucketSelection();
+                this._saveNavState();
+            }
             await this._refreshDatasetSummary(datasetId);
-            window.showToast?.('The dataset changed. Select a bucket to browse its current contents.', 'info');
+            if (this.expandedDataset === datasetId && !this.selectedBucket) {
+                window.showToast?.('The dataset changed. Select a bucket to browse its current contents.', 'info');
+            }
         },
 
         async nextPage(datasetId) {
@@ -622,6 +642,7 @@ window.datasetViewerComponent = function () {
         },
 
         async showFileDetail(datasetId, filePath) {
+            const request = ++this._fileRequest;
             this._destroyBboxCanvas();
             this.loadingFileDetail = true;
             this.loadingPreview = true;
@@ -663,10 +684,10 @@ window.datasetViewerComponent = function () {
             }
 
             const results = await Promise.allSettled(fetches);
-            if (staleView) {
+            if (request !== this._fileRequest) return;
+            const currentRevision = this.datasets.find(d => d.dataset_id === datasetId)?.view_revision;
+            if (staleView || currentRevision !== ds?.view_revision) {
                 this.closeFileDetail();
-                this.loadingFileDetail = false;
-                this.loadingPreview = false;
                 await this._refreshStaleView(datasetId);
                 return;
             }
@@ -693,7 +714,9 @@ window.datasetViewerComponent = function () {
 
             // Initialize bbox canvas if entities exist
             if (this.selectedFile?.bbox_entities?.length > 0) {
-                this.$nextTick(() => this._initBboxCanvas());
+                this.$nextTick(() => {
+                    if (request === this._fileRequest) this._initBboxCanvas();
+                });
             }
         },
 
@@ -804,7 +827,10 @@ window.datasetViewerComponent = function () {
         },
 
         closeFileDetail() {
+            this._fileRequest++;
             this._destroyBboxCanvas();
+            this.loadingFileDetail = false;
+            this.loadingPreview = false;
             this.selectedFile = null;
             this.previewOriginal = null;
             this.previewIntermediary = null;
