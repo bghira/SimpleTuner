@@ -123,6 +123,31 @@ class TestWebshartParquetBackend(unittest.TestCase):
         with patch.object(self.backend.dataset, "read_metadata_rows", side_effect=AssertionError("second projection")):
             self.assertEqual(provider.get_metadata_batch(requests), warm)
 
+        provider.close()
+        (shard_cache,) = (Path(self.backend.cache_dir) / ".webshart-transforms").rglob("*.sqlite3")
+        location = self.backend.parse_sample_id(refs[1])
+        with closing(sqlite3.connect(shard_cache)) as db, db:
+            (cached,) = db.execute("SELECT value FROM transforms WHERE row=?", (location.sample_idx,)).fetchone()
+            stale = {**json.loads(cached), "crop_coordinates": [314, 159]}
+            db.execute("UPDATE transforms SET value=? WHERE row=?", (json.dumps(stale).encode(), location.sample_idx))
+        provider.reload_cache()
+        self.assertEqual(provider.get_metadata_by_filepath(refs[1])["crop_coordinates"], [314, 159])
+        with (
+            patch.object(provider, "flush_prepared_metadata", side_effect=OSError("interrupted transform write")),
+            self.assertRaisesRegex(OSError, "interrupted transform write"),
+        ):
+            provider.compute_aspect_ratio_bucket_indices(ignore_existing_cache=True)
+        provider.reload_cache()
+        self.assertEqual(provider.describe().view_revision, revision)
+        self.assertEqual(provider.get_metadata_by_filepath(refs[1])["crop_coordinates"], [314, 159])
+
+        provider.compute_aspect_ratio_bucket_indices(ignore_existing_cache=True)
+        self.assertNotEqual(provider.describe().view_revision, revision)
+        self.assertEqual(provider.read_page(limit=10), (refs, 2))
+        self.assertEqual(provider.get_metadata_batch(requests), warm)
+        with patch.object(provider, "_scan_rows", side_effect=AssertionError("invalidated refreshed view")):
+            provider.compute_aspect_ratio_bucket_indices()
+
         provider.dataset_config.update(crop=True, crop_style="center", crop_aspect="square")
         provider.compute_aspect_ratio_bucket_indices()
         centered = provider._published
@@ -1332,11 +1357,14 @@ class TestWebshartParquetBackend(unittest.TestCase):
             refs, total = metadata.read_page(limit=10)
             self.assertEqual(total, 8)
             self.assertEqual([source.parse_sample_id(ref).shard_idx for ref in refs], [0, 0, 1, 1, 2, 2, 3, 3])
-            result = (metadata.describe(), metadata.filtering_statistics)
+            result = (replace(metadata.describe(), view_revision=None), metadata.filtering_statistics)
+            geometry_digest = metadata._published["geometry_sha256"]
 
             source.parallel_downloads = 1
             metadata.compute_aspect_ratio_bucket_indices(ignore_existing_cache=True)
-            self.assertEqual((metadata.describe(), metadata.filtering_statistics), result)
+            self.assertEqual((replace(metadata.describe(), view_revision=None), metadata.filtering_statistics), result)
+            self.assertEqual(metadata._published["geometry_sha256"], geometry_digest)
+            self.assertEqual(metadata.read_page(limit=10), (refs, total))
 
             source.parallel_downloads = 2
             publication = source._cache_path(metadata.cache_file)

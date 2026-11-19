@@ -16,6 +16,7 @@ from pathlib import Path
 from queue import SimpleQueue
 from threading import Event
 from typing import Any, Dict, List, Optional
+from uuid import uuid4
 
 import ijson
 from filelock import FileLock
@@ -1238,6 +1239,10 @@ class WebshartMetadataBackend(MetadataBackend):
         transform_settings = recipe.cache_settings() if supports_transform_cache else None
         rules = {key: public_config.get(key) for key in geometry_keys}
         if transform_settings is not None:
+            previous_settings = (self._published or {}).get("transform_cache_recipe") or {}
+            generation = uuid4().hex if refresh else previous_settings.get("generation")
+            if generation is not None:
+                transform_settings["generation"] = generation
             rules["transform_cache_recipe"] = transform_settings
         rules.update(require_captions=require_captions, caption_key=self.data_backend.caption_key)
         args = self.runtime_args
