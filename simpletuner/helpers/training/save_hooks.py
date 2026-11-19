@@ -348,6 +348,7 @@ class SaveHookManager:
         self.ema_model = ema_model
         self.accelerator = accelerator
         self.use_deepspeed_optimizer = use_deepspeed_optimizer
+        self.dataset_export_metadata = {}
         if self.model.get_trained_component() is None:
             raise ValueError("No model was loaded?")
 
@@ -542,41 +543,32 @@ class SaveHookManager:
                 return cleaned
         return None
 
-    def _collect_trigger_words(self) -> list[str]:
-        """
-        Collect instance_prompt values from all data backends as trigger words.
-        """
-        datasets = StateTracker.get_datasets("image", "video", "audio", "caption").values()
-        return list(
-            dict.fromkeys(
-                prompt
-                for dataset in datasets
-                for prompt in PromptHandler._normalize_caption_payload(dataset.config.get("instance_prompt"))
-            )
+    def prepare_dataset_metadata(self, datasets):
+        """Prepare export metadata once from accepted views before training starts."""
+        trigger_words = dict.fromkeys(
+            prompt
+            for dataset in datasets.values()
+            for prompt in PromptHandler._normalize_caption_payload(dataset.config.get("instance_prompt"))
         )
+        metadata = {"trained_words": ", ".join(trigger_words)} if trigger_words else {}
+        frequencies = self._compute_caption_tag_frequencies(datasets)
+        if frequencies:
+            metadata["ss_tag_frequency"] = json.dumps(frequencies)
+        self.dataset_export_metadata = metadata
 
-    def _build_tag_frequency_from_captions(self) -> dict[str, dict[str, int]]:
-        """
-        Infer trigger-word frequencies when captions can be collected for every dataset.
-        Only includes tags that appear in more than 50% of all captions.
-        Returns dict of dataset_id -> {tag: count}.
-
-        The dataset is fixed for the duration of a run, so the result is computed once
-        and memoized; recomputing per checkpoint can cost hours on remote-read backends.
-        """
-        cached = getattr(self, "_tag_frequency_cache", None)
-        if cached is not None:
-            return cached
-
+    @staticmethod
+    def _compute_caption_tag_frequencies(datasets) -> dict[str, dict[str, int]]:
+        """Count tags in more than half of the captions across compatible accepted views."""
         import re
         from collections import Counter
 
-        datasets = StateTracker.get_datasets("image", "video", "audio", "caption")
         if any(
-            dataset.uses_native_schedule or dataset.config.get("caption_strategy") == "webshart"
+            dataset.uses_native_schedule
+            or dataset.requires_complete_preparation
+            or dataset.config.get("caption_strategy") == "webshart"
+            or (dataset.text_embed_cache is not None and dataset.text_embed_cache.text_cache_ondemand)
             for dataset in datasets.values()
         ):
-            self._tag_frequency_cache = {}
             return {}
 
         caption_count = 0
@@ -596,7 +588,6 @@ class SaveHookManager:
                     seen_captions += 1
             except Exception as exc:
                 logger.debug("Could not count captions for dataset %s: %s", dataset_id, exc)
-                self._tag_frequency_cache = {}
                 return {}
             caption_count += seen_captions
             caption_presence.update(presence)
@@ -608,29 +599,7 @@ class SaveHookManager:
             filtered = {tag: count for tag, count in tags.items() if tag in frequent}
             if filtered:
                 stats[dataset_id] = filtered
-        self._tag_frequency_cache = stats
         return stats
-
-    def _build_trigger_words_metadata(self) -> dict[str, str]:
-        """
-        Build trigger words metadata in formats compatible with ComfyUI extensions.
-        Returns metadata dict with ss_tag_frequency (for ComfyUI-Lora-Auto-Trigger-Words)
-        and trained_words (instance_prompts as comma-separated list).
-        """
-        metadata = {}
-
-        # trained_words: simple comma-separated list of instance_prompts
-        trigger_words = self._collect_trigger_words()
-        if trigger_words:
-            metadata["trained_words"] = ", ".join(trigger_words)
-
-        # ss_tag_frequency: JSON dict of dataset -> tag -> count
-        # Built from actual caption content for full tag frequency data
-        ss_tag_frequency = self._build_tag_frequency_from_captions()
-        if ss_tag_frequency:
-            metadata["ss_tag_frequency"] = json.dumps(ss_tag_frequency)
-
-        return metadata
 
     def _build_modelspec_metadata(self, checkpoint_dir: str | None = None) -> dict[str, str]:
         metadata = {
@@ -656,9 +625,7 @@ class SaveHookManager:
         if description:
             metadata["modelspec.description"] = str(description)
 
-        # Add trigger words metadata for ComfyUI compatibility
-        trigger_words_metadata = self._build_trigger_words_metadata()
-        metadata.update(trigger_words_metadata)
+        metadata.update(self.dataset_export_metadata)
 
         comment = getattr(self.args, "modelspec_comment", None)
         if comment:

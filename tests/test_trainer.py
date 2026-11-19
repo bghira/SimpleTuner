@@ -1835,7 +1835,7 @@ class TestTrainer(unittest.TestCase):
         trainer.init_optimizer = Mock(side_effect=lambda: events.append("optimizer"))
         trainer.init_lr_scheduler = Mock(side_effect=lambda: events.append("lr_scheduler") or object())
         trainer.init_hooks = Mock(
-            side_effect=lambda: (
+            side_effect=lambda **_: (
                 events.append("hooks"),
                 setattr(trainer, "model_hooks", SimpleNamespace(ema_model=None)),
             )

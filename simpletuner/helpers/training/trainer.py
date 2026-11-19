@@ -4457,7 +4457,7 @@ class Trainer:
                 )
                 logger.error(f"Failed to pin EMA model to CPU: {e}")
 
-    def init_hooks(self):
+    def init_hooks(self, *, datasets=None):
         from simpletuner.helpers.training.save_hooks import SaveHookManager
 
         self.model_hooks = SaveHookManager(
@@ -4467,6 +4467,8 @@ class Trainer:
             accelerator=self.accelerator,
             use_deepspeed_optimizer=self.config.use_deepspeed_optimizer,
         )
+        if datasets and self.accelerator.is_main_process:
+            self.model_hooks.prepare_dataset_metadata(datasets)
         self.accelerator.register_save_state_pre_hook(self.model_hooks.save_model_hook)
         self.accelerator.register_load_state_pre_hook(self.model_hooks.load_model_hook)
 
@@ -5408,7 +5410,7 @@ class Trainer:
     def resume_and_prepare(self):
         self.init_optimizer()
         lr_scheduler = self.init_lr_scheduler()
-        self.init_hooks()
+        self.init_hooks(datasets=self._registered_training_datasets())
         self.init_prepare_models(lr_scheduler=lr_scheduler)
         self.init_ema_model()
         if self.model_hooks is not None:

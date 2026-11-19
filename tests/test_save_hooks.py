@@ -31,37 +31,66 @@ class SaveHookManagerTests(unittest.TestCase):
     def test_native_caption_run_does_not_scan_or_infer_partial_global_tag_statistics(self):
         manager = object.__new__(SaveHookManager)
         native = SimpleNamespace(config={"caption_strategy": "webshart"}, uses_native_schedule=True)
-        local = SimpleNamespace(config={"caption_strategy": "textfile"}, uses_native_schedule=False)
+        local = SimpleNamespace(
+            config={"caption_strategy": "textfile"},
+            uses_native_schedule=False,
+            requires_complete_preparation=False,
+            text_embed_cache=None,
+        )
         local.iter_accepted_captions = Mock(side_effect=AssertionError("caption scan"))
-        with patch.object(StateTracker, "get_datasets", return_value={"local": local, "native": native}):
-            self.assertEqual(manager._build_tag_frequency_from_captions(), {})
+        manager.prepare_dataset_metadata({"local": local, "native": native})
         local.iter_accepted_captions.assert_not_called()
-        self.assertEqual(manager._tag_frequency_cache, {})
+        self.assertEqual(manager.dataset_export_metadata, {})
+
+    def test_online_caption_encoding_avoids_export_scan_on_legacy_providers(self):
+        manager = object.__new__(SaveHookManager)
+        local = SimpleNamespace(
+            config={"caption_strategy": "textfile", "instance_prompt": "style"},
+            uses_native_schedule=False,
+            requires_complete_preparation=False,
+            text_embed_cache=SimpleNamespace(text_cache_ondemand=True),
+            iter_accepted_captions=Mock(side_effect=AssertionError("caption scan")),
+        )
+        manager.prepare_dataset_metadata({"local": local})
+        local.iter_accepted_captions.assert_not_called()
+        self.assertEqual(manager.dataset_export_metadata, {"trained_words": "style"})
 
     def test_local_caption_tag_statistics_are_preserved(self):
         manager = object.__new__(SaveHookManager)
         local = SimpleNamespace(
             config={"caption_strategy": "textfile"},
             uses_native_schedule=False,
-            iter_accepted_captions=lambda: iter(["style, cat, style", "style, dog"]),
+            requires_complete_preparation=False,
+            text_embed_cache=None,
+            iter_accepted_captions=Mock(return_value=iter(["style, cat, style", "style, dog"])),
         )
-        with patch.object(StateTracker, "get_datasets", return_value={"local": local}):
-            self.assertEqual(manager._build_tag_frequency_from_captions(), {"local": {"style": 3}})
+        manager.prepare_dataset_metadata({"local": local})
+        manager.args = SimpleNamespace()
+        manager.model = SimpleNamespace()
+        with patch.object(StateTracker, "get_datasets", side_effect=AssertionError("checkpoint dataset lookup")):
+            for _ in range(2):
+                result = manager._build_modelspec_metadata()
+                self.assertEqual(json.loads(result["ss_tag_frequency"]), {"local": {"style": 3}})
+        local.iter_accepted_captions.assert_called_once_with()
 
     def test_caption_statistics_omit_partial_counts_and_keep_prompt_alternatives(self):
         manager = object.__new__(SaveHookManager)
         local = SimpleNamespace(
             config={"caption_strategy": "instanceprompt", "instance_prompt": ["style", "portrait"]},
             uses_native_schedule=False,
+            requires_complete_preparation=False,
+            text_embed_cache=None,
             iter_accepted_captions=lambda: iter(["style, cat", "style, dog"]),
         )
         remote = SimpleNamespace(
             config={"caption_strategy": "instanceprompt", "instance_prompt": "style"},
             uses_native_schedule=False,
+            requires_complete_preparation=False,
+            text_embed_cache=None,
             iter_accepted_captions=Mock(side_effect=OSError("caption source unavailable")),
         )
-        with patch.object(StateTracker, "get_datasets", return_value={"local": local, "remote": remote}):
-            self.assertEqual(manager._build_trigger_words_metadata(), {"trained_words": "style, portrait"})
+        manager.prepare_dataset_metadata({"local": local, "remote": remote})
+        self.assertEqual(manager.dataset_export_metadata, {"trained_words": "style, portrait"})
 
     def _run_save_model_hook(self, is_local_main_process):
         output_dir = "/tmp/checkpoint"
