@@ -98,8 +98,16 @@ def publish_indexed_membership(path, header):
         json.dump({"membership_format": "sqlite-v1", **header}, output, separators=(",", ":"), default=os.fspath)
 
 
+class IncompleteWebshartMembership(ValueError):
+    def __init__(self, header):
+        super().__init__("Webshart scan is incomplete.")
+        self.header = header
+
+
 class MembershipPages:
     def __init__(self, source, header):
+        if header.get("scan_in_progress"):
+            raise IncompleteWebshartMembership(header)
         self.source = source
         self.header = header
         self.counts = header["bucket_counts"]
@@ -117,8 +125,6 @@ class MembershipPages:
             source.seek(0)
             return None
         header = json.loads(_PREFIX + source.readline().removesuffix(b",\n") + b"}")
-        if header.get("scan_in_progress"):
-            raise ValueError("Webshart scan is incomplete.")
         return cls(source, header)
 
     def describe(self, spec=None):

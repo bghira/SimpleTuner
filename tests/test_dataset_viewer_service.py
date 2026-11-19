@@ -132,6 +132,45 @@ class TestWebshartMembershipPages(unittest.TestCase):
                 service.get_dataset_files(config, view_revision=selected)
             self.assertTrue(old.is_file())
 
+    def test_incomplete_webshart_scan_is_isolated_from_other_dataset_summaries(self):
+        import asyncio
+
+        from simpletuner.helpers.metadata.backends.webshart_membership import write_membership
+        from simpletuner.simpletuner_sdk.server.routes import dataset_viewer
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = {
+                "id": "images",
+                "type": "webshart",
+                "webshart": {"source": "s3://example", "cache_dir": directory, "format": "parquet"},
+            }
+            local = {"id": "local", "type": "local", "instance_data_dir": directory}
+            (root / "aspect_ratio_bucket_indices_local.json").write_text(
+                json.dumps({"aspect_ratio_bucket_indices": {"square": ["local.jpg"]}})
+            )
+            path = root / "aspect_ratio_bucket_indices_source_123_images.json"
+            write_membership(path, {"square": ["partial.jpg"]}, {"config": config, "scan_in_progress": True})
+
+            service = DatasetViewerService(project_root=root)
+            with (
+                patch.object(dataset_viewer, "_load_plan", return_value=[config, local]),
+                patch.object(dataset_viewer, "_get_viewer_service", return_value=service),
+            ):
+                native, legacy = asyncio.run(dataset_viewer.get_viewer_summaries())
+            self.assertTrue(native.scan_incomplete)
+            self.assertIsNone(native.accepted_samples)
+            self.assertEqual(legacy.accepted_samples, 1)
+            self.assertEqual(service.get_dataset_files(config).files, [])
+            with self.assertRaises(DatasetViewChanged):
+                service.get_dataset_files(config, view_revision="previous")
+
+            write_membership(path, {"square": ["ready.jpg"]}, {"config": config})
+            ready = service.get_dataset_summary(config)
+            self.assertTrue(ready.has_cache)
+            self.assertFalse(ready.scan_incomplete)
+            self.assertEqual(service.get_dataset_files(config, view_revision=ready.view_revision).files, ["ready.jpg"])
+
     def test_published_pages_are_bounded_and_survive_replacement(self):
         from simpletuner.helpers.metadata.backends.webshart_membership import MembershipPages, write_membership
 

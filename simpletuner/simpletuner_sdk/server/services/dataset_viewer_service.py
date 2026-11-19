@@ -29,7 +29,7 @@ from simpletuner.helpers.metadata.backends.webshart_geometry import (
     prepared_geometry_path,
     read_snapshot,
 )
-from simpletuner.helpers.metadata.backends.webshart_membership import MembershipPages
+from simpletuner.helpers.metadata.backends.webshart_membership import IncompleteWebshartMembership, MembershipPages
 from simpletuner.helpers.metadata.preparation import read_bucket_groups, read_bucket_page
 
 logger = logging.getLogger(__name__)
@@ -51,6 +51,7 @@ class DatasetSummary(BaseModel):
 
     dataset_id: str
     has_cache: bool = False
+    scan_incomplete: bool = False
     accepted_samples: Optional[int] = None
     physical_rows: Optional[int] = None
     source_revision: Optional[str] = None
@@ -359,20 +360,25 @@ class DatasetViewerService:
             stem = f"aspect_ratio_bucket_{file_type}"
             if root.is_dir() and native.get("format", "tar") == "parquet":
                 candidates = root.glob(f"{stem}_source_*_{escape(suffix)}.json")
-                matches = []
+                matches, incomplete = [], []
+                configured_source = _webshart_source_config(dataset_config)
                 for candidate in candidates:
                     indices = candidate.with_name(candidate.name.replace(stem, "aspect_ratio_bucket_indices", 1))
-                    if not indices.is_file():
-                        continue
-                    with indices.open("rb") as source:
-                        index = MembershipPages.open(source)
-                        if index is None:
-                            continue
-                        if _webshart_source_config(dataset_config) == _webshart_source_config(
-                            index.header.get("config") or {}
-                        ):
-                            matches.append((os.fstat(source.fileno()).st_mtime_ns, candidate))
-                return max(matches)[1] if matches else None
+                    try:
+                        with indices.open("rb") as source:
+                            modified = os.fstat(source.fileno()).st_mtime_ns
+                            try:
+                                index = MembershipPages.open(source)
+                            except IncompleteWebshartMembership as scan:
+                                if configured_source == _webshart_source_config(scan.header.get("config") or {}):
+                                    incomplete.append((modified, candidate))
+                            else:
+                                if index and configured_source == _webshart_source_config(index.header.get("config") or {}):
+                                    matches.append((modified, candidate))
+                    except (OSError, json.JSONDecodeError, KeyError) as error:
+                        logger.debug("Cannot open Webshart publication for %s: %s", dataset_id, error)
+                available = matches or incomplete
+                return max(available)[1] if available else None
             if cache_dir:
                 instance_data_dir = str(root)
         filename = f"aspect_ratio_bucket_{file_type}_{dataset_config.get('cache_file_suffix', dataset_id)}.json"
@@ -555,9 +561,13 @@ class DatasetViewerService:
                 index = MembershipPages.open(source)
             if index is None:
                 data = self._load_cache(cache_path)
+                if data.get("scan_in_progress") and dataset_config.get("type") == "webshart":
+                    raise IncompleteWebshartMembership(data)
                 counts = {key: len(files) for key, files in data.get("aspect_ratio_bucket_indices", {}).items()}
             else:
                 data, counts = index.header, index.counts
+        except IncompleteWebshartMembership:
+            return DatasetSummary(dataset_id=dataset_id, scan_incomplete=True, **cond_fields)
         except (json.JSONDecodeError, OSError) as e:
             logger.warning("Failed to read cache for %s: %s", dataset_id, e)
             return DatasetSummary(dataset_id=dataset_id, has_cache=False, **cond_fields)
@@ -606,6 +616,10 @@ class DatasetViewerService:
                     files, total = read_bucket_page(read_bucket_groups(source), bucket_key, offset, limit)
                 else:
                     files, total = index.read_page(bucket_key, offset, limit)
+        except IncompleteWebshartMembership:
+            if view_revision is not None:
+                raise DatasetViewChanged("The prepared dataset is no longer available.") from None
+            return DatasetFilePage(files=[], total=0, limit=limit, offset=offset)
         except DatasetViewChanged:
             raise
         except (ijson.JSONError, ValueError, OSError):
@@ -620,7 +634,10 @@ class DatasetViewerService:
         index = None
         if indices is not None:
             with indices.open("rb") as source:
-                index = MembershipPages.open(source)
+                try:
+                    index = MembershipPages.open(source)
+                except IncompleteWebshartMembership:
+                    indices = None
         current_revision = index.header["view_revision"] if index is not None else None
         if view_revision is not None and current_revision != view_revision:
             raise DatasetViewChanged("The prepared dataset changed. Reopen its bucket to inspect the current view.")
