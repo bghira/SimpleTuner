@@ -371,10 +371,8 @@ class DatasetViewerService:
                         if _webshart_source_config(dataset_config) == _webshart_source_config(
                             index.header.get("config") or {}
                         ):
-                            matches.append(candidate)
-                if len(matches) > 1:
-                    raise ValueError("Multiple published Webshart revisions match this dataset configuration.")
-                return matches[0] if matches else None
+                            matches.append((os.fstat(source.fileno()).st_mtime_ns, candidate))
+                return max(matches)[1] if matches else None
             if cache_dir:
                 instance_data_dir = str(root)
         filename = f"aspect_ratio_bucket_{file_type}_{dataset_config.get('cache_file_suffix', dataset_id)}.json"

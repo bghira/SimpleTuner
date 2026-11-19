@@ -4,6 +4,7 @@ import base64
 import hashlib
 import io
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -93,6 +94,43 @@ class TestWebshartMembershipPages(unittest.TestCase):
                 backend.dataset.fingerprint = "new-catalogue"
                 with self.assertRaisesRegex(DatasetViewChanged, "catalogue changed"):
                     service.get_file_metadata(config, ref, view_revision=revision)
+
+    def test_latest_matching_catalogue_is_selected_across_publications(self):
+        from simpletuner.helpers.metadata.backends.webshart_membership import write_membership
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = {
+                "id": "images",
+                "type": "webshart",
+                "webshart": {
+                    "source": "s3://example",
+                    "cache_dir": directory,
+                    "format": "parquet",
+                    "manifest": "capture.json",
+                },
+            }
+
+            def publish(fingerprint, ref, order, source_config):
+                path = root / f"aspect_ratio_bucket_indices_source_{fingerprint}_images.json"
+                write_membership(path, {"square": [ref]}, {"source_revision": fingerprint, "config": source_config})
+                os.utime(path, ns=(order, order))
+                return path
+
+            service = DatasetViewerService(project_root=root)
+            old = publish("z", "old.jpg", 1_000_000_000, config)
+            selected = service.get_dataset_summary(config).view_revision
+            publish("a", "new.jpg", 2_000_000_000, config)
+            other = {**config, "webshart": {**config["webshart"], "manifest": "other.json"}}
+            publish("later", "other.jpg", 3_000_000_000, other)
+
+            summary = service.get_dataset_summary(config)
+            self.assertEqual(summary.source_revision, "a")
+            self.assertEqual(service.get_dataset_files(config, view_revision=summary.view_revision).files, ["new.jpg"])
+            self.assertEqual(service.get_dataset_files(other).files, ["other.jpg"])
+            with self.assertRaises(DatasetViewChanged):
+                service.get_dataset_files(config, view_revision=selected)
+            self.assertTrue(old.is_file())
 
     def test_published_pages_are_bounded_and_survive_replacement(self):
         from simpletuner.helpers.metadata.backends.webshart_membership import MembershipPages, write_membership
