@@ -44,12 +44,8 @@ from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
 from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
 from simpletuner.helpers.configuration.loader import load_config
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type, selected_dataset_ids
-from simpletuner.helpers.data_backend.factory import (
-    BatchFetcher,
-    configure_multi_databackend,
-    run_distillation_cache_generation,
-)
-from simpletuner.helpers.data_backend.runtime import random_dataloader_iterator
+from simpletuner.helpers.data_backend.factory import configure_multi_databackend, run_distillation_cache_generation
+from simpletuner.helpers.data_backend.runtime import BatchFetcher, random_dataloader_iterator
 from simpletuner.helpers.data_backend.runtime.context_parallel_sync import (
     ContextParallelBatchSynchronizer,
     gather_sample_weighted_scalar,
