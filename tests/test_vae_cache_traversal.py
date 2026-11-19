@@ -284,19 +284,31 @@ class TestVaeCacheTraversal(unittest.TestCase):
         cache.cache_data_backend = Mock()
         cache.cache_data_backend.bulk_exists.return_value = (True, False)
         cache.cache_path_for_image = lambda ref: f"cache/{ref}.pt"
-        cache.accelerator = Mock()
         cache.vae_cache_ondemand = False
         cache.prepare_dataset = Mock()
         dataset = Mock()
         dataset.iter_preparation_batches.return_value = iter([("square", ("present", "missing"))])
 
-        cache.rebuild_prepared_cache(dataset, worker=3, workers=8)
+        with patch("simpletuner.helpers.training.multi_process.gather_across_processes", return_value=[]) as agree:
+            cache.rebuild_prepared_cache(dataset, worker=3, workers=8)
 
         dataset.iter_preparation_batches.assert_called_once_with(worker=3, workers=8, batch_size=2)
         cache.cache_data_backend.delete.assert_called_once_with("cache/present.pt")
         cache.cache_data_backend.iter_file_keys.assert_not_called()
         cache.prepare_dataset.assert_called_once_with(dataset, worker=3, workers=8)
-        self.assertEqual(cache.accelerator.wait_for_everyone.call_count, 2)
+        self.assertEqual(agree.call_count, 2)
+
+        cache.prepare_dataset.reset_mock()
+        dataset.iter_preparation_batches.return_value = iter(())
+        with (
+            patch(
+                "simpletuner.helpers.training.multi_process.gather_across_processes",
+                return_value=["rank 0: OSError: unable to remove latent"],
+            ),
+            self.assertRaisesRegex(RuntimeError, "unable to remove latent"),
+        ):
+            cache.rebuild_prepared_cache(dataset, worker=3, workers=8)
+        cache.prepare_dataset.assert_not_called()
 
     def test_epoch_latent_expiry_uses_scoped_s3_prefix_on_global_leader(self):
         cache = VAECache.__new__(VAECache)

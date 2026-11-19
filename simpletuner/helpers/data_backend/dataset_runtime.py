@@ -21,6 +21,7 @@ from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.helpers.metadata.preparation import DatasetReadView
 from simpletuner.helpers.prompts import CaptionNotFoundError, PromptHandler
 from simpletuner.helpers.training import video_file_extensions
+from simpletuner.helpers.training.multi_process import agree_process_failure
 from simpletuner.helpers.utils.pathing import normalize_data_path
 
 logger = logging.getLogger(__name__)
@@ -131,15 +132,17 @@ class DatasetRuntime:
         clear_latents = self.config.get("vae_cache_clear_each_epoch")
         if self.requires_complete_preparation is True:
             accelerator = metadata.accelerator
+            rank, workers = accelerator.process_index, accelerator.num_processes
             if clear_latents and self.uses_native_schedule:
                 cache.expire_epoch_latents()
                 if not self.recrops_lazily and not cache.vae_cache_ondemand:
-                    cache.prepare_dataset(self, worker=accelerator.process_index, workers=accelerator.num_processes)
-                    accelerator.wait_for_everyone()
+                    with agree_process_failure(f"(id={self.id}) Epoch {epoch} latent preparation", rank):
+                        cache.prepare_dataset(self, worker=rank, workers=workers)
             elif clear_latents:
-                cache.rebuild_prepared_cache(self, worker=accelerator.process_index, workers=accelerator.num_processes)
+                cache.rebuild_prepared_cache(self, worker=rank, workers=workers)
             elif rebuilt and not cache.vae_cache_ondemand:
-                cache.prepare_dataset(self, worker=accelerator.process_index, workers=accelerator.num_processes)
+                with agree_process_failure(f"(id={self.id}) Epoch {epoch} latent preparation", rank):
+                    cache.prepare_dataset(self, worker=rank, workers=workers)
         elif rebuilt or clear_latents:
             cache.rebuild_cache()
 

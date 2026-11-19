@@ -41,7 +41,7 @@ from simpletuner.helpers.models.wan import compute_wan_posterior
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
 from simpletuner.helpers.training import audio_file_extensions, image_file_extensions, video_file_extensions
 from simpletuner.helpers.training.multi_process import _get_rank as get_rank
-from simpletuner.helpers.training.multi_process import gather_across_processes, rank_info, should_log
+from simpletuner.helpers.training.multi_process import agree_process_failure, gather_across_processes, rank_info, should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.webhooks.events import lifecycle_stage_event
 from simpletuner.helpers.webhooks.mixin import WebhookMixin
@@ -922,16 +922,18 @@ class VAECache(WebhookMixin):
             raise RuntimeError(f"Could not expire epoch latents for {self.id}: {failures[0]}")
 
     def rebuild_prepared_cache(self, dataset, *, worker, workers):
-        for _, refs in dataset.iter_preparation_batches(worker=worker, workers=workers, batch_size=self.write_batch_size):
-            keys = tuple(dict.fromkeys(self.cache_path_for_image(ref) for ref in refs))
-            present = self.cache_data_backend.bulk_exists(keys)
-            for key, exists in zip(keys, present, strict=True):
-                if exists:
-                    self.cache_data_backend.delete(key)
-        self.accelerator.wait_for_everyone()
+        with agree_process_failure(f"(id={dataset.id}) Prepared latent removal", worker):
+            for _, refs in dataset.iter_preparation_batches(
+                worker=worker, workers=workers, batch_size=self.write_batch_size
+            ):
+                keys = tuple(dict.fromkeys(self.cache_path_for_image(ref) for ref in refs))
+                present = self.cache_data_backend.bulk_exists(keys)
+                for key, exists in zip(keys, present, strict=True):
+                    if exists:
+                        self.cache_data_backend.delete(key)
         if not self.vae_cache_ondemand:
-            self.prepare_dataset(dataset, worker=worker, workers=workers)
-            self.accelerator.wait_for_everyone()
+            with agree_process_failure(f"(id={dataset.id}) Prepared latent generation", worker):
+                self.prepare_dataset(dataset, worker=worker, workers=workers)
 
     def clear_cache(self):
         # can't simply clear directory since it might be mixed with image samples (s3 case)
