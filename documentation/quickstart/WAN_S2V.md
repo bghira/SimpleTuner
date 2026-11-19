@@ -497,6 +497,8 @@ python scripts/generate_s2v_audio.py \
     --strip-audio
 ```
 
+The helper searches subdirectories. By default it writes flat files matched by stem. Use `--sidecar-match relative_path` to mirror the video tree, and set `audio.sidecar_match: relative_path` on the audio dataset entry. For example, `speaker-a/clip.mp4` maps to `speaker-a/clip.wav`. The helper rejects two inputs that would write the same sidecar before extracting or stripping audio.
+
 The script:
 - Extracts audio at 16kHz mono WAV (native Wav2Vec2 sample rate)
 - Matches filenames automatically (e.g., `video.mp4` -> `video.wav`)

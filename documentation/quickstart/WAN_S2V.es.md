@@ -496,6 +496,8 @@ python scripts/generate_s2v_audio.py \
     --strip-audio
 ```
 
+La herramienta busca en subdirectorios. Por defecto, escribe archivos en una sola carpeta y los empareja por su nombre base. Usa `--sidecar-match relative_path` para reproducir el árbol de vídeo y configura `audio.sidecar_match: relative_path` en el dataset de audio. Por ejemplo, `speaker-a/clip.mp4` corresponde a `speaker-a/clip.wav`. Si dos entradas producirían el mismo archivo de audio, la herramienta se detiene antes de extraer o quitar el audio.
+
 El script:
 - Extrae audio en WAV mono de 16kHz (tasa nativa de Wav2Vec2)
 - Empareja nombres de archivo automáticamente (p. ej., `video.mp4` -> `video.wav`)
