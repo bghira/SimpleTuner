@@ -313,8 +313,8 @@
                                 <template x-if="ds.conditioning_data && ds.conditioning_data.length > 0">
                                     <div class="d-flex gap-2 flex-wrap mb-1">
                                         <template x-for="condId in ds.conditioning_data" :key="condId">
-                                            <button class="btn btn-sm viewer-bucket-btn py-0 px-2"
-                                                    @click.stop="pairsOffset = 0; loadConditioningPairs(ds.dataset_id, condId)">
+                                            <button type="button" class="btn btn-sm viewer-bucket-btn py-0 px-2"
+                                                    @click.stop="selectConditioningPair(ds.dataset_id, condId)">
                                                 <i class="fas fa-link me-1 viewer-text-xxs"></i>
                                                 <span x-text="condId"></span>
                                             </button>
@@ -326,8 +326,8 @@
                                 <template x-if="ds.source_dataset_id">
                                     <div class="d-flex align-items-center gap-2">
                                         <span class="text-muted small">Source:</span>
-                                        <button class="btn btn-sm viewer-bucket-btn py-0 px-2"
-                                                @click.stop="pairsOffset = 0; loadConditioningPairs(ds.source_dataset_id, ds.dataset_id)">
+                                        <button type="button" class="btn btn-sm viewer-bucket-btn py-0 px-2"
+                                                @click.stop="selectConditioningPair(ds.source_dataset_id, ds.dataset_id)">
                                             <i class="fas fa-link me-1 viewer-text-xxs"></i>
                                             <span x-text="ds.source_dataset_id"></span>
                                         </button>
@@ -346,7 +346,7 @@
                         </div>
 
                         <!-- Conditioning pairs viewer (expanded inline) -->
-                        <div x-show="conditioningPairs && expandedDataset === ds.dataset_id" class="px-3 py-2 viewer-section">
+                        <div x-show="conditioningPairSelection && expandedDataset === ds.dataset_id" class="px-3 py-2 viewer-section">
                             <div class="d-flex justify-content-between align-items-center mb-2">
                                 <span class="small text-muted">
                                     <span x-text="conditioningPairs?.scope === 'unavailable' ? 'Pairing index unavailable' : (conditioningPairs?.scope === 'source_page' ? conditioningPairs.pairs.length + ' matched pairs on this source page' : (conditioningPairs?.total_pairs ?? 0) + ' matched pairs')"></span>
@@ -362,17 +362,19 @@
                                     </span>
                                 </span>
                                 <div class="d-flex gap-2 align-items-center" x-show="(conditioningPairs?.source_total ?? conditioningPairs?.total_pairs) > pairsLimit">
-                                    <button class="btn btn-outline-secondary btn-sm"
+                                    <button type="button" class="btn btn-outline-secondary btn-sm"
+                                            aria-label="Previous conditioning pairs"
                                             :disabled="pairsOffset === 0"
-                                            @click="pairsPrevPage(ds.conditioning_data ? ds.dataset_id : ds.source_dataset_id, ds.conditioning_data ? ds.conditioning_data[0] : ds.dataset_id)">
+                                            @click="pairsPrevPage()">
                                         <i class="fas fa-chevron-left"></i>
                                     </button>
                                     <span class="text-muted small"
                                           x-text="(pairsOffset + 1) + '-' + Math.min(pairsOffset + pairsLimit, conditioningPairs?.source_total ?? conditioningPairs?.total_pairs ?? 0)">
                                     </span>
-                                    <button class="btn btn-outline-secondary btn-sm"
+                                    <button type="button" class="btn btn-outline-secondary btn-sm"
+                                            aria-label="Next conditioning pairs"
                                             :disabled="pairsOffset + pairsLimit >= (conditioningPairs?.source_total ?? conditioningPairs?.total_pairs ?? 0)"
-                                            @click="pairsNextPage(ds.conditioning_data ? ds.dataset_id : ds.source_dataset_id, ds.conditioning_data ? ds.conditioning_data[0] : ds.dataset_id)">
+                                            @click="pairsNextPage()">
                                         <i class="fas fa-chevron-right"></i>
                                     </button>
                                 </div>
@@ -385,12 +387,12 @@
                             <div x-show="!loadingPairs && conditioningPairs?.pairs" class="viewer-conditioning-pairs">
                                 <template x-for="pair in (conditioningPairs?.pairs || [])" :key="pair.source_path">
                                     <div class="viewer-pair-row d-flex gap-2 mb-2 align-items-center">
-                                        <div class="viewer-pair-thumb" @click="showFileDetail(ds.source_dataset_id || ds.dataset_id, pair.source_path)">
+                                        <div class="viewer-pair-thumb" @click="showFileDetail(conditioningPairSelection.sourceId, pair.source_path, conditioningPairSelection.sourceRevision)">
                                             <div class="text-muted text-center viewer-text-xxs">Source</div>
                                             <div class="viewer-pair-filename" x-text="pair.source_path.split('/').pop()"></div>
                                         </div>
                                         <i class="fas fa-arrow-right text-muted viewer-text-xxs"></i>
-                                        <div class="viewer-pair-thumb" @click="showFileDetail(ds.conditioning_data?.[0] || ds.dataset_id, pair.conditioning_path)">
+                                        <div class="viewer-pair-thumb" @click="showFileDetail(conditioningPairSelection.conditioningId, pair.conditioning_path, conditioningPairSelection.conditioningRevision)">
                                             <div class="text-muted text-center viewer-text-xxs">Conditioning</div>
                                             <div class="viewer-pair-filename" x-text="pair.conditioning_path.split('/').pop()"></div>
                                         </div>

@@ -326,6 +326,21 @@ class TestWebshartMembershipPages(unittest.TestCase):
                 report = service.get_conditioning_pairs(*configs, offset=1, limit=2)
                 self.assertEqual(report["pairs"], [{"source_path": refs[1], "conditioning_path": refs[1]}])
                 self.assertEqual((report["source_total"], report["total_pairs"]), (4, None))
+                self.assertEqual(report["conditioning_view_revision"], filtered_page.view_revision)
+                self.assertIsNotNone(report["source_view_revision"])
+                self.assertEqual(
+                    service.get_conditioning_pairs(
+                        *configs,
+                        offset=1,
+                        limit=2,
+                        source_view_revision=report["source_view_revision"],
+                        conditioning_view_revision=report["conditioning_view_revision"],
+                    ),
+                    report,
+                )
+                for key in ("source_view_revision", "conditioning_view_revision"):
+                    with self.subTest(key=key), self.assertRaises(DatasetViewChanged):
+                        service.get_conditioning_pairs(*configs, **{key: "replaced-view"})
                 orphans = service.get_orphaned_files(*configs)
                 self.assertEqual((orphans.source_orphans, orphans.conditioning_orphans), ([refs[0], refs[2]], [refs[4]]))
                 self.assertEqual(service.get_conditioning_pairs(configs[0], {"type": "local"})["scope"], "unavailable")

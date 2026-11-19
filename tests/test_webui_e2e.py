@@ -9,7 +9,7 @@ from io import BytesIO
 
 import requests
 from PIL import Image
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import StaleElementReferenceException, TimeoutException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support import expected_conditions as EC
@@ -2021,6 +2021,111 @@ class DatasetViewerRevisionTestCase(_TrainerPageMixin, WebUITestCase):
                 self.assertEqual(len(driver.find_elements(By.CSS_SELECTOR, ".viewer-bucket-btn.active")), 1)
 
         self.for_each_browser("test_delayed_thumbnail_response_does_not_change_another_dataset", scenario)
+
+    def test_conditioning_pairs_keep_the_selected_link_and_view(self) -> None:
+        root = self.home_path / "viewer-pairs"
+        root.mkdir()
+        datasets = [
+            {"type": "local", "id": "source", "conditioning_data": ["first", "second"]},
+            {"type": "local", "id": "first", "dataset_type": "conditioning"},
+            {"type": "local", "id": "second", "dataset_type": "conditioning"},
+        ]
+        for config in datasets:
+            config["instance_data_dir"] = str(root)
+            (root / f"aspect_ratio_bucket_indices_{config['id']}.json").write_text(
+                json.dumps({"aspect_ratio_bucket_indices": {"square": ["image.jpg"]}})
+            )
+        (self.config_dir / "default" / "multidatabackend.json").write_text(json.dumps(datasets))
+        self.seed_defaults()
+
+        def scenario(driver, _browser):
+            trainer = self._trainer_page(driver)
+            trainer.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer.switch_to_datasets_tab()
+            trainer.wait_for_tab("datasets")
+            wait = WebDriverWait(driver, 15, ignored_exceptions=(StaleElementReferenceException,))
+            wait.until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, "//button[contains(@class,'dataset-subtab-btn') and contains(.,'Viewer')]")
+                )
+            ).click()
+            wait.until(lambda d: len(d.find_elements(By.CSS_SELECTOR, ".viewer-card-header")) == 3)
+            self.dismiss_onboarding(driver)
+            wait.until(EC.invisibility_of_element_located((By.CSS_SELECTOR, ".onboarding-overlay")))
+
+            def click_when_visible(locator):
+                def click(driver):
+                    element = EC.element_to_be_clickable(locator)(driver)
+                    if not element:
+                        return False
+                    driver.execute_script("arguments[0].click();", element)
+                    return True
+
+                wait.until(click)
+
+            viewer_card = "//div[contains(@class,'viewer-dataset-card')][div[contains(@class,'viewer-card-header')]//span[normalize-space(.)='source']]"
+            click_when_visible((By.XPATH, viewer_card + "/div[contains(@class,'viewer-card-header')]"))
+            driver.execute_script(
+                """
+                window.pairRequests = [];
+                const originalFetch = window.fetch;
+                window.fetch = (url, options) => {
+                    const target = new URL(url, window.location.origin);
+                    const response = body => new Response(JSON.stringify(body), {
+                        headers: {'Content-Type': 'application/json'},
+                    });
+                    if (target.pathname.endsWith('/conditioning-pairs')) {
+                        const query = Object.fromEntries(target.searchParams);
+                        window.pairRequests.push(query);
+                        if (query.conditioning_id === 'first') {
+                            return new Promise(resolve => {
+                                window.releaseFirstPair = () => resolve(new Response('{}', {status: 409}));
+                            });
+                        }
+                        return Promise.resolve(response({
+                            source_total: 12,
+                            source_view_revision: 'source-view',
+                            conditioning_view_revision: 'second-view',
+                            pairs: [{source_path: 'source.jpg', conditioning_path: 'page-' + query.offset + '.jpg'}],
+                        }));
+                    }
+                    if (target.pathname.endsWith('/file-metadata') || target.pathname.endsWith('/preview')) {
+                        window.detailQuery = Object.fromEntries(target.searchParams);
+                        return Promise.resolve(response({path: window.detailQuery.file_path, found: true}));
+                    }
+                    return originalFetch(url, options);
+                };
+                for (const name of ['first', 'second']) {
+                    const buttons = arguments[0].querySelectorAll('.viewer-bucket-btn');
+                    [...buttons].find(button => button.textContent.trim() === name).click();
+                }
+                """,
+                wait.until(EC.presence_of_element_located((By.XPATH, viewer_card))),
+            )
+            self.assertEqual(
+                driver.execute_script("return window.pairRequests.map(p => p.conditioning_id);"), ["first", "second"]
+            )
+            next_page = viewer_card + "//button[@aria-label='Next conditioning pairs']"
+            click_when_visible((By.XPATH, next_page))
+            second_detail = (
+                By.XPATH,
+                viewer_card + "//*[contains(@class,'viewer-pair-thumb') and contains(.,'page-6.jpg')]",
+            )
+            wait.until(EC.element_to_be_clickable(second_detail))
+            driver.execute_async_script("window.releaseFirstPair(); setTimeout(arguments[0], 30);")
+            click_when_visible(second_detail)
+            requests = driver.execute_script("return window.pairRequests;")
+            self.assertEqual([entry["conditioning_id"] for entry in requests], ["first", "second", "second"])
+            self.assertEqual(requests[-1]["offset"], "6")
+            self.assertEqual(requests[-1]["source_view_revision"], "source-view")
+            self.assertEqual(requests[-1]["conditioning_view_revision"], "second-view")
+            self.assertEqual(
+                driver.execute_script("return window.detailQuery;"),
+                {"dataset_id": "second", "file_path": "page-6.jpg", "view_revision": "second-view"},
+            )
+
+        self.for_each_browser("test_conditioning_pairs_keep_the_selected_link_and_view", scenario)
 
     def test_replaced_view_refreshes_bucket_choices_from_bucket_and_file(self) -> None:
         from simpletuner.helpers.metadata.backends.webshart_membership import write_membership

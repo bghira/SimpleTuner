@@ -1699,16 +1699,12 @@ class DatasetViewerService:
         return DatasetGraph(nodes=nodes, edges=edges)
 
     @contextmanager
-    def _indexed_conditioning_view(self, config):
-        if config.get("type") == "webshart":
-            publication = self._find_cache_file(config, "indices")
-            if publication is not None:
-                with publication.open("rb") as source:
-                    pages = MembershipPages.open(source)
-                    if pages is not None and pages.header.get("geometry_format") == "sqlite-v1":
-                        with accepted_ref_lookup(publication, pages) as contains:
-                            yield pages, contains
-                        return
+    def _indexed_conditioning_view(self, config, revision=None):
+        publication, pages = self._webshart_view(config, revision)
+        if pages is not None and pages.header.get("geometry_format") == "sqlite-v1":
+            with accepted_ref_lookup(publication, pages) as contains:
+                yield pages, contains
+            return
         yield None
 
     def get_conditioning_pairs(
@@ -1717,12 +1713,18 @@ class DatasetViewerService:
         conditioning_config: Dict[str, Any],
         limit: int = 12,
         offset: int = 0,
+        *,
+        source_view_revision: Optional[str] = None,
+        conditioning_view_revision: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Match files by basename between source and conditioning datasets."""
         with ExitStack() as stack:
             source, target = [
-                stack.enter_context(self._indexed_conditioning_view(config))
-                for config in (source_config, conditioning_config)
+                stack.enter_context(self._indexed_conditioning_view(config, revision))
+                for config, revision in (
+                    (source_config, source_view_revision),
+                    (conditioning_config, conditioning_view_revision),
+                )
             ]
             if source or target:
                 can_pair = source is not None and target is not None
@@ -1736,6 +1738,8 @@ class DatasetViewerService:
                     "conditioning_orphan_count": None,
                     "limit": limit,
                     "offset": offset,
+                    "source_view_revision": source[0].header["view_revision"] if source else None,
+                    "conditioning_view_revision": target[0].header["view_revision"] if target else None,
                 }
         source_files = self.get_dataset_files(source_config, limit=1_000_000).files
         cond_files = self.get_dataset_files(conditioning_config, limit=1_000_000).files

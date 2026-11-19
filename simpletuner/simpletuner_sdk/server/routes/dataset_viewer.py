@@ -465,15 +465,22 @@ async def get_viewer_conditioning_pairs(
     conditioning_id: str,
     limit: Annotated[int, Query(ge=0, le=128)] = 12,
     offset: Annotated[int, Query(ge=0)] = 0,
+    source_view_revision: Optional[str] = None,
+    conditioning_view_revision: Optional[str] = None,
     _user: User = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """Matched conditioning pairs between source and conditioning datasets."""
-    return _get_viewer_service().get_conditioning_pairs(
-        _require_dataset_config(source_id),
-        _require_dataset_config(conditioning_id),
-        limit=limit,
-        offset=offset,
-    )
+    try:
+        return _get_viewer_service().get_conditioning_pairs(
+            _require_dataset_config(source_id),
+            _require_dataset_config(conditioning_id),
+            limit=limit,
+            offset=offset,
+            source_view_revision=source_view_revision,
+            conditioning_view_revision=conditioning_view_revision,
+        )
+    except DatasetViewChanged as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/viewer/conditioning-match")

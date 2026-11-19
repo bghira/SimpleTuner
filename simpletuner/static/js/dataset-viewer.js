@@ -47,6 +47,8 @@ window.datasetViewerComponent = function () {
         // Conditioning pair viewer state
         conditioningPairs: null,
         loadingPairs: false,
+        conditioningPairSelection: null,
+        _pairsRequest: 0,
         pairsOffset: 0,
         pairsLimit: 6,
 
@@ -514,46 +516,85 @@ window.datasetViewerComponent = function () {
             } catch (e) { /* silently fail */ }
         },
 
-        async loadConditioningPairs(sourceId, conditioningId) {
+        async selectConditioningPair(sourceId, conditioningId) {
+            this.conditioningPairSelection = {
+                sourceId,
+                conditioningId,
+                sourceRevision: this.datasets.find(d => d.dataset_id === sourceId)?.view_revision,
+                conditioningRevision: this.datasets.find(d => d.dataset_id === conditioningId)?.view_revision,
+            };
+            this.pairsOffset = 0;
+            await this.loadConditioningPairs();
+        },
+
+        async loadConditioningPairs() {
+            const selection = this.conditioningPairSelection;
+            if (!selection) return;
+            const request = ++this._pairsRequest;
             this.loadingPairs = true;
             this.conditioningPairs = null;
             try {
                 const params = new URLSearchParams({
-                    source_id: sourceId,
-                    conditioning_id: conditioningId,
+                    source_id: selection.sourceId,
+                    conditioning_id: selection.conditioningId,
                     limit: String(this.pairsLimit),
                     offset: String(this.pairsOffset),
                 });
+                if (selection.sourceRevision) params.set('source_view_revision', selection.sourceRevision);
+                if (selection.conditioningRevision) params.set('conditioning_view_revision', selection.conditioningRevision);
                 const resp = await fetch('/api/datasets/viewer/conditioning-pairs?' + params);
-                if (resp.ok) {
-                    this.conditioningPairs = await resp.json();
+                if (resp.status === 409) {
+                    if (request !== this._pairsRequest) return;
+                    this._clearConditioningPairs();
+                    const clearedRequest = this._pairsRequest;
+                    await Promise.all([
+                        this._refreshDatasetSummary(selection.sourceId),
+                        this._refreshDatasetSummary(selection.conditioningId),
+                    ]);
+                    if (clearedRequest === this._pairsRequest) {
+                        window.showToast?.('The dataset changed. Select the conditioning link again.', 'info');
+                    }
+                } else if (resp.ok) {
+                    const page = await resp.json();
+                    if (request === this._pairsRequest) {
+                        this.conditioningPairs = page;
+                        selection.sourceRevision = page.source_view_revision ?? selection.sourceRevision;
+                        selection.conditioningRevision = page.conditioning_view_revision ?? selection.conditioningRevision;
+                    }
                 }
             } catch (e) {
-                console.error('Error loading conditioning pairs:', e);
+                if (request === this._pairsRequest) console.error('Error loading conditioning pairs:', e);
             } finally {
-                this.loadingPairs = false;
+                if (request === this._pairsRequest) this.loadingPairs = false;
             }
         },
 
-        async pairsNextPage(sourceId, conditioningId) {
+        async pairsNextPage() {
             if (!this.conditioningPairs) return;
             if (this.pairsOffset + this.pairsLimit >= (this.conditioningPairs.source_total ?? this.conditioningPairs.total_pairs)) return;
             this.pairsOffset += this.pairsLimit;
-            await this.loadConditioningPairs(sourceId, conditioningId);
+            await this.loadConditioningPairs();
         },
 
-        async pairsPrevPage(sourceId, conditioningId) {
+        async pairsPrevPage() {
             if (this.pairsOffset <= 0) return;
             this.pairsOffset = Math.max(0, this.pairsOffset - this.pairsLimit);
-            await this.loadConditioningPairs(sourceId, conditioningId);
+            await this.loadConditioningPairs();
+        },
+
+        _clearConditioningPairs() {
+            this._pairsRequest++;
+            this.loadingPairs = false;
+            this.conditioningPairs = null;
+            this.conditioningPairSelection = null;
+            this.pairsOffset = 0;
         },
 
         toggleDataset(datasetId) {
             this.expandedDataset = this.expandedDataset === datasetId ? null : datasetId;
             this._clearBucketSelection();
             this.closeFileDetail();
-            this.conditioningPairs = null;
-            this.pairsOffset = 0;
+            this._clearConditioningPairs();
             this._saveNavState();
         },
 
@@ -641,7 +682,7 @@ window.datasetViewerComponent = function () {
             await this.loadBucketThumbnails(datasetId);
         },
 
-        async showFileDetail(datasetId, filePath) {
+        async showFileDetail(datasetId, filePath, viewRevision) {
             const request = ++this._fileRequest;
             this._destroyBboxCanvas();
             this.loadingFileDetail = true;
@@ -659,7 +700,8 @@ window.datasetViewerComponent = function () {
                 file_path: filePath,
             });
             const ds = this.datasets.find(d => d.dataset_id === datasetId);
-            if (ds?.view_revision) params.set('view_revision', ds.view_revision);
+            const expectedRevision = viewRevision ?? ds?.view_revision;
+            if (expectedRevision) params.set('view_revision', expectedRevision);
             let staleView = false;
             const readDetail = response => {
                 staleView ||= response.status === 409;
