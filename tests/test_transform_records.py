@@ -657,40 +657,95 @@ class HuggingfaceTransformRecordTests(unittest.TestCase):
 
 
 class CopiedDatasetGeometryTests(unittest.TestCase):
-    def test_a_copied_dataset_keeps_the_source_geometry_without_reading_its_own_files(self):
-        StateTracker.set_args(SimpleNamespace(enable_multiprocessing=False, train_batch_size=1, model_type=""))
+    """A copied dataset mirrors the source's geometry on every rank and has none of its own."""
+
+    def setUp(self):
+        temp = TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = temp.name
+        self.args = SimpleNamespace(
+            enable_multiprocessing=False,
+            train_batch_size=1,
+            gradient_accumulation_steps=1,
+            model_type="",
+            skip_file_discovery="",
+            vae_cache_scan_behaviour="sync",
+            aspect_bucket_worker_count=1,
+            aspect_bucket_disable_rebuild=False,
+            cache_dir=f"{self.root}/cache",
+            output_dir=f"{self.root}/output",
+            disable_bucket_pruning=True,
+            ignore_missing_files=True,
+            delete_problematic_images=False,
+            delete_unwanted_images=False,
+            minimum_image_size=None,
+            resolution=1.0,
+            resolution_type="area",
+        )
+        StateTracker.set_args(self.args)
+
+    def copy(self, process_index=0):
         backends = {}
-        with TemporaryDirectory() as root:
-            for dataset_id, dataset_type in (("source", "image"), ("control", "conditioning")):
-                StateTracker.register_data_backend({"id": dataset_id})
-                self.addCleanup(StateTracker.data_backends.pop, dataset_id, None)
-                StateTracker.set_data_backend_config(
-                    dataset_id, {"resolution": 1.0, "resolution_type": "area", "dataset_type": dataset_type}
-                )
-                directory = f"{root}/{dataset_id}"
-                metadata = DiscoveryMetadataBackend(
-                    id=dataset_id,
-                    instance_data_dir=directory,
-                    cache_file=f"{directory}/aspect_ratio_bucket_indices",
-                    metadata_file=f"{directory}/aspect_ratio_bucket_metadata",
-                    data_backend=LocalDataBackend(accelerator=None, id=dataset_id),
-                    accelerator=_Accelerator(0),
-                    batch_size=1,
-                    resolution=1.0,
-                    resolution_type="area",
-                )
-                entry = StateTracker.get_data_backend(dataset_id)
-                entry.update(metadata_backend=metadata, instance_data_dir=directory, dataset_type=dataset_type)
-                backends[dataset_id] = entry
-            source = backends["source"]["metadata_backend"]
-            source.aspect_ratio_bucket_indices = {"2.0": [f"{root}/source/a.png"]}
-            source.image_metadata = {f"{root}/source/a.png": {"original_size": [128, 64], **_geometry(2.0)}}
-            source.image_metadata_loaded = True
+        for dataset_id, dataset_type in (("source", "image"), ("control", "conditioning")):
+            StateTracker.register_data_backend({"id": dataset_id})
+            self.addCleanup(StateTracker.data_backends.pop, dataset_id, None)
+            StateTracker.set_data_backend_config(
+                dataset_id, {"resolution": 1.0, "resolution_type": "area", "dataset_type": dataset_type}
+            )
+            directory = f"{self.root}/{dataset_id}"
+            metadata = DiscoveryMetadataBackend(
+                id=dataset_id,
+                instance_data_dir=directory,
+                cache_file=f"{directory}/aspect_ratio_bucket_indices",
+                metadata_file=f"{directory}/aspect_ratio_bucket_metadata",
+                data_backend=LocalDataBackend(accelerator=None, id=dataset_id),
+                accelerator=_Accelerator(process_index),
+                batch_size=1,
+                resolution=1.0,
+                resolution_type="area",
+            )
+            self.addCleanup(metadata._close_transforms)
+            entry = StateTracker.get_data_backend(dataset_id)
+            entry.update(metadata_backend=metadata, instance_data_dir=directory, dataset_type=dataset_type)
+            backends[dataset_id] = entry
+        source = backends["source"]["metadata_backend"]
+        source.aspect_ratio_bucket_indices = {"2.0": [f"{self.root}/source/a.png"]}
+        source.image_metadata = {f"{self.root}/source/a.png": {"original_size": [128, 64], **_geometry(2.0)}}
+        source.image_metadata_loaded = True
+        DatasetDuplicator.copy_metadata(backends["source"], backends["control"])
+        return backends["control"]
 
-            DatasetDuplicator.copy_metadata(backends["source"], backends["control"])
+    def prepare(self, control, process_index):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
 
-            copied = backends["control"]["metadata_backend"].get_metadata()
-        self.assertEqual(copied[f"{root}/control/a.png"]["target_size"], (128, 64))
+        accelerator = _Accelerator(process_index)
+        accelerator.wait_for_everyone = lambda: None
+        factory = FactoryRegistry.__new__(FactoryRegistry)
+        factory.args, factory.accelerator = self.args, accelerator
+        factory.model = SimpleNamespace(requires_conditioning_latents=lambda: False)
+        backend = {"id": "control", "conditioning_type": "reference_strict", "scan_for_errors": True}
+        with patch.object(control["metadata_backend"], "handle_vae_cache_inconsistencies"):
+            factory._handle_error_scanning_and_metadata(backend, control, "reference_strict")
+
+    def target_size(self, control):
+        return control["metadata_backend"].get_metadata()[f"{self.root}/control/a.png"]["target_size"]
+
+    def test_a_copied_dataset_keeps_the_source_geometry_without_reading_its_own_files(self):
+        self.assertEqual(self.target_size(self.copy()), (128, 64))
+
+    def test_the_other_ranks_keep_the_copied_geometry_after_preparation(self):
+        control = self.copy(process_index=1)
+        self.prepare(control, process_index=1)
+        self.assertEqual(self.target_size(control), (128, 64))
+
+    def test_an_error_scan_does_not_decide_a_copied_dataset_again(self):
+        from PIL import Image
+
+        control = self.copy()
+        Path(f"{self.root}/control").mkdir(exist_ok=True)
+        Image.new("RGB", (64, 32)).save(f"{self.root}/control/a.png")
+        self.prepare(control, process_index=0)
+        self.assertEqual(self.target_size(control), (128, 64))
 
 
 class ViewerTransformRecordTests(unittest.TestCase):

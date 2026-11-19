@@ -4243,6 +4243,8 @@ class FactoryRegistry:
         self, backend: Dict[str, Any], init_backend: Dict[str, Any], conditioning_type: Optional[str]
     ) -> None:
         """Handle error scanning and metadata operations."""
+        # A copied dataset holds the source's metadata in memory on every rank and has none of its own to load.
+        copied = self._copies_metadata(backend)
         if (
             ("metadata" not in self.args.skip_file_discovery or "metadata" not in backend.get("skip_file_discovery", ""))
             and self.accelerator.is_main_process
@@ -4262,7 +4264,8 @@ class FactoryRegistry:
                     vae_cache=init_backend.get("vaecache"),
                     vae_cache_behavior=backend.get("vae_cache_scan_behaviour", self.args.vae_cache_scan_behaviour),
                 )
-                init_backend["metadata_backend"].scan_for_metadata()
+                if not copied:
+                    init_backend["metadata_backend"].scan_for_metadata()
             except FileNotFoundError:
                 warning_log(
                     f"(id={init_backend['id']}) Skipping metadata scan because data directory was not found: {init_backend.get('instance_data_dir')}"
@@ -4271,7 +4274,7 @@ class FactoryRegistry:
 
         if self._is_multi_process():
             self.accelerator.wait_for_everyone()
-        if not self.accelerator.is_main_process:
+        if not self.accelerator.is_main_process and not copied:
             try:
                 init_backend["metadata_backend"].load_image_metadata()
             except FileNotFoundError:
