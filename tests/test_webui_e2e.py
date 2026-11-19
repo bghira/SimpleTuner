@@ -2508,6 +2508,71 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
 
         self.for_each_browser("test_webshart_caption_keys_edit_and_save", scenario)
 
+    def test_audio_relationship_settings_survive_a_form_edit(self) -> None:
+        self.seed_defaults()
+        config_path = self.config_dir / "default" / "multidatabackend.json"
+        training_config = config_path.with_name("config.json")
+        settings = json.loads(training_config.read_text())
+        settings.update({"--model_family": "wan_s2v", "--model_flavour": "s2v-14b-2.2"})
+        training_config.write_text(json.dumps(settings))
+        source = {
+            "id": "video",
+            "type": "local",
+            "dataset_type": "video",
+            "instance_data_dir": str(self.home_path),
+            "s2v_datasets": ["embedded", "sidecars"],
+            "audio": {"auto_split": False, "sample_rate": 16000},
+        }
+        embedded = {
+            "id": "embedded",
+            "type": "local",
+            "dataset_type": "audio",
+            "instance_data_dir": str(self.home_path),
+            "source_dataset_id": "video",
+            "audio": {"source_from_video": True, "allow_zero_audio": False, "sample_rate": 16000},
+        }
+        sidecars = {
+            "id": "sidecars",
+            "type": "local",
+            "dataset_type": "audio",
+            "instance_data_dir": str(self.home_path),
+            "audio": {"sample_rate": 22050, "sidecar_match": "relative_path"},
+        }
+        config_path.write_text(json.dumps([source, embedded, sidecars]))
+
+        def scenario(driver, _browser):
+            trainer = self._trainer_page(driver)
+            trainer.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer.switch_to_datasets_tab()
+            trainer.wait_for_tab("datasets")
+            wait = WebDriverWait(driver, 10)
+            driver.execute_script(
+                """
+                document.querySelector('#datasets-tab-content .hero-dismiss-btn')?.click();
+                document.querySelector('[data-dataset-id="sidecars"] .list-item-toggle').click();
+                const sidecars = document.querySelector('[data-dataset-id="sidecars"]').closest('.dataset-list-item-wrapper');
+                [...sidecars.querySelectorAll('button')].find(button => button.textContent.trim() === 'Audio').click();
+                """
+            )
+            selector = (By.CSS_SELECTOR, ".dataset-list-item-expanded .audio-sidecar-match")
+            field = wait.until(
+                lambda d: next((element for element in d.find_elements(*selector) if element.is_displayed()), False)
+            )
+            self.assertEqual(Select(field).first_selected_option.get_attribute("value"), "relative_path")
+            Select(field).select_by_value("stem")
+            wait.until(lambda d: d.execute_script("return Alpine.store('trainer').hasUnsavedChanges === true;"))
+            DatasetsTab(driver, base_url=self.base_url).save_datasets()
+            self.assertEqual(driver.execute_script("return Alpine.store('trainer').datasetValidationErrors;"), {})
+            saved = {dataset["id"]: dataset for dataset in json.loads(config_path.read_text())}
+            self.assertEqual(saved["embedded"]["source_dataset_id"], "video")
+            self.assertEqual(saved["embedded"]["audio"], embedded["audio"])
+            self.assertEqual(saved["sidecars"]["audio"], {"sample_rate": 22050, "sidecar_match": "stem"})
+            self.assertEqual(saved["video"]["s2v_datasets"], source["s2v_datasets"])
+            self.assertEqual(saved["video"]["audio"], source["audio"])
+
+        self.for_each_browser("test_audio_relationship_settings_survive_a_form_edit", scenario)
+
     def test_webshart_parquet_settings_edit_and_save(self) -> None:
         self.seed_defaults()
         config_path = self.config_dir / "default" / "multidatabackend.json"

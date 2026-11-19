@@ -107,6 +107,13 @@
     <!-- Audio Dataset Settings (shown for audio datasets) -->
     <template x-if="editingDataset.dataset_type === 'audio'">
         <div>
+            <div class="section-group"
+                 x-show="!editingDataset.audio.source_from_video && matchesParamFilter('sidecar', 'layout', 'audio')">
+                {% with audio_dataset='editingDataset' %}
+                {% include 'components/dataloader/audio_sidecar_layout.html' %}
+                {% endwith %}
+            </div>
+
             <!-- Duration Settings -->
             <div class="section-group" x-show="matchesParamFilter('duration', 'min', 'max', 'interval', 'seconds', 'truncate', 'bucket')">
                 <h6 class="modal-section-title">Duration & Bucketing</h6>

@@ -14,6 +14,11 @@
          x-show="sectionIsExpanded(dataset, 'audio')"
          x-transition>
         <div class="row g-3">
+            <div class="col-md-6 col-lg-4" x-show="!dataset.audio?.source_from_video" x-init="dataset.audio ||= {}">
+                {% with audio_dataset='dataset' %}
+                {% include 'components/dataloader/audio_sidecar_layout.html' %}
+                {% endwith %}
+            </div>
             <div class="col-md-6 col-lg-4">
                 <label class="form-label">Min Duration (seconds)</label>
                 <input type="number" class="form-control form-control-sm"
