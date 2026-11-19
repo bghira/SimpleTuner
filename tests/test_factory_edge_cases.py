@@ -2046,7 +2046,9 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 with (
                     patch.object(StateTracker, "args", self.args),
                     patch.object(StateTracker, "aspect_resolution_map", {resolution: {"0.68": (1264, 1856)}}),
-                    patch("simpletuner.helpers.data_backend.factory.gather_across_processes", side_effect=finish_discovery),
+                    patch(
+                        "simpletuner.helpers.training.multi_process.gather_across_processes", side_effect=finish_discovery
+                    ),
                 ):
                     factory._handle_bucket_operations(
                         backend={"id": "train"},
@@ -2075,7 +2077,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 metadata = MagicMock()
                 metadata.refresh_buckets.side_effect = FileNotFoundError("source moved")
                 with patch(
-                    "simpletuner.helpers.data_backend.factory.gather_across_processes",
+                    "simpletuner.helpers.training.multi_process.gather_across_processes",
                     return_value=["rank 0: FileNotFoundError: source moved"],
                 ) as gather:
                     with self.assertRaisesRegex(FileNotFoundError if is_local_main else RuntimeError, "source moved"):
@@ -2103,7 +2105,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
             patch("simpletuner.helpers.data_backend.factory.init_backend_config", return_value=initial),
             patch.object(factory, "_configure_backend_by_type", side_effect=OSError("catalogue unavailable")),
             patch.object(factory, "_handle_bucket_operations") as prepare,
-            patch("simpletuner.helpers.data_backend.factory.gather_across_processes") as gather,
+            patch("simpletuner.helpers.training.multi_process.gather_across_processes", return_value=[]) as gather,
         ):
             with self.assertRaisesRegex(OSError, "catalogue unavailable"):
                 factory._configure_single_data_backend(backend, [backend], [], [], False)

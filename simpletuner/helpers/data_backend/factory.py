@@ -3,7 +3,7 @@ import logging
 import os
 import sys
 import time
-from contextlib import contextmanager, nullcontext
+from contextlib import nullcontext
 from copy import deepcopy
 from dataclasses import dataclass
 from functools import partial
@@ -99,7 +99,7 @@ from simpletuner.helpers.training.collate import collate_fn
 from simpletuner.helpers.training.default_settings import default, latest_config_version
 from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
 from simpletuner.helpers.training.multi_process import _get_rank as get_rank
-from simpletuner.helpers.training.multi_process import gather_across_processes, rank_info, should_log
+from simpletuner.helpers.training.multi_process import agree_process_failure, rank_info, should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 from .builders import build_backend_from_config, create_backend_builder
@@ -2906,29 +2906,10 @@ class FactoryRegistry:
         StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
         init_backend["metadata_backend"].attach_bucket_report(init_backend.get("bucket_report"))
 
-    @contextmanager
     def _dataset_startup_phase(self, dataset_id, phase):
         if not self._is_multi_process():
-            yield
-            return
-
-        local_error = None
-        try:
-            yield
-        except Exception as error:
-            local_error = error
-
-        failure = (
-            f"rank {self.accelerator.process_index}: {type(local_error).__name__}: {local_error}"
-            if local_error is not None
-            else None
-        )
-        failures = gather_across_processes(failure)
-        if local_error is not None:
-            raise local_error
-        peer_failure = next((message for message in failures if message is not None), None)
-        if peer_failure is not None:
-            raise RuntimeError(f"(id={dataset_id}) {phase} failed on {peer_failure}")
+            return nullcontext()
+        return agree_process_failure(f"(id={dataset_id}) {phase}", self.accelerator.process_index)
 
     def _handle_bucket_operations(
         self,

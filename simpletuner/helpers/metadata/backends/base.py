@@ -32,7 +32,7 @@ from simpletuner.helpers.metadata.preparation import (
     read_bucket_page,
 )
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
-from simpletuner.helpers.training.multi_process import broadcast_object_from_main, should_log
+from simpletuner.helpers.training.multi_process import agree_process_failure, broadcast_object_from_main, should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger("BaseMetadataBackend")
@@ -823,26 +823,29 @@ class MetadataBackend:
             recrop = config.get("crop_style", "random") == "random"
         if not recrop:
             return False
-        if self.accelerator.is_main_process:
-            self.read_only = False
-            self.compute_aspect_ratio_bucket_indices(ignore_existing_cache=True)
-        self.accelerator.wait_for_everyone()
-        self.reload_cache(set_config=False)
-        self.accelerator.wait_for_everyone()
-        self.split_buckets_between_processes(
-            gradient_accumulation_steps=gradient_accumulation_steps, apply_padding=apply_padding
-        )
-        if not any(self.aspect_ratio_bucket_indices.values()):
-            raise ValueError(
-                f"(id={self.id}) Dataset produced no usable samples. The epoch rollover"
-                f" re-split left this rank with zero samples, so epoch {epoch} would train"
-                f" against an empty schedule here.\n"
-                f"This usually means per-epoch re-bucketing (e.g., crop_aspect=random) produced"
-                f" buckets too small to divide across the data-parallel ranks, or that samples"
-                f" were filtered out of the cache during the previous epoch.\n"
-                f"Enable --allow_dataset_oversubscription so short buckets are padded across"
-                f" ranks, use fewer GPUs, or add more samples to the dataset."
+        rank = self.accelerator.process_index
+        operation = f"(id={self.id}) Epoch {epoch}"
+        with agree_process_failure(f"{operation} geometry rebuild", rank):
+            if self.accelerator.is_main_process:
+                self.read_only = False
+                self.compute_aspect_ratio_bucket_indices(ignore_existing_cache=True)
+        with agree_process_failure(f"{operation} geometry reload", rank):
+            self.reload_cache(set_config=False)
+        with agree_process_failure(f"{operation} bucket partition", rank):
+            self.split_buckets_between_processes(
+                gradient_accumulation_steps=gradient_accumulation_steps, apply_padding=apply_padding
             )
+            if not any(self.aspect_ratio_bucket_indices.values()):
+                raise ValueError(
+                    f"(id={self.id}) Dataset produced no usable samples. The epoch rollover"
+                    f" re-split left this rank with zero samples, so epoch {epoch} would train"
+                    f" against an empty schedule here.\n"
+                    f"This usually means per-epoch re-bucketing (e.g., crop_aspect=random) produced"
+                    f" buckets too small to divide across the data-parallel ranks, or that samples"
+                    f" were filtered out of the cache during the previous epoch.\n"
+                    f"Enable --allow_dataset_oversubscription so short buckets are padded across"
+                    f" ranks, use fewer GPUs, or add more samples to the dataset."
+                )
         return True
 
     def split_buckets_between_processes(self, gradient_accumulation_steps=1, apply_padding=False):

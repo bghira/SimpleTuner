@@ -2467,6 +2467,30 @@ class TestTrainer(unittest.TestCase):
         metadata_backend.split_buckets_between_processes.assert_called_once()
         vaecache.rebuild_cache.assert_not_called()
 
+    def test_epoch_rollover_stops_after_a_peer_geometry_failure(self):
+        for phase in ("rebuild", "reload", "partition"):
+            with self.subTest(phase=phase):
+                trainer, metadata, cache, backends = self._rollover_fixture({"1.0": ["image.jpg"]})
+                trainer.accelerator.is_main_process = False
+                trainer.accelerator.process_index = 1
+                phase_index = ("rebuild", "reload", "partition").index(phase)
+                failure = ["rank 0: OSError: geometry unavailable"]
+
+                with (
+                    self._rollover_patches(backends),
+                    patch(
+                        "simpletuner.helpers.training.multi_process.gather_across_processes",
+                        side_effect=[[]] * phase_index + [failure],
+                    ),
+                    self.assertRaisesRegex(RuntimeError, f"{phase} failed on rank 0: OSError: geometry unavailable"),
+                ):
+                    trainer._epoch_rollover(2)
+
+                metadata.compute_aspect_ratio_bucket_indices.assert_not_called()
+                self.assertEqual(metadata.reload_cache.call_count, int(phase_index >= 1))
+                self.assertEqual(metadata.split_buckets_between_processes.call_count, int(phase_index >= 2))
+                cache.rebuild_cache.assert_not_called()
+
     def test_epoch_rollover_vae_only_leaves_legacy_geometry_alone(self):
         trainer, metadata, cache, backends = self._rollover_fixture({"1.0": ["image.jpg"]})
         backends["train"].config.update(crop_aspect="square", crop_style="center", vae_cache_clear_each_epoch=True)

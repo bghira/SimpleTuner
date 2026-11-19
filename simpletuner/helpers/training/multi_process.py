@@ -1,4 +1,5 @@
 import os
+from contextlib import contextmanager
 from typing import Iterable, List, Optional, TypeVar
 
 # Skip torch import in CLI mode for fast startup
@@ -75,3 +76,21 @@ def gather_across_processes(obj: T) -> list[T]:
     gathered: List[Optional[T]] = [None for _ in range(_get_world_size())]
     dist.all_gather_object(gathered, obj)
     return [item for item in gathered if item is not None]
+
+
+@contextmanager
+def agree_process_failure(operation: str, rank: int):
+    """Share errors before any rank starts the next distributed phase."""
+    local_error = None
+    try:
+        yield
+    except Exception as error:
+        local_error = error
+
+    failure = f"rank {rank}: {type(local_error).__name__}: {local_error}" if local_error is not None else None
+    failures = gather_across_processes(failure)
+    if local_error is not None:
+        raise local_error
+    peer_failure = next((message for message in failures if message is not None), None)
+    if peer_failure is not None:
+        raise RuntimeError(f"{operation} failed on {peer_failure}")
