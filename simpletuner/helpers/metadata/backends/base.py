@@ -755,6 +755,12 @@ class MetadataBackend:
         )
         self.scan_for_metadata()
 
+    def remove_images(self, image_paths) -> None:
+        """Drop these samples from every bucket list."""
+        removed = set(image_paths)
+        for paths in self.aspect_ratio_bucket_indices.values():
+            paths[:] = [path for path in paths if path not in removed]
+
     def remove_image(self, image_path, bucket: str = None):
         """remove image from bucket(s)"""
         if not bucket:

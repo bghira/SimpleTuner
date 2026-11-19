@@ -79,6 +79,14 @@ class HuggingfaceMetadataBackendTests(unittest.TestCase):
         self.assertFalse(reload_thread.is_alive())
         self.assertEqual(backend.get_metadata_by_filepath("1.wav")["prompt"], "new")
 
+    def test_removed_samples_leave_the_caption_cache_and_every_bucket_list(self):
+        backend = HuggingfaceMetadataBackend.__new__(HuggingfaceMetadataBackend)
+        backend.caption_cache = {"0.png": "kept", "1.png": "removed"}
+        backend.aspect_ratio_bucket_indices = {"1.0": ["0.png", "1.png"]}
+        backend.remove_images(["1.png"])
+        self.assertEqual(backend.caption_cache, {"0.png": "kept"})
+        self.assertEqual(backend.aspect_ratio_bucket_indices, {"1.0": ["0.png"]})
+
     def test_audio_caption_falls_back_to_text_sibling(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             audio_path = Path(tmpdir) / "song.flac"

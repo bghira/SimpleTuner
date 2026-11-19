@@ -930,17 +930,10 @@ class HuggingfaceMetadataBackend(RecordedGeometry, MetadataBackend):
             self.bucket_report.update_statistics(statistics)
             self.bucket_report.record_bucket_snapshot("post_refresh", self.aspect_ratio_bucket_indices)
 
-    def remove_images(self, image_paths: List[str]):
-        if not isinstance(image_paths, list):
-            image_paths = [image_paths]
-
+    def remove_images(self, image_paths: List[str]) -> None:
         for image_path in image_paths:
-            if image_path in self.caption_cache:
-                del self.caption_cache[image_path]
-            for bucket, images in self.aspect_ratio_bucket_indices.items():
-                if image_path in images:
-                    self.aspect_ratio_bucket_indices[bucket].remove(image_path)
-                    logger.debug(f"Removed {image_path} from bucket {bucket}")
+            self.caption_cache.pop(image_path, None)
+        super().remove_images(image_paths)
 
     def refresh_buckets(self, rank: int = None):
         # override refresh_buckets for HuggingFace datasets

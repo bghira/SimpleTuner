@@ -85,6 +85,11 @@ class TestMetadataBackend(unittest.TestCase):
         self.assertEqual(sorted(recorded), sorted(new_files))
         save_image_metadata.assert_called_once()
 
+    def test_removed_images_leave_every_bucket_list(self):
+        self.metadata_backend.aspect_ratio_bucket_indices = {"1.0": ["a.png", "b.png"], "2.0": ["c.png", "a.png"]}
+        self.metadata_backend.remove_images(["a.png", "c.png", "unlisted.png"])
+        self.assertEqual(self.metadata_backend.aspect_ratio_bucket_indices, {"1.0": ["b.png"], "2.0": []})
+
     def test_probe_image_dimensions_applies_exif_orientation(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             image_path = Path(tmpdir) / "oriented.jpg"
