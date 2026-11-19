@@ -151,6 +151,22 @@ class TestScanUsesTrainingSettings(unittest.TestCase):
             self.scan(_get_global_config())
         self.assertEqual(self.recipe(), "discovery")
 
+    def test_a_rescan_in_the_same_process_finds_files_added_since_the_last_scan(self):
+        import json
+
+        from PIL import Image
+
+        def samples():
+            buckets = json.loads((self.images / "aspect_ratio_bucket_indices_images.json").read_text())
+            return sum(len(refs) for refs in buckets["aspect_ratio_bucket_indices"].values())
+
+        self.scan({})
+        self.assertEqual(samples(), 2)
+        Image.new("RGB", (384, 192)).save(self.images / "2.png")
+        (self.images / "2.txt").write_text("caption")
+        self.scan({})
+        self.assertEqual(samples(), 3)
+
     def test_a_scan_leaves_no_store_writer_running(self):
         import threading
 

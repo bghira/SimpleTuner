@@ -575,7 +575,9 @@ class DatasetScanService:
             # can read resolution_type, crop settings, etc.
             StateTracker.set_data_backend_config(config.id, config.to_dict()["config"])
 
-            # Create data backend
+            # Start from the file list a training process would: the builder deletes the saved list unless
+            # preserve_data_backend_cache keeps it, and an earlier scan in this process may hold a stale one.
+            StateTracker.all_image_files.pop(config.id, None)
             builder = create_backend_builder(config.backend_type, accelerator, scan_args)
             data_backend = builder.build(config)
 
