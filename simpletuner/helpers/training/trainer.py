@@ -6052,6 +6052,8 @@ class Trainer:
         for backend in StateTracker.get_data_backends().values():
             if "sampler" in backend:
                 backend["sampler"].drop_unfinished_epoch()
+        # A rank whose epoch another rank ended still lists the datasets it had used up.
+        StateTracker.clear_exhausted_buckets()
         logger.debug(
             f"Just completed epoch {self.state['current_epoch'] - 1}. Beginning epoch {epoch}. Starting epoch was {self.state['first_epoch']}. Final epoch will be {self.config.num_train_epochs}"
         )

@@ -2453,6 +2453,17 @@ class TestTrainer(unittest.TestCase):
                 copy["dataset_runtime"].rebuild_cursor.assert_not_called()
                 self.assertEqual(copy["vaecache"].rebuild_cache.called, rebuilds_vae_cache)
 
+    def test_every_dataset_is_active_again_in_a_new_epoch(self):
+        trainer, backends = self._rollover_fixture(bucket_contents={"1.0": ["image-0.jpg"]})
+        with self._rollover_patches(backends):
+            StateTracker.set_exhausted_backends(["train"])
+            self.addCleanup(StateTracker.clear_exhausted_buckets)
+            # The first epoch of a resumed run keeps what its checkpoint recorded.
+            trainer._epoch_rollover(1)
+            self.assertEqual(StateTracker.exhausted_backends, ["train"])
+            trainer._epoch_rollover(2)
+        self.assertEqual(StateTracker.exhausted_backends, [])
+
     def test_epoch_rollover_drops_what_is_left_of_the_previous_epoch(self):
         # A rank stopped by another rank's epoch end must not carry its unread batches forward.
         trainer, backends = self._rollover_fixture(bucket_contents={"1.0": ["image-0.jpg"]})
