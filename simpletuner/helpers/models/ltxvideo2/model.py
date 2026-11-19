@@ -16,6 +16,7 @@ from huggingface_hub.utils import EntryNotFoundError
 from safetensors import safe_open
 from transformers import AutoTokenizer, Gemma3ForConditionalGeneration, GemmaTokenizerFast, PreTrainedTokenizerFast
 
+from simpletuner.helpers.data_backend.dataset_types import selected_dataset_ids
 from simpletuner.helpers.models.common import (
     ModelTypes,
     PipelineTypes,
@@ -1613,9 +1614,7 @@ class LTXVideo2(VideoModelFoundation):
     def requires_s2v_validation_inputs(self) -> bool:
         if not getattr(self.config, "validation_using_datasets", False):
             return False
-        eval_ids = getattr(self.config, "eval_dataset_id", None)
-        if isinstance(eval_ids, str):
-            eval_ids = (eval_ids,)
+        eval_ids = selected_dataset_ids(getattr(self.config, "eval_dataset_id", None))
         return any(
             dataset.audio_datasets
             for dataset_id, dataset in StateTracker.get_datasets("video", "eval").items()

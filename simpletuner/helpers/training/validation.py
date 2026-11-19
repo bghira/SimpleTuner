@@ -59,6 +59,7 @@ from diffusers.utils.torch_utils import is_compiled_module
 from PIL import Image, ImageDraw, ImageFont
 from transformers.utils import ContextManagers
 
+from simpletuner.helpers.data_backend.dataset_types import selected_dataset_ids
 from simpletuner.helpers.data_backend.runtime.context_parallel_sync import get_cp_info, get_model_replica_data_info
 from simpletuner.helpers.models.common import PipelineTypes
 from simpletuner.helpers.models.cosmos.scheduler import RectifiedFlowAB2Scheduler
@@ -458,20 +459,11 @@ def _assert_eval_dataset_exists(eval_dataset_config, available_backends: Mapping
     Raises:
         ValueError: If one or more requested dataset IDs are missing.
     """
-    if eval_dataset_config is None:
-        return set()
-
-    if isinstance(eval_dataset_config, (list, tuple, set)):
-        requested_ids = {str(item) for item in eval_dataset_config}
-    else:
-        requested_ids = {str(eval_dataset_config)}
-
-    available_ids = {backend_id for backend_id in available_backends.keys()}
-
-    missing_ids = sorted(requested_ids - available_ids)
+    requested_ids = selected_dataset_ids(eval_dataset_config)
+    missing_ids = sorted(requested_ids - available_backends.keys())
     if missing_ids:
         formatted_missing = ", ".join(missing_ids)
-        formatted_available = ", ".join(sorted(available_ids)) or "none"
+        formatted_available = ", ".join(sorted(available_backends)) or "none"
         raise ValueError(
             f"--eval_dataset_id references unknown {context} dataset(s): {formatted_missing}. "
             f"Loaded datasets: {formatted_available}. "
@@ -484,8 +476,11 @@ _PREVIEW_DATASET_TYPES = ("image", "video", "audio")
 
 
 def _selected_validation_datasets(args, context, *dataset_types):
+    selection = getattr(args, "eval_dataset_id", None)
+    if selection and dataset_types == _PREVIEW_DATASET_TYPES:
+        dataset_types += ("eval",)
     datasets = StateTracker.get_datasets(*dataset_types)
-    selected = _assert_eval_dataset_exists(args.eval_dataset_id, datasets, context)
+    selected = _assert_eval_dataset_exists(selection, datasets, context)
     return (
         dataset
         for dataset in datasets.values()

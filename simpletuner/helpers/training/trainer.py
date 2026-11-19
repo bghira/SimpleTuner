@@ -43,7 +43,7 @@ from simpletuner.helpers.caching.memory import reclaim_memory
 from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
 from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
 from simpletuner.helpers.configuration.loader import load_config
-from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
+from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type, selected_dataset_ids
 from simpletuner.helpers.data_backend.factory import (
     BatchFetcher,
     configure_multi_databackend,
@@ -6863,9 +6863,7 @@ class Trainer:
         return StateTracker.get_datasets(DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.AUDIO, DatasetType.CAPTION)
 
     def _training_datasets(self):
-        eval_ids = getattr(self.config, "eval_dataset_id", None) or ()
-        if isinstance(eval_ids, str):
-            eval_ids = (eval_ids,)
+        eval_ids = selected_dataset_ids(getattr(self.config, "eval_dataset_id", None))
         return {
             name: dataset
             for name, dataset in self._registered_training_datasets().items()

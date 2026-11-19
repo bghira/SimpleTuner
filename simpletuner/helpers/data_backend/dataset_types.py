@@ -73,6 +73,15 @@ def get_arg_value(args: Any, key: str, default: Any = None) -> Any:
     return getattr(args, key, default)
 
 
+def selected_dataset_ids(value: Any) -> set[str]:
+    """Normalize a configured ID or collection of IDs for exact selection."""
+    if value is None or value == "":
+        return set()
+    if isinstance(value, (list, tuple, set)):
+        return {str(item) for item in value}
+    return {str(value)}
+
+
 def parse_positive_train_batch_size(raw_value: Any, backend_id: Optional[str] = None) -> int:
     """Parse a positive integer dataset training batch size."""
     error_message = f"(id={backend_id}) train_batch_size must be a positive integer."

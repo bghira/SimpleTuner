@@ -87,6 +87,23 @@ class EvalDatasetSelectionTests(unittest.TestCase):
         other.training_dataloader = [{"batch": 2}]
         self.assertEqual(list(iter_eval_batches()), [{"batch": 1}, {"batch": 2}])
 
+    def test_preview_selects_an_explicit_held_out_id_exactly(self):
+        model = self._build_base_model_mock()
+        selected = MagicMock()
+        selected.retrieve_validation_set.return_value = [("sample", "prompt", "sample.jpg", None)]
+        self._register("eval", sampler=MagicMock())
+        self._register("eval-full", sampler=selected, config={"dataset_type": "eval"})
+
+        with (
+            patch.object(StateTracker, "get_model", return_value=model),
+            patch.object(StateTracker, "get_args", return_value=self._build_args(eval_dataset_id="eval-full")),
+        ):
+            (prompt,) = retrieve_validation_images()
+
+        self.assertEqual(prompt.shortname, "sample")
+        selected.retrieve_validation_set.assert_called_once_with(batch_size=4)
+        StateTracker.get_dataset("eval").sampler.retrieve_validation_set.assert_not_called()
+
     def test_s2v_validation_resolves_audio_from_the_registered_binding(self):
         model = self._build_base_model_mock()
         model.requires_s2v_validation_inputs.return_value = True
