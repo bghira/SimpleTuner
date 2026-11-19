@@ -81,9 +81,11 @@ class InfiniteTalk(Wan):
             self._audio_encoder.to(self.accelerator.device)
 
     @torch.no_grad()
-    def encode_audio(self, audio_path: str, num_frames: int) -> torch.Tensor:
+    def encode_audio(self, audio_path: str, num_frames: int, *, audio_dataset=None) -> torch.Tensor:
         self._load_audio_encoder()
-        waveform, sample_rate = torchaudio.load(audio_path)
+        waveform, sample_rate = (
+            torchaudio.load(audio_path) if audio_dataset is None else audio_dataset.read_audio_sample(audio_path)
+        )
         if waveform.shape[0] > 1:
             waveform = waveform.mean(dim=0, keepdim=True)
         if sample_rate != self.AUDIO_SAMPLE_RATE:
@@ -108,7 +110,10 @@ class InfiniteTalk(Wan):
         latent_frames = batch["latents"].shape[2]
         video_frames = (latent_frames - 1) * 4 + 1
         batch["infinitetalk_audio_hidden_states"] = torch.cat(
-            [self.encode_audio(path, video_frames) for path in audio_paths],
+            [
+                self.encode_audio(path, video_frames, audio_dataset=audio_dataset)
+                for path, audio_dataset in self.iter_s2v_audio_inputs(batch)
+            ],
             dim=0,
         )
         return batch

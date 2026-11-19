@@ -297,15 +297,11 @@ class TestVaeCacheAudio(unittest.TestCase):
         )
         vae_cache._log_audio_tensor_stats = MagicMock()
 
-        with patch.object(
-            StateTracker,
-            "get_data_backend_config",
-            return_value={"audio": {"source_from_video": False}},
-        ):
-            prepared = vae_cache._prepare_audio_sample(
-                "track.wav",
-                {"waveform": torch.arange(700, dtype=torch.float32).reshape(2, 350), "sample_rate": 100},
-            )
+        vae_cache.dataset_config = {"audio": {"source_from_video": False}}
+        prepared = vae_cache._prepare_audio_sample(
+            "track.wav",
+            {"waveform": torch.arange(700, dtype=torch.float32).reshape(2, 350), "sample_rate": 100},
+        )
 
         self.assertEqual(prepared["waveform"].shape, (2, 300))
         self.assertEqual(prepared["metadata"]["duration_seconds"], 3.0)
@@ -316,15 +312,11 @@ class TestVaeCacheAudio(unittest.TestCase):
         vae_cache.metadata_backend = DummyMetadataBackend(metadata={"track.wav": {}})
         vae_cache._log_audio_tensor_stats = MagicMock()
 
-        with patch.object(
-            StateTracker,
-            "get_data_backend_config",
-            return_value={"audio": {"max_duration_seconds": 3.0}},
-        ):
-            prepared = vae_cache._prepare_audio_sample(
-                "track.wav",
-                {"waveform": torch.zeros(2, 350), "sample_rate": 100},
-            )
+        vae_cache.dataset_config = {"audio": {"max_duration_seconds": 3.0}}
+        prepared = vae_cache._prepare_audio_sample(
+            "track.wav",
+            {"waveform": torch.zeros(2, 350), "sample_rate": 100},
+        )
 
         self.assertEqual(prepared["waveform"].shape, (2, 300))
 
@@ -336,17 +328,30 @@ class TestVaeCacheAudio(unittest.TestCase):
         )
         vae_cache._log_audio_tensor_stats = MagicMock()
 
-        with patch.object(
-            StateTracker,
-            "get_data_backend_config",
-            return_value={"audio": {"source_from_video": True}},
-        ):
-            prepared = vae_cache._prepare_audio_sample(
-                "track.mp4",
-                {"waveform": torch.zeros(2, 350), "sample_rate": 100},
-            )
+        vae_cache.dataset_config = {"audio": {"source_from_video": True}}
+        prepared = vae_cache._prepare_audio_sample(
+            "track.mp4",
+            {"waveform": torch.zeros(2, 350), "sample_rate": 100},
+        )
 
         self.assertEqual(prepared["waveform"].shape, (2, 350))
+
+    def test_audio_alignment_reads_duration_from_the_bound_video_dataset(self):
+        vae_cache = VAECache.__new__(VAECache)
+        vae_cache.id = "audio-cache"
+        vae_cache.dataset_config = {"audio": {"source_from_video": True}, "source_dataset_id": "video"}
+        source = MagicMock(config={"video": {}})
+        source.read_samples.return_value = [{"num_frames": 3}]
+        with (
+            patch.object(StateTracker, "get_dataset", return_value=source) as locate,
+            patch.object(StateTracker, "get_data_backend_config", side_effect=AssertionError("global config lookup")),
+            patch.object(StateTracker, "get_args", return_value=MagicMock(framerate=2)),
+        ):
+            waveform, metadata = vae_cache._align_audio_waveform_to_video(torch.zeros(2, 350), 100, {}, "video/key.mp4")
+        locate.assert_called_once_with("video")
+        source.read_samples.assert_called_once_with(["video/key.mp4"])
+        self.assertEqual(waveform.shape, (2, 150))
+        self.assertEqual(metadata["duration_seconds"], 1.5)
 
     def test_audio_vae_queue_partitions_variable_length_waveforms(self):
         vae_cache = VAECache.__new__(VAECache)

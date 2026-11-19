@@ -124,7 +124,7 @@ class EvalDatasetSelectionTests(unittest.TestCase):
         audio.metadata_backend = MagicMock()
         waveform = torch.arange(8, dtype=torch.float32).reshape(1, -1)
         audio.data_backend = MagicMock(type="aws")
-        audio.data_backend.read_image.return_value = (waveform, WanS2V.AUDIO_SAMPLE_RATE)
+        audio.data_backend.read_embedded_audio.return_value = (waveform, WanS2V.AUDIO_SAMPLE_RATE)
         video.audio_datasets = (audio,)
         model = self._build_base_model_mock()
         model.requires_s2v_validation_inputs.return_value = True
@@ -139,7 +139,7 @@ class EvalDatasetSelectionTests(unittest.TestCase):
             kwargs = WanS2V.update_pipeline_call_kwargs(WanS2V.__new__(WanS2V), {"_s2v_conditioning": prompt.conditioning})
 
         audio.metadata_backend.get_metadata_by_filepath.assert_called_once_with(video_ref)
-        audio.data_backend.read_image.assert_called_once_with(video_ref)
+        audio.data_backend.read_embedded_audio.assert_called_once_with(video_ref, sample_rate=16000, channels=1)
         torch.testing.assert_close(kwargs["audio"], waveform.squeeze(0))
         self.assertIs(kwargs["image"], image)
 

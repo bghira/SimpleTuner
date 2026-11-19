@@ -174,7 +174,7 @@ class WanS2V(VideoModelFoundation):
         """S2V uses video datasets for conditioning validation samples."""
         return "video"
 
-    def encode_audio(self, audio_path: str) -> torch.Tensor:
+    def encode_audio(self, audio_path: str, *, audio_dataset=None) -> torch.Tensor:
         """
         Encode audio file to Wav2Vec2 embeddings.
 
@@ -185,7 +185,9 @@ class WanS2V(VideoModelFoundation):
             Audio embeddings [1, num_layers, audio_dim, T]
         """
         # Load audio
-        waveform, sample_rate = torchaudio.load(audio_path)
+        waveform, sample_rate = (
+            torchaudio.load(audio_path) if audio_dataset is None else audio_dataset.read_audio_sample(audio_path)
+        )
 
         # Resample if needed
         if sample_rate != self.AUDIO_SAMPLE_RATE:
@@ -290,14 +292,12 @@ class WanS2V(VideoModelFoundation):
             batch["audio_embeds"] = audio_embeds_list
         elif batch.get("s2v_audio_paths") is not None:
             # Audio paths provided, encode on-the-fly
-            audio_paths = batch["s2v_audio_paths"]
             audio_embeds = []
-            B = batch["latents"].shape[0]
             T = batch["latents"].shape[2]  # Temporal dimension
 
-            for path in audio_paths:
+            for path, audio_dataset in self.iter_s2v_audio_inputs(batch):
                 if path is not None:
-                    embed = self.encode_audio(path)
+                    embed = self.encode_audio(path, audio_dataset=audio_dataset)
                     audio_embeds.append(embed)
                 else:
                     # No audio for this sample, use zeros

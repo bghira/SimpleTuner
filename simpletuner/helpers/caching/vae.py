@@ -670,16 +670,11 @@ class VAECache(WebhookMixin):
                     file_ext = os.path.splitext(filename)[1].lower().lstrip(".")
 
                     if source_from_video and file_ext in video_file_extensions:
-                        # Extract audio from video file
-                        from simpletuner.helpers.audio import load_audio_from_video
-
-                        target_sr = audio_config.get("sample_rate", 16000)
-                        target_channels = audio_config.get("channels", 1)
-                        if self.image_data_backend.type == "local":
-                            waveform, sample_rate = load_audio_from_video(filename, target_sr, target_channels)
-                        else:
-                            video_bytes = self.image_data_backend.read(filename, as_byteIO=False)
-                            waveform, sample_rate = load_audio_from_video(video_bytes, target_sr, target_channels)
+                        waveform, sample_rate = self.image_data_backend.read_embedded_audio(
+                            filename,
+                            sample_rate=audio_config.get("sample_rate", 16000),
+                            channels=audio_config.get("channels", 1),
+                        )
                         sample = {"waveform": waveform, "sample_rate": sample_rate}
                     elif self.image_data_backend.type == "local":
                         # For local audio files, use load_audio which has ffmpeg fallback
@@ -689,7 +684,7 @@ class VAECache(WebhookMixin):
                         waveform, sample_rate = load_audio(filename)
                         sample = {"waveform": waveform, "sample_rate": sample_rate}
                     else:
-                        sample = self.image_data_backend.read(filename, as_byteIO=False)
+                        sample = self.image_data_backend.read(filename)
                 else:
                     sample = self.image_data_backend.read_image(filename)
                 return self._normalise_loaded_sample(sample)
@@ -1643,7 +1638,7 @@ class VAECache(WebhookMixin):
         }
 
     def _align_audio_waveform_to_video(self, waveform, sample_rate, metadata: dict, filepath: str):
-        backend_config = StateTracker.get_data_backend_config(data_backend_id=self.id) or {}
+        backend_config = self.dataset_config or {}
         audio_config = backend_config.get("audio") or {}
         if not audio_config.get("source_from_video", False):
             return waveform, metadata
@@ -1651,9 +1646,11 @@ class VAECache(WebhookMixin):
         if not source_dataset_id or sample_rate is None:
             return waveform, metadata
 
-        video_meta = StateTracker.get_metadata_by_filepath(filepath, data_backend_id=source_dataset_id) or {}
-        source_config = StateTracker.get_data_backend_config(data_backend_id=source_dataset_id) or {}
-        video_config = source_config.get("video") or {}
+        source = StateTracker.get_dataset(source_dataset_id)
+        if source is None:
+            raise ValueError(f"Video dataset {source_dataset_id} is unavailable for audio dataset {self.id}.")
+        (video_meta,) = source.read_samples([filepath])
+        video_config = source.config.get("video") or {}
 
         target_num_frames = video_config.get("num_frames") or video_meta.get("num_frames")
         fps = getattr(StateTracker.get_args(), "framerate", None)
@@ -1689,7 +1686,7 @@ class VAECache(WebhookMixin):
     def _truncate_audio_waveform_to_target_duration(self, waveform, sample_rate, metadata: dict, filepath: str):
         if sample_rate is None:
             return waveform, metadata
-        backend_config = StateTracker.get_data_backend_config(data_backend_id=self.id) or {}
+        backend_config = self.dataset_config or {}
         audio_config = backend_config.get("audio") or {}
         duration_limits = [audio_config.get("max_duration_seconds")]
         if not audio_config.get("source_from_video", False):

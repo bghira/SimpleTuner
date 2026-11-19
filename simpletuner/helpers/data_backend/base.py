@@ -94,6 +94,14 @@ class BaseDataBackend(ABC):
             except FileNotFoundError:
                 continue
 
+    def read_embedded_audio(self, identifier, *, sample_rate, channels):
+        from simpletuner.helpers.audio import load_audio_from_video
+
+        payload = self.read(identifier)
+        if payload is None:
+            raise FileNotFoundError(f"Could not read video {identifier}.")
+        return load_audio_from_video(payload, sample_rate, channels)
+
     @abstractmethod
     def exists(self, identifier):
         """

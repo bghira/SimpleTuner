@@ -13,6 +13,7 @@ from simpletuner.helpers.data_backend.dataset_types import get_arg_value
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.helpers.metadata.preparation import DatasetReadView
 from simpletuner.helpers.prompts import CaptionNotFoundError, PromptHandler
+from simpletuner.helpers.training import video_file_extensions
 from simpletuner.helpers.utils.pathing import normalize_data_path
 
 
@@ -330,7 +331,27 @@ class DatasetRuntime:
 
     def read_audio_sample(self, ref):
         """Read a waveform and sample rate from the bound audio provider."""
-        return self.data_backend.read_image(ref)
+        audio = self.config.get("audio") or {}
+        extension = os.path.splitext(ref)[1].lower().lstrip(".")
+        if audio.get("source_from_video") and extension in video_file_extensions:
+            from simpletuner.helpers.audio.load import NoAudioStreamError, generate_zero_audio
+
+            sample_rate = audio.get("sample_rate", 16000)
+            channels = audio.get("channels", 1)
+            try:
+                return self.data_backend.read_embedded_audio(ref, sample_rate=sample_rate, channels=channels)
+            except NoAudioStreamError:
+                if not audio.get("allow_zero_audio"):
+                    raise
+                (record,) = self.read_samples([ref])
+                duration = record.get("duration_seconds")
+                if not duration:
+                    raise
+                return generate_zero_audio(duration, sample_rate, channels)
+        sample = self.data_backend.read_image(ref)
+        if sample is None:
+            raise FileNotFoundError(f"Could not read audio {ref} from dataset {self.id}.")
+        return sample
 
     def resolve_captions(self, sample_refs):
         lookup = self._caption_lookup(sample_refs)

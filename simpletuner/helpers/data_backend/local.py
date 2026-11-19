@@ -51,6 +51,11 @@ class LocalDataBackend(BaseDataBackend):
             compress_cache=representation.get("compress_cache", False),
         )
 
+    def read_embedded_audio(self, identifier, *, sample_rate, channels):
+        from simpletuner.helpers.audio import load_audio_from_video
+
+        return load_audio_from_video(identifier, sample_rate, channels)
+
     def read(self, filepath: str, as_byteIO: bool = False) -> Any:
         """Read and return the content of the file."""
         try:

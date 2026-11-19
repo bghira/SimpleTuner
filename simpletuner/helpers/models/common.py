@@ -7022,6 +7022,20 @@ class VideoModelFoundation(VideoTransformMixin, ImageModelFoundation):
     SUPPORTS_FAKE_VIDEO_STREAM = False
     AUDIO_LORA_TARGET = None
 
+    def iter_s2v_audio_inputs(self, batch):
+        """Pair each audio reference with the dataset selected by collation."""
+        refs = batch["s2v_audio_paths"]
+        dataset_ids = batch.get("s2v_audio_backend_ids")
+        if dataset_ids is None:
+            dataset_ids = [None] * len(refs)
+        for ref, dataset_id in zip(refs, dataset_ids, strict=True):
+            dataset = None
+            if dataset_id is not None:
+                dataset = StateTracker.get_dataset(dataset_id)
+                if dataset is None:
+                    raise ValueError(f"Audio dataset {dataset_id} is no longer registered.")
+            yield ref, dataset
+
     @classmethod
     def supports_audio_only_training(cls) -> bool:
         """Return whether audio datasets can be trained without source video."""

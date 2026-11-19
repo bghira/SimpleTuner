@@ -1132,47 +1132,13 @@ def collate_fn(batch, *, dataset=None):
         s2v_audio_paths.append(audio_path)
         s2v_audio_backend_ids.append(audio_backend_id)
 
-    def single_audio_source():
-        if len(dataset.audio_datasets) == 1:
-            audio = dataset.audio_datasets[0]
-            return audio.id, audio.config, audio.metadata_backend
-        return None, {}, None
-
-    if not any(s2v_audio_paths):
-
-        def resolve_local_source_audio_path(path: str | None) -> str | None:
-            if not path:
-                return None
-            candidates = [path]
-            if training_data_root and not os.path.isabs(path):
-                candidates.insert(0, os.path.join(training_data_root, path.lstrip(os.sep)))
-            for candidate in candidates:
-                if os.path.exists(candidate):
-                    return candidate
-            return None
-
-        if dataset_type == "video":
-            audio_backend_id, s2v_config, metadata_backend = single_audio_source()
-            if s2v_config:
-                audio_config = s2v_config.get("audio", {})
-                if audio_config.get("source_from_video", False):
-                    if audio_backend_id is not None:
-                        if metadata_backend is None:
-                            s2v_audio_paths = [resolve_local_source_audio_path(path) for path in filepaths]
-                            s2v_audio_backend_ids = [
-                                audio_backend_id if path is not None else None for path in s2v_audio_paths
-                            ]
-                        else:
-                            s2v_audio_paths = []
-                            s2v_audio_backend_ids = []
-                            for path in filepaths:
-                                audio_path = resolve_local_source_audio_path(path)
-                                if metadata_backend.get_metadata_by_filepath(path) is None or audio_path is None:
-                                    s2v_audio_paths.append(None)
-                                    s2v_audio_backend_ids.append(None)
-                                else:
-                                    s2v_audio_paths.append(audio_path)
-                                    s2v_audio_backend_ids.append(audio_backend_id)
+    if dataset_type == "video" and dataset.audio_datasets and not any("s2v_audio_path" in example for example in examples):
+        for index, path in enumerate(filepaths):
+            pair = dataset.resolve_s2v_audio(path)
+            if pair is not None:
+                audio_dataset, audio_ref = pair
+                s2v_audio_paths[index] = audio_ref
+                s2v_audio_backend_ids[index] = audio_dataset.id
 
     audio_latent_batch = None
     audio_latent_mask = None
@@ -1184,7 +1150,7 @@ def collate_fn(batch, *, dataset=None):
             uses_audio_latents = False
     if uses_audio_latents and any(s2v_audio_paths):
         if dataset_type == "video":
-            default_audio_backend_id, _, _ = single_audio_source()
+            default_audio_backend_id = dataset.audio_datasets[0].id if len(dataset.audio_datasets) == 1 else None
             grouped: dict[str, list[int]] = {}
             for idx, path in enumerate(s2v_audio_paths):
                 if path is None:
