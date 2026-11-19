@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 
 VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".flv", ".wmv", ".m4v"}
-AUDIO_FORMAT = "wav"  # Output format for extracted audio
+AUDIO_CODECS = {"wav": "pcm_s16le", "mp3": "libmp3lame", "flac": "flac", "ogg": "libvorbis"}
 
 
 def check_ffmpeg():
@@ -35,11 +35,7 @@ def check_ffmpeg():
 
 def get_video_files(input_dir: Path) -> list[Path]:
     """Find all video files in the input directory."""
-    video_files = []
-    for ext in VIDEO_EXTENSIONS:
-        video_files.extend(input_dir.glob(f"*{ext}"))
-        video_files.extend(input_dir.glob(f"*{ext.upper()}"))
-    return sorted(video_files)
+    return sorted(path for path in input_dir.rglob("*") if path.is_file() and path.suffix.lower() in VIDEO_EXTENSIONS)
 
 
 def extract_audio(video_path: Path, output_path: Path) -> bool:
@@ -54,7 +50,7 @@ def extract_audio(video_path: Path, output_path: Path) -> bool:
         str(video_path),
         "-vn",  # No video
         "-acodec",
-        "pcm_s16le",  # PCM 16-bit for WAV
+        AUDIO_CODECS[output_path.suffix.lstrip(".")],
         "-ar",
         "16000",  # 16kHz sample rate (Wav2Vec2 native rate)
         "-ac",
@@ -161,9 +157,16 @@ Examples:
     parser.add_argument(
         "--format",
         type=str,
-        default=AUDIO_FORMAT,
-        choices=["wav", "mp3", "flac", "ogg"],
+        default="wav",
+        choices=AUDIO_CODECS,
         help="Output audio format (default: wav)",
+    )
+
+    parser.add_argument(
+        "--sidecar-match",
+        default="stem",
+        choices=("stem", "relative_path"),
+        help="Write flat filenames or mirror the input tree. Set the same audio.sidecar_match in the dataset plan.",
     )
 
     args = parser.parse_args()
@@ -180,15 +183,24 @@ Examples:
     # Check ffmpeg availability
     check_ffmpeg()
 
-    # Create output directory
-    args.output_dir.mkdir(parents=True, exist_ok=True)
-
     # Find video files
     video_files = get_video_files(args.input_dir)
     if not video_files:
         print(f"No video files found in {args.input_dir}")
         print(f"Supported formats: {', '.join(sorted(VIDEO_EXTENSIONS))}")
         sys.exit(1)
+
+    outputs = {}
+    for video in video_files:
+        relative = video.relative_to(args.input_dir) if args.sidecar_match == "relative_path" else Path(video.name)
+        destination = relative.with_suffix(f".{args.format}")
+        if destination in outputs:
+            other = outputs[destination].relative_to(args.input_dir)
+            parser.error(
+                f"{other} and {video.relative_to(args.input_dir)} would both write {destination}. "
+                "Use distinct stems, or use --sidecar-match relative_path for videos in different directories."
+            )
+        outputs[destination] = video
 
     print(f"Found {len(video_files)} video files in {args.input_dir}")
     print(f"Output directory: {args.output_dir}")
@@ -201,9 +213,9 @@ Examples:
     stripped_count = 0
     no_audio_count = 0
 
-    for i, video_path in enumerate(video_files, 1):
-        audio_filename = f"{video_path.stem}.{args.format}"
+    for i, (audio_filename, video_path) in enumerate(outputs.items(), 1):
         audio_path = args.output_dir / audio_filename
+        audio_path.parent.mkdir(parents=True, exist_ok=True)
 
         print(f"[{i}/{len(video_files)}] Processing {video_path.name}...")
 
@@ -236,7 +248,7 @@ Examples:
         print("Next steps for S2V training:")
         print(f"  1. Video directory: {args.input_dir}")
         print(f"  2. Audio directory: {args.output_dir}")
-        print("  3. Configure your multidatabackend.json with s2v_datasets linking")
+        print(f"  3. Link the audio dataset using s2v_datasets and set audio.sidecar_match to {args.sidecar_match}")
         print("  4. See documentation/quickstart/WAN_S2V.md for full setup guide")
 
 
