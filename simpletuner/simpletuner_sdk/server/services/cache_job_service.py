@@ -931,7 +931,8 @@ class CacheJobService:
     def _execute_conditioning_cache(
         self, job: CacheJob, dataset_config: Dict[str, Any], global_config: Dict[str, Any], dataset_plan=None
     ):
-        from simpletuner.helpers.data_backend.factory import FactoryRegistry, configure_model_data_signals
+        from simpletuner.helpers.data_backend.config.relationships import resolve_dataset_relationships
+        from simpletuner.helpers.data_backend.factory import configure_model_data_signals
         from simpletuner.helpers.training.state_tracker import StateTracker
 
         args = self._build_args(global_config)
@@ -965,7 +966,7 @@ class CacheJobService:
 
             datasets = [dataset_config]
             if dataset_config.get("conditioning_data") and model.conditioning_image_embeds_use_reference_dataset():
-                conditioning, _ = FactoryRegistry._resolve_dataset_relationships(plan)
+                conditioning, _ = resolve_dataset_relationships(plan)
                 target_ids = conditioning.get(dataset_config["id"], ())
                 if target_ids:
                     by_id = {entry["id"]: entry for entry in plan}
