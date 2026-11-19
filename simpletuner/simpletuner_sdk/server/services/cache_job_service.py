@@ -662,9 +662,11 @@ class CacheJobService:
                 StateTracker.register_dataset(previous_dataset)
 
     def _text_embed_store(self, dataset, plan, global_config, args, accelerator):
+        from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
         from simpletuner.helpers.data_backend.factory import (
             build_text_embed_store,
             ensure_text_embed_backends_present,
+            init_backend_config,
             select_text_embed_backend,
         )
 
@@ -672,14 +674,16 @@ class CacheJobService:
         stores = {
             entry["id"]: entry
             for entry in entries
-            if entry.get("dataset_type") == "text_embeds" and not (entry.get("disable") or entry.get("disabled"))
+            if ensure_dataset_type(entry.get("dataset_type"), default=DatasetType.IMAGE) is DatasetType.TEXT_EMBEDS
+            and not (entry.get("disable") or entry.get("disabled"))
         }
         default_id = next(entry["id"] for entry in stores.values() if entry.get("default"))
         config = select_text_embed_backend(dataset, stores, default_id)
-        if config.get("text_cache_disable") or config.get("text_cache_encode_only"):
+        settings = init_backend_config(config, args, accelerator)["config"]
+        if settings["text_cache_disable"]:
             raise ValueError("The selected text embedding store has writes disabled.")
         store, directory = build_text_embed_store(config, args, accelerator)
-        if config.get("type", "local") == "local":
+        if store.type == "local":
             directory = self._resolve_cache_dir(directory, global_config, config)
         if directory is None:
             raise ValueError("No text embed cache directory configured for this dataset")

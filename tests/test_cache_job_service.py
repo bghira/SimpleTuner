@@ -471,6 +471,37 @@ class TestStreamingTextPreparation(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "writes disabled"):
                 service._text_embed_store(source, [source, dict(store, text_cache_disable=True)], {}, args, accelerator)
 
+    def test_text_store_accepts_normalized_role_and_enforces_training_write_policy(self):
+        import json
+        from pathlib import Path
+
+        from simpletuner.helpers.data_backend.factory import init_backend_config
+
+        service = CacheJobService()
+        accelerator = _CacheAcceleratorStub()
+        source = {"id": "source", "type": "local"}
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "plan.json"
+            store_config = {
+                "id": "embeddings",
+                "type": "local",
+                "dataset_type": " TEXT_EMBEDS ",
+                "cache_dir": directory,
+                "text_cache_disable": "false",
+                "text_cache_encode_only": "false",
+            }
+            path.write_text(json.dumps([source, store_config]))
+            loaded = json.loads(path.read_text())
+
+            for args in (_CacheArgsNamespace({}), _CacheArgsNamespace({"text_cache_disable": True})):
+                disabled = init_backend_config(loaded[1], args, accelerator)["config"]["text_cache_disable"]
+                if disabled:
+                    with self.assertRaisesRegex(ValueError, "writes disabled"):
+                        service._text_embed_store(loaded[0], loaded, {}, args, accelerator)
+                else:
+                    config, store, prefix = service._text_embed_store(loaded[0], loaded, {}, args, accelerator)
+                    self.assertEqual((config["id"], store.id, Path(prefix)), ("embeddings", "embeddings", Path(directory)))
+
     def test_job_streams_accepted_samples_without_inventory_discovery(self):
         from simpletuner.helpers.models.common import TextEmbedCacheKey
         from simpletuner.helpers.training.state_tracker import StateTracker
