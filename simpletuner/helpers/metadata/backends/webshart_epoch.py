@@ -290,3 +290,107 @@ class WebshartEpoch:
         if self.index is not None:
             self.index.close()
         self.source.close()
+
+
+class WindowedWebshartEpoch:
+    """Schedule one bounded group of adjacent Parquet shards at a time."""
+
+    version = "shard-window-v1"
+
+    def __init__(self, spec, source, view, partition_count, open_partition):
+        self.spec = spec
+        self.source = source
+        self.view = view
+        self.partition_count = partition_count
+        self.open_partition = open_partition
+        self.order_key = _key(spec.seed, spec.epoch, spec.dataset_id, self.version)
+        self.global_batch = spec.batch_size * spec.dp_size
+        self.position = 0
+        self.window = 0
+        self.batch_in_window = 0
+        self.partition = None
+        self.revision = None
+        self.frontier = (0, 0, None)
+
+    def _open_window(self):
+        self.partition = _permute(self.window, self.partition_count, self.order_key)
+        self.revision, buckets = self.open_partition(self.partition)
+        self.buckets = sorted(buckets.items())
+        self.ends = []
+        total = 0
+        for _, refs in self.buckets:
+            total += self.spec.batches_for(len(refs))
+            self.ends.append(total)
+
+    def next_batch(self):
+        while self.window < self.partition_count:
+            if self.partition is None:
+                self._open_window()
+            if self.ends and self.batch_in_window < self.ends[-1]:
+                break
+            self.window += 1
+            self.batch_in_window = 0
+            self.partition = None
+        else:
+            if self.position == 0:
+                raise ValueError(
+                    f"Webshart dataset {self.spec.dataset_id!r} has no complete training batches in its shard windows. "
+                    "Reduce the global batch size or prepare an indexed view."
+                )
+            raise StopIteration
+
+        bucket_index = bisect_right(self.ends, self.batch_in_window)
+        bucket, refs = self.buckets[bucket_index]
+        batch = self.batch_in_window - (self.ends[bucket_index - 1] if bucket_index else 0)
+        start = batch * self.global_batch + self.spec.dp_rank * self.spec.batch_size
+        count = len(refs)
+        logical_count = count * (self.spec.repeats + 1)
+        key = _key(self.order_key.hex(), self.partition, bucket)
+        result = [
+            refs[_permute(occurrence % logical_count, logical_count, key) % count]
+            for occurrence in range(start, start + self.spec.batch_size)
+        ]
+        self.position += 1
+        self.batch_in_window += 1
+        self.frontier = (self.window, self.batch_in_window, self.revision)
+        return bucket, result
+
+    def state_dict(self):
+        window, batch, revision = self.frontier
+        return {
+            "version": self.version,
+            "view": self.view,
+            "source": self.source,
+            "layout": {**asdict(self.spec), "topology": list(self.spec.topology)},
+            "position": self.position,
+            "window": window,
+            "batch_in_window": batch,
+            "window_revision": revision,
+        }
+
+    def load_state_dict(self, state):
+        expected = self.state_dict()
+        if any(state.get(key) != expected[key] for key in ("version", "view", "source", "layout")):
+            raise ValueError("Webshart resume requires unchanged source, accepted view, sampling policy and layout.")
+        position, window, batch = (state.get(key) for key in ("position", "window", "batch_in_window"))
+        if (
+            any(not isinstance(value, int) or isinstance(value, bool) for value in (position, window, batch))
+            or not 0 <= window < self.partition_count
+            or not 0 <= batch <= position
+            or (position == 0 and (window or state.get("window_revision") is not None))
+            or (position > 0 and (batch == 0 or (position - batch) % self.spec.accumulation))
+        ):
+            raise ValueError("Invalid Webshart window position.")
+        self.window = window
+        self.partition = self.revision = None
+        if position:
+            self._open_window()
+            if self.revision != state.get("window_revision"):
+                raise ValueError("Webshart shard contents changed since the training checkpoint.")
+            if not self.ends or batch > self.ends[-1]:
+                raise ValueError("Invalid Webshart position within the prepared shard window.")
+        self.position, self.batch_in_window = position, batch
+        self.frontier = (window, batch, self.revision)
+
+    def close(self):
+        self.buckets = ()

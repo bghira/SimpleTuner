@@ -152,20 +152,27 @@ class WebshartTransforms:
             if batch:
                 self.cache.enqueue(key, batch)
 
-    def read_batch(self, refs):
-        locations = [self.source.parse_sample_id(ref) for ref in refs]
+    def _read_cached(self, locations):
         keys = {shard: self._shard_key(shard) for shard in dict.fromkeys(location.shard_idx for location in locations)}
         payloads = self.cache.read_batch([(keys[location.shard_idx], location.sample_idx) for location in locations])
-        results = []
-        missing = defaultdict(dict)
-        for index, (ref, location, payload) in enumerate(zip(refs, locations, payloads, strict=True)):
+        for location, payload in zip(locations, payloads, strict=True):
             if payload is None:
-                missing[location.shard_idx][ref] = location
-                results.append(None)
+                yield None
             else:
                 record = json.loads(payload)
                 record["webshart"] = self._provenance(location, record["webshart"])
-                results.append(record)
+                yield record
+
+    def read_cached_batch(self, refs):
+        return list(self._read_cached([self.source.parse_sample_id(ref) for ref in refs]))
+
+    def read_batch(self, refs):
+        locations = [self.source.parse_sample_id(ref) for ref in refs]
+        results = list(self._read_cached(locations))
+        missing = defaultdict(dict)
+        for ref, location, result in zip(refs, locations, results, strict=True):
+            if result is None:
+                missing[location.shard_idx][ref] = location
         if missing:
             computed = {}
             for shard, group in missing.items():

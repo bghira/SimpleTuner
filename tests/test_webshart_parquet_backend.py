@@ -72,6 +72,7 @@ class TestWebshartParquetBackend(unittest.TestCase):
         copied = self.root / name
         config = json.loads((copied / "config.json").read_text())
         self.assertEqual(config["data_backend_config"], "dataloader.json")
+        self.assertEqual(config["data_backend_sampling"], "uniform")
         plan = json.loads((copied / config["data_backend_config"]).read_text())
         self.assertEqual(plan, imported.dataloader_payload)
 
@@ -115,6 +116,103 @@ class TestWebshartParquetBackend(unittest.TestCase):
                     )[0]
                 ]
                 self.assertEqual(active, [stage["id"]])
+
+    def test_online_training_opens_one_shard_window_and_resumes_the_consumed_batch(self):
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+        from simpletuner.helpers.metadata.preparation import DatasetReadView, TrainingPreparation
+        from simpletuner.simpletuner_sdk.server.services.cache_job_service import _CacheAcceleratorStub, _CacheArgsNamespace
+
+        for i in range(7):
+            pq.write_table(pa.Table.from_pylist(self.rows), self.source / f"part-{i}.parquet", row_group_size=2)
+        self._publish_capture_manifest()
+        args = _CacheArgsNamespace(
+            dict(
+                output_dir=str(self.root),
+                seed=19,
+                max_train_steps=20,
+                gradient_accumulation_steps=2,
+                data_backend_sampling="uniform",
+            )
+        )
+        config = dict(
+            id="capture",
+            type="webshart",
+            source=str(self.source),
+            webshart=dict(format="parquet", manifest="capture.json", sampling_policy="shard_local"),
+            resolution=64,
+            resolution_type="pixel",
+            caption_strategy="webshart",
+            crop=False,
+        )
+        online = TrainingPreparation(online_text=True, ondemand_latents=True, requires_complete_view=False)
+
+        with (
+            closing(DatasetRuntime.from_config(config, args, _CacheAcceleratorStub(device="cpu"))) as runtime,
+            closing(DatasetRuntime.from_config(config, args, _CacheAcceleratorStub(device="cpu"))) as other_rank,
+        ):
+            metadata = runtime.metadata_backend
+            spec = replace(metadata.epoch_spec(1, 1), dp_size=2)
+            with (
+                patch.object(metadata, "_scan_rows", side_effect=AssertionError("startup scanned rows")),
+                patch.object(runtime.data_backend.dataset, "_file", side_effect=AssertionError("startup opened a shard")),
+            ):
+                for request in (
+                    replace(online, online_text=False),
+                    replace(online, ondemand_latents=False),
+                    replace(online, requires_complete_view=True),
+                ):
+                    self.assertFalse(runtime.prepare_for_training(request))
+                with patch.object(metadata.runtime_args, "data_backend_sampling", "auto-weighting"):
+                    self.assertFalse(runtime.prepare_for_training(online))
+                self.assertTrue(runtime.prepare_for_training(online))
+                metadata.load_image_metadata()
+                self.assertIsNone(runtime.describe().accepted_samples)
+                self.assertIsNone(runtime.describe().batches)
+                self.assertIsNone(runtime.training_batch_count())
+                self.assertFalse(metadata.membership_path.exists())
+                cursor = runtime.open_epoch(spec)
+                initial_state = cursor.state_dict()
+                self.assertEqual(initial_state["position"], 0)
+            self.assertTrue(other_rank.prepare_for_training(online))
+
+            project = runtime.data_backend.loader.iter_samples_in_shard
+            with patch.object(runtime.data_backend.loader, "iter_samples_in_shard", wraps=project) as projected:
+                first = cursor.next_batch()
+                continuation = cursor.state_dict()
+                first_partition = cursor.partition
+                self.assertLessEqual(projected.call_count, metadata.window_shards)
+                self.assertGreater(projected.call_count, 0)
+            self.assertFalse(metadata.membership_path.exists())
+
+            with closing(other_rank.open_epoch(replace(spec, dp_rank=1))) as peer:
+                peer_bucket, peer_refs = peer.next_batch()
+                self.assertEqual(first[0], peer_bucket)
+                self.assertTrue(set(first[1]).isdisjoint(peer_refs))
+                self.assertEqual(peer.state_dict()["window_revision"], continuation["window_revision"])
+            first_view = DatasetReadView(continuation["view"], spec.epoch, spec.seed, first_partition)
+            (sample,) = runtime.read_samples(first[1], fields=("metadata", "caption"), view=first_view)
+            self.assertEqual(tuple(sample["target_size"]), (128, 64))
+            self.assertIn(sample["caption"], ("first", "third"))
+            self.assertIn(sample["webshart"]["sample_idx"], (0, 2))
+            batches_after_consume = [cursor.next_batch() for _ in range(4)]
+            self.assertNotEqual(cursor.partition, first_partition)
+
+            with (
+                closing(runtime.open_epoch(spec)) as resume,
+                patch.object(metadata, "_prepare_metadata", side_effect=AssertionError("geometry was recomputed")),
+            ):
+                resume.load_state_dict(continuation)
+                self.assertEqual([resume.next_batch() for _ in range(4)], batches_after_consume)
+                resume.load_state_dict(initial_state)
+                self.assertEqual(resume.next_batch(), first)
+            with closing(runtime.open_epoch(spec)) as resume:
+                with self.assertRaisesRegex(ValueError, "shard contents changed"):
+                    resume.load_state_dict({**continuation, "window_revision": "changed"})
+            cursor.close()
+
+            runtime.prepare_view()
+            self.assertEqual(runtime.describe().accepted_samples, 16)
+            self.assertFalse(runtime.prepare_for_training(online))
 
     def test_viewer_resolves_conditioning_against_each_parquet_catalogue(self):
         from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime

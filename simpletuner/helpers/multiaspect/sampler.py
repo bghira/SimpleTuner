@@ -211,7 +211,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             state = cursor.state_dict()
             spec = cursor.spec
             rng = random.Random(f"{self.id}:{spec.seed}:{spec.epoch}:{spec.dp_rank}:{cursor.position}")
-            view = DatasetReadView(state["view"], spec.epoch, spec.seed)
+            view = DatasetReadView(state["view"], spec.epoch, spec.seed, getattr(cursor, "partition", None))
             records = self._validate_and_yield_images_from_samples(refs, bucket, rng=rng, view=view)
             records[0]["dataset_continuation"] = state
             records[0]["dataset_read_view"] = view
@@ -1090,7 +1090,10 @@ class MultiAspectSampler(torch.utils.data.Sampler):
     def __len__(self):
         if self.epoch_provider is not None:
             spec = self.epoch_provider.epoch_spec(self.current_epoch, self.batch_size)
-            return self.epoch_provider.scheduled_batches(spec)
+            count = self.epoch_provider.scheduled_batches(spec)
+            if count is None:
+                return self.metadata_backend.runtime_args.max_train_steps * spec.accumulation
+            return count
         batches_per_pass = sum(
             (len(indices) + self.batch_size - 1) // self.batch_size
             for indices in self.metadata_backend.aspect_ratio_bucket_indices.values()

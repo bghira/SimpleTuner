@@ -212,6 +212,7 @@ class TestVaeCacheTraversal(unittest.TestCase):
         metadata = WebshartMetadataBackend.__new__(WebshartMetadataBackend)
         metadata.native_policy = "global"
         metadata.vae_output_scaling_factor = 8
+        metadata._window_revision = None
         metadata._published = {"view_revision": "prepared-v1"}
         metadata.iter_preparation_batches = Mock(return_value=iter([("wide", ("ok", "bad")), ("wide", ("nan", "missing"))]))
         metadata.scan_for_metadata = Mock(side_effect=AssertionError("read source catalogue"))

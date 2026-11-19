@@ -17,6 +17,7 @@
     "resolution": 512,
     "resolution_type": "pixel",
     "aspect_bucket_alignment": 64,
+    "data_backend_sampling": "uniform",
     "dataloader_prefetch": true,
     "dataloader_prefetch_qlen": 2,
     "vae_cache_disable": true,

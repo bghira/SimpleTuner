@@ -7,12 +7,13 @@ import sqlite3
 import subprocess
 import tempfile
 import time
-from collections import deque
+from collections import defaultdict, deque
 from concurrent.futures import CancelledError, ThreadPoolExecutor
 from contextlib import ExitStack, closing, contextmanager, nullcontext
 from copy import copy, deepcopy
 from hashlib import file_digest, sha256
 from itertools import batched, chain, islice
+from math import ceil
 from pathlib import Path
 from queue import SimpleQueue
 from threading import Event
@@ -30,7 +31,7 @@ from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.data_backend.webshart import CaptionValue, WebshartDataBackend
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.metadata.backends.base import MetadataBackend, get_cp_aware_dp_info
-from simpletuner.helpers.metadata.backends.webshart_epoch import EpochSpec, WebshartEpoch
+from simpletuner.helpers.metadata.backends.webshart_epoch import EpochSpec, WebshartEpoch, WindowedWebshartEpoch
 from simpletuner.helpers.metadata.backends.webshart_exclusions import (
     collect_exclusions,
     exclusion_path,
@@ -85,6 +86,7 @@ def _empty_filtering_statistics():
 class WebshartMetadataBackend(MetadataBackend):
     native_policy = None
     epoch_recrop_version = 1
+    window_shards = 4
     maximum_canvas_size = None
     collect_exclusions = collect_exclusions
 
@@ -166,6 +168,10 @@ class WebshartMetadataBackend(MetadataBackend):
         self._stored_geometry_digest = None
         self._transforms = None
         self._writing_transforms = None
+        self._window_recipe = None
+        self._window_revision = None
+        self._window_cache = None
+        self._window_transforms = None
         if self.native_policy and self.data_backend.format == "parquet":
             self.reload_cache(set_config=not preparation_only)
         else:
@@ -239,6 +245,10 @@ class WebshartMetadataBackend(MetadataBackend):
         self.load_image_metadata()
 
     def close(self):
+        if self._window_transforms is not None:
+            self._window_transforms.close()
+            self._window_transforms = None
+        self._window_recipe = self._window_revision = self._window_cache = None
         self._accepted_geometry = None
         self._transforms = None
         if self._snapshot is not None:
@@ -257,6 +267,8 @@ class WebshartMetadataBackend(MetadataBackend):
         return self.data_backend._cache_path(self.cache_file)
 
     def describe(self, spec=None):
+        if self._window_recipe is not None:
+            return DatasetDescription(**self._source_description(), view_revision=self._window_revision)
         if self.data_backend.exists(self.cache_file):
             with self._open_membership() as source:
                 pages = MembershipPages.open(source)
@@ -268,7 +280,7 @@ class WebshartMetadataBackend(MetadataBackend):
 
     @property
     def view_revision(self):
-        return self._published["view_revision"] if self._published else None
+        return self._window_revision or (self._published["view_revision"] if self._published else None)
 
     def read_page(self, *, bucket=None, offset=0, limit=50):
         with self._open_membership() as source:
@@ -367,7 +379,91 @@ class WebshartMetadataBackend(MetadataBackend):
                 for batch in batched(refs, batch_size):
                     yield bucket, batch
 
+    def prepare_for_training(self, request):
+        args = self.runtime_args
+        config = self.active_dataset_config
+        if not (
+            self.native_policy == "shard_local"
+            and self.data_backend.format == "parquet"
+            and self.dataset_type is DatasetType.IMAGE
+            and self._published is None
+            and request.online_text
+            and request.ondemand_latents
+            and not request.requires_complete_view
+            and args.max_train_steps
+            and not getattr(args, "strict_epoch_limit", False)
+            and not getattr(args, "allow_dataset_oversubscription", False)
+            and getattr(args, "data_backend_sampling", "uniform") != "auto-weighting"
+            and self.max_num_samples is None
+            and not (config.get("crop") and config.get("crop_style") == "face")
+            and not self.delete_problematic_images
+            and not self.delete_unwanted_images
+        ):
+            return False
+
+        recipe = self._geometry_recipe(config)
+        settings = recipe.cache_settings()
+        source = self._source_description()["source_revision"]
+        caption = DatasetRuntime.caption_config(config, args)
+        self._window_require_captions = caption["caption_strategy"] == "webshart" and caption["use_captions"]
+        rules = {
+            "source": source,
+            "recipe": settings,
+            "window_shards": self.window_shards,
+            "minimum_image_size": self.minimum_image_size,
+            "minimum_aspect_ratio": self.minimum_aspect_ratio,
+            "maximum_aspect_ratio": self.maximum_aspect_ratio,
+            "require_captions": self._window_require_captions,
+            "caption_key": self.data_backend.caption_key,
+            "filter": self.dataset_filter.config if self.dataset_filter is not None else None,
+        }
+        self._window_transforms = self._open_transforms(settings, self.data_backend.dataset.source_revision_for_shard)
+        self._window_revision = sha256(
+            json.dumps(make_public_config_serializable(rules), sort_keys=True).encode()
+        ).hexdigest()
+        self._window_recipe = recipe
+        logger.info("(id=%s) Preparing Webshart geometry as training opens shard windows.", self.id)
+        return True
+
+    @property
+    def training_count_is_exact(self):
+        return self._window_recipe is None
+
+    def _open_training_partition(self, partition):
+        if self._window_cache is not None and self._window_cache[0] == partition:
+            return self._window_cache[1:]
+        start = self.window_shards * partition
+        indices = range(start, min(start + self.window_shards, self.data_backend.num_shards()))
+        pins = [self.data_backend.dataset.source_revision_for_shard(shard) for shard in indices]
+        records, buckets = {}, defaultdict(list)
+        rows = self._scan_rows(
+            (),
+            _empty_filtering_statistics(),
+            self._window_require_captions,
+            None,
+            recipe=self._window_recipe,
+            shard_indices=indices,
+            transforms=self._window_transforms,
+        )
+        for bucket, ref, record in rows:
+            if self._allows_native_aspect(bucket, self._window_recipe):
+                buckets[bucket].append(ref)
+                records[ref] = record
+        self._window_transforms.flush()
+        revision = sha256(json.dumps([pins, buckets], sort_keys=True).encode()).hexdigest()
+        self._window_cache = (partition, revision, buckets, records)
+        return revision, buckets, records
+
+    def _window_buckets(self, partition):
+        revision, buckets, _ = self._open_training_partition(partition)
+        return revision, buckets
+
     def open_epoch(self, spec):
+        if self._window_recipe is not None:
+            partitions = ceil(self.data_backend.num_shards() / self.window_shards)
+            return WindowedWebshartEpoch(
+                spec, self._source_description()["source_revision"], self._window_revision, partitions, self._window_buckets
+            )
         source = self._open_membership()
         try:
             if self.native_policy:
@@ -379,6 +475,8 @@ class WebshartMetadataBackend(MetadataBackend):
             raise
 
     def scheduled_batches(self, spec):
+        if self._window_recipe is not None:
+            return None
         with self._open_membership() as source:
             pages = MembershipPages.open(source)
             self._check_publication(pages)
@@ -512,7 +610,13 @@ class WebshartMetadataBackend(MetadataBackend):
     def get_view_metadata(self, refs, view):
         self.validate_read_view(view)
         refs = [self.data_backend.normalize_sample_id(ref) for ref in refs]
-        records = self._published_metadata_batch(refs)
+        if self._window_recipe is not None:
+            if view.partition is None:
+                raise ValueError("A Webshart training shard window is required to read geometry.")
+            _, _, window = self._open_training_partition(view.partition)
+            records = [window.get(ref) for ref in refs]
+        else:
+            records = self._published_metadata_batch(refs)
         if view.epoch in (None, 1) or not self.recrops_lazily:
             return records
         return [
@@ -659,14 +763,19 @@ class WebshartMetadataBackend(MetadataBackend):
         else:
             geometry_view = DatasetReadView(view.revision) if kind == "conditioning" else view
             (metadata,) = self.get_view_metadata((ref,), geometry_view)
-        if metadata is None or self._published is None:
-            raise ValueError("Image artifacts require published Webshart geometry.")
+        if metadata is None:
+            raise ValueError("Image artifacts require prepared Webshart geometry.")
         shard = metadata["webshart"]["shard_idx"]
-        content_revision = self._lookup.shard_revision(shard) if self._published.get("source_pins") else None
+        if self._window_recipe is not None:
+            source_revision = self._source_description()["source_revision"]
+            content_revision = self.data_backend.dataset.source_revision_for_shard(shard)
+        else:
+            source_revision = self._published.get("source_revision")
+            content_revision = self._lookup.shard_revision(shard) if self._published.get("source_pins") else None
         spec = [
             kind,
             ref,
-            self._published.get("source_revision"),
+            source_revision,
             content_revision,
             metadata,
             self._artifact_model_revision(kind, model.config),
@@ -683,7 +792,8 @@ class WebshartMetadataBackend(MetadataBackend):
 
     def load_image_metadata(self):
         if self.native_policy:
-            self.reload_cache(set_config=False)
+            if self._window_recipe is None:
+                self.reload_cache(set_config=False)
             return
         self._geometry_digest = None
         self.image_metadata = {}
@@ -861,11 +971,20 @@ class WebshartMetadataBackend(MetadataBackend):
         sample_path: str,
         require_captions: bool,
         recipe: PreparationGeometry | None = None,
+        cached: dict | None = None,
     ) -> tuple[dict, Optional[tuple[str, dict]], Optional[Exception]]:
         try:
             filename = str(entry["filename"])
             sample_metadata = self._metadata_for_entry(shard_metadata, filename, entry, sample_path)
-            prepared = self._prepare_metadata(sample_path, sample_metadata, recipe)
+            if cached is not None:
+                width, height = cached["target_size"]
+                prepared = (
+                    (f"{width}x{height}", {**sample_metadata, **cached})
+                    if self.meets_resolution_requirements(image_metadata=sample_metadata, dataset_config=recipe.config)
+                    else None
+                )
+            else:
+                prepared = self._prepare_metadata(sample_path, sample_metadata, recipe)
             if prepared is not None and require_captions and not self._entry_has_caption(shard_metadata, entry, sample_path):
                 raise CaptionNotFoundError(f"Could not find caption for {sample_path}")
             return sample_metadata, prepared, None
@@ -996,7 +1115,16 @@ class WebshartMetadataBackend(MetadataBackend):
         return PreparationGeometry(deepcopy(config), sizing, seed, model_geometry)
 
     def _scan_rows(
-        self, existing_files, statistics, require_captions, progress_callback, *, recipe=None, shard_indices=None, stop=None
+        self,
+        existing_files,
+        statistics,
+        require_captions,
+        progress_callback,
+        *,
+        recipe=None,
+        shard_indices=None,
+        stop=None,
+        transforms=None,
     ):
         if recipe is None and self.native_policy:
             recipe = self._geometry_recipe(self.dataset_config)
@@ -1081,7 +1209,13 @@ class WebshartMetadataBackend(MetadataBackend):
                             shard_idx, [entry["sample_idx"] for entry, _ in chunk], fields=fields
                         )
                         shard_metadata = {entry["filename"]: row for (entry, _), row in zip(chunk, rows, strict=True)}
-                    if executor is None:
+                    if transforms is not None:
+                        cached = transforms.read_cached_batch([ref for _, ref in chunk])
+                        results = [
+                            self._prepare_bucket_entry(shard_metadata, entry, ref, require_captions, recipe, record)
+                            for (entry, ref), record in zip(chunk, cached, strict=True)
+                        ]
+                    elif executor is None:
                         results = [
                             self._prepare_bucket_entry(shard_metadata, entry, sample_path, require_captions, recipe)
                             for entry, sample_path in chunk
@@ -1094,7 +1228,10 @@ class WebshartMetadataBackend(MetadataBackend):
                             chunk,
                         )
 
-                    for (entry, sample_path), (sample_metadata, prepared, error) in zip(chunk, results):
+                    writes = {}
+                    for index, ((entry, sample_path), (sample_metadata, prepared, error)) in enumerate(
+                        zip(chunk, results, strict=True)
+                    ):
                         if isinstance(error, CaptionNotFoundError):
                             statistics["skipped"]["caption_missing"] += 1
                             continue
@@ -1110,13 +1247,29 @@ class WebshartMetadataBackend(MetadataBackend):
                             continue
                         bucket_key, sample_metadata = prepared
                         statistics["total_processed"] += 1
+                        if transforms is not None and cached[index] is None:
+                            writes[sample_path] = sample_metadata
                         yield bucket_key, sample_path, sample_metadata
+                    if writes:
+                        transforms.enqueue(writes)
 
                 if progress_callback is not None:
                     progress_callback(shard_idx + 1, total_shards)
         finally:
             if executor is not None:
                 executor.shutdown(wait=True)
+
+    def _allows_native_aspect(self, key, recipe):
+        if not (self.minimum_aspect_ratio or self.maximum_aspect_ratio):
+            return True
+        width, height = (int(side) for side in key.split("@", 1)[0].split("x"))
+        aspect = width / height
+        if "@" not in key:
+            aspect = round(MultiaspectImage.calculate_image_aspect_ratio((width, height), geometry=recipe.sizing), 2)
+        return not (
+            (self.minimum_aspect_ratio and aspect < self.minimum_aspect_ratio)
+            or (self.maximum_aspect_ratio and aspect > self.maximum_aspect_ratio)
+        )
 
     def _write_native_geometry(self, writer, rows, exclusions):
         pinned_shard = None
@@ -1396,17 +1549,8 @@ class WebshartMetadataBackend(MetadataBackend):
                     and size * (self.repeats + 1) < minimum_batch
                 ):
                     del counts[key]
-                elif self.minimum_aspect_ratio or self.maximum_aspect_ratio:
-                    width, height = (int(side) for side in key.split("@", 1)[0].split("x"))
-                    aspect = width / height
-                    if "@" not in key:
-                        aspect = round(
-                            MultiaspectImage.calculate_image_aspect_ratio((width, height), geometry=recipe.sizing), 2
-                        )
-                    if (self.minimum_aspect_ratio and aspect < self.minimum_aspect_ratio) or (
-                        self.maximum_aspect_ratio and aspect > self.maximum_aspect_ratio
-                    ):
-                        del counts[key]
+                elif not self._allows_native_aspect(key, recipe):
+                    del counts[key]
             digest = writer.digest.hexdigest()
             writer.db.commit()
             destination = snapshot_path(path, digest)
@@ -1468,7 +1612,10 @@ class WebshartMetadataBackend(MetadataBackend):
 
         if self.native_policy:
             spec = self.epoch_spec(1, self.batch_size)
-            return self.scheduled_batches(spec)
+            count = self.scheduled_batches(spec)
+            if count is None:
+                return self.runtime_args.max_train_steps * spec.accumulation
+            return count
 
         def repeat_len(bucket):
             return len(bucket) * (self.repeats + 1)
