@@ -482,6 +482,20 @@ class ParquetTransformRecordTests(unittest.TestCase):
         main.compute_aspect_ratio_bucket_indices()
         self.assertEqual({key: main.image_metadata[path][key] for key in DECIDED}, _geometry(2.0, (1, 1)))
 
+    def test_an_indexed_sample_whose_caption_row_is_gone_leaves_the_buckets(self):
+        import pandas as pd
+
+        self.backend().compute_aspect_ratio_bucket_indices()
+        pd.DataFrame([dict(filename="a.png", caption="a", width=128, height=64)]).to_parquet(self.root / "captions.parquet")
+        reopened = self.backend()
+        self.assertEqual(
+            [path for paths in reopened.aspect_ratio_bucket_indices.values() for path in paths], [str(self.images / "a.png")]
+        )
+        self.assertEqual(
+            [path for paths in self.saved("indices")["aspect_ratio_bucket_indices"].values() for path in paths],
+            [str(self.images / "a.png")],
+        )
+
     def test_a_bucket_index_that_names_no_recipe_is_bucketed_again(self):
         main = self.backend()
         main.compute_aspect_ratio_bucket_indices()

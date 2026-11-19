@@ -100,17 +100,7 @@ class ParquetMetadataBackend(RecordedGeometry, MetadataBackend):
             self._remove_images_with_missing_captions()
 
     def _remove_images_with_missing_captions(self):
-        # remove items with missing captions from buckets
-        for key in self.aspect_ratio_bucket_indices.keys():
-            len_before = len(self.aspect_ratio_bucket_indices[key])
-            self.aspect_ratio_bucket_indices[key] = [
-                path for path in self.aspect_ratio_bucket_indices[key] if path not in self.missing_captions
-            ]
-            len_after = len(self.aspect_ratio_bucket_indices[key])
-            if len_before != len_after:
-                logger.warning(
-                    f"Removed {len_before - len_after} items from aspect ratio bucket {key} due to missing captions."
-                )
+        self.remove_images(self.missing_captions)
         self.save_cache(enforce_constraints=True)
         self.missing_captions = []
 
@@ -140,7 +130,8 @@ class ParquetMetadataBackend(RecordedGeometry, MetadataBackend):
         identifier_includes_path = False
 
         for key in self.aspect_ratio_bucket_indices.keys():
-            for filename in self.aspect_ratio_bucket_indices[key]:
+            for sample_path in self.aspect_ratio_bucket_indices[key]:
+                filename = sample_path
                 # Chop extension if parquet expects no extension
                 if not identifier_includes_extension:
                     filename = os.path.splitext(filename)[0]
@@ -156,7 +147,7 @@ class ParquetMetadataBackend(RecordedGeometry, MetadataBackend):
                     if filename.startswith("/"):
                         filename = filename[1:]
                 if filename not in self.caption_cache:
-                    missing_captions.append(filename)
+                    missing_captions.append(sample_path)
         return missing_captions
 
     def _extract_captions_to_fast_list(self):
