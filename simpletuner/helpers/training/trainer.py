@@ -6986,7 +6986,7 @@ class Trainer:
                     accumulated_microbatches=accumulated_microbatches,
                 )
                 step = mixer.step
-                StateTracker.consumed_dataset_mixer = mixer.state_dict(train_backends)
+                StateTracker.consumed_dataset_mixer = mixer.state_dict()
                 StateTracker.set_exhausted_backends(StateTracker.consumed_dataset_mixer["exhausted_backends"].copy())
             else:
                 train_backends = {

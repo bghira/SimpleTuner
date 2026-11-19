@@ -38,6 +38,7 @@ class TestDatasetMixer(unittest.TestCase):
         class Loader:
             def __init__(self, name, left):
                 self.name, self.left, self.config = name, left, configs[name]
+                self.acknowledged = []
 
             def __iter__(self):
                 return self
@@ -46,7 +47,10 @@ class TestDatasetMixer(unittest.TestCase):
                 if not self.left:
                     raise MultiDatasetExhausted()
                 self.left -= 1
-                return {"name": self.name}
+                return {"name": self.name, "dataset_continuation": self.left}
+
+            def acknowledge_batch(self, continuation):
+                self.acknowledged.append(continuation)
 
         def loaders(counts):
             return {name: Loader(name, count) for name, count in counts.items()}
@@ -67,7 +71,12 @@ class TestDatasetMixer(unittest.TestCase):
             fetcher.fetch_responses()
             batches = [fetcher.next_response(19 + i) for i in range(8)]
             self.assertFalse(fetcher.next_response(27))
-            self.assertEqual(backends, {})
+            self.assertEqual(mixer.state_dict()["exhausted_backends"], sorted(initial))
+            self.assertEqual(set(backends), set(initial))
+            for batch in batches:
+                backends[batch["name"]].acknowledge_batch(batch["dataset_continuation"])
+            for name, count in initial.items():
+                self.assertEqual(backends[name].acknowledged, list(reversed(range(count))))
             self.assertEqual(StateTracker.dataset_schedule, {})
             self.assertEqual(StateTracker.repeats, {})
             self.assertEqual(StateTracker.exhausted_backends, [])

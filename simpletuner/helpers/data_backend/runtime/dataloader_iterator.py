@@ -319,6 +319,7 @@ class DatasetMixer:
         self.optimizer_step = optimizer_step
         self.accumulated_microbatches = accumulated_microbatches
         self.dataset_ids = set(backends)
+        self.active_backends = dict(backends)
         if saved is not None:
             if saved["version"] != 2 or saved["revision"] != self.revision or saved["epoch"] != epoch:
                 raise ValueError("Dataset mixing resume requires the same datasets, epoch, weights and sampling settings.")
@@ -326,8 +327,8 @@ class DatasetMixer:
             self.optimizer_step = saved["optimizer_step"]
             self.accumulated_microbatches = saved["accumulated_microbatches"]
             for name in saved["exhausted_backends"]:
-                del backends[name]
-            self.sampler.rebuild(backends)
+                del self.active_backends[name]
+            self.sampler.rebuild(self.active_backends)
             self.sampler._phase_index = saved["phase"]
 
     def advance(self):
@@ -337,7 +338,7 @@ class DatasetMixer:
         )
         self.optimizer_step += completed
 
-    def state_dict(self, backends):
+    def state_dict(self):
         return {
             "version": 2,
             "revision": self.revision,
@@ -346,7 +347,7 @@ class DatasetMixer:
             "optimizer_step": self.optimizer_step,
             "accumulated_microbatches": self.accumulated_microbatches,
             "phase": self.sampler._phase_index,
-            "exhausted_backends": sorted(self.dataset_ids.difference(backends)),
+            "exhausted_backends": sorted(self.dataset_ids.difference(self.active_backends)),
         }
 
 
@@ -357,11 +358,11 @@ def random_dataloader_iterator(
     update_epoch_step: bool = True,
     mixer: Optional[DatasetMixer] = None,
 ) -> Union[Any, bool]:
-    if not backends:
-        raise ValueError("No data backends provided to iterator.")
-
     if mixer is not None:
+        backends = mixer.active_backends
         step = mixer.step + 1
+    elif not backends:
+        raise ValueError("No data backends provided to iterator.")
     prefetch_log_debug("Random dataloader iterator launched.")
     logger.debug(f"Backends to select from {backends}")
     while backends:
@@ -400,7 +401,7 @@ def random_dataloader_iterator(
                 batch = next(iter(backend))
             if mixer is not None:
                 mixer.advance()
-                batch["dataset_mixer_state"] = mixer.state_dict(backends)
+                batch["dataset_mixer_state"] = mixer.state_dict()
             return batch
         except MultiDatasetExhausted:
             config = getattr(backend, "config", None)
