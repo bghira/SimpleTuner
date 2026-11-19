@@ -16,6 +16,7 @@ from simpletuner.helpers.data_backend.dataset_runtime import (
     RUNTIME_MUTABLE_KEYS,
     DatasetRuntime,
     image_context_dropout_record,
+    is_eval_dataset,
     recrops_each_epoch,
     shuffle_window,
 )
@@ -1617,15 +1618,6 @@ class FactoryRegistry:
         except (TypeError, ValueError):
             return False
 
-    def _is_eval_dataset(self, dataset_id: str) -> bool:
-        """Return True when --eval_dataset_id reserves this dataset for validation."""
-        eval_dataset_id = self.args.eval_dataset_id
-        if eval_dataset_id is None:
-            return False
-        if isinstance(eval_dataset_id, str):
-            return dataset_id == eval_dataset_id
-        return dataset_id in eval_dataset_id
-
     def _evaluate_distiller_requirements(
         self,
         data_backend_config: List[Dict[str, Any]],
@@ -3181,7 +3173,7 @@ class FactoryRegistry:
                 f"Only image datasets can be read this way, and its dataset_type is {dataset_type.value}.",
             ),
             (
-                self._is_eval_dataset(init_backend["id"]),
+                is_eval_dataset(init_backend["id"], self.args),
                 "It cannot be the --eval_dataset_id dataset, which is read whole.",
             ),
             (
@@ -3575,7 +3567,7 @@ class FactoryRegistry:
             # been read whole.
             shared_by_all_ranks=(
                 dataset_type in (DatasetType.EVAL, DatasetType.CONDITIONING)
-                or self._is_eval_dataset(init_backend["id"])
+                or is_eval_dataset(init_backend["id"], self.args)
                 or self._is_audio_only_mode(backend)
             ),
         )

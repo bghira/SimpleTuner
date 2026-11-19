@@ -138,6 +138,7 @@ def _configure_worker(rank, port, root):
     trainer.accelerator = accelerator
     trainer.config = SimpleNamespace(
         distillation_method=None,
+        eval_dataset_id=None,
         gradient_accumulation_steps=1,
         max_train_steps=0,
         num_train_epochs=2,

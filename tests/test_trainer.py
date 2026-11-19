@@ -2501,6 +2501,7 @@ class TestTrainer(unittest.TestCase):
         trainer.accelerator = SimpleNamespace(num_processes=1)
         trainer.config = SimpleNamespace(
             distillation_method=None,
+            eval_dataset_id=None,
             gradient_accumulation_steps=5,
             max_train_steps=0,
             num_train_epochs=2,
@@ -2522,6 +2523,39 @@ class TestTrainer(unittest.TestCase):
         self.assertTrue(trainer.config.strict_epoch_limit)
         self.assertEqual(2, trainer.config.num_update_steps_per_epoch)
         self.assertEqual(4, trainer.config.max_train_steps)
+
+    @patch("simpletuner.helpers.training.trainer.StateTracker.get_dataset_schedule", return_value=None)
+    @patch("simpletuner.helpers.training.trainer.StateTracker.get_data_backends")
+    def test_a_dataset_reserved_for_evaluation_adds_no_training_batches(
+        self, mock_get_data_backends, mock_get_dataset_schedule
+    ):
+        for eval_dataset_id in ("holdout", ["holdout"]):
+            with self.subTest(eval_dataset_id=eval_dataset_id):
+                trainer = object.__new__(Trainer)
+                trainer.distiller = None
+                trainer.lr_scheduler = None
+                trainer.accelerator = SimpleNamespace(num_processes=1)
+                trainer.config = SimpleNamespace(
+                    distillation_method=None,
+                    eval_dataset_id=eval_dataset_id,
+                    gradient_accumulation_steps=5,
+                    max_train_steps=0,
+                    num_train_epochs=2,
+                    overrode_max_train_steps=False,
+                    strict_epoch_limit=False,
+                    train_batch_size=1,
+                )
+                mock_get_data_backends.return_value = {
+                    "train": {"config": {}, "sampler": [object()] * 10},
+                    # An image dataset --eval_dataset_id names is validated on, never trained on.
+                    "holdout": {"config": {}, "sampler": [object()] * 10},
+                }
+
+                trainer._recalculate_training_steps()
+
+                self.assertEqual(10, trainer.config.total_num_batches)
+                self.assertEqual({1: 10}, trainer.config.epoch_batches_schedule)
+                self.assertEqual(2, trainer.config.num_update_steps_per_epoch)
 
     @patch("simpletuner.helpers.training.trainer.Trainer._misc_init", return_value=Mock())
     @patch(

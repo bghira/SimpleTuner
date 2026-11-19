@@ -42,7 +42,7 @@ from simpletuner.helpers.caching.memory import reclaim_memory
 from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
 from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
 from simpletuner.helpers.configuration.loader import load_config
-from simpletuner.helpers.data_backend.dataset_runtime import recrops_each_epoch, shuffle_window
+from simpletuner.helpers.data_backend.dataset_runtime import is_eval_dataset, recrops_each_epoch, shuffle_window
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.data_backend.factory import (
     BatchFetcher,
@@ -3832,7 +3832,7 @@ class Trainer:
 
         for backend_id, backend in StateTracker.get_data_backends().items():
             backend_type = ensure_dataset_type(backend.get("dataset_type"), default=DatasetType.IMAGE)
-            if backend_type is DatasetType.EVAL:
+            if backend_type is DatasetType.EVAL or is_eval_dataset(backend_id, self.config):
                 continue
             if backend_type not in training_dataset_types:
                 continue
@@ -3876,7 +3876,9 @@ class Trainer:
         epoch_batches_map: dict[int, int] = {}
         for backend_id, backend in StateTracker.get_data_backends().items():
             backend_type = ensure_dataset_type(backend.get("dataset_type"), default=DatasetType.IMAGE)
-            if backend_type is DatasetType.EVAL or backend_type not in training_dataset_types:
+            if backend_type is DatasetType.EVAL or is_eval_dataset(backend_id, self.config):
+                continue
+            if backend_type not in training_dataset_types:
                 continue
             backend_config = backend.get("config", {}) if isinstance(backend, dict) else {}
             probability = backend_config.get("probability", 1.0)
@@ -7034,12 +7036,8 @@ class Trainer:
                         f"Excluding backend: {backend_id}, as it is exhausted? {StateTracker.backend_status(backend_id)} or not found {('train_dataloader' not in backend)}"
                     )
                     continue
-                if self.config.eval_dataset_id is not None:
-                    # skip eval splits.
-                    if isinstance(self.config.eval_dataset_id, str) and backend_id == self.config.eval_dataset_id:
-                        continue
-                    elif isinstance(self.config.eval_dataset_id, list) and backend_id in self.config.eval_dataset_id:
-                        continue
+                if is_eval_dataset(backend_id, self.config):
+                    continue
                 train_backends[backend_id] = backend["train_dataloader"]
             # Begin dataloader prefetch, if enabled.
             # With CP enabled, only the CP-local leader prefetches; batches are broadcast via CP sync.

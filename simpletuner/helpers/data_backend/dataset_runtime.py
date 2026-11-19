@@ -52,6 +52,16 @@ def image_context_dropout_record(model, args, key: str, metadata: dict[str, Any]
     return {"prompt": "", "key": key, "metadata": dropout_metadata}
 
 
+def is_eval_dataset(dataset_id: str, args) -> bool:
+    """Whether --eval_dataset_id reserves this dataset for evaluation, so it is never trained on."""
+    eval_dataset_id = args.eval_dataset_id
+    if eval_dataset_id is None:
+        return False
+    if isinstance(eval_dataset_id, str):
+        return dataset_id == eval_dataset_id
+    return dataset_id in eval_dataset_id
+
+
 def recrops_each_epoch(config: Mapping[str, Any], args) -> bool:
     """Whether a dataset's samples are given a new aspect and crop when an epoch ends."""
     return bool(config.get("crop")) and config.get("crop_aspect") == "random" and not args.aspect_bucket_disable_rebuild
