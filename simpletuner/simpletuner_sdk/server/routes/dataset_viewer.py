@@ -76,13 +76,14 @@ def _refuse_geometry_edits(config: Dict[str, Any]) -> None:
 
 
 def _get_global_config() -> Dict[str, Any]:
-    """Get global training config values relevant to scanning."""
+    """Get global training config values relevant to scanning, keyed without the CLI's ``--``."""
     try:
         from simpletuner.simpletuner_sdk.server.services.configs_service import ConfigsService
 
-        return ConfigsService().get_active_config().get("config", {})
+        config = ConfigsService().get_active_config().get("config", {})
     except Exception:
         return {}
+    return {key.removeprefix("--"): value for key, value in config.items()}
 
 
 # ---------------------------------------------------------------------------

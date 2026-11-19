@@ -142,6 +142,15 @@ class TestScanUsesTrainingSettings(unittest.TestCase):
         self.scan({"aspect_bucket_disable_rebuild": True})
         self.assertEqual(self.recipe(), "discovery")
 
+    def test_the_active_config_reaches_the_scan_with_its_cli_style_keys(self):
+        from simpletuner.simpletuner_sdk.server.routes.dataset_viewer import _get_global_config
+        from simpletuner.simpletuner_sdk.server.services.configs_service import ConfigsService
+
+        active = {"config": {"--aspect_bucket_disable_rebuild": True}}
+        with patch.object(ConfigsService, "get_active_config", return_value=active):
+            self.scan(_get_global_config())
+        self.assertEqual(self.recipe(), "discovery")
+
     def test_a_scan_leaves_no_store_writer_running(self):
         import threading
 
