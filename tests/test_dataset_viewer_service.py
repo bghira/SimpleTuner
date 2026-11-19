@@ -171,6 +171,43 @@ class TestWebshartMembershipPages(unittest.TestCase):
             self.assertFalse(ready.scan_incomplete)
             self.assertEqual(service.get_dataset_files(config, view_revision=ready.view_revision).files, ["ready.jpg"])
 
+    def test_native_caption_health_uses_admission_provenance_without_reading_rows(self):
+        from simpletuner.helpers.metadata.backends.webshart_membership import write_membership
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = {
+                "id": "images",
+                "type": "webshart",
+                "caption_strategy": "webshart",
+                "only_instance_prompt": True,
+                "instance_prompt": "shared prompt",
+                "webshart": {"source": "s3://example", "cache_dir": directory, "format": "parquet"},
+            }
+            path = root / "aspect_ratio_bucket_indices_source_123_images.json"
+            properties = {"config": config}
+            service = DatasetViewerService(project_root=root)
+
+            with patch.object(service, "get_dataset_files", side_effect=AssertionError("caption inventory")):
+                write_membership(path, {"square": ["caption-missing.jpg"]}, properties)
+                old = service.get_caption_status(config)
+                self.assertIsNone(old.captioned_files)
+                self.assertIsNone(old.coverage_ratio)
+
+                properties["source_captions_required"] = False
+                write_membership(path, {"square": ["caption-missing.jpg"]}, properties)
+                status = service.get_caption_status(config)
+                self.assertEqual(status.total_files, 1)
+                self.assertIsNone(status.captioned_files)
+                self.assertIsNone(status.coverage_ratio)
+
+                properties["config"] = {**config, "only_instance_prompt": False}
+                properties["source_captions_required"] = True
+                write_membership(path, {"square": ["caption-present.jpg"]}, properties)
+                status = service.get_caption_status(properties["config"])
+                self.assertEqual(status.captioned_files, 1)
+                self.assertEqual(status.coverage_ratio, 1.0)
+
     def test_published_pages_are_bounded_and_survive_replacement(self):
         from simpletuner.helpers.metadata.backends.webshart_membership import MembershipPages, write_membership
 

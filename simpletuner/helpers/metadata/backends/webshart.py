@@ -1441,6 +1441,7 @@ class WebshartMetadataBackend(MetadataBackend):
                         "geometry_partition_shards": shards_per_partition,
                         "geometry_name": path.name,
                         "source_pins": pin_source,
+                        "source_captions_required": require_captions,
                         "geometry_sha256": digest,
                         "rules_revision": rules_revision,
                         "config": public_config,

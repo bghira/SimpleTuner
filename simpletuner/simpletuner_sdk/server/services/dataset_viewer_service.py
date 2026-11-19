@@ -54,6 +54,7 @@ class DatasetSummary(BaseModel):
     scan_incomplete: bool = False
     accepted_samples: Optional[int] = None
     physical_rows: Optional[int] = None
+    source_captions_required: Optional[bool] = None
     source_revision: Optional[str] = None
     view_revision: Optional[str] = None
     total_files: int = 0
@@ -581,6 +582,7 @@ class DatasetViewerService:
             total_files=total_files,
             accepted_samples=total_files,
             physical_rows=data.get("physical_rows"),
+            source_captions_required=data.get("source_captions_required"),
             source_revision=data.get("source_revision"),
             view_revision=data.get("view_revision"),
             bucket_count=len(buckets),
@@ -1317,10 +1319,17 @@ class DatasetViewerService:
 
         if dataset_config.get("type") == "webshart":
             summary = self.get_dataset_summary(dataset_config)
+            if summary.scan_incomplete:
+                return CaptionValidationResult(
+                    dataset_id=dataset_id,
+                    strategy=strategy,
+                    captioned_files=None,
+                    coverage_ratio=None,
+                    warnings=["Caption coverage is unavailable until the scan completes."],
+                )
             if summary.view_revision is not None:
                 total = summary.accepted_samples
-                published = summary.config or {}
-                if strategy == "filename" or (strategy == "webshart" and published.get("caption_strategy") == strategy):
+                if strategy == "filename" or (strategy == "webshart" and summary.source_captions_required is True):
                     captioned = total
                 elif strategy == "instanceprompt":
                     captioned = total if dataset_config.get("instance_prompt") else 0
