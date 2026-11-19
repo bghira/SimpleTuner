@@ -105,6 +105,7 @@ from simpletuner.helpers.training.state_tracker import StateTracker
 from .builders import build_backend_from_config, create_backend_builder
 from .builders.base import create_metadata_provider
 from .config import ImageBackendConfig, ImageEmbedBackendConfig, TextEmbedBackendConfig, create_backend_config
+from .config.relationships import resolve_dataset_relationships
 
 logger = logging.getLogger("DataBackendFactory")
 if should_log():
@@ -952,7 +953,7 @@ def sort_dataset_configs_by_dependencies(data_backend_config):
             audio.get("source_dataset_id") if isinstance(audio, dict) and audio.get("source_from_video") else None,
             config.get("metadata_clone_source_id"),
         ):
-            if source in by_id:
+            if isinstance(source, str) and source in by_id:
                 dependencies.setdefault(dataset_id, []).append(source)
 
         conditioning = config.get("conditioning_data")
@@ -960,7 +961,7 @@ def sort_dataset_configs_by_dependencies(data_backend_config):
             conditioning = [conditioning]
         if isinstance(conditioning, list):
             for target in conditioning:
-                if target in by_id and target != dataset_id:
+                if isinstance(target, str) and target in by_id and target != dataset_id:
                     dependencies.setdefault(target, []).append(dataset_id)
 
     if not dependencies:
@@ -1739,6 +1740,7 @@ class FactoryRegistry:
             {"backend_count": len(data_backend_config), "config_file_size": os.path.getsize(self.args.data_backend_config)},
         )
 
+        resolve_dataset_relationships(data_backend_config, authored=True)
         data_backend_config = sort_dataset_configs_by_dependencies(data_backend_config)
         self._log_performance_metrics("config_sorted")
 
@@ -2615,7 +2617,7 @@ class FactoryRegistry:
             self._materialize_caption_generators(data_backend_config)
             self._prevalidate_backend_ids(data_backend_config)
 
-        conditioning, audio = self._resolve_dataset_relationships(data_backend_config)
+        conditioning, audio = resolve_dataset_relationships(data_backend_config)
         self._resolve_conditioning_geometry(data_backend_config)
         configure_model_data_signals(self.model, data_backend_config)
 
@@ -3775,50 +3777,6 @@ class FactoryRegistry:
         if self._is_multi_process():
             self.accelerator.wait_for_everyone()
 
-    @staticmethod
-    def _resolve_dataset_relationships(data_backend_config):
-        """Resolve explicit conditioning and audio links before opening dataset providers."""
-        enabled = [
-            backend
-            for backend in data_backend_config
-            if backend.get("id") and not (backend.get("disabled") or backend.get("disable"))
-        ]
-        roles = {
-            backend["id"]: (
-                DatasetType.CONDITIONING if backend.get("conditioning_type") is not None else _backend_dataset_type(backend)
-            )
-            for backend in enabled
-        }
-        conditioning = {}
-        audio = {}
-        for backend in enabled:
-            dataset_id = backend["id"]
-            role = roles[dataset_id]
-            for field, target_role, source_roles, result in (
-                (
-                    "conditioning_data",
-                    DatasetType.CONDITIONING,
-                    (DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.AUDIO, DatasetType.EVAL),
-                    conditioning,
-                ),
-                ("s2v_datasets", DatasetType.AUDIO, (DatasetType.VIDEO, DatasetType.EVAL), audio),
-            ):
-                targets = backend.get(field)
-                if role not in source_roles or not targets:
-                    continue
-                if isinstance(targets, str):
-                    targets = [targets]
-                if not isinstance(targets, (list, tuple)):
-                    raise ValueError(f"(id={dataset_id}) {field} must be a dataset ID or a list of IDs.")
-                for target_id in targets:
-                    if not isinstance(target_id, str) or roles.get(target_id) is not target_role:
-                        raise ValueError(
-                            f"(id={dataset_id}) {field} references {target_id!r}, "
-                            f"which is not an enabled {target_role.value} dataset."
-                        )
-                result[dataset_id] = list(targets)
-        return conditioning, audio
-
     def _resolve_conditioning_geometry(self, data_backend_config: List[Dict[str, Any]]) -> None:
         """Resolve shared geometry before constructing metadata providers or scanning membership."""
         active = {
@@ -4132,6 +4090,7 @@ class FactoryRegistry:
         data_backend_config = self._inject_grounding_configs(data_backend_config)
         data_backend_config = self._inject_s2v_audio_configs(data_backend_config)
         data_backend_config = self.process_conditioning_datasets(data_backend_config)
+        resolve_dataset_relationships(data_backend_config)
         data_backend_config = sort_dataset_configs_by_dependencies(data_backend_config)
         data_backend_config = process_data_transforms(
             global_config=self.args,
@@ -4139,7 +4098,6 @@ class FactoryRegistry:
             accelerator=self.accelerator,
         )
 
-        self._resolve_dataset_relationships(data_backend_config)
         self.configure_text_embed_backends(data_backend_config)
         self.configure_image_embed_backends(data_backend_config)
         self.configure_conditioning_image_embed_backends(data_backend_config)

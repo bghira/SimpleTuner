@@ -76,6 +76,20 @@ class StrictI2VDatasetValidationTest(unittest.TestCase):
             {"id": "text-embeds", "dataset_type": "text_embeds", "type": "local", "default": True},
         ]
 
+    def test_dataset_plan_rejects_disabled_audio_and_conditioning_targets(self):
+        for field, role in (("conditioning_data", "conditioning"), ("s2v_datasets", "audio")):
+            with self.subTest(field=field):
+                configs = self._base_datasets() + [
+                    {"id": "video", "dataset_type": "video", "type": "local", field: ["related"]},
+                    {"id": "related", "dataset_type": role, "type": "local", "disable": True},
+                ]
+                issues = compute_validations(configs, blueprints=[])
+                self.assertTrue(any(issue.level == "error" and issue.field == f"video.{field}" for issue in issues))
+                configs[-1].pop("disable")
+                self.assertFalse(
+                    any(issue.field == f"video.{field}" for issue in compute_validations(configs, blueprints=[]))
+                )
+
     def _collect_errors(self, validations):
         return [message.message for message in validations if message.level == "error"]
 

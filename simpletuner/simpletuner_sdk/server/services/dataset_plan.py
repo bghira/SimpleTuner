@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 from pydantic import BaseModel
 
 import simpletuner.helpers.distillation.factory  # noqa: F401
+from simpletuner.helpers.data_backend.config.relationships import DatasetRelationshipError, resolve_dataset_relationships
 from simpletuner.helpers.data_backend.config.validators import validate_caption_data_generator
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.data_backend.runtime.schedule import dataset_is_active
@@ -118,6 +119,11 @@ def compute_validations(
             )
         )
         return validations
+
+    try:
+        resolve_dataset_relationships(datasets, authored=True)
+    except DatasetRelationshipError as exc:
+        validations.append(ValidationMessage(field=f"{exc.dataset_id}.{exc.field}", message=str(exc), level="error"))
 
     effective_datasets = [
         (
@@ -406,7 +412,7 @@ def compute_validations(
         dataset
         for dataset in datasets
         if _dataset_type(dataset) in {DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.AUDIO}
-        and not dataset.get("disabled")
+        and not (dataset.get("disabled") or dataset.get("disable"))
     ]
     if training_datasets:
         immediate_datasets = [dataset for dataset in training_datasets if _is_immediately_available(dataset)]
