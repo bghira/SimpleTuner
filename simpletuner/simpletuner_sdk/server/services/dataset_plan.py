@@ -13,6 +13,7 @@ from pydantic import BaseModel
 import simpletuner.helpers.distillation.factory  # noqa: F401
 from simpletuner.helpers.data_backend.config.validators import validate_caption_data_generator
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
+from simpletuner.helpers.data_backend.runtime.schedule import dataset_is_active
 from simpletuner.helpers.distillation.registry import DistillationRegistry
 from simpletuner.helpers.distillation.requirements import (
     EMPTY_PROFILE,
@@ -413,7 +414,7 @@ def compute_validations(
             validations.append(
                 ValidationMessage(
                     field="scheduling",
-                    message="at least one dataset must be available from the start of training (start_epoch <= 1 and start_step <= 0)",
+                    message="at least one dataset must be available from the start of training (start_epoch <= 1 and start_step <= 1)",
                     level="error",
                     suggestion="Set one dataset to use 'Immediate' scheduling mode or set start_epoch=1 and start_step=0",
                 )
@@ -517,16 +518,8 @@ def _dataset_type(dataset: Dict[str, Any]) -> Optional[DatasetType]:
 
 def _is_immediately_available(dataset: Dict[str, Any]) -> bool:
     """Check if a dataset is available from the start of training."""
-    start_epoch = dataset.get("start_epoch")
-    start_step = dataset.get("start_step")
-
-    # Normalize start_epoch: not set or <= 1 means available from epoch 1
-    epoch_ok = start_epoch is None or (isinstance(start_epoch, (int, float)) and start_epoch <= 1)
-
-    # Normalize start_step: not set or <= 0 means available from step 0
-    step_ok = start_step is None or (isinstance(start_step, (int, float)) and start_step <= 0)
-
-    return epoch_ok and step_ok
+    active, _ = dataset_is_active(_normalise_identifier(dataset), dataset, epoch_hint=1, step_hint=0, update_state=False)
+    return active
 
 
 def _resolve_distiller_profile(distillation_method: Optional[str]) -> DistillerRequirementProfile:
