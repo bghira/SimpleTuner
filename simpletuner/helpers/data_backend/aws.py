@@ -64,6 +64,8 @@ def normalise_s3_prefixes(prefix: Union[str, Sequence[str], None]) -> tuple[str,
 
 
 class S3DataBackend(BaseDataBackend):
+    supports_artifact_presence_listing = True
+
     # Storing the list_files output in a local dict.
     _list_cache: dict = {}
 

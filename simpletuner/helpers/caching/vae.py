@@ -6,7 +6,7 @@ import random
 import threading
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from hashlib import sha256
 from io import BytesIO
 from itertools import batched
@@ -22,6 +22,7 @@ from numpy import str_ as numpy_str
 from PIL import Image
 from tqdm import tqdm
 
+from simpletuner.helpers.caching.artifact_listing import ArtifactListing
 from simpletuner.helpers.data_backend.base import BaseDataBackend, ordered_sample_payloads
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.image_manipulation.batched_training_samples import BatchedTrainingSamples
@@ -2056,20 +2057,43 @@ class VAECache(WebhookMixin):
             maintenance or (not self.vae_cache_ondemand and (self.nsfw_check_enabled or self.delete_problematic_images))
         )
 
+    @contextmanager
+    def _preparation_presence(self, dataset, workers):
+        store = self.cache_data_backend
+        if (
+            dataset.requires_complete_preparation
+            or store.supports_artifact_presence_listing is not True
+            or self._artifact_inventory is None
+            or not self.cache_dir.rstrip("/")
+        ):
+            yield store.bulk_exists
+            return
+
+        prefix = self.cache_dir.rstrip("/") + "/"
+        listing = ArtifactListing(store, prefix, self._artifact_inventory.parent, self.accelerator)
+        try:
+            with listing.open() as probe:
+                yield probe
+        finally:
+            if workers > 1:
+                self.accelerator.wait_for_everyone()
+            listing.close()
+
     def prepare_dataset(self, dataset, *, worker=0, workers=1, progress_callback=None):
         exclude_unreadable = dataset.requires_complete_preparation and self.delete_problematic_images
-        if not self.nsfw_check_enabled and not exclude_unreadable:
-            return self._prepare_dataset_batches(dataset, worker, workers, progress_callback, None)
-        try:
-            with dataset.metadata_backend.collect_exclusions() as exclusions:
-                count = self._prepare_dataset_batches(dataset, worker, workers, progress_callback, exclusions)
-        finally:
-            if self.nsfw_check_enabled:
-                self._close_nsfw_classifier_store()
-        self._write_nsfw_scan_report()
-        return count
+        with self._preparation_presence(dataset, workers) as probe:
+            if not self.nsfw_check_enabled and not exclude_unreadable:
+                return self._prepare_dataset_batches(dataset, worker, workers, progress_callback, None, probe)
+            try:
+                with dataset.metadata_backend.collect_exclusions() as exclusions:
+                    count = self._prepare_dataset_batches(dataset, worker, workers, progress_callback, exclusions, probe)
+            finally:
+                if self.nsfw_check_enabled:
+                    self._close_nsfw_classifier_store()
+            self._write_nsfw_scan_report()
+            return count
 
-    def _prepare_dataset_batches(self, dataset, worker, workers, progress_callback, exclusions):
+    def _prepare_dataset_batches(self, dataset, worker, workers, progress_callback, exclusions, probe):
         current = 0
         total = dataset.describe().accepted_samples
         ready = False
@@ -2077,7 +2101,7 @@ class VAECache(WebhookMixin):
         view = dataset.published_read_view() if dataset.uses_native_schedule is True else None
         for bucket, refs in dataset.iter_preparation_batches(worker=worker, workers=workers, batch_size=self.vae_batch_size):
             keys = (self.cache_path_for_image(ref, view=view) for ref in refs)
-            cached = self.cache_data_backend.bulk_exists(keys)
+            cached = probe(keys)
             pending = [ref for ref, present in zip(refs, cached, strict=True) if not present]
             requested = refs if self.nsfw_check_enabled else pending
             if requested:

@@ -49,6 +49,8 @@ class BaseDataBackend(ABC):
     prepared_partition_shards = None
     caption_projection_strategy = None
 
+    supports_artifact_presence_listing = False
+
     @cached_property
     def source_files(self):
         return SourceFileInventory()

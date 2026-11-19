@@ -4270,19 +4270,18 @@ class FactoryRegistry:
             ]
         ):
             cache = init_backend["vaecache"]
-            if cache.needs_legacy_cache_inventory({**backend, **init_backend["config"]}):
-                unprocessed_files = cache.discover_unprocessed_files()
-                logger.info(f"VAECache has {len(unprocessed_files)} unprocessed files.")
-                cache.process_buckets()
-            else:
-                cache.prepare_dataset(
-                    init_backend["dataset_runtime"],
-                    worker=self.accelerator.process_index,
-                    workers=self.accelerator.num_processes,
-                )
+            with self._dataset_startup_phase(init_backend["id"], "Latent preparation"):
+                if cache.needs_legacy_cache_inventory({**backend, **init_backend["config"]}):
+                    unprocessed_files = cache.discover_unprocessed_files()
+                    logger.info(f"VAECache has {len(unprocessed_files)} unprocessed files.")
+                    cache.process_buckets()
+                else:
+                    cache.prepare_dataset(
+                        init_backend["dataset_runtime"],
+                        worker=self.accelerator.process_index,
+                        workers=self.accelerator.num_processes,
+                    )
             logger.debug(f"Encoding images during training: {init_backend['vaecache'].vae_cache_ondemand}")
-            if self._is_multi_process():
-                self.accelerator.wait_for_everyone()
         self._move_text_encoders_for_vae_cache(self.accelerator.device)
         init_backend["metadata_backend"].save_cache()
 

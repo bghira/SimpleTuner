@@ -321,6 +321,59 @@ class TestVaeCacheTraversal(unittest.TestCase):
         self.assertEqual(stored, {"b", "c"})
         source.delete.assert_not_called()
 
+    def test_aws_latent_preparation_lists_warm_prefix_and_probes_only_misses(self):
+        from botocore.exceptions import ClientError
+
+        from simpletuner.helpers.data_backend.aws import S3DataBackend
+
+        dataset = Mock(requires_complete_preparation=False, uses_native_schedule=False)
+        dataset.describe.return_value.accepted_samples = 3
+        dataset.iter_preparation_batches.return_value = [("wide", ("a", "b")), ("square", ("c",))]
+        with TemporaryDirectory() as directory, patch("simpletuner.helpers.data_backend.aws.boto3.client"):
+            store = S3DataBackend("latents", "artifacts", None)
+            stored = {"latents/a.pt", "latents/b.pt", "latents/c.pt"}
+            paginate = store.client.get_paginator.return_value.paginate
+            paginate.side_effect = lambda **kwargs: ({"Contents": [{"Key": key}]} for key in sorted(stored))
+
+            def head(*, Bucket, Key):
+                if Key not in stored:
+                    raise ClientError({"Error": {"Code": "404"}}, "HeadObject")
+                return {}
+
+            store.client.exceptions.NoSuchKey = type("NoSuchKey", (ClientError,), {})
+            store.client.head_object.side_effect = head
+            cache = VAECache.__new__(VAECache)
+            cache.vae_batch_size = 2
+            cache.cache_dir = "latents"
+            cache._artifact_inventory = Path(directory) / "legacy-inventory.json"
+            cache.accelerator = SimpleNamespace(is_local_main_process=True)
+            cache.cache_data_backend = store
+            cache.cache_path_for_image = lambda ref, *, view=None: f"latents/{ref}.pt"
+            cache.init_vae = Mock()
+            cache.nsfw_check_enabled = False
+            cache.delete_problematic_images = False
+            cache._read_from_storage_concurrently = Mock(side_effect=lambda refs, hide_errors: zip(refs, refs))
+            cache._process_images_in_batch = lambda refs, images, disable_queue, view: list(zip(images, refs))
+            cache._encode_images_in_batch = lambda pixels, disable_queue, view: [
+                (f"latents/{ref}.pt", ref, image) for image, ref in pixels
+            ]
+            cache._write_latents_in_batch = Mock(side_effect=lambda batch: stored.update(key for key, _, _ in batch))
+
+            self.assertEqual(cache.prepare_dataset(dataset), 3)
+            store.client.head_object.assert_not_called()
+            store.client.get_object.assert_not_called()
+            cache._write_latents_in_batch.assert_not_called()
+            cache.init_vae.assert_not_called()
+            paginate.assert_called_once_with(Bucket="artifacts", Prefix="latents/", MaxKeys=1000)
+
+            stored.remove("latents/b.pt")
+            self.assertEqual(cache.prepare_dataset(dataset), 3)
+            self.assertEqual(paginate.call_count, 2)
+            store.client.head_object.assert_called_once_with(Bucket="artifacts", Key="latents/b.pt")
+            cache._read_from_storage_concurrently.assert_called_once_with(["b"], hide_errors=True)
+            cache._write_latents_in_batch.assert_called_once_with([("latents/b.pt", "b", "b")])
+            self.assertEqual(list((Path(directory) / ".artifact-listings").iterdir()), [])
+
     def test_vae_inventory_is_only_needed_for_legacy_filtering_and_maintenance(self):
         cache = VAECache.__new__(VAECache)
         cache.metadata_backend = SimpleNamespace(requires_complete_preparation=False)
