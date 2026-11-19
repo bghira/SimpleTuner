@@ -3,6 +3,7 @@ import logging
 import os
 import time
 import traceback
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
@@ -15,6 +16,7 @@ from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.dataset_types import ensure_dataset_type
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
+from simpletuner.helpers.metadata.transform_records import RecordedGeometry
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
 from simpletuner.helpers.training import image_file_extensions
 from simpletuner.helpers.training.multi_process import should_log
@@ -36,7 +38,9 @@ else:
     logger.setLevel("ERROR")
 
 
-class HuggingfaceMetadataBackend(MetadataBackend):
+class HuggingfaceMetadataBackend(RecordedGeometry, MetadataBackend):
+    transform_recipe_name = "huggingface"
+
     def __init__(
         self,
         id: str,
@@ -378,6 +382,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                 self.config = cache_data.get("config", {})
             # Load filtering statistics if present
             self.filtering_statistics = cache_data.get("filtering_statistics")
+            self._adopt_index_recipe(cache_data)
         else:
             logger.debug("No cache file found, starting fresh.")
 
@@ -397,6 +402,8 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         cache_data = {
             "config": StateTracker.get_data_backend_config(data_backend_id=self.data_backend.id),
             "aspect_ratio_bucket_indices": aspect_ratio_bucket_indices_str,
+            # A process that reads this index must find the geometry of every sample it lists.
+            "transform_recipe": self._committed_recipe(),
         }
         # Include filtering statistics if available
         if self.filtering_statistics is not None:
@@ -405,18 +412,23 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         self.data_backend.write(self.cache_file, cache_data_str)
         logger.debug("Aspect ratio cache saved.")
 
-    def save_image_metadata(self):
-        full_metadata_path = self.metadata_file
-        if not str(self.metadata_file).endswith(".json"):
-            full_metadata_path = f"{self.metadata_file}_{self.id}.json"
+    def _metadata_path(self) -> str:
+        if str(self.metadata_file).endswith(".json"):
+            return str(self.metadata_file)
+        return f"{self.metadata_file}_{self.id}.json"
 
-        self.data_backend.write(full_metadata_path, json.dumps(self.image_metadata))
+    def _metadata_directory(self) -> Path:
+        return self.data_backend.cache_file_path(self._metadata_path()).parent
+
+    def save_image_metadata(self):
+        """Save what was measured of each sample. Its geometry is in the store."""
+        full_metadata_path = self._metadata_path()
+        self.data_backend.write(full_metadata_path, json.dumps(self._metadata_to_save()))
         logger.debug(f"Metadata file saved to {full_metadata_path}")
 
     def load_image_metadata(self):
-        full_metadata_path = self.metadata_file
-        if not str(self.metadata_file).endswith(".json"):
-            full_metadata_path = f"{self.metadata_file}_{self.id}.json"
+        """Load what was measured of each sample, with the geometry recorded for it."""
+        full_metadata_path = self._metadata_path()
         logger.debug(f"Loading metadata from {full_metadata_path}")
         if self.data_backend.exists(full_metadata_path):
             try:
@@ -436,6 +448,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                 self.image_metadata = {}
                 self.image_metadata_loaded = False
             logger.debug(f"Metadata file does not exist: {full_metadata_path}")
+        self._merge_recorded_geometry()
 
     def _passes_quality_filter(self, quality_assessment: Dict) -> bool:
         if not self.quality_filter or not quality_assessment:
@@ -834,6 +847,8 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         if not ignore_existing_cache:
             self.reload_cache()
             self.load_image_metadata()
+        ignore_existing_cache = self._begin_bucketing(ignore_existing_cache)
+        if not ignore_existing_cache:
             existing_files = set().union(*self.aspect_ratio_bucket_indices.values())
             statistics["skipped"]["already_exists"] = len(existing_files)
         else:
@@ -893,6 +908,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
 
                 for path, metadata in metadata_updates.items():
                     self.set_metadata_by_filepath(path, metadata, update_json=False)
+                self.record_transforms(metadata_updates)
                 metadata_updates = {}
 
                 self.save_cache(enforce_constraints=False)
@@ -903,11 +919,13 @@ class HuggingfaceMetadataBackend(MetadataBackend):
 
         for path, metadata in metadata_updates.items():
             self.set_metadata_by_filepath(path, metadata, update_json=False)
+        self.record_transforms(metadata_updates)
 
         logger.info(f"Processing complete. Statistics: {statistics}")
         self.filtering_statistics = statistics
         self.save_image_metadata()
         self.save_cache(enforce_constraints=True)
+        self._end_bucketing()
         if self.bucket_report:
             self.bucket_report.update_statistics(statistics)
             self.bucket_report.record_bucket_snapshot("post_refresh", self.aspect_ratio_bucket_indices)

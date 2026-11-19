@@ -1,18 +1,28 @@
 """The geometry decided for a sample, how it is encoded, the recipe of settings it follows from, and where it is kept."""
 
 import json
+import logging
+import os
 import queue
 import sqlite3
+import tempfile
 import threading
 from contextlib import closing
 from hashlib import sha256
 from pathlib import Path
 
 from simpletuner.helpers.data_backend.dataset_runtime import RUNTIME_MUTABLE_KEYS, recrops_each_epoch
+from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.training.state_tracker import StateTracker
+
+logger = logging.getLogger(__name__)
 
 DECIDED = ("aspect_ratio", "target_size", "intermediary_size", "crop_coordinates")
 _PAIRS = DECIDED[1:]
+_TRANSFORM_BATCH_BYTES = 1 << 20
+_TRANSFORM_READ_ROWS = 10_000
+# Data backends that write metadata files to this machine's disk, so the store can sit beside them.
+_LOCAL_METADATA = ("local", "csv", "huggingface")
 
 
 def encode_transform(record: dict) -> bytes:
@@ -178,3 +188,169 @@ class PythonTransformCache:
         finally:
             if current is not None:
                 current[1].close()
+
+
+class RecordedGeometry:
+    """
+    For a metadata backend whose samples are listed in a bucket index: the geometry decided for each sample
+    is recorded in a PythonTransformCache under the recipe the index names, and the metadata file keeps what
+    was measured. A dataset that re-crops each epoch has the epoch in its recipe. The backend names its recipe
+    and calls these where it loads, saves and buckets.
+    """
+
+    transform_recipe_name: str
+    _recipe: str | None = None
+    _transforms: PythonTransformCache | None = None
+    _wrote_transforms = False
+    image_metadata_loaded = False
+
+    def record_transforms(self, records: dict[str, dict]) -> None:
+        if not self._decides_geometry() or not records:
+            return
+        if self._recipe is None:
+            self._recipe = self._new_recipe()
+        store = self._transform_store()
+        empty = len(self.id.encode("utf-8"))
+        batch, size = [], empty
+        for path, metadata in records.items():
+            row = (str(path), encode_transform(metadata))
+            cost = record_bytes(*row)
+            if batch and size + cost > _TRANSFORM_BATCH_BYTES:
+                store.enqueue(self.id, batch)
+                batch, size = [], empty
+            batch.append(row)
+            size += cost
+        store.enqueue(self.id, batch)
+        self._wrote_transforms = True
+
+    def _adopt_index_recipe(self, cache_data: dict) -> None:
+        """Take the recipe a bucket index names; the geometry of its samples is read again under it."""
+        recipe = cache_data.get("transform_recipe")
+        if recipe != self._recipe:
+            self._recipe = recipe
+            if self.image_metadata_loaded:
+                self.load_image_metadata()
+
+    def _committed_recipe(self) -> str | None:
+        """The recipe for a bucket index to name, once every record it lists is committed."""
+        self._flush_transforms()
+        return self._recipe
+
+    def _metadata_to_save(self) -> dict:
+        """What was measured of each sample, once the geometry decided for it is committed."""
+        if not self._decides_geometry():
+            return self.image_metadata
+        self._flush_transforms()
+        return {
+            path: {key: value for key, value in metadata.items() if key not in DECIDED}
+            for path, metadata in self.image_metadata.items()
+        }
+
+    def _begin_bucketing(self, ignore_existing_cache: bool) -> bool:
+        """Whether every sample is decided again: a forced rescan, or an index that names no recipe."""
+        if not self._decides_geometry():
+            return ignore_existing_cache
+        if self._recipe is None and any(self.aspect_ratio_bucket_indices.values()):
+            logger.info("(id=%s) Its bucket index names no recipe of recorded geometry; bucketing it again.", self.id)
+            ignore_existing_cache = True
+        if ignore_existing_cache:
+            self._recipe = self._new_recipe()
+            self._discard_transforms()
+        return ignore_existing_cache
+
+    def _end_bucketing(self) -> None:
+        if self._wrote_transforms:
+            # The first geometry recorded for a sample is kept, so every sample takes what was recorded.
+            self._merge_recorded_geometry()
+
+    def _new_recipe(self) -> str:
+        return transform_recipe(self.transform_recipe_name, StateTracker.get_epoch(), self.id)
+
+    def _decides_geometry(self) -> bool:
+        return ensure_dataset_type(self.dataset_type, default=DatasetType.IMAGE) is not DatasetType.AUDIO
+
+    def _metadata_on_local_disk(self) -> bool:
+        return self.data_backend.type in _LOCAL_METADATA
+
+    def _metadata_directory(self) -> Path:
+        """The directory the data backend writes the metadata file into."""
+        return Path(self.metadata_file).parent
+
+    def _transform_store(self) -> PythonTransformCache:
+        """This process's handle on the store of the recipe in force."""
+        if self._transforms is None or self._transforms.recipe != self._recipe:
+            self._close_transforms()
+            if self._metadata_on_local_disk():
+                directory = self._metadata_directory() / "transforms"
+            else:
+                # Each process keeps its own copy of the published store, so a download never replaces a file being written.
+                directory = (
+                    Path(StateTracker.get_args().cache_dir)
+                    / "transforms"
+                    / self.id
+                    / f"process-{self.accelerator.process_index}"
+                )
+            self._transforms = PythonTransformCache(directory, self._recipe, max_batch_bytes=_TRANSFORM_BATCH_BYTES)
+        return self._transforms
+
+    def _close_transforms(self) -> None:
+        if self._transforms is not None:
+            self._transforms.close()
+            self._transforms = None
+            self._wrote_transforms = False
+
+    def _discard_transforms(self) -> None:
+        """A forced rescan decides every sample again, so what its recipe recorded is dropped first."""
+        path = self._transform_store().path(self.id)
+        self._close_transforms()
+        path.unlink(missing_ok=True)
+
+    def _published_transforms(self, store: PythonTransformCache) -> str:
+        """Where the store is published beside the metadata file, for a data backend not on local disk."""
+        return str(self._metadata_directory() / "transforms" / store.path(self.id).relative_to(store.directory))
+
+    def _flush_transforms(self) -> None:
+        if not self._wrote_transforms:
+            return
+        self._transforms.flush()
+        if not self._metadata_on_local_disk():
+            self.data_backend.write(
+                self._published_transforms(self._transforms), self._transforms.path(self.id).read_bytes()
+            )
+
+    def _download_transforms(self, store: PythonTransformCache) -> None:
+        """Replace this process's copy with the published store, which only the writing process changes."""
+        published = self._published_transforms(store)
+        if not self.data_backend.exists(published):
+            return
+        local = store.path(self.id)
+        local.parent.mkdir(parents=True, exist_ok=True)
+        handle, temporary = tempfile.mkstemp(dir=local.parent, prefix=f".{local.name}.", suffix=".tmp")
+        try:
+            with os.fdopen(handle, "wb") as file:
+                file.write(self.data_backend.read(published))
+            os.replace(temporary, local)
+        except BaseException:
+            Path(temporary).unlink(missing_ok=True)
+            raise
+
+    def _merge_recorded_geometry(self) -> None:
+        """Give each sample the geometry recorded for it. A sample with none was not decided under this recipe."""
+        if not self._decides_geometry():
+            return
+        if self._recipe is None:
+            self.image_metadata = {}
+            return
+        store = self._transform_store()
+        if self._wrote_transforms:
+            store.flush()
+        elif not self._metadata_on_local_disk():
+            self._download_transforms(store)
+        paths = list(self.image_metadata)
+        for start in range(0, len(paths), _TRANSFORM_READ_ROWS):
+            chunk = paths[start : start + _TRANSFORM_READ_ROWS]
+            for path, value in zip(chunk, store.read_batch([(self.id, path) for path in chunk])):
+                if value is None:
+                    del self.image_metadata[path]
+                else:
+                    self.image_metadata[path].update(decode_transform(value))

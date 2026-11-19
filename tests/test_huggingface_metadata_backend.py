@@ -62,6 +62,7 @@ class HuggingfaceMetadataBackendTests(unittest.TestCase):
 
         backend = HuggingfaceMetadataBackend.__new__(HuggingfaceMetadataBackend)
         backend.id = "audio-test"
+        backend.dataset_type = "audio"
         backend.metadata_file = Path("metadata.json")
         backend.data_backend = BlockingDataBackend()
         backend.metadata_semaphor = threading.Semaphore()

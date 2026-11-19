@@ -2,13 +2,16 @@ import json
 import multiprocessing
 import threading
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from simpletuner.helpers.data_backend.huggingface import HuggingfaceDatasetsBackend
 from simpletuner.helpers.data_backend.local import LocalDataBackend
 from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend
+from simpletuner.helpers.metadata.backends.huggingface import HuggingfaceMetadataBackend
 from simpletuner.helpers.metadata.transform_records import DECIDED, PythonTransformCache, encode_transform
 from simpletuner.helpers.metadata.utils.duplicator import DatasetDuplicator
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -379,6 +382,165 @@ class DiscoveryTransformRecordTests(unittest.TestCase):
         local_copy = reader._transform_store().path("images")
         self.assertTrue(local_copy.is_relative_to(self.root / "cache" / "transforms" / "images" / "process-1"))
         self.assertEqual(local_copy.read_bytes(), self.storage.files[published[0]])
+
+
+class _HubDataset:
+    """A Hugging Face dataset in memory; its cache files are written where the real backend writes them."""
+
+    type = "huggingface"
+    image_column = "image"
+    streaming = False
+    cache_file_path = HuggingfaceDatasetsBackend.cache_file_path
+    write = HuggingfaceDatasetsBackend.write
+    read = HuggingfaceDatasetsBackend.read
+    exists = HuggingfaceDatasetsBackend.exists
+
+    def __init__(self, cache_dir, sizes):
+        self.id = "hub"
+        self.cache_dir = str(cache_dir)
+        self.dataset = [
+            {"width": width, "height": height, "caption": f"sample {index}"} for index, (width, height) in enumerate(sizes)
+        ]
+
+    def _get_index_from_path(self, path):
+        return int(str(path).split(".")[0])
+
+    def get_dataset_item(self, index):
+        return self.dataset[index]
+
+    def get_abs_path(self, path):
+        return path
+
+
+class _HubAccelerator(_Accelerator):
+    def main_process_first(self):
+        return nullcontext()
+
+    def wait_for_everyone(self):
+        pass
+
+
+class HuggingfaceTransformRecordTests(unittest.TestCase):
+    """A Hugging Face dataset keeps decided geometry in the store beside its metadata file."""
+
+    PATHS = ["0.jpg", "1.jpg"]
+
+    def setUp(self):
+        temp = TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.cache = Path(temp.name) / "hub-cache"
+        self.config = {"resolution": 64, "resolution_type": "pixel", "crop": False, "dataset_type": "image"}
+        StateTracker.set_args(
+            SimpleNamespace(
+                aspect_bucket_disable_rebuild=False,
+                aspect_bucket_alignment=8,
+                aspect_bucket_rounding=2,
+                cache_dir=str(Path(temp.name) / "cache"),
+                disable_bucket_pruning=True,
+                train_batch_size=1,
+                model_type="",
+                resolution=64,
+                resolution_type="pixel",
+            )
+        )
+        StateTracker.set_model(None)
+        StateTracker.set_epoch(1)
+        self.addCleanup(StateTracker.set_epoch, 1)
+        self.addCleanup(StateTracker.data_backends.pop, "hub", None)
+
+    def backend(self, process_index=0, metadata_update_interval=3600):
+        StateTracker.register_data_backend({"id": "hub"})
+        StateTracker.set_data_backend_config("hub", dict(self.config))
+        backend = HuggingfaceMetadataBackend(
+            id="hub",
+            instance_data_dir="",
+            cache_file="aspect_ratio_bucket_indices",
+            metadata_file="aspect_ratio_bucket_metadata",
+            data_backend=_HubDataset(self.cache, [(128, 64), (64, 128)]),
+            accelerator=_HubAccelerator(process_index),
+            batch_size=1,
+            resolution=64,
+            resolution_type="pixel",
+            hf_config={"width_column": "width", "height_column": "height", "caption_column": "caption"},
+            metadata_update_interval=metadata_update_interval,
+            cache_file_suffix="hub",
+        )
+        self.addCleanup(backend._close_transforms)
+        return backend
+
+    def metadata_directory(self):
+        return self.cache / "huggingface_metadata" / "hub"
+
+    def geometry_of(self, backend, path):
+        return {
+            key: tuple(backend.image_metadata[path][key]) if key != "aspect_ratio" else backend.image_metadata[path][key]
+            for key in DECIDED
+        }
+
+    def decide_by(self, backend, decide):
+        def process(path, buckets, metadata_updates=None, **kwargs):
+            metadata = {"original_size": (128, 64), **decide(path)}
+            buckets.setdefault(str(metadata["aspect_ratio"]), []).append(path)
+            metadata_updates[path] = metadata
+            return buckets
+
+        return patch.object(backend, "_process_for_bucket", side_effect=process)
+
+    def test_the_metadata_file_holds_what_was_measured_and_the_store_what_was_decided(self):
+        main = self.backend()
+        main.compute_aspect_ratio_bucket_indices()
+        saved = json.loads((self.metadata_directory() / "aspect_ratio_bucket_metadata_hub.json").read_text())
+        self.assertEqual(saved, {"0.jpg": {"original_size": [128, 64]}, "1.jpg": {"original_size": [64, 128]}})
+        index = json.loads((self.metadata_directory() / "aspect_ratio_bucket_indices_hub.json").read_text())
+        self.assertEqual(index["transform_recipe"], "huggingface")
+        self.assertTrue(any((self.metadata_directory() / "transforms").rglob("*.sqlite3")))
+
+        reader = self.backend(process_index=1)
+        self.assertEqual(reader.image_metadata["0.jpg"]["target_size"], tuple(main.image_metadata["0.jpg"]["target_size"]))
+        self.assertEqual(reader.image_metadata["1.jpg"]["aspect_ratio"], 0.5)
+
+    def test_a_rank_reloading_after_an_epoch_recrop_reads_the_new_epochs_geometry(self):
+        self.config.update(crop=True, crop_aspect="random")
+        main = self.backend()
+        with self.decide_by(main, lambda path: _geometry(2.0)):
+            main.compute_aspect_ratio_bucket_indices()
+        reader = self.backend(process_index=1)
+        self.assertEqual(self.geometry_of(reader, "0.jpg"), _geometry(2.0))
+
+        StateTracker.set_epoch(2)
+        with self.decide_by(main, lambda path: _geometry(0.5)):
+            main.compute_aspect_ratio_bucket_indices(ignore_existing_cache=True)
+        reader.reload_cache(set_config=False)
+        self.assertEqual(self.geometry_of(reader, "0.jpg"), _geometry(0.5))
+
+    def test_a_bucket_index_that_names_no_recipe_is_bucketed_again(self):
+        self.metadata_directory().mkdir(parents=True)
+        (self.metadata_directory() / "aspect_ratio_bucket_indices_hub.json").write_text(
+            json.dumps({"config": {}, "aspect_ratio_bucket_indices": {"2.0": self.PATHS}})
+        )
+        main = self.backend()
+        with self.decide_by(main, lambda path: _geometry(0.5)) as process:
+            main.compute_aspect_ratio_bucket_indices()
+        self.assertEqual(sorted(call.args[0] for call in process.call_args_list), self.PATHS)
+        self.assertEqual(self.geometry_of(main, "1.jpg"), _geometry(0.5))
+
+    def test_a_sample_takes_the_geometry_first_recorded_for_it(self):
+        recorded = PythonTransformCache(self.metadata_directory() / "transforms", "huggingface")
+        recorded.enqueue("hub", [("0.jpg", encode_transform(_geometry(2.0, (1, 1))))])
+        recorded.close()
+        main = self.backend()
+        with self.decide_by(main, lambda path: _geometry(2.0, (5, 5))):
+            main.compute_aspect_ratio_bucket_indices()
+        self.assertEqual(self.geometry_of(main, "0.jpg"), _geometry(2.0, (1, 1)))
+        self.assertEqual(self.geometry_of(main, "1.jpg"), _geometry(2.0, (5, 5)))
+
+    def test_samples_saved_in_flight_are_recorded(self):
+        main = self.backend(metadata_update_interval=0)
+        with self.decide_by(main, lambda path: _geometry(2.0, (0, 1))):
+            main.compute_aspect_ratio_bucket_indices()
+        reader = self.backend(process_index=1)
+        self.assertEqual(sorted(reader.image_metadata), self.PATHS)
+        self.assertEqual(self.geometry_of(reader, "0.jpg"), _geometry(2.0, (0, 1)))
 
 
 class CopiedDatasetGeometryTests(unittest.TestCase):

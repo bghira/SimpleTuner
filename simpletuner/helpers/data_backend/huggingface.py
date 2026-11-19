@@ -793,6 +793,22 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
             logger.error(traceback.format_exc())
             raise
 
+    def cache_file_path(self, filepath: Union[str, Path]) -> Path:
+        """Where write() puts a cache file: an absolute path whose directory exists, or a directory under cache_dir."""
+        filepath = str(filepath)
+        filepath_path = Path(filepath)
+        if filepath_path.is_absolute() and filepath_path.parent.exists():
+            return filepath_path
+        if not hasattr(self, "cache_dir") or not self.cache_dir:
+            raise ValueError(f"Cannot write cache file {filepath} - no cache_dir configured for HuggingFace backend")
+        if filepath.endswith(".json"):
+            cache_subdir = Path(self.cache_dir) / "huggingface_metadata" / self.id
+        elif any(filepath.endswith(ext) for ext in [".pt", ".safetensors"]):
+            cache_subdir = Path(self.cache_dir) / "vae" / self.id
+        else:
+            cache_subdir = Path(self.cache_dir) / "cache" / self.id
+        return cache_subdir / filepath_path.name
+
     def write(self, filepath: Union[str, Path], data: Any) -> None:
         if isinstance(filepath, Path):
             filepath = str(filepath)
@@ -800,29 +816,8 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         # Allow writing cache files
         cache_extensions = [".json", ".pt", ".msgpack", ".safetensors"]
         if any(filepath.endswith(ext) for ext in cache_extensions):
-            # Determine cache directory based on file path
-            filepath_path = Path(filepath)
-
-            # If it's already an absolute path with a directory, use it
-            if filepath_path.is_absolute() and filepath_path.parent.exists():
-                cache_path = filepath_path
-            else:
-                # Otherwise, create a cache directory structure
-                if not hasattr(self, "cache_dir") or not self.cache_dir:
-                    raise ValueError(f"Cannot write cache file {filepath} - no cache_dir configured for HuggingFace backend")
-
-                # Determine subdirectory based on file type
-                if filepath.endswith(".json"):
-                    cache_subdir = Path(self.cache_dir) / "huggingface_metadata" / self.id
-                elif any(filepath.endswith(ext) for ext in [".pt", ".safetensors"]):
-                    # VAE cache files
-                    cache_subdir = Path(self.cache_dir) / "vae" / self.id
-                else:
-                    # Other cache files
-                    cache_subdir = Path(self.cache_dir) / "cache" / self.id
-
-                cache_subdir.mkdir(parents=True, exist_ok=True)
-                cache_path = cache_subdir / Path(filepath).name
+            cache_path = self.cache_file_path(filepath)
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
 
             # Write the file
             if filepath.endswith(".json"):
