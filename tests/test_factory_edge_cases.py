@@ -49,6 +49,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
         self.accelerator = MagicMock()
         self.accelerator.is_main_process = True
         self.accelerator.is_local_main_process = True
+        self.accelerator.num_processes = 1
+        self.accelerator.process_index = 0
         self.accelerator.device = "cuda"
         self.accelerator.main_process_first.return_value.__enter__ = MagicMock()
         self.accelerator.main_process_first.return_value.__exit__ = MagicMock()
@@ -57,6 +59,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
         self.model = MagicMock()
         self.model.requires_conditioning_latents.return_value = False
         self.model.requires_conditioning_dataset.return_value = False
+        self.model.requires_conditioning_image_embeds.return_value = False
         self.model.get_vae.return_value = MagicMock()
         self.model.get_pipeline.return_value = MagicMock()
         self.model.AUTOENCODER_CLASS = "AutoencoderKL"
@@ -1250,8 +1253,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 factory.configure_text_embed_backends(loaded_config)
                 factory.configure_data_backends(loaded_config)
 
-                # Check that warnings were logged (the exact calls depend on the implementation)
-                # We mainly want to ensure no exceptions are raised for DeepFloyd
+                self.assertTrue(any("DeepFloyd" in call.args[0] for call in mock_warning.call_args_list))
 
     @patch("simpletuner.helpers.data_backend.factory.FactoryRegistry._validate_dataset_paths")
     def test_pixel_area_resolution_conversion(self, mock_validate_paths):
@@ -1577,11 +1579,11 @@ class TestFactoryEdgeCases(unittest.TestCase):
         mock_metadata_instance.resolution = 1024
         mock_metadata.return_value = mock_metadata_instance
 
-        dataset_patcher = patch("simpletuner.helpers.multiaspect.dataset.MultiAspectDataset")
+        dataset_patcher = patch("simpletuner.helpers.data_backend.factory.MultiAspectDataset")
         dataset_patcher.start()
         self.addCleanup(dataset_patcher.stop)
 
-        sampler_patcher = patch("simpletuner.helpers.multiaspect.sampler.MultiAspectSampler")
+        sampler_patcher = patch("simpletuner.helpers.data_backend.factory.MultiAspectSampler")
         mock_sampler = sampler_patcher.start()
         self.addCleanup(sampler_patcher.stop)
         mock_sampler_instance = MagicMock()

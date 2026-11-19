@@ -2895,19 +2895,7 @@ class FactoryRegistry:
 
         # Restore the live-authoritative runtime config after metadata cache loading.
         StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
-        metadata_backend = init_backend["metadata_backend"]
-        if hasattr(metadata_backend, "attach_bucket_report"):
-            metadata_backend.attach_bucket_report(init_backend.get("bucket_report"))
-        if hasattr(metadata_backend, "_mock_children"):
-            children = getattr(metadata_backend, "_mock_children", None)
-            if isinstance(children, dict):
-                children.pop("id", None)
-            try:
-                object.__setattr__(metadata_backend, "id", init_backend["id"])
-            except AttributeError:
-                setattr(metadata_backend, "id", init_backend["id"])
-            if hasattr(metadata_backend, "configure_mock"):
-                metadata_backend.configure_mock(id=init_backend["id"])
+        init_backend["metadata_backend"].attach_bucket_report(init_backend.get("bucket_report"))
 
     @contextmanager
     def _dataset_startup_phase(self, dataset_id, phase):
@@ -3418,15 +3406,6 @@ class FactoryRegistry:
             and "text" not in skip_file_discovery
             and caption_strategy is not None
         ):
-            if hasattr(init_backend.get("data_backend"), "_mock_children"):
-                info_log(f"(id={init_backend['id']}) Detected mocked data backend, skipping text embedding processing.")
-                return
-            state_args = StateTracker.get_args()
-            output_dir = getattr(state_args, "output_dir", None)
-            if not isinstance(output_dir, (str, os.PathLike)):
-                info_log(f"(id={init_backend['id']}) Skipping text embedding processing due to missing output_dir in args.")
-                return
-
             conditioning_data = init_backend["config"].get("conditioning_data")
             if TextRequestBuilder.needs_conditioning_datasets(self.model, conditioning_data, self.args):
                 info_log(
@@ -4057,25 +4036,11 @@ class FactoryRegistry:
 
         self._assign_text_embed_cache(backend, init_backend)
 
-        data_backend_is_mock = hasattr(init_backend["data_backend"], "_mock_children")
-
         image_embed_data_backend = self._get_image_embed_backend(backend, init_backend)
         conditioning_image_embed_backend = self._get_conditioning_image_embed_backend(backend, init_backend)
 
         self._configure_metadata_backend(backend, init_backend)
         self._attach_audio_backend(init_backend, dataset_type_enum)
-
-        metadata_backend_is_mock = hasattr(init_backend["metadata_backend"], "_mock_children")
-
-        if data_backend_is_mock and not metadata_backend_is_mock:
-            info_log(
-                f"(id={init_backend['id']}) Detected mocked data backend without mocked metadata backend; skipping runtime setup steps."
-            )
-            return
-
-        if data_backend_is_mock and metadata_backend_is_mock:
-            info_log(f"(id={init_backend['id']}) Detected fully mocked backend stack, skipping dataset creation steps.")
-            return
 
         # Audio-only datasets contain no video stream to split into spatial buckets.
         self._bind_dataset_runtime(init_backend, conditioning_type)
