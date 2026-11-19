@@ -3562,13 +3562,11 @@ class FactoryRegistry:
         init_backend["dataset_runtime"].configure_cursor(
             accelerator=self.accelerator,
             batch_size=batch_size,
-            # Validation divides its own work between ranks, conditioning samples are read by the
-            # path of whichever training sample a rank draws, and audio-only datasets have always
-            # been read whole.
+            # Validation divides its own work between ranks, and conditioning samples are read by the
+            # path of whichever training sample a rank draws.
             shared_by_all_ranks=(
                 dataset_type in (DatasetType.EVAL, DatasetType.CONDITIONING)
                 or is_eval_dataset(init_backend["id"], self.args)
-                or self._is_audio_only_mode(backend)
             ),
         )
         init_backend["sampler"] = MultiAspectSampler(

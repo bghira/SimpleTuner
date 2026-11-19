@@ -1646,7 +1646,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 self.assertIn("Test: No usable samples", str(context.exception))
 
     def test_datasets_that_are_not_divided_between_ranks(self):
-        """Training datasets are divided between ranks; validation, conditioning and audio-only datasets stay whole."""
+        """Training datasets, audio-only ones included, are divided between ranks; validation and conditioning stay whole."""
         from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
 
@@ -1668,7 +1668,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
             ("eval_dataset_type", None, {"id": "held-out", "dataset_type": "eval"}, True),
             ("conditioning_dataset", None, {"id": "control", "dataset_type": "conditioning"}, True),
             ("audio_dataset", None, {"id": "speech", "dataset_type": "audio"}, False),
-            ("audio_only_dataset", None, {"id": "speech", "dataset_type": "audio", "audio": {"audio_only": True}}, True),
+            ("audio_only_dataset", None, {"id": "speech", "dataset_type": "audio", "audio": {"audio_only": True}}, False),
         )
         for name, eval_dataset_id, backend, expected in cases:
             with self.subTest(name=name):
