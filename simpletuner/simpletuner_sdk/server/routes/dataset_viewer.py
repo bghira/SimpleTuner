@@ -66,6 +66,15 @@ def _require_dataset_config(dataset_id: str) -> Dict[str, Any]:
     return config
 
 
+def _refuse_geometry_edits(config: Dict[str, Any]) -> None:
+    """A Webshart dataset's sizes and crops follow from its settings and are kept in webshart's transform cache."""
+    if config.get("type") == "webshart":
+        raise HTTPException(
+            status_code=400,
+            detail="A Webshart dataset's sizes and crops follow from its settings and cannot be edited here.",
+        )
+
+
 def _get_global_config() -> Dict[str, Any]:
     """Get global training config values relevant to scanning."""
     try:
@@ -181,6 +190,7 @@ async def update_viewer_crop_coordinates(
     """Update crop coordinates for a file and return a re-cropped preview."""
     service = _get_viewer_service()
     config = _require_dataset_config(request.dataset_id)
+    _refuse_geometry_edits(config)
 
     if not service.update_crop_coordinates(config, request.file_path, request.crop_coordinates):
         raise HTTPException(status_code=404, detail="Metadata entry not found")
@@ -366,6 +376,7 @@ async def rebuild_file_metadata(request: SingleFileAction, _user: User = Depends
     """Recalculate metadata for a single file using current dataset config."""
     service = _get_viewer_service()
     config = _require_dataset_config(request.dataset_id)
+    _refuse_geometry_edits(config)
     global_config = _get_global_config()
 
     result = service.rebuild_file_metadata(config, global_config, request.file_path)

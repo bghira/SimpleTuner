@@ -13,6 +13,35 @@ from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.data_backend.filters import DatasetFilter
 from simpletuner.helpers.data_backend.webshart import WebshartDataBackend
 from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBackend
+from simpletuner.helpers.metadata.transform_records import encode_transform
+
+DECIDED_SQUARE = {
+    "aspect_ratio": 1.0,
+    "target_size": (512, 512),
+    "intermediary_size": (512, 512),
+    "crop_coordinates": (0, 0),
+}
+
+
+class MemoryTransformCache:
+    """webshart's TransformCache, in memory: the first value written for a row is kept."""
+
+    def __init__(self):
+        self.rows = {}
+
+    def read_batch(self, requests):
+        return [self.rows.get((shard, row)) for shard, row in requests]
+
+    def enqueue(self, shard, records):
+        for row, value in records:
+            self.rows.setdefault((shard, row), value)
+
+    def flush(self):
+        pass
+
+
+def decided(sample_path, sample_metadata):
+    return "1.0", {**sample_metadata, **DECIDED_SQUARE}
 
 
 class TestWebshartDataBackend(unittest.TestCase):
@@ -329,14 +358,24 @@ class TestWebshartMetadataCaptionFiltering(unittest.TestCase):
         backend._all_shard_indices = Mock(return_value=[0])
         backend._entries_for_shard = Mock(return_value=entries)
         backend._sample_id_from_entry = Mock(side_effect=lambda shard_idx, entry: f"webshart://0/0/{entry['path']}")
-        backend._metadata_for_entry = Mock(return_value={"original_size": (512, 512)})
-        backend._prepare_metadata = Mock(side_effect=lambda sample_path, sample_metadata: ("1.0", sample_metadata))
+        backend._metadata_for_entry = Mock(
+            side_effect=lambda shard_metadata, filename, entry, sample_path: {
+                "original_size": (512, 512),
+                "webshart": {"shard_idx": 0, "sample_idx": entry["sample_idx"]},
+            }
+        )
+        backend._prepare_metadata = Mock(side_effect=decided)
+        backend.minimum_aspect_ratio = backend.maximum_aspect_ratio = None
+        backend.data_backend.shard_key = Mock(return_value="shard-0")
+        backend.data_backend.dataset.get_shard_info = Mock(return_value={"num_samples": len(entries)})
+        backend._settings_digest = Mock(return_value="digest")
+        backend._open_transform_cache = Mock(return_value=MemoryTransformCache())
         return backend
 
     def _entries(self):
         return [
-            {"path": "captioned.webp", "filename": "captioned.webp", "captions": ["a caption"]},
-            {"path": "uncaptioned.webp", "filename": "uncaptioned.webp", "captions": None},
+            {"path": "captioned.webp", "filename": "captioned.webp", "captions": ["a caption"], "sample_idx": 0},
+            {"path": "uncaptioned.webp", "filename": "uncaptioned.webp", "captions": None, "sample_idx": 1},
         ]
 
     def test_webshart_caption_strategy_skips_caption_less_samples(self):
@@ -704,7 +743,7 @@ class TestWebshartCaptionKeyIntegration(unittest.TestCase):
             worker = self._metadata_backend(self._backend("short"))
             self.assertNotIn("caption_cache", vars(worker))
             with (
-                patch.object(main, "_prepare_metadata", side_effect=lambda path, data: (1.0, data)),
+                patch.object(main, "_prepare_metadata", side_effect=decided),
                 patch.object(main, "_enforce_min_bucket_size"),
             ):
                 main.compute_aspect_ratio_bucket_indices()
@@ -733,12 +772,12 @@ class TestWebshartCaptionKeyIntegration(unittest.TestCase):
             backend = self._backend("short")
             metadata = self._metadata_backend(backend)
             with (
-                patch.object(metadata, "_prepare_metadata", side_effect=lambda path, data: (1.0, data)),
+                patch.object(metadata, "_prepare_metadata", side_effect=decided),
                 patch.object(metadata, "_enforce_min_bucket_size"),
             ):
                 metadata.compute_aspect_ratio_bucket_indices()
             sample_id = self._sample_id(backend)
-            self.assertEqual(metadata.aspect_ratio_bucket_indices, {1.0: [sample_id]})
+            self.assertEqual(metadata.aspect_ratio_bucket_indices, {"1.0": [sample_id]})
             self.assertEqual(metadata.filtering_statistics["skipped"]["caption_missing"], 1)
             self.assertEqual(metadata.caption_cache_entry(sample_id), "brief caption")
             reloaded = self._metadata_backend(self._backend("short"))
@@ -785,21 +824,32 @@ class TestWebshartShardMetadataMemoization(unittest.TestCase):
 class TestWebshartCaptionAccess(unittest.TestCase):
     def test_legacy_caption_json_is_ignored_and_geometry_captions_are_not_retained(self):
         backend = WebshartMetadataBackend.__new__(WebshartMetadataBackend)
+        backend.id = "captions"
         backend.cache_file = "buckets.json"
         backend.metadata_file = "geometry.json"
         backend.aspect_ratio_bucket_indices = {}
+        measured = {"captions": "old caption", "original_size": [16, 16], "webshart": {"shard_idx": 0, "sample_idx": 0}}
         files = {
+            "buckets.json": json.dumps({"aspect_ratio_bucket_indices": {"1.0": ["sample.jpg"]}, "transform_recipe": "r"}),
             "buckets.json_captions.json": '{"sample.jpg": "stale caption"}',
-            "geometry.json": '{"sample.jpg": {"captions": "old caption", "original_size": [16, 16]}}',
+            "geometry.json": json.dumps({"sample.jpg": measured}),
         }
         backend.data_backend = Mock()
         backend.data_backend.exists.side_effect = lambda path: path in files
         backend.data_backend.read.side_effect = files.__getitem__
         backend.data_backend.normalize_sample_id.side_effect = str
         backend.data_backend.get_caption.return_value = "source caption"
-        backend.reload_cache()
-        self.assertEqual(backend.image_metadata, {"sample.jpg": {"original_size": [16, 16]}})
-        backend.data_backend.read.assert_called_once_with("geometry.json")
+        backend.data_backend.shard_key.return_value = "shard-0"
+        cache = MemoryTransformCache()
+        cache.enqueue("shard-0", [(0, encode_transform(DECIDED_SQUARE))])
+        backend._open_transform_cache = Mock(return_value=cache)
+        backend._sync_image_files_with_buckets = Mock()
+        backend.reload_cache(set_config=False)
+        self.assertEqual(
+            backend.image_metadata,
+            {"sample.jpg": {"original_size": [16, 16], "webshart": {"shard_idx": 0, "sample_idx": 0}, **DECIDED_SQUARE}},
+        )
+        backend._open_transform_cache.assert_called_once_with("r")
         self.assertEqual(backend.caption_cache_entry("sample.jpg"), "source caption")
         self.assertIn("buckets.json_captions.json", files)
         backend.data_backend.delete.assert_not_called()

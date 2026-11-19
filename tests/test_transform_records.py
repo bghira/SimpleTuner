@@ -8,6 +8,8 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from fastapi.testclient import TestClient
+
 from simpletuner.helpers.data_backend.huggingface import HuggingfaceDatasetsBackend
 from simpletuner.helpers.data_backend.local import LocalDataBackend
 from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend
@@ -15,7 +17,9 @@ from simpletuner.helpers.metadata.backends.huggingface import HuggingfaceMetadat
 from simpletuner.helpers.metadata.transform_records import DECIDED, PythonTransformCache, encode_transform
 from simpletuner.helpers.metadata.utils.duplicator import DatasetDuplicator
 from simpletuner.helpers.training.state_tracker import StateTracker
+from simpletuner.simpletuner_sdk.server import ServerMode
 from simpletuner.simpletuner_sdk.server.services.dataset_viewer_service import DatasetViewerService
+from tests.unittest_support import APITestCase
 
 
 def _write_in_another_process(directory, recipe, partition, records):
@@ -642,6 +646,37 @@ class ViewerTransformRecordTests(unittest.TestCase):
     def test_filtered_samples_are_explained_by_their_recorded_aspect(self):
         report = self.service.get_filtered_files(self.config)
         self.assertEqual([(entry.path, entry.reason) for entry in report.files], [("wide.png", "aspect_out_of_range")])
+
+
+class TestViewerRefusesWebshartGeometryEdits(APITestCase, unittest.TestCase):
+    """A Webshart dataset's geometry follows from its settings and is kept in webshart's own cache."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.client: TestClient = self.create_test_client(ServerMode.TRAINER)
+
+    def tearDown(self) -> None:
+        self.client.close()
+        super().tearDown()
+
+    def test_crop_edits_and_rebuilds_answer_with_the_reason(self):
+        routes = "simpletuner.simpletuner_sdk.server.routes.dataset_viewer"
+        config = {"id": "shards", "type": "webshart", "dataset_type": "image"}
+        requests = (
+            ("patch", "/api/datasets/viewer/crop-coordinates", {"crop_coordinates": [0, 0]}),
+            ("post", "/api/datasets/viewer/rebuild-metadata", {}),
+        )
+        with (
+            patch(f"{routes}._get_dataset_config_by_id", return_value=config),
+            patch(f"{routes}._get_viewer_service") as viewer,
+        ):
+            viewer.return_value.update_crop_coordinates.side_effect = AssertionError("no edit may be made")
+            viewer.return_value.rebuild_file_metadata.side_effect = AssertionError("no edit may be made")
+            for method, path, body in requests:
+                with self.subTest(path=path):
+                    response = getattr(self.client, method)(path, json={"dataset_id": "shards", "file_path": "a", **body})
+                    self.assertEqual(response.status_code, 400)
+                    self.assertIn("Webshart", response.json()["detail"])
 
 
 if __name__ == "__main__":

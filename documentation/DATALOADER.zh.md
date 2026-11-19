@@ -395,7 +395,7 @@ LTX-2 使用原生纯音频分支；MiniMax-H3 在打包序列中为每个 laten
 - 旧版本写入的桶索引没有记录配方，因此升级后该数据集会重新分桶一次。使用 `crop_style: "random"` 时裁剪会重新选择，与升级前缓存的 latents 不再一致；请清除该数据集的 VAE 缓存。
 - 在 WebUI 数据集查看器中编辑裁剪或重建元数据，会替换已记录的值。
 
-`parquet` 元数据后端把尺寸与裁剪保存在其元数据文件中。设置了 `webshart.shuffle_window` 的 Webshart 数据集会把每个分片的尺寸与裁剪记录在 `webshart.cache_dir` 下的 `transforms/` 中，每个分片一个 SQLite 文件，所用配方由数据集设置生成（使用 `crop_aspect: "random"` 时还包含 epoch）。之后再次打开的分片（在后续 epoch 或恢复训练后）会让样本保持最初得到的尺寸与裁剪。
+`parquet` 元数据后端将尺寸与裁剪保存在其元数据文件中。Webshart 数据集把每个分片的尺寸与裁剪记录在 `webshart.cache_dir` 下的 `transforms/` 中，每个分片一个 SQLite 文件，配方由数据集的设置生成（使用 `crop_aspect: "random"` 时还包含 epoch）。未设置 `webshart.shuffle_window` 时，其元数据文件保存测量值，分桶索引记录配方，与上文相同。已决定过的分片——无论是在之后的 epoch、恢复训练后，还是以相同设置重新扫描时——都会让样本使用最初决定的尺寸与裁剪；设置改变则会生成新的配方。由早期版本写入的 Webshart 分桶索引会重新分桶一次。数据集查看器无法编辑 Webshart 数据集的尺寸与裁剪。
 
 ### 裁剪选项
 

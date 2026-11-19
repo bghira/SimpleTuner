@@ -396,7 +396,7 @@ Data augmentation के लिए tag-based captions के deterministic shuff
 - पुराने संस्करण से लिखा गया बकेट इंडेक्स किसी recipe का नाम नहीं रखता, इसलिए अपग्रेड के बाद डेटासेट एक बार फिर से बकेट किया जाता है। `crop_style: "random"` के साथ उसके क्रॉप फिर से चुने जाते हैं और अपग्रेड से पहले कैश किए गए latents से मेल नहीं खाते; उस डेटासेट का VAE कैश साफ़ करें।
 - WebUI dataset viewer में क्रॉप संपादन और मेटाडेटा rebuild दर्ज मान को बदल देते हैं।
 
-`parquet` metadata backend आकार और क्रॉप अपनी मेटाडेटा फ़ाइल में रखता है। `webshart.shuffle_window` वाला Webshart डेटासेट हर shard के आकार और क्रॉप `webshart.cache_dir` के अंदर `transforms/` में दर्ज करता है, हर shard के लिए एक SQLite फ़ाइल, डेटासेट की सेटिंग्स से बनी recipe के तहत (`crop_aspect: "random"` के साथ एपोक भी शामिल)। बाद के एपोक में या रिज़्यूम के बाद फिर से खोला गया shard अपने सैंपल्स को वही आकार और क्रॉप देता है जो उन्हें पहली बार मिले थे।
+`parquet` मेटाडेटा बैकएंड आकार और क्रॉप अपनी मेटाडेटा फ़ाइल में रखता है। Webshart डेटासेट हर shard के आकार और क्रॉप `webshart.cache_dir` के अंदर `transforms/` में दर्ज करता है, हर shard की एक SQLite फ़ाइल, डेटासेट की सेटिंग्स से बनी recipe के तहत (`crop_aspect: "random"` के साथ epoch भी)। `webshart.shuffle_window` के बिना उसकी मेटाडेटा फ़ाइल मापी गई जानकारी रखती है और bucket index recipe का नाम रखता है, जैसा ऊपर बताया गया है। पहले तय हो चुका shard — बाद के epoch में, resume के बाद या उन्हीं सेटिंग्स से दोबारा scan में — अपने samples को वही आकार और क्रॉप देता है जो पहली बार दिए गए थे; सेटिंग्स बदलने पर नई recipe बनती है। पुराने संस्करण का लिखा Webshart bucket index एक बार फिर से bucket होता है। डेटासेट व्यूअर Webshart डेटासेट के आकार और क्रॉप संपादित नहीं कर सकता।
 
 ### Cropping Options
 

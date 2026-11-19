@@ -398,7 +398,7 @@ When a dataset is bucketed, each sample is given an aspect ratio, a target size,
 - A bucket index written by an earlier version names no recipe, so the dataset is bucketed again once after upgrading. With `crop_style: "random"` its crops are chosen again and no longer match latents cached before the upgrade; clear that dataset's VAE cache.
 - Crop edits and metadata rebuilds in the WebUI dataset viewer replace what is recorded.
 
-The `parquet` metadata backend keeps sizes and crops in its metadata file. A Webshart dataset with `webshart.shuffle_window` records each shard's sizes and crops in `transforms/` under `webshart.cache_dir`, one SQLite file per shard, under a recipe made from the dataset's settings (and the epoch, with `crop_aspect: "random"`). A shard opened again, in a later epoch or after a resume, gives its samples the sizes and crops they were first given.
+The `parquet` metadata backend keeps sizes and crops in its metadata file. A Webshart dataset records each shard's sizes and crops in `transforms/` under `webshart.cache_dir`, one SQLite file per shard, under a recipe made from the dataset's settings (and the epoch, with `crop_aspect: "random"`). Without `webshart.shuffle_window` its metadata file keeps what was measured and its bucket index names the recipe, as above. A shard decided before, in a later epoch, after a resume or in a rescan with the same settings, gives its samples the sizes and crops they were first given; changed settings make a new recipe. A Webshart bucket index written by an earlier version is bucketed again once. The dataset viewer cannot edit a Webshart dataset's sizes and crops.
 
 ### Cropping Options
 

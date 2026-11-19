@@ -18,7 +18,7 @@ from simpletuner.helpers.data_backend.cursor import WindowedCursor
 from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 from simpletuner.helpers.data_backend.webshart import WebshartDataBackend
 from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBackend
-from simpletuner.helpers.metadata.transform_records import decode_transform, encode_transform
+from simpletuner.helpers.metadata.transform_records import DECIDED, decode_transform, encode_transform
 from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
 from simpletuner.helpers.training.state_tracker import StateTracker
 
@@ -469,20 +469,79 @@ class TestWholeDatasetIndexing(WebshartSource, unittest.TestCase):
     def test_what_is_skipped_is_counted_by_reason(self):
         skipped = self.whole().filtering_statistics["skipped"]
         self.assertEqual(
-            skipped, {"already_exists": 0, "metadata_missing": 0, "caption_missing": SHARDS, "too_small": SHARDS, "error": 0}
+            skipped,
+            {
+                "already_exists": 0,
+                "metadata_missing": 0,
+                "caption_missing": SHARDS,
+                "too_small": SHARDS,
+                "aspect_ratio": 0,
+                "error": 0,
+            },
         )
 
-    def test_a_second_scan_prepares_only_what_the_first_one_left_out(self):
+    def test_a_second_scan_reads_every_shard_back_instead_of_deciding_it(self):
         backend = self.whole()
         found = as_json(backend.aspect_ratio_bucket_indices)
         accepted = {ref for refs in found.values() for ref in refs}
         with patch.object(backend, "_prepare_bucket_entry", wraps=backend._prepare_bucket_entry) as prepare:
             backend.compute_aspect_ratio_bucket_indices()
-        prepared = [call.args[2] for call in prepare.call_args_list]
-        self.assertEqual(len(prepared), 2 * SHARDS)
-        self.assertEqual(accepted.intersection(prepared), set())
+        prepare.assert_not_called()
         self.assertEqual(as_json(backend.aspect_ratio_bucket_indices), found)
         self.assertEqual(backend.filtering_statistics["skipped"]["already_exists"], len(accepted))
+
+    def test_decided_geometry_is_recorded_in_the_transform_cache_and_not_in_the_metadata_file(self):
+        backend = self.whole("recorded")
+        decided = {path: {key: metadata[key] for key in DECIDED} for path, metadata in backend.image_metadata.items()}
+        self.assertEqual(set(decided), {ref for refs in backend.aspect_ratio_bucket_indices.values() for ref in refs})
+        measured = json.loads(Path(backend.metadata_file).read_text())
+        self.assertEqual(set(measured), set(decided))
+        self.assertTrue(all(not set(DECIDED) & set(metadata) for metadata in measured.values()))
+        index = json.loads(Path(backend.cache_file).read_text())
+        self.assertEqual(index["transform_recipe"], backend._recipe)
+
+        reloaded = self.metadata_backend(self.data_backend("recorded"), "recorded")
+        self.assertEqual(
+            as_json({path: {key: metadata[key] for key in DECIDED} for path, metadata in reloaded.image_metadata.items()}),
+            as_json(decided),
+        )
+
+    def test_bucketing_again_reads_back_what_was_recorded(self):
+        backend = self.whole("again")
+        found = as_json(backend.aspect_ratio_bucket_indices)
+        geometry = as_json(backend.image_metadata)
+        with patch.object(backend, "_prepare_bucket_entry", wraps=backend._prepare_bucket_entry) as prepare:
+            backend.compute_aspect_ratio_bucket_indices(ignore_existing_cache=True)
+        prepare.assert_not_called()
+        self.assertEqual(as_json(backend.aspect_ratio_bucket_indices), found)
+        self.assertEqual(as_json(backend.image_metadata), geometry)
+
+    def test_bucketing_again_in_a_new_epoch_of_a_recropping_dataset_decides_under_that_epoch(self):
+        self.dataset_config.update(crop=True, crop_aspect="random", crop_aspect_buckets=[0.5, 1.0, 2.0])
+        with patch.object(StateTracker, "get_epoch", return_value=1):
+            backend = self.whole("recrop")
+        first = backend._recipe
+        with (
+            patch.object(StateTracker, "get_epoch", return_value=2),
+            patch.object(backend, "_prepare_bucket_entry", wraps=backend._prepare_bucket_entry) as prepare,
+        ):
+            backend.compute_aspect_ratio_bucket_indices(ignore_existing_cache=True)
+        self.assertNotEqual(backend._recipe, first)
+        self.assertTrue(backend._recipe.endswith("-epoch-2"), backend._recipe)
+        self.assertEqual(json.loads(Path(backend.cache_file).read_text())["transform_recipe"], backend._recipe)
+        prepare.assert_called()
+
+    def test_an_index_that_names_no_recipe_is_bucketed_again(self):
+        backend = self.whole("legacy")
+        index = json.loads(Path(backend.cache_file).read_text())
+        del index["transform_recipe"]
+        Path(backend.cache_file).write_text(json.dumps(index))
+        legacy = self.metadata_backend(self.data_backend("legacy"), "legacy")
+        self.assertEqual(legacy.image_metadata, {})
+        legacy.compute_aspect_ratio_bucket_indices()
+        self.assertEqual(json.loads(Path(backend.cache_file).read_text())["transform_recipe"], backend._recipe)
+        self.assertEqual(as_json(legacy.aspect_ratio_bucket_indices), as_json(backend.aspect_ratio_bucket_indices))
+        self.assertEqual(as_json(legacy.image_metadata), as_json(backend.image_metadata))
 
     def test_progress_is_reported_for_every_shard(self):
         backend = self.metadata_backend(self.data_backend("progress"), "progress")

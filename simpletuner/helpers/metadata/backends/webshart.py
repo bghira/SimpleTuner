@@ -20,6 +20,7 @@ from simpletuner.helpers.data_backend.webshart import CaptionValue, WebshartData
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.helpers.metadata.transform_records import (
+    _TRANSFORM_READ_ROWS,
     DECIDED,
     decode_transform,
     encode_transform,
@@ -39,12 +40,16 @@ else:
 
 # Under webshart's limit, which counts 32 bytes a row; ours counts 64.
 _TRANSFORM_BATCH_BYTES = 1 << 20
+_SKIP_REASONS = ("metadata_missing", "caption_missing", "too_small", "aspect_ratio", "error")
 
 
 class WebshartMetadataBackend(MetadataBackend):
     shuffle_window = None
     _digest = None
     _transforms = None
+    # The recipe the bucket index was built under. Without a window, the index names it and every sample it
+    # lists has its geometry recorded under it.
+    _recipe = None
 
     def __init__(
         self,
@@ -147,6 +152,7 @@ class WebshartMetadataBackend(MetadataBackend):
                 logger.warning("Error loading webshart aspect bucket cache, creating new one: %s", exc)
                 cache_data = {}
             self.aspect_ratio_bucket_indices = cache_data.get("aspect_ratio_bucket_indices", {})
+            self._recipe = cache_data.get("transform_recipe")
             self._sync_image_files_with_buckets()
             if set_config:
                 self.config = cache_data.get("config", {})
@@ -172,26 +178,50 @@ class WebshartMetadataBackend(MetadataBackend):
             "aspect_ratio_bucket_indices": {
                 key: [str(path) for path in value] for key, value in self.aspect_ratio_bucket_indices.items()
             },
+            "transform_recipe": self._recipe,
         }
         if self.filtering_statistics is not None:
             cache_data["filtering_statistics"] = self.filtering_statistics
         self.data_backend.write(self.cache_file, json.dumps(cache_data))
 
     def load_image_metadata(self):
+        """What was measured of each sample, from the metadata file, and the geometry recorded for it under the index's recipe."""
         if self.shuffle_window is not None:
             return
         self.image_metadata = {}
         self.image_metadata_loaded = False
-        if self.data_backend.exists(self.metadata_file):
-            self.image_metadata = json.loads(self.data_backend.read(self.metadata_file))
-            for metadata in self.image_metadata.values():
-                metadata.pop("captions", None)
-            self.image_metadata_loaded = True
+        if not self.data_backend.exists(self.metadata_file):
+            return
+        measured = json.loads(self.data_backend.read(self.metadata_file))
+        if self._recipe is not None:
+            cache = self._open_transform_cache(self._recipe)
+            paths = list(measured)
+            for start in range(0, len(paths), _TRANSFORM_READ_ROWS):
+                chunk = paths[start : start + _TRANSFORM_READ_ROWS]
+                keys = [
+                    (
+                        self.data_backend.shard_key(measured[path]["webshart"]["shard_idx"]),
+                        int(measured[path]["webshart"]["sample_idx"]),
+                    )
+                    for path in chunk
+                ]
+                for path, decision in zip(chunk, cache.read_batch(keys)):
+                    # A sample with no geometry recorded under the recipe was not decided under it.
+                    if decision is not None:
+                        metadata = measured[path]
+                        metadata.pop("captions", None)
+                        self.image_metadata[path] = {**metadata, **decode_transform(decision)}
+        self.image_metadata_loaded = True
 
     def save_image_metadata(self):
+        """The metadata file keeps what was measured; the geometry decided for each sample is in the transform cache."""
         if self.shuffle_window is not None:
             return
-        self.data_backend.write(self.metadata_file, json.dumps(self.image_metadata))
+        measured = {
+            path: {key: value for key, value in metadata.items() if key not in DECIDED}
+            for path, metadata in self.image_metadata.items()
+        }
+        self.data_backend.write(self.metadata_file, json.dumps(measured))
         self.image_metadata_loaded = True
 
     def _all_shard_indices(self) -> list[int]:
@@ -209,12 +239,7 @@ class WebshartMetadataBackend(MetadataBackend):
         records each epoch's decisions apart. The first decisions recorded for a shard are the ones kept,
         so the shard is read back after it is decided.
         """
-        cache, shard = self._transform_cache(epoch), self.data_backend.shard_key(unit)
-        # The row after the shard's last is written once all of its decisions are: without it the shard was not decided.
-        decided = int(self.data_backend.dataset.get_shard_info(unit)["num_samples"])
-        if cache.read_batch([(shard, decided)])[0] is None:
-            self._record_decisions(cache, shard, decided, self._decide_samples(unit))
-        samples = self._recorded_samples(unit, cache, shard)
+        samples = self._shard_samples(self._transform_cache(epoch), unit)
         pools: dict[str, list[str]] = {}
         for sample_path, sample_metadata in samples.items():
             width, height = sample_metadata["target_size"]
@@ -222,6 +247,18 @@ class WebshartMetadataBackend(MetadataBackend):
         self.image_metadata.update(samples)
         self._open_units[unit] = list(samples)
         return pools
+
+    def _shard_samples(self, cache, unit: int, skipped: dict | None = None, executor=None) -> dict[str, dict]:
+        """
+        A shard's usable samples with the geometry recorded for them, deciding the shard first if it was not.
+        The first decisions recorded for a shard are the ones kept, so the shard is read back after it is decided.
+        """
+        shard, entries = self.data_backend.shard_key(unit), self._entries_for_shard(unit)
+        # The row after the shard's last is written once all of its decisions are: without it the shard was not decided.
+        decided = int(self.data_backend.dataset.get_shard_info(unit)["num_samples"])
+        if cache.read_batch([(shard, decided)])[0] is None:
+            self._record_decisions(cache, shard, decided, self._decide_samples(unit, entries, skipped, executor))
+        return self._recorded_samples(unit, entries, cache, shard)
 
     @staticmethod
     def _record_decisions(cache, shard: str, decided: int, samples: dict[str, dict]) -> None:
@@ -261,13 +298,15 @@ class WebshartMetadataBackend(MetadataBackend):
             Path(temporary).unlink(missing_ok=True)
             raise
 
-    def _decide_samples(self, unit: int) -> dict[str, dict]:
-        skipped = dict.fromkeys(("metadata_missing", "caption_missing", "too_small", "aspect_ratio", "error"), 0)
+    def _decide_samples(self, unit: int, entries: list[dict], skipped: dict | None, executor) -> dict[str, dict]:
+        skipped = dict.fromkeys(_SKIP_REASONS, 0) if skipped is None else skipped
         samples = {}
-        for bucket, sample_path, sample_metadata in self._prepare_shard(unit, self._requires_captions(), skipped):
-            # Without a window, save_cache drops the buckets outside these limits once all are built.
-            if (self.minimum_aspect_ratio and float(bucket) < self.minimum_aspect_ratio) or (
-                self.maximum_aspect_ratio and float(bucket) > self.maximum_aspect_ratio
+        for _, sample_path, sample_metadata in self._prepare_shard(
+            unit, entries, self._requires_captions(), skipped, executor=executor
+        ):
+            aspect_ratio = round(sample_metadata["aspect_ratio"], 2)
+            if (self.minimum_aspect_ratio and aspect_ratio < self.minimum_aspect_ratio) or (
+                self.maximum_aspect_ratio and aspect_ratio > self.maximum_aspect_ratio
             ):
                 skipped["aspect_ratio"] += 1
                 continue
@@ -275,9 +314,8 @@ class WebshartMetadataBackend(MetadataBackend):
         logger.debug("(id=%s) Shard %s holds %s usable samples; skipped %s.", self.id, unit, len(samples), skipped)
         return samples
 
-    def _recorded_samples(self, unit: int, cache, shard: str) -> dict[str, dict]:
+    def _recorded_samples(self, unit: int, entries: list[dict], cache, shard: str) -> dict[str, dict]:
         """The shard's samples as they were decided. A sample without a decision was left out then."""
-        entries = self._entries_for_shard(unit)
         decisions = cache.read_batch([(shard, int(entry["sample_idx"])) for entry in entries])
         if not any(decisions):
             return {}
@@ -306,7 +344,9 @@ class WebshartMetadataBackend(MetadataBackend):
 
     def _transform_cache(self, epoch: int):
         """The store of this dataset's decisions for the recipe they follow in this epoch."""
-        recipe = transform_recipe(self._settings_digest(), epoch, self.id)
+        return self._open_transform_cache(transform_recipe(self._settings_digest(), epoch, self.id))
+
+    def _open_transform_cache(self, recipe: str):
         if self._transforms is None or self._transforms[0] != recipe:
             if self._transforms is not None:
                 self._transforms[1].close()
@@ -531,17 +571,18 @@ class WebshartMetadataBackend(MetadataBackend):
                 "target_size": prepared_sample.target_size,
             }
         )
+        return self._bucket_key(sample_metadata), sample_metadata
+
+    def _bucket_key(self, sample_metadata: dict) -> str:
+        """The bucket of a sample, from the geometry decided for it."""
         if self.dataset_type is DatasetType.VIDEO and self.bucket_strategy == "resolution_frames":
-            target_width, target_height = prepared_sample.target_size
+            target_width, target_height = sample_metadata["target_size"]
             bucket_key, rounded_frames = self._compute_video_bucket(
-                target_width,
-                target_height,
-                sample_metadata["num_frames"],
+                target_width, target_height, sample_metadata["num_frames"]
             )
             sample_metadata["bucket_frames"] = rounded_frames
-        else:
-            bucket_key = str(round(aspect_ratio, 2))
-        return bucket_key, sample_metadata
+            return bucket_key
+        return str(round(sample_metadata["aspect_ratio"], 2))
 
     def _entries_for_shard(self, shard_idx: int) -> list[dict]:
         if self.dataset_type is not DatasetType.VIDEO:
@@ -577,22 +618,19 @@ class WebshartMetadataBackend(MetadataBackend):
         return str(backend_config.get("caption_strategy", "")).lower() == "webshart"
 
     def _prepare_shard(
-        self, shard_idx: int, require_captions: bool, skipped: dict, *, known=frozenset(), executor=None
+        self, shard_idx: int, shard_entries: list[dict], require_captions: bool, skipped: dict, *, executor=None
     ) -> Iterator[tuple[str, str, dict]]:
         """
         Decide the geometry of a shard's samples, one at a time. Yields (bucket, sample id, metadata)
         for each usable sample and counts the others in `skipped` by reason.
         """
-        shard_entries = self._entries_for_shard(shard_idx)
         if not shard_entries:
             return
         shard_metadata = self.data_backend.get_shard_metadata(shard_idx)
         candidates = []
         for entry in shard_entries:
             entry = {**entry, "shard_idx": shard_idx}
-            sample_path = self._sample_id_from_entry(shard_idx, entry)
-            if sample_path not in known:
-                candidates.append((entry, sample_path))
+            candidates.append((entry, self._sample_id_from_entry(shard_idx, entry)))
 
         def prepare(candidate):
             return self._prepare_bucket_entry(shard_metadata, candidate[0], candidate[1], require_captions)
@@ -620,28 +658,28 @@ class WebshartMetadataBackend(MetadataBackend):
                 " while training and has no whole-dataset bucket lists to build."
             )
         logger.info("Building aspect ratio buckets from webshart metadata...")
-        statistics = {
-            "total_processed": 0,
-            "skipped": {
-                "already_exists": 0,
-                "metadata_missing": 0,
-                "caption_missing": 0,
-                "too_small": 0,
-                "error": 0,
-            },
-        }
-        require_captions = self._requires_captions()
+        statistics = {"total_processed": 0, "skipped": {"already_exists": 0, **dict.fromkeys(_SKIP_REASONS, 0)}}
 
         if not ignore_existing_cache:
             self.reload_cache()
+            if self._recipe is None and any(self.aspect_ratio_bucket_indices.values()):
+                logger.info("(id=%s) Its bucket index names no recipe of recorded geometry; bucketing it again.", self.id)
+                ignore_existing_cache = True
+        if ignore_existing_cache:
+            self.aspect_ratio_bucket_indices = {}
+            self.image_metadata = {}
+            existing_files = set()
+            # The recipe follows from the settings and the epoch, so bucketing again under the same ones reads
+            # back the geometry recorded before: latents already written stay valid.
+            self._recipe = None
+        else:
             existing_files = (
                 set().union(*self.aspect_ratio_bucket_indices.values()) if self.aspect_ratio_bucket_indices else set()
             )
             statistics["skipped"]["already_exists"] = len(existing_files)
-        else:
-            self.aspect_ratio_bucket_indices = {}
-            self.image_metadata = {}
-            existing_files = set()
+        if self._recipe is None:
+            self._recipe = transform_recipe(self._settings_digest(), StateTracker.get_epoch(), self.id)
+        cache = self._open_transform_cache(self._recipe)
 
         last_save_time = time.time()
         aspect_ratio_bucket_updates: Dict[float, list[str]] = {}
@@ -668,10 +706,11 @@ class WebshartMetadataBackend(MetadataBackend):
                 ):
                     break
 
-                for bucket_key, sample_path, sample_metadata in self._prepare_shard(
-                    shard_idx, require_captions, statistics["skipped"], known=existing_files, executor=executor
-                ):
-                    aspect_ratio_bucket_updates.setdefault(bucket_key, []).append(sample_path)
+                samples = self._shard_samples(cache, shard_idx, statistics["skipped"], executor)
+                for sample_path, sample_metadata in samples.items():
+                    if sample_path in existing_files:
+                        continue
+                    aspect_ratio_bucket_updates.setdefault(self._bucket_key(sample_metadata), []).append(sample_path)
                     metadata_updates[sample_path] = sample_metadata
                     statistics["total_processed"] += 1
                     if (
