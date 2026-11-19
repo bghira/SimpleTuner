@@ -457,15 +457,27 @@ class TestLegacyMembershipPages(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             service = DatasetViewerService(project_root=Path(directory))
             publication = Path(directory) / "buckets.json"
-            publication.write_text(json.dumps({"aspect_ratio_bucket_indices": {"wide": ["a", "b", "c"], "square": ["d"]}}))
+            publication.write_text(
+                json.dumps(
+                    {
+                        "aspect_ratio_bucket_indices": {"wide": ["a", "b", "c"], "square": ["d"]},
+                        "config": {"resolution": 0.5},
+                        "filtering_statistics": {"skipped": {"too_small": 2}},
+                    }
+                )
+            )
             with (
                 patch.object(service, "_find_cache_file", return_value=publication),
                 patch.object(service, "_load_cache", side_effect=AssertionError("full cache read")),
             ):
                 page = service.get_dataset_files({"id": "images"}, offset=2, limit=1)
                 square = service.get_dataset_files({"id": "images"}, bucket_key="square")
+                summary = service.get_dataset_summary({"id": "images"})
             self.assertEqual((page.files, page.total), (["c"], 4))
             self.assertEqual((square.files, square.total), (["d"], 1))
+            self.assertEqual(summary.total_files, 4)
+            self.assertEqual(summary.config, {"resolution": 0.5})
+            self.assertEqual(summary.filtering_statistics, {"skipped": {"too_small": 2}})
 
 
 class TestLatentFileInvalidation(unittest.TestCase):

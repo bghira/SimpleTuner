@@ -13,7 +13,7 @@ import tempfile
 from collections import OrderedDict
 from contextlib import ExitStack, closing, contextmanager
 from glob import escape
-from itertools import islice
+from itertools import chain, islice
 from pathlib import Path
 from threading import Lock
 from typing import Any, Dict, List, Optional, Tuple
@@ -37,6 +37,7 @@ from simpletuner.helpers.metadata.backends.webshart_membership import Incomplete
 from simpletuner.helpers.metadata.preparation import (
     DatasetViewChangedError,
     LegacyMetadataPublication,
+    bucket_groups_from_events,
     read_bucket_groups,
     read_bucket_page,
 )
@@ -582,16 +583,15 @@ class DatasetViewerService:
         try:
             with cache_path.open("rb") as source:
                 index = MembershipPages.open(source)
-            if index is None:
-                data = self._load_cache(cache_path)
-                if data.get("scan_in_progress") and dataset_config.get("type") == "webshart":
-                    raise IncompleteWebshartMembership(data)
-                counts = {key: len(files) for key, files in data.get("aspect_ratio_bucket_indices", {}).items()}
-            else:
-                data, counts = index.header, index.counts
+                if index is None:
+                    data, counts = self._read_legacy_bucket_summary(source)
+                    if data.get("scan_in_progress") and dataset_config.get("type") == "webshart":
+                        raise IncompleteWebshartMembership(data)
+                else:
+                    data, counts = index.header, index.counts
         except IncompleteWebshartMembership:
             return DatasetSummary(dataset_id=dataset_id, scan_incomplete=True, **cond_fields)
-        except (json.JSONDecodeError, OSError) as e:
+        except (ijson.JSONError, ValueError, OSError) as e:
             logger.warning("Failed to read cache for %s: %s", dataset_id, e)
             return DatasetSummary(dataset_id=dataset_id, has_cache=False, **cond_fields)
 
@@ -614,6 +614,26 @@ class DatasetViewerService:
             cache_file_path=str(cache_path),
             **cond_fields,
         )
+
+    @staticmethod
+    def _read_legacy_bucket_summary(source):
+        fields = {
+            "config",
+            "filtering_statistics",
+            "physical_rows",
+            "scan_in_progress",
+            "source_captions_required",
+            "source_revision",
+            "view_revision",
+        }
+        header, counts = {}, {}
+        events = iter(ijson.parse(source, use_float=True))
+        for prefix, event, value in events:
+            if prefix == "aspect_ratio_bucket_indices" and event == "start_map":
+                counts = {key: sum(1 for _ in refs) for key, refs in bucket_groups_from_events(events)}
+            elif prefix in fields:
+                header[prefix] = next(ijson.items(chain(((prefix, event, value),), events), prefix))
+        return header, counts
 
     def get_dataset_files(
         self,
