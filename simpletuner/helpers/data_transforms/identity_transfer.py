@@ -449,7 +449,6 @@ class IdentityTransferTransform(DataTransformTask):
             "instance_data_dir": str(generated_dir),
             "generated_by": "data_transforms",
             "data_transform_task": self.TASK,
-            "source_dataset_id": self.source_backend_config["id"],
             "data_transform_source_dataset_id": self.source_backend_config["id"],
             "data_transform_config": transform,
         }
