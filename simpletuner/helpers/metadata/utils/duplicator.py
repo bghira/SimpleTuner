@@ -166,8 +166,10 @@ class DatasetDuplicator:
         if conditioning_data_type == "i2v_first_frame" and hasattr(target_meta, "save_cache"):
             target_meta.save_cache()
 
-        # The target mirrors the source's bucket lists and is copied again on every start, so it is never written back.
+        # The target mirrors the source's bucket lists and is copied again on every start, so they are never written
+        # back. Its metadata file is, with the source's geometry, for the dataset viewer.
         target_meta.set_readonly()
+        target_meta.geometry_is_copied = True
         if hasattr(target_meta, "save_image_metadata"):
             target_meta.save_image_metadata()
             logger.debug("Saved image_metadata to disk")

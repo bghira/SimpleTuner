@@ -750,6 +750,11 @@ class CopiedDatasetGeometryTests(unittest.TestCase):
         self.assertEqual(self.target_size(control), (128, 64))
         self.assertEqual(control["metadata_source_id"], "source")
 
+    def test_a_copied_dataset_saves_the_source_geometry_in_its_metadata_file(self):
+        control = self.copy()
+        saved = json.loads(Path(control["metadata_backend"].metadata_file).read_text())
+        self.assertEqual(saved[f"{self.root}/control/a.png"]["target_size"], [128, 64])
+
     def test_the_other_ranks_keep_the_copied_geometry_after_preparation(self):
         control = self.copy(process_index=1)
         self.prepare(control, process_index=1)

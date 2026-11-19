@@ -203,6 +203,8 @@ class RecordedGeometry:
     _transforms: PythonTransformCache | None = None
     _wrote_transforms = False
     image_metadata_loaded = False
+    # A copy of another dataset's metadata: the source decided its geometry, so it stays in this metadata file.
+    geometry_is_copied = False
 
     def record_transforms(self, records: dict[str, dict]) -> None:
         if not self._decides_geometry() or not records:
@@ -267,6 +269,8 @@ class RecordedGeometry:
         return transform_recipe(self.transform_recipe_name, StateTracker.get_epoch(), self.id)
 
     def _decides_geometry(self) -> bool:
+        if self.geometry_is_copied:
+            return False
         return ensure_dataset_type(self.dataset_type, default=DatasetType.IMAGE) is not DatasetType.AUDIO
 
     def _metadata_on_local_disk(self) -> bool:
