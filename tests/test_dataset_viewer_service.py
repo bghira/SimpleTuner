@@ -418,6 +418,53 @@ class TestLegacyMembershipPages(unittest.TestCase):
             self.assertEqual((square.files, square.total), (["d"], 1))
 
 
+class TestLatentFileInvalidation(unittest.TestCase):
+    def test_viewer_uses_training_keys_and_the_selected_artifact_store(self):
+        from simpletuner.helpers.caching.vae import VAECache
+        from simpletuner.helpers.data_backend.local import LocalDataBackend
+        from simpletuner.helpers.metadata.preparation import DatasetViewChangedError
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            service = DatasetViewerService(project_root=root)
+            source = root / "images"
+            latents = root / "latents"
+            sample = str(source / "nested" / "image.jpg")
+            metadata = root / "metadata.json"
+            metadata.write_text(json.dumps({sample: {"original_size": [32, 32]}}))
+            dataset = {
+                "id": "images",
+                "type": "local",
+                "instance_data_dir": str(source),
+                "cache_dir_vae": str(latents),
+                "image_embeds": "separate",
+            }
+            store = {"id": "separate", "dataset_type": "image_embeds", "type": "local"}
+            cache = VAECache.__new__(VAECache)
+            cache.image_data_backend = LocalDataBackend(None, "images")
+            cache.cache_data_backend = LocalDataBackend(None, "separate")
+            cache.cache_dir = str(latents)
+            cache.instance_data_dir = str(source)
+            cache.hash_filenames = True
+            artifact = Path(cache.cache_path_for_image(sample))
+            artifact.parent.mkdir(parents=True)
+            artifact.write_bytes(b"fixture")
+
+            with patch.object(service, "_find_cache_file", return_value=metadata):
+                current = service.get_file_metadata(dataset, sample)
+                with self.assertRaises(DatasetViewChangedError):
+                    service.delete_vae_cache_file(dataset, sample, dataset_plan=[store], metadata_revision="old")
+                remote = {**store, "type": "aws"}
+                self.assertFalse(service.delete_vae_cache_file(dataset, sample, dataset_plan=[remote])["deleted"])
+                self.assertFalse(service.delete_vae_cache_file(dataset, "missing.jpg", dataset_plan=[store])["deleted"])
+                self.assertTrue(artifact.exists())
+                result = service.delete_vae_cache_file(
+                    dataset, sample, dataset_plan=[store], metadata_revision=current.metadata_revision
+                )
+            self.assertEqual(result, {"deleted": True, "cache_path": str(artifact.resolve())})
+            self.assertFalse(artifact.exists())
+
+
 class TestFindCacheFile(unittest.TestCase):
     """Verify _find_cache_file locates cache files across all backend types."""
 

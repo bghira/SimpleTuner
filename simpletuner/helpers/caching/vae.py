@@ -85,6 +85,24 @@ def prepare_sample(image, data_backend_id, filepath, model, *, metadata, config,
     return prepared.image, prepared.crop_coordinates, prepared.aspect_ratio
 
 
+def legacy_vae_cache_filename(filepath, instance_data_dir, cache_dir, *, hash_filenames=True):
+    """Return the existing file-backed latent key for a source sample."""
+    base_filename = os.path.splitext(os.path.basename(filepath))[0]
+    if hash_filenames:
+        base_filename = str(sha256(str(base_filename).encode()).hexdigest())
+    base_filename = str(base_filename) + ".pt"
+    subfolders = ""
+    if instance_data_dir is not None:
+        subfolders = os.path.dirname(filepath).replace(instance_data_dir, "")
+        subfolders = subfolders.lstrip(os.sep)
+
+    if len(subfolders) > 0:
+        full_filename = os.path.join(cache_dir, subfolders, base_filename)
+    else:
+        full_filename = os.path.join(cache_dir, base_filename)
+    return full_filename, base_filename
+
+
 class VAECache(WebhookMixin):
     _epoch_cache_dir: str | None = None
     dataset = None
@@ -622,20 +640,12 @@ class VAECache(WebhookMixin):
             base_filename = str(sha256(sample_id.encode()).hexdigest()) if self.hash_filenames else sample_id
             base_filename = str(base_filename).replace("/", "_").replace(":", "_") + ".pt"
             return os.path.join(self.cache_dir, base_filename), base_filename
-        base_filename = os.path.splitext(os.path.basename(filepath))[0]
-        if self.hash_filenames:
-            base_filename = str(sha256(str(base_filename).encode()).hexdigest())
-        base_filename = str(base_filename) + ".pt"
-        subfolders = ""
-        if self.instance_data_dir is not None:
-            subfolders = os.path.dirname(filepath).replace(self.instance_data_dir, "")
-            subfolders = subfolders.lstrip(os.sep)
-
-        if len(subfolders) > 0:
-            full_filename = os.path.join(self.cache_dir, subfolders, base_filename)
-        else:
-            full_filename = os.path.join(self.cache_dir, base_filename)
-        return full_filename, base_filename
+        return legacy_vae_cache_filename(
+            filepath,
+            self.instance_data_dir,
+            self.cache_dir,
+            hash_filenames=self.hash_filenames,
+        )
 
     def _image_filename_from_vaecache_filename(self, cache_key: str) -> str | None:
         return self.vae_path_to_image_path.get(self._store_key(cache_key))

@@ -865,44 +865,58 @@ class DatasetViewerService:
         file_path: str,
         *,
         view_revision: Optional[str] = None,
+        metadata_revision: Optional[str] = None,
+        global_config=None,
+        dataset_plan=None,
     ) -> Dict[str, Any]:
-        """Delete the VAE cache .pt file for a single image/video.
+        """Delete a file-backed latent using the dataset's configured artifact store."""
+        from simpletuner.helpers.caching.vae import legacy_vae_cache_filename
+        from simpletuner.helpers.data_backend.factory import default_vae_cache_dir
 
-        Returns a dict with 'deleted' (bool) and 'cache_path' (str or None).
-        """
+        from .cache_job_service import CacheJobService, resolve_image_artifact_entry
+
         self._require_editable_file(dataset_config, view_revision)
-        cache_dir_vae = dataset_config.get("cache_dir_vae", "")
-        if not cache_dir_vae:
-            return {"deleted": False, "cache_path": None, "error": "No cache_dir_vae configured"}
-
-        instance_data_dir = dataset_config.get("instance_data_dir", "")
-
-        # Replicate VAECache.generate_vae_cache_filename logic (hash_filenames=True always)
-        base_filename = os.path.splitext(os.path.basename(file_path))[0]
-        hashed = hashlib.sha256(base_filename.encode()).hexdigest()
-        cache_filename = hashed + ".pt"
-
-        # Compute subfolder (relative path within instance_data_dir)
-        subfolders = ""
-        if instance_data_dir:
-            subfolders = os.path.dirname(file_path).replace(instance_data_dir, "")
-            subfolders = subfolders.lstrip(os.sep)
-
-        if subfolders:
-            cache_path = os.path.join(cache_dir_vae, subfolders, cache_filename)
-        else:
-            cache_path = os.path.join(cache_dir_vae, cache_filename)
-
-        cache_path = os.path.abspath(cache_path)
-
-        if not os.path.isfile(cache_path):
-            return {"deleted": False, "cache_path": cache_path, "error": "File not found"}
-
         try:
-            os.remove(cache_path)
-            return {"deleted": True, "cache_path": cache_path}
-        except OSError as e:
-            return {"deleted": False, "cache_path": cache_path, "error": str(e)}
+            store = resolve_image_artifact_entry(dataset_config, dataset_plan, "image_embeds") or dataset_config
+        except ValueError as exc:
+            raise DatasetFileMutationUnavailable(str(exc)) from exc
+        if store.get("type", "local") != "local" or dataset_config.get("type") == "webshart":
+            return {
+                "deleted": False,
+                "cache_path": None,
+                "error": "Per-file deletion requires a file-backed Local latent store.",
+            }
+
+        metadata = self._find_cache_file(dataset_config, "metadata")
+        if metadata is None:
+            return {"deleted": False, "cache_path": None, "error": "Metadata entry not found"}
+        try:
+            record, revision = LegacyMetadataPublication(metadata).read(file_path)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {"deleted": False, "cache_path": None, "error": "Metadata entry not found"}
+        if metadata_revision is not None and revision != metadata_revision:
+            raise DatasetViewChangedError("The metadata changed. Reopen the file before deleting its latent.")
+        if record is None:
+            return {"deleted": False, "cache_path": None, "error": "Metadata entry not found"}
+
+        global_config = global_config or {}
+        args = CacheJobService._build_args(global_config)
+        directory = dataset_config.get("cache_dir_vae") or default_vae_cache_dir(
+            args, dataset_config["id"], dataset_config.get("dataset_type", "image")
+        )
+        directory = Path(CacheJobService._resolve_cache_dir(directory, global_config, dataset_config)).resolve()
+        source_root = dataset_config.get("instance_data_dir") or dataset_config.get("csv_cache_dir")
+        key, _ = legacy_vae_cache_filename(file_path, source_root, str(directory))
+        artifact = Path(key)
+        if not artifact.resolve().is_relative_to(directory):
+            raise DatasetFileMutationUnavailable("The latent path is outside its configured cache directory.")
+        try:
+            artifact.unlink()
+        except FileNotFoundError:
+            return {"deleted": False, "cache_path": str(artifact), "error": "File not found"}
+        except OSError as exc:
+            return {"deleted": False, "cache_path": str(artifact), "error": str(exc)}
+        return {"deleted": True, "cache_path": str(artifact)}
 
     def _get_file_caption(
         self, dataset_config: Dict[str, Any], file_path: str, *, view_revision: Optional[str] = None

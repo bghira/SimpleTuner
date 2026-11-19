@@ -174,6 +174,25 @@ def _execute_cache_process(connection, cancelled, job, config, global_config, da
         service._run_cache_job(job, config, global_config, dataset_plan)
 
 
+def resolve_image_artifact_entry(dataset, plan, role):
+    store_id = dataset.get(role)
+    if store_id is None:
+        return None
+    entry = next(
+        (
+            item
+            for item in plan or ()
+            if item.get("id") == store_id
+            and item.get("dataset_type") == role
+            and not (item.get("disabled") or item.get("disable"))
+        ),
+        None,
+    )
+    if entry is None:
+        raise ValueError(f"Could not find {role} backend {store_id!r} in the standalone cache plan.")
+    return entry
+
+
 class CacheJobService:
     """Manages background cache operations with SSE progress broadcasting."""
 
@@ -639,21 +658,9 @@ class CacheJobService:
         from simpletuner.helpers.data_backend.builders import create_backend_builder
         from simpletuner.helpers.data_backend.config import create_backend_config
 
-        store_id = dataset.get(role)
-        if store_id is None:
-            return source, {}
-        entry = next(
-            (
-                item
-                for item in plan or ()
-                if item.get("id") == store_id
-                and item.get("dataset_type") == role
-                and not (item.get("disabled") or item.get("disable"))
-            ),
-            None,
-        )
+        entry = resolve_image_artifact_entry(dataset, plan, role)
         if entry is None:
-            raise ValueError(f"Could not find {role} backend {store_id!r} in the standalone cache plan.")
+            return source, {}
         config = create_backend_config(entry, vars(args))
         config.validate(vars(args))
         if config.backend_type not in {"local", "aws"}:

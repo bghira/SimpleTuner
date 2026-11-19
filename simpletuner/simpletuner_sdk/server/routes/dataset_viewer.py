@@ -441,9 +441,22 @@ async def rebuild_file_metadata(request: SingleFileAction, _user: User = Depends
 async def delete_vae_cache_file(request: SingleFileAction, _user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Delete the VAE cache file for a single image/video."""
     service = _get_viewer_service()
-    config = _require_dataset_config(request.dataset_id)
+    try:
+        plan = _load_plan()
+    except ValueError:
+        plan = []
+    config = next((dataset for dataset in plan if dataset.get("id") == request.dataset_id), None)
+    if config is None:
+        raise HTTPException(status_code=404, detail=f"Dataset '{request.dataset_id}' not found in plan")
     with _viewer_file_action():
-        return service.delete_vae_cache_file(config, request.file_path, view_revision=request.view_revision)
+        return service.delete_vae_cache_file(
+            config,
+            request.file_path,
+            view_revision=request.view_revision,
+            metadata_revision=request.metadata_revision,
+            global_config=_get_global_config(),
+            dataset_plan=plan,
+        )
 
 
 # ---------------------------------------------------------------------------
