@@ -2357,6 +2357,31 @@ class TestTrainer(unittest.TestCase):
                     apply_padding=expected,
                 )
 
+    def test_epoch_rollover_counts_refreshed_buckets_and_leaves_preview_datasets_alone(self):
+        trainer, metadata, _, datasets = self._rollover_fixture({"1.0": [f"image-{i}.jpg" for i in range(32)]})
+        training = datasets["train"]
+        training.training_dataloader = MagicMock()
+        training.training_dataloader.__len__.side_effect = lambda: len(metadata)
+        preview = datasets["preview"] = Mock(training_dataloader=object())
+        unbound = datasets["unbound"] = Mock(training_dataloader=None)
+        trainer.config.eval_dataset_id = "preview"
+        trainer.state["global_step"] = 8
+        trainer.get_steps_per_epoch_for_epoch = Trainer.get_steps_per_epoch_for_epoch.__get__(trainer)
+
+        def split_buckets(**_):
+            metadata.aspect_ratio_bucket_indices = {"1.0": [f"image-{i}.jpg" for i in range(24)]}
+
+        metadata.split_buckets_between_processes.side_effect = split_buckets
+        with self._rollover_patches(datasets):
+            trainer._refresh_training_batch_schedule(trainer._training_datasets())
+            self.assertEqual(trainer.get_steps_per_epoch_for_epoch(2), 8)
+            trainer._epoch_rollover(2)
+            self.assertEqual(trainer.get_steps_per_epoch_for_epoch(2), 6)
+            self.assertEqual(set(trainer._training_datasets()), {"train"})
+        self.assertEqual(trainer.config.num_update_steps_per_epoch, 6)
+        preview.prepare_epoch.assert_not_called()
+        unbound.prepare_epoch.assert_not_called()
+
     def _rollover_fixture(self, bucket_contents, provider=DiscoveryMetadataBackend):
         trainer = object.__new__(Trainer)
         trainer.state = {"first_epoch": 1, "current_epoch": 1}
@@ -2387,6 +2412,7 @@ class TestTrainer(unittest.TestCase):
             "train", None, metadata_backend, {"crop": True, "crop_aspect": "random", "vae_cache_clear_each_epoch": True}
         )
         dataset.vae_cache = vaecache
+        dataset.training_dataloader = MagicMock()
         backends = {"train": dataset}
         return trainer, metadata_backend, vaecache, backends
 
@@ -2518,7 +2544,9 @@ class TestTrainer(unittest.TestCase):
             train_batch_size=1,
         )
         mock_get_datasets.return_value = {
-            "train": SimpleNamespace(config={"dataset_type": "image"}, training_batch_count=lambda: 10)
+            "train": SimpleNamespace(
+                config={"dataset_type": "image"}, training_dataloader=object(), training_batch_count=lambda: 10
+            )
         }
 
         trainer._recalculate_training_steps()
@@ -2572,7 +2600,11 @@ class TestTrainer(unittest.TestCase):
         )
 
         def dataset(batches, **window):
-            return SimpleNamespace(config={"dataset_type": "image", **window}, training_batch_count=lambda: batches)
+            return SimpleNamespace(
+                config={"dataset_type": "image", **window},
+                training_dataloader=object(),
+                training_batch_count=lambda: batches,
+            )
 
         mock_get_datasets.return_value = {
             "baseline": dataset(4),

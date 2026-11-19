@@ -3803,10 +3803,7 @@ class Trainer:
             trainable.extend(parameter for parameter in group if parameter.requires_grad)
         self._ensure_parameter_dtype(trainable, torch.float32, optimizer_name="adapter_model_precision=fp32")
 
-    def _recalculate_training_steps(self):
-        # Scheduler and math around the number of training steps.
-        if not hasattr(self.config, "overrode_max_train_steps"):
-            self.config.overrode_max_train_steps = False
+    def _refresh_training_batch_schedule(self, datasets):
         total_num_batches = 0
         initial_num_batches = 0
 
@@ -3828,13 +3825,7 @@ class Trainer:
 
         epoch_batches_map: dict[int, int] = {}
         batch_windows: list[tuple[int, int | None, int, int | None, int]] = []
-        datasets = self._registered_training_datasets()
-        eval_ids = getattr(self.config, "eval_dataset_id", None) or ()
-        if isinstance(eval_ids, str):
-            eval_ids = (eval_ids,)
         for dataset_id, dataset in datasets.items():
-            if dataset_id in eval_ids:
-                continue
             config = dataset.config
             if config["dataset_type"] == DatasetType.CAPTION and not caption_batches_supported:
                 continue
@@ -3861,19 +3852,25 @@ class Trainer:
             if start_epoch <= 1 and start_step <= 1:
                 initial_num_batches += dataset_batches
 
+        self.config.epoch_batches_schedule = epoch_batches_map
+        self.config.step_batches_schedule = (
+            batch_windows if any(start > 1 or end is not None for _, _, start, end, _ in batch_windows) else None
+        )
+        return total_num_batches, initial_num_batches
+
+    def _recalculate_training_steps(self):
+        # Scheduler and math around the number of training steps.
+        if not hasattr(self.config, "overrode_max_train_steps"):
+            self.config.overrode_max_train_steps = False
+        datasets = self._training_datasets()
+        total_num_batches, initial_num_batches = self._refresh_training_batch_schedule(datasets)
         if initial_num_batches <= 0:
             raise ValueError(
                 "No datasets are active at the start of training. "
                 "Ensure at least one dataset has start_epoch<=1 and start_step<=1."
             )
-
         self.config.total_num_batches = total_num_batches
         self.config.initial_num_batches = initial_num_batches
-
-        self.config.epoch_batches_schedule = epoch_batches_map
-        self.config.step_batches_schedule = (
-            batch_windows if any(start > 1 or end is not None for _, _, start, end, _ in batch_windows) else None
-        )
 
         if initial_num_batches < total_num_batches:
             logger.info(
@@ -3927,7 +3924,7 @@ class Trainer:
         max_epochs = getattr(self.config, "num_train_epochs", None)
         max_steps = getattr(self.config, "max_train_steps", None)
         for dataset_id, dataset in datasets.items():
-            if dataset_id in eval_ids or dataset.config["dataset_type"] == DatasetType.CAPTION:
+            if dataset.config["dataset_type"] == DatasetType.CAPTION:
                 continue
             start_epoch = normalize_start_epoch(dataset.config.get("start_epoch"))
             start_step = normalize_start_step(dataset.config.get("start_step"))
@@ -5998,6 +5995,23 @@ class Trainer:
         self.state["current_epoch"] = epoch
         StateTracker.set_epoch(epoch)
 
+        if self.state["first_epoch"] != epoch:
+            datasets = self._training_datasets()
+            logger.debug(
+                f"Just completed epoch {epoch - 1}. Beginning epoch {epoch}. Starting epoch was {self.state['first_epoch']}. Final epoch will be {self.config.num_train_epochs}"
+            )
+            for dataset in datasets.values():
+                dataset.prepare_epoch(
+                    epoch,
+                    rebuild_random_aspect=not self.config.aspect_bucket_disable_rebuild,
+                    gradient_accumulation_steps=self.config.gradient_accumulation_steps,
+                    apply_padding=(self.config.overrode_max_train_steps or self.config.allow_dataset_oversubscription),
+                )
+            if getattr(self.config, "epoch_batches_schedule", None) is not None:
+                self._refresh_training_batch_schedule(datasets)
+            if self.config.lr_scheduler == "cosine_with_restarts":
+                self.extra_lr_scheduler_kwargs["epoch"] = epoch
+
         # A resumed epoch may have started before the saved global step.
         current_step = self.state.get("global_step", 0)
         first_step = None if current_step and self.state["first_epoch"] == epoch else current_step + 1
@@ -6009,21 +6023,6 @@ class Trainer:
                 f"due to dataset scheduling (epoch {epoch})."
             )
         self.config.num_update_steps_per_epoch = new_steps_per_epoch
-
-        if self.state["first_epoch"] == epoch:
-            return
-        logger.debug(
-            f"Just completed epoch {self.state['current_epoch'] - 1}. Beginning epoch {epoch}. Starting epoch was {self.state['first_epoch']}. Final epoch will be {self.config.num_train_epochs}"
-        )
-        for dataset in self._registered_training_datasets().values():
-            dataset.prepare_epoch(
-                epoch,
-                rebuild_random_aspect=not self.config.aspect_bucket_disable_rebuild,
-                gradient_accumulation_steps=self.config.gradient_accumulation_steps,
-                apply_padding=(self.config.overrode_max_train_steps or self.config.allow_dataset_oversubscription),
-            )
-        if self.config.lr_scheduler == "cosine_with_restarts":
-            self.extra_lr_scheduler_kwargs["epoch"] = epoch
 
     def _exit_on_signal(self):
         external_abort = False
@@ -6860,6 +6859,16 @@ class Trainer:
     def _registered_training_datasets():
         return StateTracker.get_datasets(DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.AUDIO, DatasetType.CAPTION)
 
+    def _training_datasets(self):
+        eval_ids = getattr(self.config, "eval_dataset_id", None) or ()
+        if isinstance(eval_ids, str):
+            eval_ids = (eval_ids,)
+        return {
+            name: dataset
+            for name, dataset in self._registered_training_datasets().items()
+            if dataset.training_dataloader is not None and name not in eval_ids
+        }
+
     def _execute_eval_loss(self):
         with ExitStack() as stack:
             if self.accelerator.is_main_process:
@@ -6948,15 +6957,8 @@ class Trainer:
             else:
                 # If it's None, we need to calculate the current epoch step based on the current global step.
                 current_epoch_step = self.state["global_step"] % self.config.num_update_steps_per_epoch
-            eval_ids = self.config.eval_dataset_id
-            if isinstance(eval_ids, str):
-                eval_ids = [eval_ids]
-            training_datasets = {
-                name: dataset
-                for name, dataset in self._registered_training_datasets().items()
-                if dataset.training_dataloader is not None and name not in (eval_ids or ())
-            }
-            train_backends = dict(training_datasets)
+            training_datasets = self._training_datasets()
+            train_backends = training_datasets
             mixer = None
             saved_mix = StateTracker.consumed_dataset_mixer
             resumable = bool(train_backends) and all(
