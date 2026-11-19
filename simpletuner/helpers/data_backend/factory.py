@@ -3187,7 +3187,7 @@ class FactoryRegistry:
         else:
             if skip_bucket_split:
                 info_log(f"(id={init_backend['id']}) Skipping bucket split for audio-only dataset.")
-            elif self.args.eval_dataset_id is None or init_backend["id"] in self.args.eval_dataset_id:
+            else:
                 init_backend["metadata_backend"].split_buckets_between_processes(
                     gradient_accumulation_steps=self.args.gradient_accumulation_steps,
                     apply_padding=apply_padding,

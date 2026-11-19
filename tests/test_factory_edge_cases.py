@@ -1843,16 +1843,17 @@ class TestFactoryEdgeCases(unittest.TestCase):
         factory._handle_config_versioning = MagicMock()
 
         cases = (
-            ("fixed_steps", 100, False, False),
-            ("oversubscribed_fixed_steps", 100, True, True),
-            ("epoch_driven", 0, False, True),
+            ("fixed_steps", 100, False, None, False),
+            ("oversubscribed_fixed_steps", 100, True, None, True),
+            ("epoch_driven", 0, False, None, True),
+            ("separate_validation_dataset", 100, False, "held-out", False),
         )
-        for name, max_train_steps, allow_oversubscription, expected in cases:
+        for name, max_train_steps, allow_oversubscription, eval_dataset_id, expected in cases:
             with self.subTest(name=name):
                 factory.args.max_train_steps = max_train_steps
                 factory.args.allow_dataset_oversubscription = allow_oversubscription
                 factory.args.skip_file_discovery = "aspect"
-                factory.args.eval_dataset_id = None
+                factory.args.eval_dataset_id = eval_dataset_id
 
                 metadata_backend = MagicMock()
                 init_backend = {
