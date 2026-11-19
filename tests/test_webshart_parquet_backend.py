@@ -57,6 +57,65 @@ class TestWebshartParquetBackend(unittest.TestCase):
             None, "parquet", str(source), format="parquet", cache_dir=str(self.root / "cache")
         )
 
+    def test_bundled_pixart_plan_prepares_all_three_uncropped_stages(self):
+        from simpletuner.cli.examples import copy_example, list_examples
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+        from simpletuner.helpers.data_backend.runtime.schedule import dataset_is_active
+        from simpletuner.simpletuner_sdk.server.services.cache_job_service import _CacheAcceleratorStub, _CacheArgsNamespace
+        from simpletuner.simpletuner_sdk.server.services.example_configs_service import ExampleConfigsService
+
+        name = "pixart/600M-512/default/progressive-webshart-full"
+        self.assertIn(name, list_examples())
+        imported = ExampleConfigsService().get_example(name)
+        self.assertTrue(imported.dataloader_payload[-1]["text_cache_encode_only"])
+        self.assertTrue(copy_example(name, str(self.root)))
+        copied = self.root / name
+        config = json.loads((copied / "config.json").read_text())
+        self.assertEqual(config["data_backend_config"], "dataloader.json")
+        plan = json.loads((copied / config["data_backend_config"]).read_text())
+        self.assertEqual(plan, imported.dataloader_payload)
+
+        image = BytesIO()
+        Image.new("RGB", (512, 512), "blue").save(image, format="PNG")
+        for row in self.rows:
+            if row["image"] is not None:
+                row.update(image={"bytes": image.getvalue(), "path": None}, width=512, height=512)
+        pq.write_table(pa.Table.from_pylist(self.rows), self.source / "part.parquet")
+        self._publish_capture_manifest()
+        args = _CacheArgsNamespace({**config, "output_dir": str(self.root)})
+        accelerator = _CacheAcceleratorStub(device="cpu")
+        stages = plan[:-1]
+        for index, (stage, expected) in enumerate(zip(stages, (128, 256, 512), strict=True)):
+            with self.subTest(resolution=expected):
+                options = stage["webshart"]
+                self.assertEqual(options["sampling_policy"], "shard_local")
+                stage["source"] = str(self.source)
+                options.update(
+                    manifest="capture.json",
+                    cache_dir=str(self.root / "cache"),
+                    metadata_cache_dir=str(self.root / "cache" / "metadata"),
+                    shard_cache_dir=str(self.root / "cache" / "shards"),
+                    shard_cache_gb=0,
+                )
+                with closing(DatasetRuntime.from_config(stage, args, accelerator)) as runtime:
+                    runtime.prepare_view()
+                    description = runtime.describe()
+                    self.assertEqual((description.physical_rows, description.accepted_samples), (3, 2))
+                    refs, count = runtime.read_page(limit=1)
+                    self.assertEqual(count, 2)
+                    (sample,) = runtime.read_samples(refs, view=runtime.published_read_view())
+                    self.assertEqual(tuple(sample["target_size"]), (expected, expected))
+                    self.assertFalse(runtime.config["crop"])
+                    self.assertEqual(runtime.config["text_embeds"], plan[-1]["id"])
+                active = [
+                    candidate["id"]
+                    for candidate in stages
+                    if dataset_is_active(
+                        candidate["id"], candidate, step_hint=index * 500, epoch_hint=1, update_state=False
+                    )[0]
+                ]
+                self.assertEqual(active, [stage["id"]])
+
     def test_transform_cache_eviction_preserves_membership_and_recomputes_only_requested_rows(self):
         from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBackend
 
