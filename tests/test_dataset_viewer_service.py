@@ -709,6 +709,24 @@ class TestImagePreview(unittest.TestCase):
         self.assertIsNone(result["intermediary"])
         self.assertIsNone(result["cropped"])
 
+    def test_remote_detail_uses_source_pixels_after_thumbnail_is_cached(self):
+        config = {"id": "remote", "type": "aws"}
+        image = Image.new("RGB", (640, 384), "red")
+        image.paste("blue", (320, 0, 640, 384))
+        backend = MagicMock()
+        backend.read_image.return_value = image
+        metadata = {"intermediary_size": (640, 384), "crop_coordinates": (0, 320), "target_size": (320, 384)}
+        with patch.object(self.service, "_get_or_create_data_backend", return_value=backend):
+            self.service._read_remote_thumbnail(config, "photo.jpg", 128)
+            preview = self.service.get_image_preview(config, "photo.jpg", metadata=metadata)
+        self.assertEqual(backend.read_image.call_count, 2)
+        with Image.open(io.BytesIO(base64.b64decode(preview["original"].split(",", 1)[1]))) as original:
+            self.assertEqual(original.size, (640, 384))
+        with Image.open(io.BytesIO(base64.b64decode(preview["cropped"].split(",", 1)[1]))) as cropped:
+            self.assertEqual(cropped.size, (320, 384))
+            red, _, blue = cropped.getpixel((100, 100))
+            self.assertGreater(blue, red)
+
     def test_preview_with_crop_metadata(self):
         self._create_image(size=(2000, 1500))
         config = {"id": "test", "type": "local", "instance_data_dir": self.tmpdir}

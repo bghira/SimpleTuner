@@ -234,6 +234,8 @@ def _pil_to_thumbnail(img: Image.Image, max_size: int = 256) -> str:
             img = img.convert("RGB")
     elif img.mode != "RGB":
         img = img.convert("RGB")
+    elif max(img.size) > max_size:
+        img = img.copy()
 
     img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
 
@@ -1135,22 +1137,9 @@ class DatasetViewerService:
                 logger.warning("Failed to load the pinned image %s: %s", file_path, exc)
                 return None
 
-        # Remote: try thumbnail disk cache first for speed, then fetch full image
-        cached_path = self._get_thumbnail_cache_path(dataset_config, file_path, view_revision)
-        if cached_path.is_file():
-            try:
-                with Image.open(cached_path) as img:
-                    return img.copy()
-            except Exception:
-                pass
-
         try:
             data_backend = self._get_or_create_data_backend(dataset_config)
-            image_data = data_backend.read_image(file_path)
-            pil_image = self._ensure_pil_image(image_data)
-            if pil_image is not None:
-                self._save_thumbnail_to_cache(cached_path, pil_image)
-            return pil_image
+            return self._ensure_pil_image(data_backend.read_image(file_path))
         except DatasetViewChanged:
             raise
         except Exception as e:
