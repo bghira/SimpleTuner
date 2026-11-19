@@ -655,6 +655,7 @@ class TextRequestBuilder:
     def records(self, captions, *, read_metadata):
         key_type = self.model.text_embed_cache_key()
         dataset_id = self.dataset.id
+        uses_image_context = getattr(self.model, "requires_text_embed_image_context", lambda: False)()
         metadata_builder = getattr(self.model, "text_embed_cache_metadata_for_preparation", None)
         for caption, sample_ref in captions:
             image_path = str(sample_ref)
@@ -664,8 +665,9 @@ class TextRequestBuilder:
                 data_backend_id=dataset_id,
                 prompt=caption,
                 dataset_relative_path=relative_path,
-                dataset_bindings=self.dataset_bindings,
             )
+            if uses_image_context:
+                metadata["dataset_bindings"] = self.dataset_bindings
             relation_sources = (
                 self.conditioning_datasets
                 if self.sampling == "random" and len(self.conditioning_datasets) > 1

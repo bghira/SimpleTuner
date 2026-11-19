@@ -569,6 +569,7 @@ class TestStreamingTextPreparation(unittest.TestCase):
             load_text_encoder=MagicMock(),
             load_text_tokenizer=MagicMock(),
             text_embed_cache_key=lambda: TextEmbedCacheKey.CAPTION,
+            requires_text_embed_image_context=lambda: True,
         )
         captured = []
         active_dataset = object()

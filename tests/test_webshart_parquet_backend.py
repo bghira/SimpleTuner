@@ -2273,6 +2273,7 @@ class TestWebshartParquetBackend(unittest.TestCase):
                         if deferred:
                             self.assertEqual(factory._deferred_text_embed_datasets, [runtime])
                             factory._process_deferred_text_embeddings()
+                            self.assertEqual(prepared[-1]["metadata"].pop("dataset_bindings"), {runtime.id: runtime})
                         self.assertEqual(prepared[-1], records[rank])
                     self.assertEqual(prepared, records)
 

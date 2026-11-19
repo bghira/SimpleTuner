@@ -960,7 +960,7 @@ def collate_fn(batch, *, dataset=None):
             debug_log(f"text_embed_cache_key() lookup failed on model {type(model)}: {exc}")
 
     if uses_text_embeddings_cache:
-        dataset_bindings = {**references, dataset.id: dataset}
+        dataset_bindings = {**references, dataset.id: dataset} if model.requires_text_embed_image_context() else None
         for idx, caption in enumerate(captions):
             example = examples[idx]
             example_path = example.get("image_path")
@@ -974,8 +974,9 @@ def collate_fn(batch, *, dataset=None):
                     "data_backend_id": example_backend_id,
                     "prompt": prompt,
                     "dataset_relative_path": normalized_identifier,
-                    "dataset_bindings": dataset_bindings,
                 }
+                if dataset_bindings is not None:
+                    prompt_metadata["dataset_bindings"] = dataset_bindings
                 if conditioning_examples:
                     reference_paths, reference_backend_ids = [], []
                     for backend_id in reference_backends + untyped_backends:
