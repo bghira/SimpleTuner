@@ -10,6 +10,7 @@ window.datasetViewerComponent = function () {
         // Viewer state
         datasets: [],
         loading: false,
+        _summaryRequest: 0,
         expandedDataset: null,
         selectedBucket: null,
         thumbnails: [],
@@ -100,6 +101,7 @@ window.datasetViewerComponent = function () {
         destroy() {
             this._cacheRequest++;
             this._scanRequest++;
+            this._summaryRequest++;
             this._teardownSSEListener();
             this._teardownConfigListener();
         },
@@ -295,10 +297,12 @@ window.datasetViewerComponent = function () {
         },
 
         async _refreshDatasetSummary(datasetId) {
+            const request = this._summaryRequest;
             try {
                 const resp = await fetch('/api/datasets/viewer/summary?dataset_id=' + encodeURIComponent(datasetId));
                 if (!resp.ok) return;
                 const summary = await resp.json();
+                if (request !== this._summaryRequest) return;
                 const idx = this.datasets.findIndex(d => d.dataset_id === datasetId);
                 if (idx >= 0) {
                     this.datasets[idx] = summary;
@@ -511,15 +515,19 @@ window.datasetViewerComponent = function () {
         // --- Viewer operations ---
 
         async loadAllSummaries() {
+            const request = ++this._summaryRequest;
             this.loading = true;
             try {
                 const resp = await fetch('/api/datasets/viewer/summaries');
+                if (request !== this._summaryRequest) return;
                 if (!resp.ok) {
                     console.error('Failed to load dataset summaries:', resp.status);
                     this.datasets = [];
                     return;
                 }
-                this.datasets = await resp.json();
+                const summaries = await resp.json();
+                if (request !== this._summaryRequest) return;
+                this.datasets = summaries;
 
                 // Load supplementary data for cached datasets in parallel
                 const fetchPromises = [];
@@ -531,6 +539,7 @@ window.datasetViewerComponent = function () {
                 }
                 fetchPromises.push(this._loadGraph());
                 await Promise.allSettled(fetchPromises);
+                if (request !== this._summaryRequest) return;
 
                 // Restore pending bucket selection from sessionStorage
                 if (this._pendingBucketKey && this.expandedDataset) {
@@ -546,36 +555,43 @@ window.datasetViewerComponent = function () {
                     this._pendingBucketKey = null;
                 }
             } catch (err) {
+                if (request !== this._summaryRequest) return;
                 console.error('Error loading dataset summaries:', err);
                 this.datasets = [];
             } finally {
-                this.loading = false;
+                if (request === this._summaryRequest) this.loading = false;
             }
         },
 
         async _loadCaptionStatus(datasetId) {
+            const request = this._summaryRequest;
             try {
                 const resp = await fetch('/api/datasets/viewer/caption-status?dataset_id=' + encodeURIComponent(datasetId));
                 if (resp.ok) {
-                    this.captionStatus[datasetId] = await resp.json();
+                    const status = await resp.json();
+                    if (request === this._summaryRequest) this.captionStatus[datasetId] = status;
                 }
             } catch (e) { /* silently fail */ }
         },
 
         async _loadFilterReport(datasetId) {
+            const request = this._summaryRequest;
             try {
                 const resp = await fetch('/api/datasets/viewer/filtered?dataset_id=' + encodeURIComponent(datasetId) + '&limit=0');
                 if (resp.ok) {
-                    this.filterReport[datasetId] = await resp.json();
+                    const report = await resp.json();
+                    if (request === this._summaryRequest) this.filterReport[datasetId] = report;
                 }
             } catch (e) { /* silently fail */ }
         },
 
         async _loadGraph() {
+            const request = this._summaryRequest;
             try {
                 const resp = await fetch('/api/datasets/viewer/graph');
                 if (resp.ok) {
-                    this.datasetGraph = await resp.json();
+                    const graph = await resp.json();
+                    if (request === this._summaryRequest) this.datasetGraph = graph;
                 }
             } catch (e) { /* silently fail */ }
         },

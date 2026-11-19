@@ -1958,6 +1958,57 @@ class DatasetManagementTestCase(_TrainerPageMixin, WebUITestCase):
 class DatasetViewerRevisionTestCase(_TrainerPageMixin, WebUITestCase):
     MAX_BROWSERS = 1
 
+    def test_viewer_ignores_delayed_summaries_from_the_previous_environment(self) -> None:
+        self.seed_defaults()
+
+        def scenario(driver, _browser):
+            trainer = self._trainer_page(driver)
+            trainer.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer.switch_to_datasets_tab()
+            trainer.wait_for_tab("datasets")
+            wait = WebDriverWait(driver, 15)
+            wait.until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, "//button[contains(@class,'dataset-subtab-btn') and contains(.,'Viewer')]")
+                )
+            ).click()
+            result = driver.execute_async_script(
+                """
+                const done = arguments[0];
+                const view = Alpine.$data(document.querySelector('[x-data="datasetViewerComponent()"]'));
+                const originalFetch = window.fetch;
+                const response = data => new Response(JSON.stringify(data));
+                let resolveOld;
+                let pending = true;
+                window.fetch = (url, options) => {
+                    const path = new URL(url, window.location.origin).pathname;
+                    if (path.endsWith('/viewer/summaries')) {
+                        if (pending) {
+                            pending = false;
+                            return new Promise(resolve => { resolveOld = resolve; });
+                        }
+                        return Promise.resolve(response([{dataset_id: 'new-plan', has_cache: false}]));
+                    }
+                    if (path.endsWith('/viewer/graph')) return Promise.resolve(response(null));
+                    return originalFetch(url, options);
+                };
+                const old = view.loadAllSummaries();
+                window.dispatchEvent(new CustomEvent('environment-changed'));
+                (async () => {
+                    const deadline = Date.now() + 5000;
+                    while (view.loading && Date.now() < deadline)
+                        await new Promise(resolve => setTimeout(resolve, 20));
+                    resolveOld(response([{dataset_id: 'old-plan', has_cache: false}]));
+                    await old;
+                    done(view.datasets.map(dataset => dataset.dataset_id));
+                })();
+                """
+            )
+            self.assertEqual(result, ["new-plan"])
+
+        self.for_each_browser("test_viewer_ignores_delayed_summaries_from_the_previous_environment", scenario)
+
     def test_scan_progress_ignores_stale_events_and_waits_for_worker_shutdown(self) -> None:
         self.seed_defaults()
 
