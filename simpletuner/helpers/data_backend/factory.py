@@ -3,7 +3,6 @@ import logging
 import os
 import sys
 import time
-import tracemalloc
 from contextlib import contextmanager, nullcontext
 from copy import deepcopy
 from dataclasses import dataclass
@@ -12,6 +11,8 @@ from math import sqrt
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple, Union
+
+import psutil
 
 from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime, TextRequestBuilder
 
@@ -1345,11 +1346,7 @@ class FactoryRegistry:
             "build_time": 0,
         }
 
-        try:
-            tracemalloc.start()
-            self.metrics["memory_usage"]["start"] = self._get_memory_usage()
-        except RuntimeError:
-            self.metrics["memory_usage"]["start"] = self._get_memory_usage()
+        self.metrics["memory_usage"]["start"] = self._get_memory_usage()
 
     def _move_text_encoders_for_vae_cache(self, target_device: str):
         model_hook = getattr(self.model, "move_text_encoders_for_vae_cache", None)
@@ -1358,18 +1355,8 @@ class FactoryRegistry:
         return move_text_encoders(self.args, self.text_encoders, target_device)
 
     def _get_memory_usage(self) -> float:
-        """Get current memory usage in MB."""
-        try:
-            current, peak = tracemalloc.get_traced_memory()
-            return current / 1024 / 1024
-        except RuntimeError:
-            try:
-                import psutil
-
-                process = psutil.Process(os.getpid())
-                return process.memory_info().rss / 1024 / 1024
-            except ImportError:
-                return 0.0
+        """Sample the current process RSS in MiB, including native allocations."""
+        return psutil.Process().memory_info().rss / 1024**2
 
     def _update_peak_memory(self) -> None:
         """Update peak memory usage tracking."""
@@ -1384,8 +1371,8 @@ class FactoryRegistry:
         log_data = {
             "stage": stage,
             "elapsed_time": time.time() - self.start_time,
-            "current_memory_mb": self._get_memory_usage(),
-            "peak_memory_mb": self.metrics["memory_usage"]["peak"],
+            "current_rss_mib": self._get_memory_usage(),
+            "peak_observed_rss_mib": self.metrics["memory_usage"]["peak"],
             "factory_type": "new",
         }
 

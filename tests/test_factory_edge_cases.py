@@ -1425,22 +1425,23 @@ class TestFactoryEdgeCases(unittest.TestCase):
         """Test memory tracking and metrics functionality."""
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
 
-        factory = FactoryRegistry(
-            args=self.args,
-            accelerator=self.accelerator,
-            text_encoders=self.text_encoders,
-            tokenizers=self.tokenizers,
-            model=self.model,
-        )
+        with patch("tracemalloc.start", side_effect=AssertionError("factory enabled allocation tracing")):
+            factory = FactoryRegistry(
+                args=self.args,
+                accelerator=self.accelerator,
+                text_encoders=self.text_encoders,
+                tokenizers=self.tokenizers,
+                model=self.model,
+            )
 
         # Test memory usage tracking
         initial_memory = factory._get_memory_usage()
         self.assertIsInstance(initial_memory, float)
-        self.assertGreaterEqual(initial_memory, 0)
+        self.assertGreater(initial_memory, 0)
 
         # Test peak memory update
         factory._update_peak_memory()
-        self.assertGreaterEqual(factory.metrics["memory_usage"]["peak"], 0)
+        self.assertGreater(factory.metrics["memory_usage"]["peak"], 0)
 
         # Test performance logging
         factory._log_performance_metrics("test_stage", {"test_metric": 123})
