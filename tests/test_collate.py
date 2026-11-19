@@ -762,3 +762,67 @@ class CollateFunctionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestDeepFloydPixels(unittest.TestCase):
+    """DeepFloyd trains on pixels: each sample is cropped and resized as its record says, not drawn again."""
+
+    RECORD = {
+        "original_size": (100, 150),
+        "target_size": (64, 80),
+        "intermediary_size": (64, 96),
+        "crop_coordinates": (8, 0),
+        "aspect_ratio": 0.8,
+    }
+
+    def setUp(self):
+        args = SimpleNamespace(
+            aspect_bucket_alignment=8,
+            aspect_bucket_rounding=2,
+            model_family="deepfloyd",
+            resolution=64,
+            resolution_type="pixel",
+            vae_cache_ondemand=False,
+            aspect_bucket_disable_rebuild=False,
+        )
+        config = {
+            "resolution": 64,
+            "resolution_type": "pixel",
+            "crop": True,
+            "crop_aspect": "random",
+            "crop_aspect_buckets": [1.0, 1.5, 0.67],
+            "crop_style": "center",
+            "dataset_type": "image",
+        }
+        from torchvision import transforms
+
+        self.model = SimpleNamespace(
+            MAXIMUM_CANVAS_SIZE=None,
+            get_transforms=lambda dataset_type="image": transforms.Compose(
+                [transforms.ToTensor(), transforms.Normalize([0.5], [0.5])]
+            ),
+        )
+        self.metadata_backend = SimpleNamespace(
+            get_metadata_by_filepath=MagicMock(side_effect=lambda path: dict(self.RECORD))
+        )
+        backend = {
+            "data_backend": SimpleNamespace(read_image=lambda path: Image.new("RGB", (100, 150))),
+            "metadata_backend": self.metadata_backend,
+        }
+        for patcher in (
+            patch.object(StateTracker, "get_args", return_value=args),
+            patch.object(StateTracker, "get_data_backend", return_value=backend),
+            patch.object(StateTracker, "get_data_backend_config", return_value=config),
+            patch.object(StateTracker, "get_model", return_value=None),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_pixels_follow_each_sample_record(self):
+        paths = [f"{index}.png" for index in range(6)]
+        for records in ({path: dict(self.RECORD) for path in paths}, None):
+            with self.subTest(records="batch" if records else "metadata backend"):
+                self.metadata_backend.get_metadata_by_filepath.reset_mock()
+                pixels = compute_latents(paths, "backend-1", self.model, records=records)
+                self.assertEqual(tuple(pixels.shape), (6, 3, 80, 64))
+                self.assertEqual(self.metadata_backend.get_metadata_by_filepath.call_count, 0 if records else len(paths))

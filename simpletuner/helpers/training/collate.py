@@ -165,12 +165,14 @@ def describe_missing_conditioning_pairs(
     return messages
 
 
-def fetch_pixel_values(fp, data_backend_id: str, model):
-    """Worker method to fetch pixel values for a single image."""
+def fetch_pixel_values(fp, data_backend_id: str, model, metadata: dict | None):
+    """Worker method to fetch pixel values for a single image, cropped and resized as its dataset decided."""
     debug_log(f" -> pull pixels for fp {fp} from cache via data backend {data_backend_id}")
     data_backend = StateTracker.get_data_backend(data_backend_id)
     image = data_backend["data_backend"].read_image(fp)
-    training_sample = TrainingSample(image=image, data_backend_id=data_backend_id, model=model)
+    training_sample = TrainingSample(
+        image=image, data_backend_id=data_backend_id, image_metadata=metadata, image_path=fp, model=model
+    )
     return training_sample.prepare(return_tensor=True).image
 
 
@@ -189,8 +191,11 @@ def fetch_latent(fp, data_backend_id: str):
     return latent
 
 
-def deepfloyd_pixels(filepaths, data_backend_id: str, model):
+def deepfloyd_pixels(filepaths, data_backend_id: str, model, records: dict | None = None):
     """DeepFloyd doesn't use the VAE. We retrieve, normalise, and stack the pixel tensors directly."""
+    if records is None:
+        metadata_backend = StateTracker.get_data_backend(data_backend_id)["metadata_backend"]
+        records = {filepath: metadata_backend.get_metadata_by_filepath(filepath) for filepath in filepaths}
     # Use a thread pool to fetch latents concurrently
     try:
         with concurrent.futures.ThreadPoolExecutor() as executor:
@@ -200,6 +205,7 @@ def deepfloyd_pixels(filepaths, data_backend_id: str, model):
                     filepaths,
                     [data_backend_id] * len(filepaths),
                     [model] * len(filepaths),
+                    [records.get(filepath) for filepath in filepaths],
                 )
             )
     except Exception as e:
@@ -328,7 +334,7 @@ def compute_latents(filepaths, data_backend_id: str, model, records: dict | None
     # Use a thread pool to fetch latents concurrently
     try:
         if "deepfloyd" in StateTracker.get_args().model_family:
-            latents = deepfloyd_pixels(filepaths, data_backend_id, model)
+            latents = deepfloyd_pixels(filepaths, data_backend_id, model, records=records)
 
             return latents
         vae_cache = StateTracker.get_vaecache(id=data_backend_id)
