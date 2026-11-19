@@ -83,9 +83,11 @@ class HuggingfaceMetadataBackendTests(unittest.TestCase):
         backend = HuggingfaceMetadataBackend.__new__(HuggingfaceMetadataBackend)
         backend.caption_cache = {"0.png": "kept", "1.png": "removed"}
         backend.aspect_ratio_bucket_indices = {"1.0": ["0.png", "1.png"]}
+        backend.removed_samples = set()
         backend.remove_images(["1.png"])
         self.assertEqual(backend.caption_cache, {"0.png": "kept"})
         self.assertEqual(backend.aspect_ratio_bucket_indices, {"1.0": ["0.png"]})
+        self.assertEqual(backend.removed_samples, {"1.png"})
 
     def test_audio_caption_falls_back_to_text_sibling(self):
         with tempfile.TemporaryDirectory() as tmpdir:

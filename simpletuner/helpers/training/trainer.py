@@ -6078,6 +6078,7 @@ class Trainer:
                 self.accelerator.wait_for_everyone()
                 logger.info(f"Reloading cache for backend {backend_id}")
                 backend["metadata_backend"].reload_cache(set_config=False)
+                backend["metadata_backend"].reapply_removals()
                 logger.info("Waiting for other threads to finish..")
                 self.accelerator.wait_for_everyone()
                 if not any(backend["metadata_backend"].aspect_ratio_bucket_indices.values()):
@@ -6095,6 +6096,7 @@ class Trainer:
                         # Samples were filtered out; every rank takes its share of what the main process saved.
                         if not self.accelerator.is_main_process:
                             backend["metadata_backend"].reload_cache(set_config=False)
+                            backend["metadata_backend"].reapply_removals()
                         backend["dataset_runtime"].rebuild_cursor()
                 rebuilt.add(backend_id)
                 # no need to manually call metadata_backend.save_cache() here.

@@ -814,6 +814,8 @@ class CopiedDatasetRolloverTests(unittest.TestCase):
         )
         StateTracker.set_args(self.args)
         StateTracker.set_model(None)
+        StateTracker.set_epoch(1)
+        self.addCleanup(StateTracker.set_epoch, 1)
         for dataset_id in ("source", "control"):
             self.addCleanup(StateTracker.data_backends.pop, dataset_id, None)
             self.addCleanup(StateTracker.all_image_files.pop, dataset_id, None)
@@ -883,6 +885,29 @@ class CopiedDatasetRolloverTests(unittest.TestCase):
             for path, record in metadata.get_metadata().items()
         }
         return {bucket: paths for bucket, paths in lists.items() if paths}, geometry
+
+    def test_a_sample_removed_in_preparation_stays_out_after_the_source_is_rebuilt(self):
+        removed = "3.png"
+        ranks = []
+        for index in (0, 1):
+            accelerator, backends = self.rank(index)
+            source = backends["source"]["metadata_backend"]
+            if index == 0:
+                source.compute_aspect_ratio_bucket_indices()
+            else:
+                source.reload_cache()
+                source.load_image_metadata()
+            # As caption collection does on every rank for a sample without a caption.
+            source.remove_images([str(self.root / "source" / removed)])
+            self.copy(backends)
+            ranks.append((accelerator, backends))
+        for accelerator, backends in ranks:
+            self.rollover(accelerator, backends)
+        for _, backends in ranks:
+            for dataset_id in ("source", "control"):
+                with self.subTest(rank=backends["source"]["metadata_backend"].accelerator.process_index, dataset=dataset_id):
+                    names = [name for paths in self.decided(backends[dataset_id])[0].values() for name in paths]
+                    self.assertEqual(sorted(names), sorted(name for name in self.NAMES if name != removed))
 
     def test_the_copy_follows_the_rebuilt_source_on_every_rank(self):
         main, main_backends = self.rank(0)

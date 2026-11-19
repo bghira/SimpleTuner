@@ -134,6 +134,8 @@ class MetadataBackend:
         self.cache_file = Path(f"{cache_file}.json")
         self.metadata_file = Path(f"{metadata_file}.json")
         self._aspect_ratio_bucket_indices = {}
+        # Samples dropped from the bucket lists after they were built, kept out when the lists are built again.
+        self.removed_samples: set[str] = set()
         self.image_metadata = {}  # Store image metadata
         self.config = {}
         self.dataset_config = StateTracker.get_data_backend_config(self.id) or {}
@@ -758,8 +760,13 @@ class MetadataBackend:
     def remove_images(self, image_paths) -> None:
         """Drop these samples from every bucket list."""
         removed = set(image_paths)
+        self.removed_samples |= removed
         for paths in self.aspect_ratio_bucket_indices.values():
             paths[:] = [path for path in paths if path not in removed]
+
+    def reapply_removals(self) -> None:
+        """Drop the samples removed earlier from bucket lists that were built or loaded again since."""
+        self.remove_images(self.removed_samples)
 
     def remove_image(self, image_path, bucket: str = None):
         """remove image from bucket(s)"""

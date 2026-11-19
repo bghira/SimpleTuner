@@ -2349,6 +2349,7 @@ class TestTrainer(unittest.TestCase):
                 calls = Mock()
                 calls.attach_mock(backend["metadata_backend"].compute_aspect_ratio_bucket_indices, "recompute")
                 calls.attach_mock(backend["metadata_backend"].reload_cache, "reload")
+                calls.attach_mock(backend["metadata_backend"].reapply_removals, "reapply_removals")
                 calls.attach_mock(backend["dataset_runtime"].rebuild_cursor, "rebuild_cursor")
                 calls.attach_mock(backend["vaecache"].rebuild_cache, "rebuild_vae_cache")
 
@@ -2356,7 +2357,7 @@ class TestTrainer(unittest.TestCase):
                     trainer._epoch_rollover(2)
 
                 # The VAE cache encodes the rank's share, so the share has to be current first.
-                expected = ["reload", "rebuild_cursor", "rebuild_vae_cache"]
+                expected = ["reload", "reapply_removals", "rebuild_cursor", "rebuild_vae_cache"]
                 if is_main_process:
                     expected.insert(0, "recompute")
                 self.assertEqual([name for name, _args, _kwargs in calls.mock_calls], expected)
@@ -2371,6 +2372,7 @@ class TestTrainer(unittest.TestCase):
                 backend["vaecache"].rebuild_cache.return_value = True
                 calls = Mock()
                 calls.attach_mock(backend["metadata_backend"].reload_cache, "reload")
+                calls.attach_mock(backend["metadata_backend"].reapply_removals, "reapply_removals")
                 calls.attach_mock(backend["dataset_runtime"].rebuild_cursor, "rebuild_cursor")
                 calls.attach_mock(backend["vaecache"].rebuild_cache, "rebuild_vae_cache")
 
@@ -2378,8 +2380,8 @@ class TestTrainer(unittest.TestCase):
                     trainer._epoch_rollover(2)
 
                 # The main process saved the lists it filtered; the others read them back.
-                after = ["rebuild_cursor"] if is_main_process else ["reload", "rebuild_cursor"]
-                expected = ["reload", "rebuild_cursor", "rebuild_vae_cache", *after]
+                after = ["rebuild_cursor"] if is_main_process else ["reload", "reapply_removals", "rebuild_cursor"]
+                expected = ["reload", "reapply_removals", "rebuild_cursor", "rebuild_vae_cache", *after]
                 self.assertEqual([name for name, _args, _kwargs in calls.mock_calls], expected)
 
     def _copy_fixture(self, copy_config):
