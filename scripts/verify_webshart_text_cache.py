@@ -36,7 +36,7 @@ from transformers import CLIPTextConfig, CLIPTextModel, CLIPTokenizer
 
 from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
 from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
-from simpletuner.helpers.data_backend.factory import FactoryRegistry, build_text_embed_store
+from simpletuner.helpers.data_backend.factory import FactoryRegistry, build_text_embed_store, build_text_preparation_listing
 from simpletuner.helpers.data_backend.webshart import WebshartDataBackend
 from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBackend
 from simpletuner.helpers.metadata.backends.webshart_epoch import EpochSpec
@@ -418,8 +418,23 @@ def run_rank(rank, connection, options, directory, port):
                 text_embed_cache=offline,
                 instance_data_dir=None,
             )
-            factory._process_text_embeddings(config, bundle, None)
-            dist.barrier()
+
+            def prepare(action):
+                offline.preparation_listing = build_text_preparation_listing(
+                    {"text_cache_use_listing": options.s3_listing},
+                    offline.data_backend,
+                    offline.cache_dir,
+                    args,
+                    accelerator,
+                )
+                try:
+                    result = action()
+                    dist.barrier()
+                    return result
+                finally:
+                    offline.finish_preparation()
+
+            prepare(lambda: factory._process_text_embeddings(config, bundle, None))
             assert len(list(physical_dir.glob("*.pt"))) == 16
             results["cold_encoder_calls"] = model.calls
             if snapshot:
@@ -432,7 +447,7 @@ def run_rank(rank, connection, options, directory, port):
             if snapshot:
                 results["readback_s3"] = snapshot()
             warm = CacheJobService._iter_prompt_records(model, runtime)
-            assert offline.precompute_embeddings(warm, batch_size=8) == 16
+            assert prepare(lambda: offline.precompute_embeddings(warm, batch_size=8)) == 16
             assert model.calls == calls
             results["warm_calls"] = model.calls - calls
             if snapshot:
@@ -441,15 +456,27 @@ def run_rank(rank, connection, options, directory, port):
             for record in records[:2]:
                 offline.data_backend.delete(offline.hash_prompt_with_path(record))
             dist.barrier()
-            factory._process_text_embeddings(config, bundle, None)
+            prepare(lambda: factory._process_text_embeddings(config, bundle, None))
             assert model.calls == calls + 1
-            dist.barrier()
             assert len(list(physical_dir.glob("*.pt"))) == 16
             results["mixed_missing_per_rank"] = 2
             if snapshot:
                 results["mixed_s3"] = snapshot()
-                for name in ("cold_s3", "warm_s3", "mixed_s3"):
-                    assert not any(key.startswith("List") for key in results[name])
+                namespace = ("cold_s3", "warm_s3", "mixed_s3")
+                observed = [
+                    sum(count for key, count in results[name].items() if key.startswith("List")) for name in namespace
+                ]
+                listing_requests = [None, None]
+                dist.all_gather_object(listing_requests, observed)
+                expected = [int(options.s3_listing)] * len(namespace)
+                assert [sum(counts) for counts in zip(*listing_requests, strict=True)] == expected
+                results["store_listing"] = {
+                    "enabled": options.s3_listing,
+                    "total_requests_per_phase": dict(zip(namespace, expected)),
+                }
+                if options.s3_listing:
+                    assert results["warm_s3"].get("HeadObject", 0) == 0
+                    assert not list((root / ".artifact-listings").glob("*.sqlite"))
                 assert results["cold_s3"].get("PutObject") == 8
                 assert results["warm_s3"].get("PutObject", 0) == 0
                 assert results["mixed_s3"].get("PutObject") == 2
@@ -539,10 +566,13 @@ if __name__ == "__main__":
     parser.add_argument("--manifest")
     parser.add_argument("--cpu-fixture", action="store_true")
     parser.add_argument("--local-s3-binary", type=Path, help="rclone binary for a loopback-only on-disk S3 artifact test")
+    parser.add_argument("--s3-listing", action="store_true", help="Use one shared S3 presence listing per preparation phase")
     parser.add_argument("--sampling-shards", type=int, default=0)
     parser.add_argument("--shard-local-first", action="store_true")
     parser.add_argument("--sampling-cache-gb", type=float, default=0)
     options = parser.parse_args()
+    if options.s3_listing and options.local_s3_binary is None:
+        parser.error("--s3-listing requires --local-s3-binary")
     if options.sampling_shards < 0 or options.sampling_shards == 1:
         parser.error("--sampling-shards must be zero or at least two")
     if options.cpu_fixture:
