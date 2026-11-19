@@ -534,6 +534,7 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
     def __init__(self, config: dict, accelerator):
         self.config = config
         self.accelerator = accelerator
+        self._training_datasets = {}
         self.noise_schedule = None
         self.pipelines = {}
         self.controlnet = None
@@ -861,6 +862,9 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
     _data_has_video: bool = False
     _data_has_audio: bool = False
     _data_has_conditioning: bool = False
+
+    def bind_training_datasets(self, datasets):
+        self._training_datasets = dict(datasets)
 
     def configure_data_signals(
         self,
@@ -7035,9 +7039,9 @@ class VideoModelFoundation(VideoTransformMixin, ImageModelFoundation):
         for ref, dataset_id in zip(refs, dataset_ids, strict=True):
             dataset = None
             if dataset_id is not None:
-                dataset = StateTracker.get_dataset(dataset_id)
+                dataset = self._training_datasets.get(dataset_id)
                 if dataset is None:
-                    raise ValueError(f"Audio dataset {dataset_id} is no longer registered.")
+                    raise ValueError(f"Audio dataset {dataset_id} is unavailable in the model's training datasets.")
             yield ref, dataset
 
     @classmethod

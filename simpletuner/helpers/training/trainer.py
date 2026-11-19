@@ -240,7 +240,7 @@ from diffusers.utils.import_utils import is_xformers_available
 from peft.utils import get_peft_model_state_dict
 from tqdm.auto import tqdm
 
-from simpletuner.helpers.models.common import ImageModelFoundation, VideoModelFoundation
+from simpletuner.helpers.models.common import ImageModelFoundation, ModelFoundation, VideoModelFoundation
 from simpletuner.helpers.training.ema import EMAModel
 
 is_optimi_available = False
@@ -2746,6 +2746,7 @@ class Trainer:
                 distiller_profile=distiller_profile,
                 distillation_method=getattr(self.config, "distillation_method", None),
             )
+            self.model.bind_training_datasets(configured_backends.datasets)
             self._distillation_caches = configured_backends.distillation_caches
             self._emit_event(
                 lifecycle_stage_event(
@@ -6082,6 +6083,8 @@ class Trainer:
         except Exception as exc:
             logger.debug("Failed to reclaim accelerator memory during cleanup: %s", exc, exc_info=True)
 
+        if isinstance(getattr(self, "model", None), ModelFoundation):
+            self.model.bind_training_datasets({})
         StateTracker.clear_data_backends()
 
     def model_predict(

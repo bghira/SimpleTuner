@@ -1537,7 +1537,8 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
         model.tokenizers = [self._FakeTokenizer()]
         cached = torch.tensor([[1, 0, 0, 0], [2, 1, 0, 0]], dtype=torch.long)
         vae_cache = SimpleNamespace(retrieve_from_cache=MagicMock(return_value=cached))
-        with patch.object(StateTracker, "get_dataset", return_value=SimpleNamespace(vae_cache=vae_cache)):
+        model.bind_training_datasets({"songs": SimpleNamespace(vae_cache=vae_cache, published_read_view=lambda: None)})
+        with patch.object(StateTracker, "get_dataset", side_effect=AssertionError("global dataset lookup")):
             payload = model.collate_audio_tokens(
                 [
                     {
@@ -1549,7 +1550,7 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
                 ]
             )
 
-        vae_cache.retrieve_from_cache.assert_called_once_with("song.flac")
+        vae_cache.retrieve_from_cache.assert_called_once_with("song.flac", view=None)
         self.assertTrue(torch.equal(payload["audio_codes"][0, :2], cached))
         self.assertEqual(payload["audio_lengths"].tolist(), [2])
 
@@ -1572,7 +1573,8 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
             )
         )
 
-        with patch.object(StateTracker, "get_dataset", return_value=SimpleNamespace(vae_cache=vae_cache)):
+        model.bind_training_datasets({"songs": SimpleNamespace(vae_cache=vae_cache, published_read_view=lambda: None)})
+        with patch.object(StateTracker, "get_dataset", side_effect=AssertionError("global dataset lookup")):
             payload = model.collate_audio_tokens(
                 [
                     {
@@ -1613,8 +1615,9 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
             )
         )
 
+        model.bind_training_datasets({"songs": SimpleNamespace(vae_cache=vae_cache, published_read_view=lambda: None)})
         with (
-            patch.object(StateTracker, "get_dataset", return_value=SimpleNamespace(vae_cache=vae_cache)),
+            patch.object(StateTracker, "get_dataset", side_effect=AssertionError("global dataset lookup")),
             patch("torch.randint", return_value=torch.tensor([2])),
         ):
             payload = model.collate_audio_tokens(

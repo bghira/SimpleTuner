@@ -28,7 +28,6 @@ from simpletuner.helpers.training.explorative_modeling import (
     select_winning_candidates,
 )
 from simpletuner.helpers.training.nextlat import NextLatRegularizer, nextlat_enabled_from_config
-from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger(__name__)
 
@@ -555,8 +554,8 @@ class HeartMuLa(AudioModelFoundation):
         if os.path.isabs(token_path):
             return token_path
         backend_id = example.get("data_backend_id")
-        backend_cfg = StateTracker.get_data_backend_config(backend_id) if backend_id else {}
-        dataset_root = backend_cfg.get("instance_data_dir") if backend_cfg else None
+        dataset = self._training_datasets.get(backend_id)
+        dataset_root = dataset.instance_data_dir if dataset is not None else None
         if dataset_root:
             return os.path.join(dataset_root, token_path)
         return token_path

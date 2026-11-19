@@ -132,13 +132,14 @@ class TestWanS2VCollateIntegration(unittest.TestCase):
 
         model = WanS2V.__new__(WanS2V)
         source_a, source_b = mock.Mock(), mock.Mock()
+        model.bind_training_datasets({"first": source_a, "second": source_b})
         model.encode_audio = mock.Mock(return_value=torch.zeros(1, 2, 3, 4))
         batch = {
             "latents": torch.zeros(2, 4, 4, 8, 8),
             "s2v_audio_paths": ["shared/key.mp4", "shared/key.mp4"],
             "s2v_audio_backend_ids": ["first", "second"],
         }
-        with mock.patch.object(StateTracker, "get_dataset", side_effect={"first": source_a, "second": source_b}.get):
+        with mock.patch.object(StateTracker, "get_dataset", side_effect=AssertionError("global dataset lookup")):
             result = model.prepare_batch_conditions(batch)
         self.assertEqual(result["audio_embeds"].shape[0], 2)
         self.assertEqual(
