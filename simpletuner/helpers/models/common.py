@@ -860,6 +860,7 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
     _data_has_images: bool = False
     _data_has_video: bool = False
     _data_has_audio: bool = False
+    _data_has_conditioning: bool = False
 
     def configure_data_signals(
         self,
@@ -867,11 +868,12 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
         has_video: bool = False,
         has_audio: bool = False,
         has_grounding: bool = False,
+        has_conditioning: bool = False,
     ) -> None:
         """
         Configure data type signals from the dataloader.
 
-        Called by the factory after data backend configuration to inform the
+        Called by the factory before dataset preparation to inform the
         model about what data types are present in the training data. Models
         can override this to take action based on data types, or use the stored
         flags in other methods like get_lora_target_layers().
@@ -881,11 +883,13 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
             has_video: Whether video data is present
             has_audio: Whether audio data is present
             has_grounding: Whether grounding annotations are present
+            has_conditioning: Whether an enabled dataset has configured conditioning inputs
         """
         self._data_has_images = has_images
         self._data_has_video = has_video
         self._data_has_audio = has_audio
         self._data_has_grounding = has_grounding
+        self._data_has_conditioning = has_conditioning
 
     def _get_additional_lora_targets(self) -> list[str]:
         """

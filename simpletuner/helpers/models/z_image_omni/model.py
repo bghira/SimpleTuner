@@ -241,23 +241,8 @@ class ZImageOmni(ImageModelFoundation):
         }
 
     def requires_conditioning_image_embeds(self) -> bool:
-        """
-        SigLIP conditioning is optional; enable when a conditioning dataset is configured.
-        The conditioning dataset images (not the primary/edited images) are encoded via the provider below.
-        """
-        try:
-            from simpletuner.helpers.training.state_tracker import StateTracker
-
-            if StateTracker.get_conditioning_mappings():
-                return True
-        except Exception:
-            # Fallback to config-based detection when StateTracker is not yet initialised.
-            pass
-
-        cond_data = getattr(self.config, "conditioning_data", None)
-        if isinstance(cond_data, (list, tuple, set)):
-            return len(cond_data) > 0
-        return cond_data is not None
+        """Enable SigLIP for the configured reference datasets."""
+        return self._data_has_conditioning or bool(getattr(self.config, "conditioning_data", None))
 
     def conditioning_image_embeds_use_reference_dataset(self) -> bool:
         # Condition on the reference/conditioning dataset, not the primary image.

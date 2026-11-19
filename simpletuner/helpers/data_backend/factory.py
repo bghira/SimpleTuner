@@ -2653,6 +2653,7 @@ class FactoryRegistry:
             self._prevalidate_backend_ids(data_backend_config)
 
         self._resolve_conditioning_geometry(data_backend_config)
+        self._configure_model_data_signals(data_backend_config)
 
         if not self.text_embed_backends and self._uses_text_embeddings_cache():
             self.configure_text_embed_backends(data_backend_config)
@@ -2756,6 +2757,7 @@ class FactoryRegistry:
         has_video = False
         has_audio = False
         has_grounding = False
+        has_conditioning = False
 
         for backend in data_backend_config:
             if backend.get("disabled", False) or backend.get("disable", False):
@@ -2767,6 +2769,7 @@ class FactoryRegistry:
                 has_video = True
             elif dataset_type is DatasetType.AUDIO:
                 has_audio = True
+            has_conditioning |= bool(backend.get("conditioning_data"))
             grounding_config = backend.get("grounding")
             if isinstance(grounding_config, dict) and grounding_config.get("enabled", False):
                 has_grounding = True
@@ -2776,6 +2779,7 @@ class FactoryRegistry:
             has_video=has_video,
             has_audio=has_audio,
             has_grounding=has_grounding,
+            has_conditioning=has_conditioning,
         )
 
     def _handle_resolution_conversion(self, backend: Dict[str, Any]) -> None:
@@ -4289,8 +4293,6 @@ class FactoryRegistry:
             for cache in prepared_caches:
                 cache.finish_preparation()
         self._configure_grounding_image_embed_caches(data_backend_config)
-
-        self._configure_model_data_signals(data_backend_config)
 
         training_types = {DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.AUDIO, DatasetType.CAPTION}
         result = {

@@ -294,6 +294,37 @@ class TestLTXVideo2AudioLoraTargets(unittest.TestCase):
 class TestFactoryDataSignals(unittest.TestCase):
     """Test factory's _configure_model_data_signals method."""
 
+    def test_z_image_reference_embeds_available_before_dataset_preparation(self):
+        from types import SimpleNamespace
+
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+        from simpletuner.helpers.models.z_image_omni.model import ZImageOmni
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        class PreparationReached(Exception):
+            pass
+
+        model = ZImageOmni.__new__(ZImageOmni)
+        model.config = SimpleNamespace()
+        self.assertFalse(model.requires_conditioning_image_embeds())
+        factory = FactoryRegistry(MagicMock(), MagicMock(), None, None, model)
+        factory.text_embed_backends["text"] = {}
+        configs = [
+            {"id": "images", "dataset_type": "image", "conditioning_data": "references"},
+            {"id": "references", "dataset_type": "conditioning"},
+        ]
+
+        def check(*_):
+            self.assertTrue(model.requires_conditioning_image_embeds())
+            raise PreparationReached()
+
+        with (
+            patch.object(StateTracker, "get_conditioning_mappings", side_effect=AssertionError("global dataset links")),
+            patch.object(factory, "_configure_single_data_backend", side_effect=check),
+            self.assertRaises(PreparationReached),
+        ):
+            factory.configure_data_backends(configs)
+
     def test_factory_detects_image_dataset(self):
         """Factory should detect image datasets and signal the model."""
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
@@ -310,7 +341,7 @@ class TestFactoryDataSignals(unittest.TestCase):
         factory._configure_model_data_signals(config)
 
         model.configure_data_signals.assert_called_once_with(
-            has_images=True, has_video=False, has_audio=False, has_grounding=False
+            has_images=True, has_video=False, has_audio=False, has_grounding=False, has_conditioning=False
         )
 
     def test_factory_detects_video_dataset(self):
@@ -329,7 +360,7 @@ class TestFactoryDataSignals(unittest.TestCase):
         factory._configure_model_data_signals(config)
 
         model.configure_data_signals.assert_called_once_with(
-            has_images=False, has_video=True, has_audio=False, has_grounding=False
+            has_images=False, has_video=True, has_audio=False, has_grounding=False, has_conditioning=False
         )
 
     def test_factory_detects_audio_dataset(self):
@@ -348,7 +379,7 @@ class TestFactoryDataSignals(unittest.TestCase):
         factory._configure_model_data_signals(config)
 
         model.configure_data_signals.assert_called_once_with(
-            has_images=False, has_video=False, has_audio=True, has_grounding=False
+            has_images=False, has_video=False, has_audio=True, has_grounding=False, has_conditioning=False
         )
 
     def test_factory_detects_mixed_datasets(self):
@@ -369,7 +400,7 @@ class TestFactoryDataSignals(unittest.TestCase):
         factory._configure_model_data_signals(config)
 
         model.configure_data_signals.assert_called_once_with(
-            has_images=True, has_video=True, has_audio=True, has_grounding=False
+            has_images=True, has_video=True, has_audio=True, has_grounding=False, has_conditioning=False
         )
 
     def test_factory_ignores_disabled_datasets(self):
@@ -389,7 +420,7 @@ class TestFactoryDataSignals(unittest.TestCase):
         factory._configure_model_data_signals(config)
 
         model.configure_data_signals.assert_called_once_with(
-            has_images=False, has_video=False, has_audio=True, has_grounding=False
+            has_images=False, has_video=False, has_audio=True, has_grounding=False, has_conditioning=False
         )
 
     def test_factory_ignores_disable_flag(self):
@@ -409,7 +440,7 @@ class TestFactoryDataSignals(unittest.TestCase):
         factory._configure_model_data_signals(config)
 
         model.configure_data_signals.assert_called_once_with(
-            has_images=False, has_video=False, has_audio=True, has_grounding=False
+            has_images=False, has_video=False, has_audio=True, has_grounding=False, has_conditioning=False
         )
 
     def test_factory_handles_no_model(self):
@@ -444,7 +475,7 @@ class TestFactoryDataSignals(unittest.TestCase):
         factory._configure_model_data_signals(config)
 
         model.configure_data_signals.assert_called_once_with(
-            has_images=False, has_video=False, has_audio=False, has_grounding=False
+            has_images=False, has_video=False, has_audio=False, has_grounding=False, has_conditioning=False
         )
 
 
@@ -529,7 +560,7 @@ class TestGroundingDataSignal(unittest.TestCase):
         factory._configure_model_data_signals(config)
 
         model.configure_data_signals.assert_called_once_with(
-            has_images=True, has_video=False, has_audio=False, has_grounding=True
+            has_images=True, has_video=False, has_audio=False, has_grounding=True, has_conditioning=False
         )
 
     def test_factory_grounding_disabled_not_signaled(self):
@@ -553,7 +584,7 @@ class TestGroundingDataSignal(unittest.TestCase):
         factory._configure_model_data_signals(config)
 
         model.configure_data_signals.assert_called_once_with(
-            has_images=True, has_video=False, has_audio=False, has_grounding=False
+            has_images=True, has_video=False, has_audio=False, has_grounding=False, has_conditioning=False
         )
 
 
