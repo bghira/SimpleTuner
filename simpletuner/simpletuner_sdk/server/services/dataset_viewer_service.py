@@ -968,20 +968,16 @@ class DatasetViewerService:
             return None
 
     def _resolve_image_path(self, dataset_config: Dict[str, Any], file_path: str) -> Optional[Path]:
-        """Resolve a relative file path from the cache to an absolute path."""
+        """Resolve a file entry inside the configured local dataset tree."""
         instance_data_dir = dataset_config.get("instance_data_dir", "")
         if not instance_data_dir:
             return None
 
-        candidate = Path(instance_data_dir) / file_path
-        if candidate.is_file():
-            return candidate
-
-        # The file_path might already be absolute
-        abs_candidate = Path(file_path)
-        if abs_candidate.is_file():
-            return abs_candidate
-
+        root = Path(os.path.abspath(os.path.expanduser(instance_data_dir)))
+        for candidate in (root / file_path, Path(file_path)):
+            candidate = Path(os.path.abspath(candidate))
+            if candidate.is_relative_to(root) and candidate.is_file():
+                return candidate
         return None
 
     def _get_thumbnail_cache_path(self, dataset_config, file_path: str, view_revision: Optional[str] = None) -> Path:
@@ -1139,12 +1135,24 @@ class DatasetViewerService:
                 logger.warning("Failed to open %s: %s", resolved, e)
                 return None
 
-        if view_revision is not None:
+        if backend_type == "aws":
+            from simpletuner.helpers.data_backend.aws import normalise_s3_prefixes
+
+            prefixes = normalise_s3_prefixes(dataset_config.get("aws_data_prefix"))
+            if not file_path.startswith(tuple(prefixes)):
+                return None
+
+        if backend_type == "webshart":
             try:
-                with self._open_view_data_backend(dataset_config, view_revision) as pinned:
-                    if pinned is not None:
-                        _, images = pinned.read_image_batch([file_path])
-                        return self._ensure_pil_image(images[0]) if images else None
+                with self._indexed_read_view(dataset_config, view_revision) as indexed:
+                    if indexed is not None:
+                        pages, contains, publication = indexed
+                        if not contains(file_path):
+                            return None
+                        if pages.header.get("source_pins"):
+                            with self._bind_view_data_backend(dataset_config, publication, pages) as pinned:
+                                _, images = pinned.read_image_batch([file_path])
+                                return self._ensure_pil_image(images[0]) if images else None
             except DatasetViewChanged:
                 raise
             except (ValueError, OSError) as exc:
@@ -1711,7 +1719,7 @@ class DatasetViewerService:
         return DatasetGraph(nodes=nodes, edges=edges)
 
     @contextmanager
-    def _indexed_conditioning_view(self, config, revision=None):
+    def _indexed_read_view(self, config, revision=None):
         with self._webshart_view(config, revision) as (publication, pages):
             if pages is not None and pages.header.get("geometry_format") == "sqlite-v1":
                 with accepted_ref_lookup(publication, pages) as contains:
@@ -1743,7 +1751,7 @@ class DatasetViewerService:
         """Match files by basename between source and conditioning datasets."""
         with ExitStack() as stack:
             source, target = [
-                stack.enter_context(self._indexed_conditioning_view(config, revision))
+                stack.enter_context(self._indexed_read_view(config, revision))
                 for config, revision in (
                     (source_config, source_view_revision),
                     (conditioning_config, conditioning_view_revision),
@@ -1812,8 +1820,7 @@ class DatasetViewerService:
         """Find files without matching counterparts between source/conditioning datasets."""
         with ExitStack() as stack:
             source, target = [
-                stack.enter_context(self._indexed_conditioning_view(config))
-                for config in (source_config, conditioning_config)
+                stack.enter_context(self._indexed_read_view(config)) for config in (source_config, conditioning_config)
             ]
             if source or target:
                 result = OrphanReport(
@@ -1873,7 +1880,7 @@ class DatasetViewerService:
 
         native_ref = source_config.get("type") == "webshart" and WebshartDataBackend.is_sample_id(source_file_path)
         source_revision = None
-        with self._indexed_conditioning_view(source_config, view_revision) as source:
+        with self._indexed_read_view(source_config, view_revision) as source:
             if source is not None:
                 if not source[1](source_file_path):
                     return None
@@ -1890,7 +1897,7 @@ class DatasetViewerService:
             if cond_config is None:
                 continue
             with ExitStack() as stack:
-                target = stack.enter_context(self._indexed_conditioning_view(cond_config))
+                target = stack.enter_context(self._indexed_read_view(cond_config))
                 if target is not None:
                     match = self._bind_conditioning_matcher(stack, cond_config, target, source_revision)
                     pairing_key = source_file_path

@@ -82,6 +82,7 @@ class TestWebshartMembershipPages(unittest.TestCase):
                 self.assertEqual(entry.caption, "first\nalternate")
                 self.assertIsNone(pins[-1])
                 self.assertIsNotNone(service.get_image_preview(config, ref, metadata=entry.model_dump()))
+                self.assertIsNone(service.get_image_preview(config, "webshart://0/1/data/other.jpg", view_revision=revision))
                 self.assertIsNone(pins[-1])
                 thumbnails = service.get_dataset_thumbnails(config, view_revision=revision)
                 self.assertIsNotNone(thumbnails[0].thumbnail)
@@ -370,6 +371,35 @@ class TestWebshartMembershipPages(unittest.TestCase):
                 match = service.get_conditioning_file_match(linked, [local], refs[1])
                 self.assertEqual(match["file_path"], str(image.resolve()))
                 self.assertIsNone(service.get_conditioning_file_match(linked, [local], refs[-1]))
+
+
+class TestPreviewSourceScope(unittest.TestCase):
+    def test_local_preview_resolves_dataset_entries_and_explicit_links(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            images = root / "images"
+            images.mkdir()
+            outside = root / "outside.jpg"
+            Image.new("RGB", (16, 16)).save(outside)
+            entry = images / "linked.jpg"
+            entry.symlink_to(outside)
+            service = DatasetViewerService(project_root=root)
+            config = {"id": "images", "instance_data_dir": str(images)}
+
+            self.assertIsNotNone(service.get_image_preview(config, "linked.jpg"))
+            self.assertIsNotNone(service.get_image_preview(config, str(entry)))
+            self.assertIsNone(service.get_image_preview(config, str(outside)))
+            self.assertIsNone(service.get_image_preview(config, "../outside.jpg"))
+
+    def test_s3_preview_stays_within_the_configured_prefixes(self):
+        service = DatasetViewerService()
+        config = {"type": "aws", "aws_data_prefix": ["images/", "extra/"]}
+        backend = MagicMock()
+        backend.read_image.return_value = Image.new("RGB", (16, 16))
+        with patch.object(service, "_get_or_create_data_backend", return_value=backend):
+            self.assertIsNone(service.get_image_preview(config, "outside/file.jpg"))
+            self.assertIsNotNone(service.get_image_preview(config, "extra/file.jpg"))
+        backend.read_image.assert_called_once_with("extra/file.jpg")
 
 
 class TestLegacyMembershipPages(unittest.TestCase):
