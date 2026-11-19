@@ -76,10 +76,13 @@ class TestMetadataBackend(unittest.TestCase):
             patch.object(self.metadata_backend, "_process_for_bucket", side_effect=process),
             patch.object(self.metadata_backend, "save_image_metadata") as save_image_metadata,
             patch.object(self.metadata_backend, "save_cache"),
+            patch.object(self.metadata_backend, "record_transforms") as record_transforms,
         ):
             self.metadata_backend.scan_for_metadata()
 
         self.assertEqual(sorted(self.metadata_backend.image_metadata), sorted(new_files))
+        recorded = [path for call in record_transforms.call_args_list for path in call.args[0]]
+        self.assertEqual(sorted(recorded), sorted(new_files))
         save_image_metadata.assert_called_once()
 
     def test_probe_image_dimensions_applies_exif_orientation(self):

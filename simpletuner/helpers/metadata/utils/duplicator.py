@@ -105,6 +105,8 @@ class DatasetDuplicator:
                         copied_metadata["training_sample_path"] = path
                         copied_metadata["image_path"] = new_path
                     target_meta.image_metadata[new_path] = copied_metadata
+                # The geometry is the source's and is not in the target's store, so the target never reloads it.
+                target_meta.image_metadata_loaded = True
                 logger.debug(f"Copied {len(target_meta.image_metadata)} image_metadata entries")
             else:
                 logger.debug("No image_metadata to copy from source")

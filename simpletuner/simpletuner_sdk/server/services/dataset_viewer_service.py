@@ -356,6 +356,58 @@ class DatasetViewerService:
         with open(cache_path, "r") as f:
             return json.load(f)
 
+    def _transform_store(self, dataset_config: Dict[str, Any], metadata_path: Path):
+        """
+        The store of the geometry training decided, opened under the recipe the bucket index names. A dataset
+        whose index names none keeps its geometry in its metadata file.
+        """
+        from simpletuner.helpers.metadata.transform_records import PythonTransformCache
+
+        index_path = self._find_cache_file(dataset_config, "indices")
+        if index_path is None:
+            return None
+        recipe = self._load_cache(index_path).get("transform_recipe")
+        if not recipe:
+            return None
+        return PythonTransformCache(metadata_path.parent / "transforms", recipe)
+
+    def _merge_recorded_geometry(
+        self, dataset_config: Dict[str, Any], metadata_path: Path, metadata: Dict[str, Any], paths: List[str]
+    ) -> None:
+        from simpletuner.helpers.metadata.transform_records import decode_transform
+
+        store = self._transform_store(dataset_config, metadata_path)
+        if store is None:
+            return
+        try:
+            values = store.read_batch([(dataset_config["id"], path) for path in paths])
+        finally:
+            store.close()
+        for path, value in zip(paths, values):
+            if value is not None:
+                metadata[path].update(decode_transform(value))
+
+    def _replace_recorded_geometry(
+        self, dataset_config: Dict[str, Any], metadata_path: Path, file_path: str, geometry: Dict[str, Any]
+    ) -> Optional[bool]:
+        """
+        Record an edit over the geometry training decided for one sample. None when the dataset keeps its
+        geometry in its metadata file; False when the sample has none recorded.
+        """
+        from simpletuner.helpers.metadata.transform_records import decode_transform, encode_transform
+
+        store = self._transform_store(dataset_config, metadata_path)
+        if store is None:
+            return None
+        try:
+            value = store.read_batch([(dataset_config["id"], file_path)])[0]
+            if value is None:
+                return False
+            store.replace(dataset_config["id"], [(file_path, encode_transform({**decode_transform(value), **geometry}))])
+        finally:
+            store.close()
+        return True
+
     def _coerce_display_name(self, value: Any) -> Optional[str]:
         """Normalise a candidate dataset label to a readable display name."""
         if value is None:
@@ -562,6 +614,7 @@ class DatasetViewerService:
         meta = data.get(file_path)
         if meta is None:
             return None
+        self._merge_recorded_geometry(dataset_config, cache_path, data, [file_path])
 
         known_keys = {
             "original_size",
@@ -611,6 +664,11 @@ class DatasetViewerService:
         if file_path not in data:
             return False
 
+        replaced = self._replace_recorded_geometry(
+            dataset_config, cache_path, file_path, {"crop_coordinates": crop_coordinates}
+        )
+        if replaced is not None:
+            return replaced
         data[file_path]["crop_coordinates"] = crop_coordinates
         with open(cache_path, "w") as f:
             json.dump(data, f)
@@ -734,14 +792,19 @@ class DatasetViewerService:
             )
             prepared = sample.prepare()
 
-            # Merge recalculated fields into existing metadata
-            existing["target_size"] = list(prepared.target_size)
-            existing["intermediary_size"] = list(prepared.intermediary_size)
-            existing["crop_coordinates"] = list(prepared.crop_coordinates)
-            existing["aspect_ratio"] = prepared.aspect_ratio
-
-            with open(cache_path, "w") as f:
-                json.dump(all_metadata, f)
+            geometry = {
+                "target_size": list(prepared.target_size),
+                "intermediary_size": list(prepared.intermediary_size),
+                "crop_coordinates": list(prepared.crop_coordinates),
+                "aspect_ratio": prepared.aspect_ratio,
+            }
+            replaced = self._replace_recorded_geometry(dataset_config, cache_path, file_path, geometry)
+            if replaced is False:
+                return None
+            existing.update(geometry)
+            if replaced is None:
+                with open(cache_path, "w") as f:
+                    json.dump(all_metadata, f)
 
             return existing
 
@@ -1353,6 +1416,10 @@ class DatasetViewerService:
                     accepted_files.update(bucket_files)
             except (json.JSONDecodeError, OSError):
                 pass
+        filtered_paths = [
+            path for path, meta in all_metadata.items() if path not in accepted_files and isinstance(meta, dict)
+        ]
+        self._merge_recorded_geometry(dataset_config, cache_path, all_metadata, filtered_paths)
 
         # Filter rules from config
         min_size = dataset_config.get("minimum_image_size")

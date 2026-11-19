@@ -378,6 +378,12 @@ class MetadataBackend:
         if update_json:
             self.save_image_metadata()
 
+    def record_transforms(self, records: dict[str, dict]) -> None:
+        """
+        Keep the geometry decided for these samples, by sample path. A backend that keeps it in its own
+        metadata records nothing here.
+        """
+
     def get_metadata(self):
         if not self.image_metadata_loaded:
             self.load_image_metadata()
@@ -696,6 +702,7 @@ class MetadataBackend:
                         continue
                     for filepath, meta in metadata_update.items():
                         self.set_metadata_by_filepath(filepath=filepath, metadata=meta, update_json=False)
+                    self.record_transforms(metadata_update)
                 while not written_files_queue.empty():
                     written_files_batch = written_files_queue.get()
                     written_files.update(written_files_batch)  # Use update for sets
@@ -1194,6 +1201,7 @@ class MetadataBackend:
                     if type(metadata_update) == dict:
                         for filepath, meta in metadata_update.items():
                             self.set_metadata_by_filepath(filepath=filepath, metadata=meta, update_json=False)
+                        self.record_transforms(metadata_update)
 
             while any(worker.is_alive() for worker in workers):
                 drain_queues()
