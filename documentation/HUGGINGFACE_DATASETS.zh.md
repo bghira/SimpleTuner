@@ -13,6 +13,8 @@ Hugging Face 数据集后端允许你：
 
 **重要**：SimpleTuner 需要完整数据集访问来构建纵横比桶并计算批大小。虽然 Hugging Face 支持流式数据集，但该功能与 SimpleTuner 架构不兼容。请使用过滤将超大数据集缩减到可管理规模。
 
+如果下载的数据集提供稳定的 Arrow 分片，SimpleTuner 会将预处理得到的裁剪和缩放几何信息写入按分片划分的本地变换缓存。文本和潜变量预处理可按 Arrow 分片分配任务。再次运行时会打开与当前预处理成员视图对应的几何缓存版本。训练采样器仍使用原有桶列表。缺少兼容 Arrow 布局的数据集继续使用 JSON 几何缓存。
+
 ## 基础配置
 
 要使用 Hugging Face 数据集，在 dataloader 中配置 `"type": "huggingface"`：

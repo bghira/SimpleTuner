@@ -33,13 +33,13 @@ sudo nano /etc/exports
 Agrega la siguiente línea al final del archivo (reemplaza `slave_ip` con la IP real de tu máquina slave):
 
 ```
-/home/ubuntu/simpletuner/output slave_ip(rw,sync,no_subtree_check)
+~/simpletuner/output slave_ip(rw,sync,no_subtree_check)
 ```
 
 *Si quieres permitir múltiples slaves o toda una subred, puedes usar:*
 
 ```
-/home/ubuntu/simpletuner/output subnet_ip/24(rw,sync,no_subtree_check)
+~/simpletuner/output subnet_ip/24(rw,sync,no_subtree_check)
 ```
 
 **3. Exportar el directorio compartido**
@@ -76,7 +76,7 @@ sudo apt install nfs-common
 Asegúrate de que el directorio existe (ya debería existir según tu configuración):
 
 ```bash
-sudo mkdir -p /home/ubuntu/simpletuner/output
+sudo mkdir -p ~/simpletuner/output
 ```
 
 *Nota:* Si el directorio contiene datos, haz un respaldo, ya que montar ocultará los contenidos existentes.
@@ -86,7 +86,7 @@ sudo mkdir -p /home/ubuntu/simpletuner/output
 Monta el directorio compartido del master en el directorio local del slave (reemplaza `master_ip` con la IP del master):
 
 ```bash
-sudo mount master_ip:/home/ubuntu/simpletuner/output /home/ubuntu/simpletuner/output
+sudo mount master_ip:~/simpletuner/output ~/simpletuner/output
 ```
 
 **4. Verificar el montaje**
@@ -94,7 +94,7 @@ sudo mount master_ip:/home/ubuntu/simpletuner/output /home/ubuntu/simpletuner/ou
 Comprueba que el montaje sea exitoso:
 
 ```bash
-mount | grep /home/ubuntu/simpletuner/output
+mount | grep ~/simpletuner/output
 ```
 
 **5. Probar acceso de escritura**
@@ -102,10 +102,10 @@ mount | grep /home/ubuntu/simpletuner/output
 Crea un archivo de prueba para asegurar que tienes permisos de escritura:
 
 ```bash
-touch /home/ubuntu/simpletuner/output/test_file_from_slave.txt
+touch ~/simpletuner/output/test_file_from_slave.txt
 ```
 
-Luego, revisa en la máquina master si el archivo aparece en `/home/ubuntu/simpletuner/output`.
+Luego, revisa en la máquina master si el archivo aparece en `~/simpletuner/output`.
 
 **6. Hacer persistente el montaje**
 
@@ -118,7 +118,7 @@ sudo nano /etc/fstab
 Agrega la siguiente línea al final:
 
 ```
-master_ip:/home/ubuntu/simpletuner/output /home/ubuntu/simpletuner/output nfs defaults 0 0
+master_ip:~/simpletuner/output ~/simpletuner/output nfs defaults 0 0
 ```
 
 ---
@@ -170,6 +170,8 @@ Si tu dataset es más pequeño que el tamaño efectivo de batch:
 4. **Habilita sobresuscripción automática** - Usa `--allow_dataset_oversubscription` para ajustar repeats automáticamente
 
 El flag `--allow_dataset_oversubscription` (documentado en [OPTIONS.md](OPTIONS.md#--allow_dataset_oversubscription)) calculará y aplicará automáticamente los repeats mínimos requeridos para tu configuración, haciéndolo ideal para prototipos o experimentos con datasets pequeños.
+
+En una captura Parquet de Webshart con muestreo nativo, cada rank abre una vista de membresía preparada y lee lotes de referencias. La geometría de los recortes compatibles se guarda en disco por shard. Mantén esta caché en almacenamiento accesible para los ranks que la abren y conserva los objetos de origen y el manifiesto. Para reanudar desde un checkpoint, usa las mismas reglas del dataset, semilla, política de muestreo, número de ranks, tamaños de lote y parámetros de acumulación. La precarga almacena lotes temporalmente y el checkpoint guarda cuáles consumió el entrenamiento.
 
 ### Escaneo/descubrimiento lento de imágenes
 
@@ -224,7 +226,7 @@ Esto usará gzip en línea para reducir la cantidad de espacio en disco redundan
 
 ## Configurar vía 🤗 Accelerate
 
-Al usar `accelerate config` (`/home/user/.cache/huggingface/accelerate/default_config.yaml`) para desplegar SimpleTuner, estas opciones tendrán prioridad sobre el contenido de `config/config.env`
+Al usar `accelerate config` (`~/.cache/huggingface/accelerate/default_config.yaml`) para desplegar SimpleTuner, estas opciones tendrán prioridad sobre el contenido de `config/config.env`
 
 Un ejemplo de default_config de Accelerate que no incluye DeepSpeed:
 

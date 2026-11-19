@@ -13,6 +13,8 @@ O backend de datasets do Hugging Face permite que voce:
 
 **Importante**: O SimpleTuner requer acesso ao dataset completo para construir buckets de proporcao e calcular batch sizes. Embora o Hugging Face suporte datasets em streaming, esse recurso nao e compativel com a arquitetura do SimpleTuner. Use filtros para reduzir datasets muito grandes a tamanhos gerenciaveis.
 
+Quando um conjunto baixado expõe shards Arrow estáveis, o SimpleTuner grava a geometria preparada de corte e redimensionamento em um cache local particionado por shard. O preparo de texto e latentes pode dividir o trabalho por shard Arrow. A reutilização da geometria abre a geração correspondente à mesma seleção preparada de amostras. O amostrador de treinamento continua usando as listas antigas de buckets. Os conjuntos sem um layout Arrow compatível mantêm o cache de geometria em JSON.
+
 ## Configuracao basica
 
 Para usar um dataset do Hugging Face, configure seu dataloader com `"type": "huggingface"`:
