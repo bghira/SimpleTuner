@@ -130,16 +130,29 @@ class TestS3PrefixHandling(unittest.TestCase):
     def test_open_read_stream_leaves_metadata_consumption_to_the_caller(self):
         backend = S3DataBackend.__new__(S3DataBackend)
         backend.bucket_name = "datasets"
+        backend.read_retry_limit = 2
+        backend.read_retry_interval = 0
         backend.client = Mock()
+        backend.client.exceptions.NoSuchKey = type("NoSuchKey", (ClientError,), {})
         body = BytesIO(b"published membership")
-        backend.client.get_object.return_value = {"Body": body}
+        backend.client.get_object.side_effect = [
+            ClientError({"Error": {"Code": "503"}}, "GetObject"),
+            {"Body": body},
+        ]
 
         with backend.open_read_stream("buckets.json") as stream:
             self.assertIs(stream, body)
             self.assertEqual(stream.tell(), 0)
             self.assertEqual(stream.read(9), b"published")
         self.assertTrue(body.closed)
-        backend.client.get_object.assert_called_once_with(Bucket="datasets", Key="buckets.json")
+        self.assertEqual(backend.client.get_object.call_count, 2)
+        self.assertEqual(backend.client.get_object.call_args.kwargs, {"Bucket": "datasets", "Key": "buckets.json"})
+
+        backend.client.get_object.reset_mock()
+        backend.client.get_object.side_effect = ClientError({"Error": {"Code": "NotFound"}}, "GetObject")
+        with self.assertRaisesRegex(FileNotFoundError, "buckets.json"):
+            backend.open_read_stream("buckets.json")
+        backend.client.get_object.assert_called_once()
 
     def test_normalise_s3_prefixes_accepts_string_or_list(self):
         self.assertEqual(normalise_s3_prefixes("train/"), ("train/",))

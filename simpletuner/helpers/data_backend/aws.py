@@ -192,10 +192,15 @@ class S3DataBackend(BaseDataBackend):
 
     def read(self, s3_key):
         """Retrieve and return the content of the file from S3."""
+        return self._read_object(s3_key)
+
+    def _read_object(self, s3_key, *, stream=False):
         for i in range(self.read_retry_limit):
             try:
-                response = self.client.get_object(Bucket=self.bucket_name, Key=str(s3_key))
-                with closing(response["Body"]) as body:
+                body = self.client.get_object(Bucket=self.bucket_name, Key=str(s3_key))["Body"]
+                if stream:
+                    return body
+                with closing(body):
                     return body.read()
             except self.client.exceptions.NoSuchKey:
                 logger.debug(f"File {s3_key} does not exist in S3 bucket ({self.bucket_name})")
@@ -220,11 +225,10 @@ class S3DataBackend(BaseDataBackend):
         return self.read(s3_key)
 
     def open_read_stream(self, identifier):
-        try:
-            response = self.client.get_object(Bucket=self.bucket_name, Key=str(identifier))
-        except self.client.exceptions.NoSuchKey as exc:
-            raise FileNotFoundError(str(identifier)) from exc
-        return closing(response["Body"])
+        body = self._read_object(identifier, stream=True)
+        if body is None:
+            raise FileNotFoundError(str(identifier))
+        return closing(body)
 
     def write(self, s3_key, data):
         """
