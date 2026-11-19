@@ -38,7 +38,9 @@ router = APIRouter(prefix="/api/datasets", tags=["dataset_viewer"])
 
 
 def _get_viewer_service() -> DatasetViewerService:
-    return DatasetViewerService()
+    from .datasets import _store
+
+    return DatasetViewerService(plan_path=_store().path)
 
 
 def _load_plan() -> List[Dict[str, Any]]:

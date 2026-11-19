@@ -9,9 +9,11 @@ import json
 import logging
 import os
 import subprocess
+from collections import OrderedDict
 from contextlib import ExitStack, closing, contextmanager
 from glob import escape
 from pathlib import Path
+from threading import Lock
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
@@ -316,10 +318,9 @@ def _array_to_thumbnail(array: np.ndarray, max_size: int = 256) -> str:
     return f"data:image/jpeg;base64,{base64.b64encode(buffer.read()).decode('utf-8')}"
 
 
-# Module-level cache for data backends used by on-demand thumbnail generation.
-# Keyed by dataset ID. Backends are expensive to create (HuggingFace loads the
-# full dataset on first access) but subsequent uses are fast.
-_data_backend_cache: Dict[str, Any] = {}
+_data_backend_cache = OrderedDict()
+_data_backend_cache_lock = Lock()
+_DATA_BACKEND_CACHE_LIMIT = 8
 
 
 def _webshart_source_config(config):
@@ -338,8 +339,13 @@ class DatasetViewerService:
     DEFAULT_THUMBNAIL_SIZE = 256
     MAX_THUMBNAIL_SIZE = 512
 
-    def __init__(self, project_root: Optional[Path] = None):
-        self.project_root = project_root or Path.cwd()
+    def __init__(self, project_root: Optional[Path] = None, *, plan_path: Optional[Path] = None):
+        self.project_root = (project_root or Path.cwd()).resolve()
+        self.plan_path = plan_path.resolve() if plan_path is not None else self.project_root
+
+    def _source_cache_key(self, dataset_config):
+        source = json.dumps([str(self.plan_path), dataset_config], sort_keys=True, separators=(",", ":"), default=os.fspath)
+        return hashlib.sha256(source.encode()).hexdigest()
 
     def _find_cache_file(self, dataset_config: Dict[str, Any], file_type: str = "indices") -> Optional[Path]:
         """Locate an aspect ratio bucket cache file for a dataset.
@@ -967,11 +973,11 @@ class DatasetViewerService:
 
         return None
 
-    def _get_thumbnail_cache_path(self, dataset_id: str, file_path: str, view_revision: Optional[str] = None) -> Path:
-        """Get the local cache path for a thumbnail."""
-        cache_key = file_path if view_revision is None else f"{view_revision}:{file_path}"
-        path_hash = hashlib.md5(cache_key.encode()).hexdigest()
-        cache_dir = self.project_root / self.THUMBNAIL_CACHE_DIR / dataset_id
+    def _get_thumbnail_cache_path(self, dataset_config, file_path: str, view_revision: Optional[str] = None) -> Path:
+        """Get the local cache path for a reference scoped to its source and view."""
+        cache_key = json.dumps([view_revision, file_path])
+        path_hash = hashlib.sha256(cache_key.encode()).hexdigest()
+        cache_dir = self.project_root / self.THUMBNAIL_CACHE_DIR / self._source_cache_key(dataset_config)
         return cache_dir / f"{path_hash}.jpg"
 
     @staticmethod
@@ -1005,13 +1011,19 @@ class DatasetViewerService:
 
     def _get_or_create_data_backend(self, dataset_config: Dict[str, Any]):
         """Create or retrieve a cached data backend for on-demand image reading."""
-        dataset_id = dataset_config.get("id", "")
-        if dataset_id in _data_backend_cache:
-            return _data_backend_cache[dataset_id]
+        key = self._source_cache_key(dataset_config)
+        with _data_backend_cache_lock:
+            if key in _data_backend_cache:
+                _data_backend_cache.move_to_end(key)
+                return _data_backend_cache[key]
 
         data_backend = self._create_data_backend(dataset_config)
-        _data_backend_cache[dataset_id] = data_backend
-        return data_backend
+        with _data_backend_cache_lock:
+            backend = _data_backend_cache.setdefault(key, data_backend)
+            _data_backend_cache.move_to_end(key)
+            if len(_data_backend_cache) > _DATA_BACKEND_CACHE_LIMIT:
+                _data_backend_cache.popitem(last=False)
+        return backend
 
     @staticmethod
     def _create_data_backend(dataset_config):
@@ -1057,7 +1069,7 @@ class DatasetViewerService:
     ) -> Optional[str]:
         """Read an image from a remote backend, generate and cache a thumbnail."""
         dataset_id = dataset_config.get("id", "")
-        cache_path = self._get_thumbnail_cache_path(dataset_id, file_path)
+        cache_path = self._get_thumbnail_cache_path(dataset_config, file_path)
 
         try:
             data_backend = self._get_or_create_data_backend(dataset_config)
@@ -1124,8 +1136,7 @@ class DatasetViewerService:
                 return None
 
         # Remote: try thumbnail disk cache first for speed, then fetch full image
-        dataset_id = dataset_config.get("id", "")
-        cached_path = self._get_thumbnail_cache_path(dataset_id, file_path, view_revision)
+        cached_path = self._get_thumbnail_cache_path(dataset_config, file_path, view_revision)
         if cached_path.is_file():
             try:
                 with Image.open(cached_path) as img:
@@ -1226,7 +1237,6 @@ class DatasetViewerService:
     ) -> List[ViewerThumbnailInfo]:
         """Generate thumbnails for files in a dataset bucket."""
         max_size = min(max(max_size, 64), self.MAX_THUMBNAIL_SIZE)
-        dataset_id = dataset_config.get("id", "")
         backend_type = dataset_config.get("type", "local")
 
         # Get files from cache
@@ -1266,7 +1276,7 @@ class DatasetViewerService:
             else:
                 # For remote backends (aws, huggingface), check local cache first,
                 # then fetch on-demand from the data backend
-                cached_path = self._get_thumbnail_cache_path(dataset_id, file_path)
+                cached_path = self._get_thumbnail_cache_path(dataset_config, file_path)
                 if cached_path.is_file():
                     thumb_data = generate_thumbnail(cached_path, max_size)
                 else:
@@ -1284,8 +1294,7 @@ class DatasetViewerService:
         return thumbnails
 
     def _prepared_thumbnails(self, dataset_config, backend, page, max_size):
-        dataset_id = dataset_config["id"]
-        cached = {ref: self._get_thumbnail_cache_path(dataset_id, ref, page.view_revision) for ref in page.files}
+        cached = {ref: self._get_thumbnail_cache_path(dataset_config, ref, page.view_revision) for ref in page.files}
         missing = [ref for ref, path in cached.items() if not path.is_file()]
         loaded = {}
         if missing:

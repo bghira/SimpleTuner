@@ -1,7 +1,6 @@
 """Tests for DatasetViewerService cache file discovery and summary generation."""
 
 import base64
-import hashlib
 import io
 import json
 import os
@@ -86,8 +85,8 @@ class TestWebshartMembershipPages(unittest.TestCase):
                 thumbnails = service.get_dataset_thumbnails(config, view_revision=revision)
                 self.assertIsNotNone(thumbnails[0].thumbnail)
                 self.assertIsNone(pins[-1])
-                self.assertTrue(service._get_thumbnail_cache_path("images", ref, revision).exists())
-                self.assertFalse(service._get_thumbnail_cache_path("images", ref).exists())
+                self.assertTrue(service._get_thumbnail_cache_path(config, ref, revision).exists())
+                self.assertFalse(service._get_thumbnail_cache_path(config, ref).exists())
                 self.assertEqual(backend.read_image_batch.call_count, 2)
                 service.get_dataset_thumbnails(config, view_revision=revision)
                 self.assertEqual(backend.read_image_batch.call_count, 2)
@@ -1173,25 +1172,38 @@ class TestRemoteThumbnails(unittest.TestCase):
     def test_cached_thumbnail_served_from_disk(self):
         """Pre-cached thumbnails should be returned without creating a backend."""
         self._setup_hf_cache()
-        # Pre-populate the thumbnail cache
-        path_hash = hashlib.md5(b"0.jpg").hexdigest()
-        thumb_dir = Path(self.tmpdir) / "cache" / "viewer_thumbnails" / "hf-ds"
-        thumb_dir.mkdir(parents=True, exist_ok=True)
-        img = Image.new("RGB", (64, 64), (255, 0, 0))
-        img.save(thumb_dir / f"{path_hash}.jpg", format="JPEG")
+        config = {"id": "hf-ds", "type": "huggingface"}
+        path = self.service._get_thumbnail_cache_path(config, "0.jpg")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (64, 64), (255, 0, 0)).save(path, format="JPEG")
 
-        import os
-
-        original_cwd = os.getcwd()
-        os.chdir(self.tmpdir)
-        try:
-            config = {"id": "hf-ds", "type": "huggingface"}
+        with patch.object(self.service, "_get_or_create_data_backend", side_effect=AssertionError("opened reader")):
             result = self.service.get_dataset_thumbnails(config, bucket_key="1.0", limit=1)
-            self.assertEqual(len(result), 1)
-            self.assertIsNotNone(result[0].thumbnail)
-            self.assertIsNone(result[0].error)
-        finally:
-            os.chdir(original_cwd)
+        self.assertEqual(len(result), 1)
+        self.assertIsNotNone(result[0].thumbnail)
+        self.assertIsNone(result[0].error)
+
+    def test_reused_dataset_ids_do_not_share_readers_or_thumbnails_between_sources(self):
+        self._setup_hf_cache()
+        root = Path(self.tmpdir)
+        other_project = DatasetViewerService(project_root=root, plan_path=root / "second-plan.json")
+        config = {"id": "hf-ds", "type": "huggingface", "dataset_name": "repo-a"}
+        changed = {**config, "dataset_name": "repo-b"}
+        requests = [(self.service, config), (self.service, changed), (other_project, config)]
+        readers = []
+        for color in ("red", "blue", "green"):
+            reader = MagicMock()
+            reader.read_image.return_value = Image.new("RGB", (64, 64), color)
+            readers.append(reader)
+
+        with patch.object(DatasetViewerService, "_create_data_backend", side_effect=readers) as create:
+            pages = [service.get_dataset_thumbnails(source, limit=1) for service, source in requests]
+            self.assertEqual(create.call_count, 3)
+            self.assertEqual(len({page[0].thumbnail for page in pages}), 3)
+            for service, source in requests:
+                self.assertTrue(service._get_thumbnail_cache_path(source, "0.jpg").exists())
+                service.get_dataset_thumbnails(source, limit=1)
+            self.assertEqual(create.call_count, 3)
 
     @patch(
         "simpletuner.simpletuner_sdk.server.services.dataset_viewer_service"
@@ -1218,8 +1230,7 @@ class TestRemoteThumbnails(unittest.TestCase):
             mock_backend.read_image.assert_called_once_with("0.jpg")
 
             # Verify thumbnail was cached to disk
-            path_hash = hashlib.md5(b"0.jpg").hexdigest()
-            cached = Path(self.tmpdir) / "cache" / "viewer_thumbnails" / "hf-ds" / f"{path_hash}.jpg"
+            cached = self.service._get_thumbnail_cache_path(config, "0.jpg")
             self.assertTrue(cached.is_file())
         finally:
             os.chdir(original_cwd)
