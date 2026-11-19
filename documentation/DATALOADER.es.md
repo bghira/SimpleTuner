@@ -227,6 +227,7 @@ Esto crea automáticamente un dataset `my-videos_audio` y lo enlaza vía `s2v_da
 |-------|------|---------|-------------|
 | `audio.auto_split` | bool | true | Genera automáticamente dataset de audio desde archivos de video. Default true cuando la sección `audio` está presente. Para modelos que requieren S2V, default true incluso sin sección `audio`. |
 | `audio.source_from_video` | bool | false | (Auto-configurado) Indica que el audio se extrae del video |
+| `audio.sidecar_match` | `stem` / `relative_path` | `stem` | Busca por el nombre base del vídeo en la raíz de audio o por su ruta relativa a la raíz de vídeo. Se aplica a archivos de audio separados. |
 | `audio.allow_zero_audio` | bool | false | Genera audio con ceros para videos sin stream de audio |
 | `audio.audio_only` | bool | false | Override de compatibilidad; una configuración compuesta solo por audio lo activa automáticamente para LTX-2 y MiniMax-H3 |
 | `audio.target_resolution` | int | null | Override legado; el stream falso automático usa la geometría mínima de tokens de la familia |
@@ -1403,7 +1404,11 @@ Para un ejemplo básico de cómo usar un dataset de Hugging Face, configura `"ty
 
 Las consultas de captions usan la caché de metadatos por shard de Webshart en lugar de un mapa de captions de todo el dataset en SimpleTuner. Los archivos JSON de captions antiguos de SimpleTuner permanecen en disco y se ignoran. Los entrenamientos con captions nativos de Webshart omiten las estadísticas inferidas de palabras de activación en los metadatos de los checkpoints.
 
-Durante la preparación de la caché VAE, Webshart procesa todos los grupos de relación de aspecto de un shard antes de pasar al siguiente. Esto reduce las descargas repetidas cuando la caché de shards completos no puede contener todo el conjunto de datos. Las muestras ya almacenadas y las asignadas a otros ranks se excluyen antes de agrupar; el orden del muestreador de entrenamiento no cambia.
+Con una política de muestreo nativa, la preparación VAE lee la vista aceptada en lotes acotados de formas compatibles y divide el trabajo independientemente del orden de entrenamiento. El mantenimiento de la caché VAE anterior agrupa por shard las tareas pendientes.
+
+En Parquet nativo, el índice de pertenencia preparado registra las referencias aceptadas, los recuentos y las revisiones fijadas de la fuente. La geometría reutilizable de las imágenes con políticas de recorte compatibles se guarda en la caché de transformaciones por shard de Webshart, bajo `webshart.cache_dir`. Los bytes de las imágenes se leen de la fuente o de la caché separada de shards completos. Una nueva revisión preparada se publica tras un escaneo forzado exitoso. Reemplazar el contenido invalida las exclusiones del shard afectado. Vuelve a abrir el dataset si cambia la huella del catálogo de origen.
+
+Define `text_cache_encode_only: true` en la entrada vinculada de embeddings de texto para codificar el lote actual durante el entrenamiento sin acceder a los archivos de embeddings. Para precalcularlos, utiliza un almacén Local o AWS independiente y con permisos de escritura, y selecciónalo con `text_embeds` en el dataset de imágenes.
 
 Los captions pueden ser cadenas, objetos JSON nativos o listas mixtas de ambos.
 Los objetos se conservan en los metadatos y la caché; cada objeto se convierte en

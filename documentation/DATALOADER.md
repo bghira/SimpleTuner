@@ -229,6 +229,7 @@ This automatically creates a `my-videos_audio` dataset and links it via `s2v_dat
 |-------|------|---------|-------------|
 | `audio.auto_split` | bool | true | Auto-generate audio dataset from video files. Defaults to true when an `audio` section is present. For S2V-required models, defaults to true even without an `audio` section. |
 | `audio.source_from_video` | bool | false | (Auto-set) Indicates audio is extracted from video |
+| `audio.sidecar_match` | `stem` / `relative_path` | `stem` | Match the video filename stem in the audio root or match its path relative to the video root. Applies to standalone sidecar audio. |
 | `audio.allow_zero_audio` | bool | false | Generate zero-filled audio for videos without audio streams |
 | `audio.audio_only` | bool | false | Compatibility override for audio-only training; all-audio dataset configurations enable it automatically on LTX-2 and MiniMax-H3 |
 | `audio.target_resolution` | int | null | Legacy target resolution override; automatic fake streams use the model family's minimal token geometry |
@@ -1458,7 +1459,11 @@ For a basic example of how to use a Hugging Face dataset, set `"type": "huggingf
 
 Caption lookups use Webshart's shard metadata cache instead of a dataset-wide SimpleTuner caption map. Legacy SimpleTuner caption JSON files remain on disk and are ignored. Runs using native Webshart captions omit inferred trigger-word statistics from checkpoint metadata.
 
-During VAE cache preparation, Webshart processes all aspect-bucket groups belonging to one shard before moving to the next shard. This reduces repeated shard downloads when the whole-shard cache cannot hold the dataset. Already-cached samples and samples assigned to other ranks are excluded before grouping; training sampler order is unchanged.
+With a native sampling policy, VAE preparation reads the accepted view in bounded, shape-compatible batches and partitions that work independently of the training order. The legacy VAE maintenance pass groups its pending work by shard.
+
+For native Parquet, the prepared membership index records accepted references, counts, and source pins. Reusable image geometry for supported crop policies is stored in Webshart's per-shard transform cache under `webshart.cache_dir`. Image bytes use the source or the separate whole-shard cache. A forced rescan publishes a new prepared revision after the scan succeeds. Replacement content invalidates exclusions for its shard. Reopen the dataset when the source catalogue fingerprint changes.
+
+Set `text_cache_encode_only: true` on the bound text embedding entry to encode the current batch during training without accessing embedding files. For precomputation, use an independent writable Local or AWS text embedding store and point the image dataset's `text_embeds` field to it.
 
 Captions can be strings, native JSON objects, or mixed lists of both. Objects stay
 intact during caption lookup; each object becomes one JSON text prompt

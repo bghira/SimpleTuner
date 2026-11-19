@@ -226,6 +226,7 @@ LTX-2 使用原生纯音频分支；MiniMax-H3 在打包序列中为每个 laten
 |------|------|--------|------|
 | `audio.auto_split` | bool | true | 从视频文件自动生成音频数据集。当存在 `audio` 部分时默认为 true。对于要求 S2V 的模型，即使没有 `audio` 部分也默认为 true。 |
 | `audio.source_from_video` | bool | false | （自动设置）表示音频从视频中提取 |
+| `audio.sidecar_match` | `stem` / `relative_path` | `stem` | 在音频根目录中按视频文件名匹配，或按相对于视频根目录的路径匹配。适用于独立的音频伴随文件。 |
 | `audio.allow_zero_audio` | bool | false | 为没有音频流的视频生成全零音频 |
 | `audio.audio_only` | bool | false | 兼容性 override；纯音频数据集配置会为 LTX-2 和 MiniMax-H3 自动启用此模式 |
 | `audio.target_resolution` | int | null | 旧版 override；自动伪视频流使用模型系列的最小 token 几何 |
@@ -1403,7 +1404,11 @@ SimpleTuner 现在支持直接从 Hugging Face Hub 加载数据集，无需完�
 
 字幕查询使用 Webshart 的分片元数据缓存，而不是 SimpleTuner 中覆盖整个数据集的字幕映射。旧版 SimpleTuner 字幕 JSON 文件保留在磁盘上，但不再读取。使用 Webshart 原生字幕的训练运行不会在检查点元数据中包含推断的触发词统计信息。
 
-准备 VAE 缓存时，Webshart 会先处理同一分片中的所有宽高比分桶组，再处理下一个分片。当整分片缓存无法容纳整个数据集时，这可以减少分片的重复下载。已缓存的样本以及分配给其他 rank 的样本会在分组前排除；训练采样器的顺序保持不变。
+使用原生采样策略时，VAE 预处理按形状兼容的有限批次读取已接受视图，并独立于训练顺序划分工作。旧版 VAE 缓存维护流程会按分片对待处理任务分组。
+
+对于原生 Parquet，预处理成员索引记录已接受的样本引用、计数和固定的源版本。支持的裁剪策略所生成的可复用图像几何信息位于 `webshart.cache_dir` 下的 Webshart 分片变换缓存中。图像字节从数据源或独立的整分片缓存读取。强制重新扫描成功后会发布新的预处理版本。替换内容会使对应分片的排除记录失效。源目录指纹变化时请重新打开数据集。
+
+在绑定的文本嵌入条目上设置 `text_cache_encode_only: true`，即可在训练时编码当前批次，无需访问嵌入文件。要预计算，请使用独立的可写本地或 AWS 文本嵌入存储，并将图像数据集的 `text_embeds` 字段指向该存储。
 
 字幕可以是字符串、原生 JSON 对象或两者混合的列表。对象在元数据和字幕缓存中保持完整，
 仅在准备文本编码器输入时转换为一条 JSON 文本提示词。对象字段不会被拆分为多个字幕变体。
