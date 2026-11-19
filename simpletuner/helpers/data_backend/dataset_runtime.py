@@ -21,7 +21,6 @@ from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.helpers.metadata.preparation import DatasetReadView
 from simpletuner.helpers.prompts import CaptionNotFoundError, PromptHandler
 from simpletuner.helpers.training import video_file_extensions
-from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.utils.pathing import normalize_data_path
 
 logger = logging.getLogger(__name__)
@@ -70,6 +69,7 @@ class DatasetRuntime:
         self.training_dataset = None
         self.training_dataloader = None
         self.conditioning_datasets = ()
+        self.source_dataset = None
         self.audio_datasets = ()
         self.conditioning_image_embed_cache = None
         self.grounding_image_embed_cache = None
@@ -353,10 +353,10 @@ class DatasetRuntime:
         caption_dataset, caption_ref = self, ref
         source_id = self.config.get("source_dataset_id")
         if source_id is not None and self.config.get("caption_strategy") is None:
-            caption_dataset = (
-                source if source is not None and source.id == source_id else StateTracker.get_dataset(source_id)
-            )
-            caption_ref = sample.training_sample_path(training_dataset_id=source_id)
+            caption_dataset = source if source is not None and source.id == source_id else self.source_dataset
+            if caption_dataset is None:
+                raise ValueError(f"Dataset {self.id} requires a bound caption source {source_id}.")
+            caption_ref = sample.training_sample_path(source_id, training_dataset=caption_dataset, conditioning_dataset=self)
         caption = caption_dataset.resolve_caption(caption_ref)
         if isinstance(caption, list):
             caption = (random if rng is None else rng).choice(caption)

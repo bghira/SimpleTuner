@@ -3380,6 +3380,8 @@ class FactoryRegistry:
             },
         )
         init_backend["dataset_runtime"].text_embed_cache = init_backend.get("text_embed_cache")
+        if source_id := init_backend["config"].get("source_dataset_id"):
+            init_backend["dataset_runtime"].source_dataset = StateTracker.get_dataset(source_id)
         init_backend["config"] = init_backend["dataset_runtime"].config
         StateTracker.own_dataset_resource(init_backend["dataset_runtime"])
         StateTracker.register_dataset(init_backend["dataset_runtime"])
@@ -3397,7 +3399,6 @@ class FactoryRegistry:
             resolution_type=backend.get("resolution_type", self.args.resolution_type),
             conditioning_type=conditioning_type,
             is_regularisation_data=is_regularisation_data,
-            source_dataset_id=init_backend["config"].get("source_dataset_id", None),
             track_consumed=dataset_type is not DatasetType.EVAL,
         )
         init_backend["dataset_runtime"].sampler = init_backend["sampler"]
@@ -3477,8 +3478,7 @@ class FactoryRegistry:
             StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
             return
         # Skip text embed processing for audio datasets that source from video.
-        # These datasets inherit captions from their parent dataset during training
-        # (see MultiAspectSampler.__getitem__ where source_dataset_id triggers caption lookup from parent).
+        # These datasets use captions from their bound video source.
         audio_config = backend.get("audio", {})
         if audio_config.get("source_from_video", False):
             info_log(f"(id={init_backend['id']}) Skipping text embedding processing for source_from_video audio dataset.")
@@ -3558,12 +3558,12 @@ class FactoryRegistry:
         )
         cache.precompute_embeddings(records, batch_size=batch_size)
 
-    def _handle_auto_generated_dataset(self, backend: Dict[str, Any], init_backend: Dict[str, Any]) -> None:
+    def _handle_auto_generated_dataset(self, init_backend: Dict[str, Any]) -> None:
         """Handle auto-generated reference datasets."""
         from simpletuner.helpers.data_generation import DataGenerator
 
-        source = StateTracker.get_dataset(backend["source_dataset_id"])
-        generator = DataGenerator(source, init_backend["dataset_runtime"], self.accelerator)
+        dataset = init_backend["dataset_runtime"]
+        generator = DataGenerator(dataset.source_dataset, dataset, self.accelerator)
         generator.generate_dataset()
 
     def _configure_conditioning_image_embed_cache(
@@ -4169,7 +4169,7 @@ class FactoryRegistry:
                 text_precompute_cleanup()
 
         if backend.get("auto_generated", False):
-            self._handle_auto_generated_dataset(backend, init_backend)
+            self._handle_auto_generated_dataset(init_backend)
 
         if getattr(self.model, "AUTOENCODER_CLASS", None) is not None and conditioning_type not in [
             "mask",

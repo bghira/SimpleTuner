@@ -182,11 +182,12 @@ class TrainingSample:
         except ValueError:
             return False
 
-    def training_sample_path(self, training_dataset_id: str) -> str:
+    def training_sample_path(self, training_dataset_id: str, *, training_dataset=None, conditioning_dataset=None) -> str:
         """get primary training sample path for conditioning sample"""
         if self.paired_source is not None and self.paired_source[0] == training_dataset_id:
             return self.paired_source[1]
-        training_dataset = StateTracker.get_dataset(training_dataset_id)
+        if training_dataset is None:
+            training_dataset = StateTracker.get_dataset(training_dataset_id)
         training_data_dir = training_dataset.config["instance_data_dir"]
         if isinstance(self.image_metadata, dict) and self.image_metadata.get("training_sample_path"):
             training_sample_path = self.image_metadata["training_sample_path"]
@@ -196,7 +197,9 @@ class TrainingSample:
         if not self._image_path:
             raise ValueError("Cannot determine training sample path: no image path provided.")
 
-        cond_data_dir = StateTracker.get_dataset(self.data_backend_id).config["instance_data_dir"]
+        if conditioning_dataset is None:
+            conditioning_dataset = StateTracker.get_dataset(self.data_backend_id)
+        cond_data_dir = conditioning_dataset.config["instance_data_dir"]
         if os.path.isabs(self._image_path):
             conditioning_root = os.path.abspath(cond_data_dir) if cond_data_dir else None
             if conditioning_root and self._path_is_within(self._image_path, conditioning_root):

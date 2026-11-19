@@ -373,7 +373,6 @@ class TestWebshartParquetBackend(unittest.TestCase):
         sampler.dataset_runtime = runtime
         sampler.id = runtime.id
         sampler.model = None
-        sampler.source_dataset_id = None
         with closing(runtime.open_validation()) as cursor:
             sampler.validation_cursor = cursor
             cursor.next_refs(1)

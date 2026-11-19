@@ -549,12 +549,12 @@ class DatasetRuntimeTests(unittest.TestCase):
                 sampler.model = None
                 sampler.dataset_runtime = self.runtime
                 sampler.data_backend = self.data_backend
-                sampler.source_dataset_id = source_id
                 sampler.validation_cursor = SimpleNamespace(next_refs=Mock(return_value=["sample.jpg"]))
                 self.data_backend.read_image_batch.return_value = (["sample.jpg"], ["image"])
                 sampler.logger = Mock()
                 sampler.debug_log = Mock()
-                source_runtime = SimpleNamespace(resolve_captions=Mock(return_value=["source caption"]))
+                source_runtime = SimpleNamespace(id="source", resolve_captions=Mock(return_value=["source caption"]))
+                self.runtime.source_dataset = source_runtime if source_id else None
 
                 def training_sample(**kwargs):
                     kwargs["image_metadata"]["webshart"]["sample_idx"] = 99
@@ -564,7 +564,7 @@ class DatasetRuntimeTests(unittest.TestCase):
 
                 with (
                     patch("simpletuner.helpers.multiaspect.sampler.TrainingSample", side_effect=training_sample),
-                    patch.object(StateTracker, "get_dataset", return_value=source_runtime),
+                    patch.object(StateTracker, "get_dataset", side_effect=AssertionError("global dataset lookup")),
                     patch("simpletuner.helpers.multiaspect.sampler.random.choice", side_effect=lambda choices: choices[0]),
                 ):
                     results = sampler.retrieve_validation_set(1)

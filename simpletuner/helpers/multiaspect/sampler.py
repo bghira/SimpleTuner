@@ -72,7 +72,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         resolution_type: str = "pixel",
         conditioning_type: str = None,
         is_regularisation_data: bool = False,
-        source_dataset_id: str = None,
         track_consumed: bool = False,
     ):
         self.dataset_runtime = dataset_runtime
@@ -116,7 +115,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 "reference_loose",
             ]:
                 raise ValueError(f"Unknown conditioning image type: {conditioning_type}")
-        self.source_dataset_id = source_dataset_id
         self.current_bucket = None
         self.current_epoch = 1
         self.batch_size = batch_size
@@ -448,9 +446,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         records = self.dataset_runtime.read_samples(list(positions), fields=("metadata", "image"), view=view)
         prepared = []
         caption_paths = []
-        caption_dataset = (
-            self.dataset_runtime if self.source_dataset_id is None else StateTracker.get_dataset(self.source_dataset_id)
-        )
+        caption_dataset = self.dataset_runtime.source_dataset or self.dataset_runtime
         for image_metadata in records:
             image_path = image_metadata["image_path"]
             training_sample = TrainingSample(
@@ -464,8 +460,10 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             training_sample.prepare()
             caption_paths.append(
                 image_path
-                if self.source_dataset_id is None
-                else training_sample.training_sample_path(training_dataset_id=self.source_dataset_id)
+                if caption_dataset is self.dataset_runtime
+                else training_sample.training_sample_path(
+                    caption_dataset.id, training_dataset=caption_dataset, conditioning_dataset=self.dataset_runtime
+                )
             )
             prepared.append((image_path, training_sample.image))
         for (image_path, image), validation_prompt in zip(
