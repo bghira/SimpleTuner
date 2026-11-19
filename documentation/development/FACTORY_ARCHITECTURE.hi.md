@@ -31,3 +31,11 @@ Local डिस्कवरी, AWS और CSV साझा पुराने �
 ```bash
 .venv/bin/python -m unittest -v -f tests.test_dataset_runtime tests.test_webshart_parquet_backend tests.test_vae_cache_traversal
 ```
+
+चेकआउट से प्रोवाइडर जाँच के लिए फ़ैक्टरी इंटीग्रेशन रनर चलाएँ। लोकल स्टार्टअप बेंचमार्क अस्थायी जगह में असली JPEG बनाता है और एक ही प्रोसेस में पहली तैयारी और दोबारा खोलने का समय मापता है। रिविज़न की तुलना के लिए इसे हर चेकआउट में चलाएँ। Webshart कैटलॉग जाँच सोर्स के चुने हुए फ़ील्ड की रीड, इंस्टॉल किया गया रीडर संस्करण और ट्रांसपोर्ट ऑपरेशन दिखाती है। ट्रेनिंग और रेज़्यूम की जाँच अलग ट्रेनर टूल से होती है।
+
+```bash
+.venv/bin/python tests/run_factory_tests.py
+.venv/bin/python -m scripts.benchmark_dataset_startup --samples 128
+.venv/bin/python -m scripts.benchmark_webshart_catalogue --source ./parquet-fixture --shards 3
+```

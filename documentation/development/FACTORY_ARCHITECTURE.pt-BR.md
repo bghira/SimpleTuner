@@ -31,3 +31,11 @@ Para um provedor novo, teste no runtime a estabilidade das referências, a proje
 ```bash
 .venv/bin/python -m unittest -v -f tests.test_dataset_runtime tests.test_webshart_parquet_backend tests.test_vae_cache_traversal
 ```
+
+Em um checkout, use o executor de integração da fábrica para testar os provedores. O benchmark de inicialização local cria JPEGs reais em uma área temporária e mede o preparo inicial e a reabertura no mesmo processo. Execute-o em cada checkout para comparar revisões. A verificação do catálogo Webshart mede leituras projetadas da origem e informa a versão instalada do leitor e as operações de transporte. O treino e a retomada usam o verificador do trainer.
+
+```bash
+.venv/bin/python tests/run_factory_tests.py
+.venv/bin/python -m scripts.benchmark_dataset_startup --samples 128
+.venv/bin/python -m scripts.benchmark_webshart_catalogue --source ./parquet-fixture --shards 3
+```

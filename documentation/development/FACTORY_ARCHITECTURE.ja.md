@@ -31,3 +31,11 @@ FactoryRegistry → builders → DatasetRuntime
 ```bash
 .venv/bin/python -m unittest -v -f tests.test_dataset_runtime tests.test_webshart_parquet_backend tests.test_vae_cache_traversal
 ```
+
+チェックアウトからファクトリの統合テストを実行すると、プロバイダーを検証できます。ローカル起動のベンチマークは一時領域に実際の JPEG を作成し、同一プロセスで新規前処理と再オープンを計測します。リビジョンを比較する場合は各チェックアウトで実行します。Webshart のカタログ計測はソースの指定列を読み、インストール済みリーダーのバージョンと転送操作を表示します。学習と再開は別のトレーナー検証ツールで確認します。
+
+```bash
+.venv/bin/python tests/run_factory_tests.py
+.venv/bin/python -m scripts.benchmark_dataset_startup --samples 128
+.venv/bin/python -m scripts.benchmark_webshart_catalogue --source ./parquet-fixture --shards 3
+```

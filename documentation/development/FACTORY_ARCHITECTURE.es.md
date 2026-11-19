@@ -31,3 +31,11 @@ Al crear un proveedor, prueba en el runtime la estabilidad de las referencias, l
 ```bash
 .venv/bin/python -m unittest -v -f tests.test_dataset_runtime tests.test_webshart_parquet_backend tests.test_vae_cache_traversal
 ```
+
+Desde un checkout, usa el ejecutor de integración de la fábrica para probar los proveedores. La prueba de arranque local crea JPEG reales en almacenamiento temporal y mide la preparación inicial y la reapertura en el mismo proceso. Ejecútala en cada checkout para comparar revisiones. La prueba del catálogo de Webshart mide lecturas proyectadas de la fuente e informa de la versión instalada y las operaciones de transporte. El entrenamiento y la reanudación se verifican con la herramienta del entrenador.
+
+```bash
+.venv/bin/python tests/run_factory_tests.py
+.venv/bin/python -m scripts.benchmark_dataset_startup --samples 128
+.venv/bin/python -m scripts.benchmark_webshart_catalogue --source ./parquet-fixture --shards 3
+```

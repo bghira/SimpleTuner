@@ -31,3 +31,11 @@ For a new provider, test reference stability, ordered projected reads, preparati
 ```bash
 .venv/bin/python -m unittest -v -f tests.test_dataset_runtime tests.test_webshart_parquet_backend tests.test_vae_cache_traversal
 ```
+
+From a checkout, use the factory integration runner for provider coverage. The Local startup benchmark creates real JPEGs in scratch space and measures a fresh preparation and a reopen in the same process. Run it in each checkout to compare revisions. The Webshart catalogue probe measures projected source reads and reports the installed reader version and transport operations. Training and resume use the separate trainer verifier.
+
+```bash
+.venv/bin/python tests/run_factory_tests.py
+.venv/bin/python -m scripts.benchmark_dataset_startup --samples 128
+.venv/bin/python -m scripts.benchmark_webshart_catalogue --source ./parquet-fixture --shards 3
+```

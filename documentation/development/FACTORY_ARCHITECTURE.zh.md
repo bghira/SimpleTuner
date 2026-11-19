@@ -31,3 +31,11 @@ FactoryRegistry → builders → DatasetRuntime
 ```bash
 .venv/bin/python -m unittest -v -f tests.test_dataset_runtime tests.test_webshart_parquet_backend tests.test_vae_cache_traversal
 ```
+
+在代码检出目录中使用工厂集成测试入口来验证提供方。本地启动基准在临时目录中生成真实的 JPEG，并在同一进程内测量首次预处理和重新打开的耗时。对比版本时，在各自的检出目录中运行。Webshart 目录探针测量数据源的投影读取，并报告已安装的读取器版本及传输操作。训练与恢复由单独的训练器验证工具覆盖。
+
+```bash
+.venv/bin/python tests/run_factory_tests.py
+.venv/bin/python -m scripts.benchmark_dataset_startup --samples 128
+.venv/bin/python -m scripts.benchmark_webshart_catalogue --source ./parquet-fixture --shards 3
+```
