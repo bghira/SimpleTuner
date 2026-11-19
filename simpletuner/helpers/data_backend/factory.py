@@ -3760,6 +3760,9 @@ class FactoryRegistry:
                 vae_batch_size = self.args.vae_batch_size
 
         dataset_vae_cache_disable, dataset_vae_cache_ondemand = _normalise_vae_cache_config(init_backend["config"])
+        if init_backend["dataset_runtime"].recrops_lazily:
+            dataset_vae_cache_ondemand = True
+            init_backend["config"]["vae_cache_ondemand"] = True
 
         init_backend["vaecache"] = VAECache(
             id=init_backend["id"],

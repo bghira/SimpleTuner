@@ -934,8 +934,8 @@ See the [Troubleshooting](#troubleshooting-filtered-datasets) section below for 
 
 ### `vae_cache_clear_each_epoch`
 
-- When enabled, all VAE cache objects are deleted from the filesystem at the end of each dataset repeat cycle. This can be resource-intensive for large datasets, but combined with `crop_style=random` and/or `crop_aspect=random` you'll want this enabled to ensure you sample a full range of crops from each image.
-- In fact, this option is **enabled by default** when using random bucketing or crops.
+- Enable this option to rebuild the VAE cache at the start of each subsequent training epoch. With `crop: true` and `crop_style: random`, mutable datasets also refresh their random crops.
+- Native Webshart Parquet image datasets with fixed target shapes and no paired conditioning inputs reuse the prepared view. The provider chooses new crop offsets as rows are read and encodes the corresponding VAE latents on demand.
 
 ### `vae_cache_ondemand`
 

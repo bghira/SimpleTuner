@@ -78,6 +78,10 @@ class DatasetRuntime:
     def uses_native_schedule(self) -> bool:
         return self.epoch_provider is not None
 
+    @property
+    def recrops_lazily(self) -> bool:
+        return getattr(self.metadata_backend, "recrops_lazily", False) is True
+
     def prepare_epoch(self, epoch, *, rebuild_random_aspect, gradient_accumulation_steps, apply_padding):
         """Refresh prepared data before the sampler and prefetcher start the next epoch."""
         metadata, cache = self.metadata_backend, self.vae_cache
@@ -87,7 +91,7 @@ class DatasetRuntime:
             gradient_accumulation_steps=gradient_accumulation_steps,
             apply_padding=apply_padding,
         )
-        if cache is None:
+        if cache is None or self.recrops_lazily:
             return
         clear_latents = self.config.get("vae_cache_clear_each_epoch")
         if self.requires_complete_preparation is True:
@@ -101,6 +105,8 @@ class DatasetRuntime:
 
     def start_epoch(self, epoch):
         if self.uses_native_schedule:
+            if self.recrops_lazily:
+                self.metadata_backend.set_training_epoch(epoch)
             self.sampler.start_native_epoch(epoch)
         elif self.tracks_consumed_batches:
             self.sampler.start_training_epoch(epoch)
@@ -146,6 +152,8 @@ class DatasetRuntime:
     def restore_checkpoint(self, state_path):
         if self.sampler is not None:
             self.sampler.load_states(state_path=state_path)
+            if self.recrops_lazily:
+                self.metadata_backend.set_training_epoch(self.sampler.current_epoch)
 
     def log_sampling_state(self):
         if self.sampler is not None:
@@ -204,6 +212,8 @@ class DatasetRuntime:
             "conditioning_sampling": getattr(args, "conditioning_multidataset_sampling", "combined"),
             "caption_dropout": getattr(args, "caption_dropout_probability", None),
         }
+        if self.recrops_lazily:
+            inputs["epoch_recrop"] = self.metadata_backend.epoch_recrop_version
         if not self.uses_native_schedule:
             revision = self.describe().source_revision
             if isinstance(revision, str):

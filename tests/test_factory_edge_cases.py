@@ -283,6 +283,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
         self.assertIn("unique 'id' field", str(context.exception))
 
     def test_dataset_vae_cache_modes_use_dataset_ondemand_mode(self):
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
         from simpletuner.helpers.data_backend.factory import FactoryRegistry, init_backend_config
 
         factory = FactoryRegistry(
@@ -293,13 +294,14 @@ class TestFactoryEdgeCases(unittest.TestCase):
             model=self.model,
         )
         modes = [
-            ({"vae_cache_ondemand": True}, False, ()),
-            ({"vae_cache_disable": True}, True, ()),
-            ({"vae_cache_ondemand": True}, False, ("vae_cache_disable",)),
+            ({"vae_cache_ondemand": True}, False, (), False),
+            ({"vae_cache_disable": True}, True, (), False),
+            ({"vae_cache_ondemand": True}, False, ("vae_cache_disable",), False),
+            ({}, False, (), True),
         ]
 
-        for backend_mode, expected_disable, missing_config_keys in modes:
-            with self.subTest(backend_mode=backend_mode, missing_config_keys=missing_config_keys):
+        for backend_mode, expected_disable, missing_config_keys, lazy_recrop in modes:
+            with self.subTest(backend_mode=backend_mode, missing_config_keys=missing_config_keys, lazy_recrop=lazy_recrop):
                 backend = {
                     "id": "dataset-ondemand-cache",
                     "type": "local",
@@ -314,9 +316,12 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 init_backend.update(
                     {
                         "data_backend": MagicMock(id=backend["id"], type="local"),
-                        "metadata_backend": MagicMock(),
+                        "metadata_backend": MagicMock(recrops_lazily=lazy_recrop),
                         "instance_data_dir": self.temp_dir,
                     }
+                )
+                init_backend["dataset_runtime"] = DatasetRuntime(
+                    backend["id"], init_backend["data_backend"], init_backend["metadata_backend"], init_backend["config"]
                 )
                 image_embed_backend = {"data_backend": MagicMock(type="local")}
 

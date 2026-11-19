@@ -157,6 +157,91 @@ class TestWebshartParquetBackend(unittest.TestCase):
         self.assertEqual(centered["geometry_sha256"], randomized["geometry_sha256"])
         self.assertNotEqual(centered["view_revision"], randomized["view_revision"])
 
+    def test_fixed_shape_epoch_recrop_projects_only_requested_rows(self):
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+        from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
+        from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBackend
+
+        config = {
+            "webshart": {"sampling_policy": "global"},
+            "caption_strategy": "webshart",
+            "resolution": 8,
+            "resolution_type": "pixel",
+            "crop": True,
+            "crop_style": "random",
+            "crop_aspect": "square",
+            "vae_cache_clear_each_epoch": True,
+        }
+        args = SimpleNamespace(seed=5, aspect_bucket_alignment=8, aspect_bucket_rounding=2, disable_bucket_pruning=True)
+        provider = WebshartMetadataBackend(
+            id=self.backend.id,
+            instance_data_dir=self.backend.cache_dir,
+            cache_file=str(self.root / "buckets"),
+            metadata_file=str(self.root / "metadata"),
+            data_backend=self.backend,
+            accelerator=SimpleNamespace(num_processes=1, process_index=0),
+            batch_size=1,
+            resolution=8,
+            resolution_type="pixel",
+            runtime_args=args,
+            dataset_config=config,
+        )
+        self.addCleanup(provider.close)
+        runtime = DatasetRuntime(self.backend.id, self.backend, provider, config)
+        runtime.sampler = Mock()
+        runtime.vae_cache = Mock()
+        runtime.prepare_view()
+        (ref, other), count = runtime.read_page(limit=2)
+        self.assertEqual(count, 2)
+        self.assertTrue(runtime.recrops_lazily)
+        revision = runtime.describe().view_revision
+        (base,) = runtime.read_samples([ref])
+        model = SimpleNamespace(config=SimpleNamespace())
+        base_vae_key = provider.image_artifact_key(ref, "vae", model)
+        base_embed_key = provider.image_artifact_key(ref, "conditioning", model)
+        with (
+            patch.object(provider, "_scan_rows", side_effect=AssertionError("epoch scanned source rows")),
+            patch.object(provider, "iter_preparation_batches", side_effect=AssertionError("epoch scanned membership")),
+            patch.object(provider, "enqueue_prepared_metadata", side_effect=AssertionError("epoch rewrote base cache")),
+            patch.object(self.backend.dataset, "read_metadata_rows", side_effect=AssertionError("warm projection")),
+            patch.object(self.backend, "read_image_batch", side_effect=AssertionError("geometry read image bytes")),
+            patch.object(provider._transforms, "read_batch", wraps=provider._transforms.read_batch) as read,
+        ):
+            coordinates = []
+            for epoch in range(2, 5):
+                runtime.prepare_epoch(epoch, rebuild_random_aspect=True, gradient_accumulation_steps=1, apply_padding=False)
+                runtime.start_epoch(epoch)
+                read.assert_not_called()
+                transformed = runtime.read_samples([ref, ref])
+                read.assert_called_once_with([ref, ref])
+                read.reset_mock()
+                self.assertEqual(transformed[0], transformed[1])
+                self.assertEqual(transformed[0]["target_size"], base["target_size"])
+                self.assertEqual(transformed[0]["intermediary_size"], base["intermediary_size"])
+                coordinates.append(transformed[0]["crop_coordinates"])
+            self.assertTrue(any(offset != base["crop_coordinates"] for offset in coordinates))
+            self.assertNotEqual(provider.image_artifact_key(ref, "vae", model), base_vae_key)
+            self.assertEqual(provider.image_artifact_key(ref, "conditioning", model), base_embed_key)
+            with provider.open_preparation_view() as view:
+                self.assertEqual(view.metadata.get_metadata_by_filepath(ref)["crop_coordinates"], base["crop_coordinates"])
+            self.assertTrue(all(other not in call.args[0] for call in read.call_args_list))
+        runtime.vae_cache.rebuild_prepared_cache.assert_not_called()
+        self.assertEqual(runtime.describe().view_revision, revision)
+        self.assertEqual(runtime.read_page(limit=2), ([ref, other], 2))
+
+        image = Image.linear_gradient("L").rotate(90).resize((16, 8)).convert("RGB")
+        epoch_with_changed_crop = next(
+            epoch for epoch, offset in enumerate(coordinates, 2) if offset != base["crop_coordinates"]
+        )
+        runtime.start_epoch(epoch_with_changed_crop)
+        (updated,) = runtime.read_samples([ref])
+        cropped = TrainingSample(image, self.backend.id, updated, ref, data_backend_config=runtime.config).prepare()
+        top, left = updated["crop_coordinates"]
+        width, height = updated["target_size"]
+        self.assertEqual(cropped.image.tobytes(), image.crop((left, top, left + width, top + height)).tobytes())
+        runtime.start_epoch(1)
+        self.assertEqual(runtime.read_samples([ref]), [base])
+
     def test_prepared_geometry_reads_compact_and_existing_text_records(self):
         from simpletuner.helpers.metadata.backends.webshart_geometry import GeometryLookup, PreparedGeometry
 
@@ -1404,6 +1489,10 @@ class TestWebshartParquetBackend(unittest.TestCase):
             "resolution": 8,
             "resolution_type": "pixel",
             "slider_strength": -1,
+            "crop": True,
+            "crop_style": "random",
+            "crop_aspect": "square",
+            "vae_cache_clear_each_epoch": True,
         }
         args = SimpleNamespace(
             model_family="sdxl",
@@ -1422,7 +1511,13 @@ class TestWebshartParquetBackend(unittest.TestCase):
                 for (record,) in self.sampler:
                     yield {
                         key: record[key]
-                        for key in ("data_backend_id", "image_path", "dataset_continuation", "caption_dropout_seed")
+                        for key in (
+                            "data_backend_id",
+                            "image_path",
+                            "dataset_continuation",
+                            "caption_dropout_seed",
+                            "crop_coordinates",
+                        )
                         if key in record
                     }
 
@@ -1489,9 +1584,9 @@ class TestWebshartParquetBackend(unittest.TestCase):
             def fetch(runtimes, saved=None):
                 backends = dict(runtimes)
                 for dataset in backends.values():
-                    dataset.start_epoch(1)
+                    dataset.start_epoch(2)
                     self.assertTrue(dataset.supports_consumed_checkpoint)
-                mixer = DatasetMixer(backends, epoch=1, step=0, saved=saved)
+                mixer = DatasetMixer(backends, epoch=2, step=0, saved=saved)
                 fetcher = BatchFetcher(step=mixer.step, max_size=8, datasets=backends, mixer=mixer)
                 fetcher.fetch_responses()
                 return fetcher
@@ -1504,14 +1599,14 @@ class TestWebshartParquetBackend(unittest.TestCase):
                 original[batch["data_backend_id"]].acknowledge_batch(batch["dataset_continuation"])
             checkpoint = str(self.root / "mixed-train-state.json")
             for dataset in original.values():
-                dataset.sampler.save_state(checkpoint)
+                dataset.save_checkpoint(checkpoint)
             expected = [fetcher.next_response(step) for step in (4, 5, 6)]
             self.assertCountEqual([batch["data_backend_id"] for batch in expected[:-1]], [self.backend.id, "local"])
             self.assertIs(expected[-1], False)
 
             resumed = make_runtimes()
             for dataset in resumed.values():
-                dataset.sampler.load_states(checkpoint)
+                dataset.restore_checkpoint(checkpoint)
             replay = fetch(resumed, saved=consumed[-1]["dataset_mixer_state"])
             self.assertEqual([replay.next_response(step) for step in (4, 5, 6)], expected)
 

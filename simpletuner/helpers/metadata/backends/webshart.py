@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import random
 import shutil
 import sqlite3
 import subprocess
@@ -15,6 +16,7 @@ from itertools import batched, chain, islice
 from pathlib import Path
 from queue import SimpleQueue
 from threading import Event
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
@@ -49,6 +51,7 @@ from simpletuner.helpers.metadata.backends.webshart_transforms import (
     PreparationGeometry,
     WebshartTransforms,
     prepared_fields,
+    recrop_record,
 )
 from simpletuner.helpers.metadata.preparation import DatasetDescription, PreparationView, bucket_groups_from_events
 from simpletuner.helpers.multiaspect.image import ImageGeometry, MultiaspectImage
@@ -73,6 +76,8 @@ def _empty_filtering_statistics():
 
 class WebshartMetadataBackend(MetadataBackend):
     native_policy = None
+    epoch_recrop_version = 1
+    _training_epoch = 1
     collect_exclusions = collect_exclusions
 
     def __init__(
@@ -279,6 +284,23 @@ class WebshartMetadataBackend(MetadataBackend):
             apply_padding=apply_padding,
         )
 
+    @property
+    def recrops_lazily(self):
+        config = self.active_dataset_config
+        return (
+            bool(self.native_policy)
+            and config.get("vae_cache_clear_each_epoch") is True
+            and config.get("crop")
+            and config.get("crop_style", "random") == "random"
+            and config.get("crop_aspect") != "random"
+            and self.dataset_type is DatasetType.IMAGE
+            and self.data_backend.format == "parquet"
+            and not config.get("conditioning_data")
+        )
+
+    def set_training_epoch(self, epoch):
+        self._training_epoch = epoch
+
     def epoch_spec(self, epoch, batch_size, *, occurrence_revision=None):
         args = self.runtime_args
         dp_size, dp_rank, cp_size = get_cp_aware_dp_info(self.accelerator)
@@ -399,6 +421,8 @@ class WebshartMetadataBackend(MetadataBackend):
             lookup = self
             if self._transforms is None and (expected_digest is not None or self.data_backend.exists(self.metadata_file)):
                 lookup = self._open_geometry(stack, pages.header if pages else {}, expected_digest)
+            elif self.recrops_lazily:
+                lookup = SimpleNamespace(get_metadata_by_filepath=self._published_metadata_for_ref)
             yield PreparationView(refs, lookup)
 
     def save_cache(self, enforce_constraints: bool = False, *, scan_in_progress: bool = False):
@@ -482,6 +506,25 @@ class WebshartMetadataBackend(MetadataBackend):
         if not self.native_policy or self._published is None:
             return super().get_metadata_batch(refs)
         refs = [self.data_backend.normalize_sample_id(ref) for ref in refs]
+        records = self._published_metadata_batch(refs)
+        epoch = self._training_epoch
+        if epoch == 1 or not self.recrops_lazily:
+            return records
+        seed = getattr(self.runtime_args, "seed", None) or 0
+        return [
+            (
+                None
+                if record is None
+                else recrop_record(record, random.Random(f"{seed}:recrop-v{self.epoch_recrop_version}:{epoch}:{ref}"))
+            )
+            for ref, record in zip(refs, records, strict=True)
+        ]
+
+    def _published_metadata_for_ref(self, ref):
+        ref = self.data_backend.normalize_sample_id(ref)
+        return next(iter(self._published_metadata_batch((ref,))))
+
+    def _published_metadata_batch(self, refs):
         if self._transforms is None:
             return self._geometry_lookup().get_metadata_batch(refs)
         accepted = self._membership_contains().batch(refs)
@@ -609,7 +652,10 @@ class WebshartMetadataBackend(MetadataBackend):
         return revision_digest
 
     def image_artifact_key(self, ref, kind, model):
-        metadata = self.get_metadata_by_filepath(ref)
+        if kind == "conditioning" and self.recrops_lazily:
+            metadata = self._published_metadata_for_ref(ref)
+        else:
+            metadata = self.get_metadata_by_filepath(ref)
         if metadata is None or self._published is None:
             raise ValueError("Image artifacts require published Webshart geometry.")
         shard = metadata["webshart"]["shard_idx"]
@@ -629,7 +675,7 @@ class WebshartMetadataBackend(MetadataBackend):
         if self.dataset_config.get("crop") and self.dataset_config.get("crop_style") != "face":
             spec.append("prepared-crop-v1")
         if kind == "vae" and self.dataset_config.get("vae_cache_clear_each_epoch"):
-            spec.append(StateTracker.get_epoch())
+            spec.append(self._training_epoch if self.recrops_lazily else StateTracker.get_epoch())
         return sha256(json.dumps(spec, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
     def load_image_metadata(self):

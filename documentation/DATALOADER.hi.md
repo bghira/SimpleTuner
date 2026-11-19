@@ -932,8 +932,8 @@ WebUI file browser में datasets browse करते समय, किस�
 
 ### `vae_cache_clear_each_epoch`
 
-- सक्षम होने पर, हर dataset repeat cycle के अंत में filesystem से सभी VAE cache objects delete कर दिए जाते हैं। बड़े datasets के लिए यह resource‑intensive हो सकता है, लेकिन `crop_style=random` और/या `crop_aspect=random` के साथ इसे सक्षम रखना बेहतर है ताकि हर image से crops की पूरी रेंज sample हो सके।
-- वास्तव में, random bucketing या crops उपयोग करने पर यह विकल्प **डिफ़ॉल्ट रूप से सक्षम** होता है।
+- पहले प्रशिक्षण epoch के बाद हर epoch की शुरुआत में VAE कैश फिर से बनाने के लिए यह विकल्प चालू करें। `crop: true` और `crop_style: random` के साथ, परिवर्तनीय डेटासेट में यादृच्छिक क्रॉप भी दोबारा चुने जाते हैं।
+- निश्चित लक्ष्य आकार वाले और बिना जोड़े गए कंडीशनिंग इनपुट के नेटिव Webshart Parquet छवि डेटासेट तैयार व्यू का दोबारा उपयोग करते हैं। प्रोवाइडर पंक्तियाँ पढ़ते समय नए क्रॉप ऑफ़सेट चुनता है और संबंधित VAE लेटेंट ज़रूरत के अनुसार एन्कोड करता है।
 
 ### `vae_cache_ondemand`
 

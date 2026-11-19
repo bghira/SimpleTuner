@@ -6,6 +6,7 @@ from hashlib import sha256
 from pathlib import Path
 from types import SimpleNamespace
 
+from simpletuner.helpers.image_manipulation.cropping import RandomCropping
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.multiaspect.image import ImageGeometry
 
@@ -76,6 +77,14 @@ def prepared_fields(sample):
         "crop_coordinates": sample.crop_coordinates,
         "target_size": sample.target_size,
     }
+
+
+def recrop_record(record, rng):
+    cropper = RandomCropping(image_metadata=record)
+    cropper.rng = rng
+    cropper.set_intermediary_size(*record["intermediary_size"])
+    _, coordinates = cropper.crop(*record["target_size"])
+    return {**record, "crop_coordinates": list(coordinates)}
 
 
 class WebshartTransforms:

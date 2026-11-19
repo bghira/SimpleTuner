@@ -932,8 +932,8 @@ Consulta la sección [Solución de Problemas](#solución-de-problemas-de-dataset
 
 ### `vae_cache_clear_each_epoch`
 
-- Cuando está habilitado, todos los objetos de caché VAE se eliminan del filesystem al final de cada ciclo de repeats del dataset. Esto puede ser intensivo en recursos para datasets grandes, pero combinado con `crop_style=random` y/o `crop_aspect=random` querrás tenerlo habilitado para asegurar que muestreas un rango completo de recortes de cada imagen.
-- De hecho, esta opción está **habilitada por defecto** cuando se usa bucketing aleatorio o recortes aleatorios.
+- Activa esta opción para reconstruir la caché del VAE al inicio de cada época de entrenamiento posterior a la primera. Con `crop: true` y `crop_style: random`, también se renuevan los recortes aleatorios de los conjuntos de datos mutables.
+- Los conjuntos de imágenes en Parquet con muestreo nativo de Webshart, tamaños de destino fijos y sin entradas de condicionamiento emparejadas reutilizan la vista preparada. El proveedor elige nuevos desplazamientos de recorte al leer las filas y codifica bajo demanda los latentes VAE correspondientes.
 
 ### `vae_cache_ondemand`
 
