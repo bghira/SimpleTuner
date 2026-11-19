@@ -139,6 +139,14 @@ class StrictI2VDatasetValidationTest(unittest.TestCase):
         errors = self._collect_errors(validations)
         self.assertTrue(any("Caption datasets cannot use CSV backends" in msg for msg in errors))
 
+    def test_shuffle_window_training_would_reject_fails_validation(self):
+        for window, rejected in ((0, True), (2.5, True), (True, True), (None, False), (4, False)):
+            datasets = self._base_datasets()
+            datasets[0] = {**datasets[0], "type": "webshart", "webshart": {"shuffle_window": window}}
+            with self.subTest(shuffle_window=window):
+                errors = self._collect_errors(compute_validations(datasets, blueprints=[]))
+                self.assertEqual(any("webshart.shuffle_window must be" in msg for msg in errors), rejected)
+
     def test_flow_dpo_requires_conditioning_dataset(self):
         datasets = self._base_datasets()
         validations = compute_validations(

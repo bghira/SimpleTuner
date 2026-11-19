@@ -11,7 +11,10 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 from pydantic import BaseModel
 
 import simpletuner.helpers.distillation.factory  # noqa: F401
-from simpletuner.helpers.data_backend.config.validators import validate_caption_data_generator
+from simpletuner.helpers.data_backend.config.validators import (
+    validate_caption_data_generator,
+    validate_webshart_shuffle_window,
+)
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.distillation.registry import DistillationRegistry
 from simpletuner.helpers.distillation.requirements import (
@@ -184,6 +187,14 @@ def compute_validations(
                         field=f"{_normalise_identifier(dataset)}.data_generator", message=str(error), level="error"
                     )
                 )
+        try:
+            validate_webshart_shuffle_window((dataset.get("webshart") or {}).get("shuffle_window"))
+        except ValueError as error:
+            validations.append(
+                ValidationMessage(
+                    field=f"{_normalise_identifier(dataset)}.webshart.shuffle_window", message=str(error), level="error"
+                )
+            )
         if normalized_type is DatasetType.CAPTION and backend_type.lower() == "csv":
             validations.append(
                 ValidationMessage(
