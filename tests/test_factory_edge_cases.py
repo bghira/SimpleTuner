@@ -104,6 +104,29 @@ class TestFactoryEdgeCases(unittest.TestCase):
             json.dump(config_data, f, indent=2)
         return config_path
 
+    def test_duplicate_enabled_ids_rejected_before_opening_artifact_providers(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        for use_file in (True, False):
+            with self.subTest(use_file=use_file):
+                config = [
+                    {"id": "shared", "type": "local", "dataset_type": "image", "conditioning_data": "ref"},
+                    {"id": "ref", "type": "local", "dataset_type": "conditioning"},
+                    {"id": "shared", "type": "aws", "dataset_type": "text_embeds"},
+                ]
+                self.args.data_backend_config = self._create_temp_config(config)
+                factory = FactoryRegistry(
+                    args=self.args,
+                    accelerator=self.accelerator,
+                    text_encoders=self.text_encoders,
+                    tokenizers=self.tokenizers,
+                    model=self.model,
+                )
+                with patch.object(factory, "configure_text_embed_backends") as configure_artifacts:
+                    with self.assertRaisesRegex(ValueError, "Duplicate id: 'shared'"):
+                        factory.configure(None if use_file else config)
+                    configure_artifacts.assert_not_called()
+
     def test_audio_dataset_materializes_audio_only_for_capable_model(self):
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
 
@@ -271,16 +294,9 @@ class TestFactoryEdgeCases(unittest.TestCase):
             model=self.model,
         )
 
-        loaded_config = factory.load_configuration()
-
-        with patch("simpletuner.helpers.data_backend.factory.StateTracker") as mock_state_tracker:
-            mock_state_tracker.get_data_backends.return_value = {"duplicate_id": {"id": "duplicate_id"}}
-            mock_state_tracker.clear_data_backends.return_value = None
-
-            with self.assertRaises(ValueError) as context:
-                factory.configure_data_backends(loaded_config)
-
-        self.assertIn("unique 'id' field", str(context.exception))
+        with self.assertRaisesRegex(ValueError, "Duplicate id: 'duplicate_id'"):
+            factory.load_configuration()
+        mock_validate_paths.assert_not_called()
 
     def test_dataset_vae_cache_modes_use_dataset_ondemand_mode(self):
         from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime

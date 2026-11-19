@@ -949,6 +949,17 @@ if not hasattr(builtins, "from_instance_representation"):
     builtins.from_instance_representation = from_instance_representation
 
 
+def _validate_unique_dataset_ids(configs):
+    seen_ids = set()
+    for config in configs:
+        dataset_id = config.get("id")
+        if not dataset_id or config.get("disabled") or config.get("disable"):
+            continue
+        if dataset_id in seen_ids:
+            raise ValueError(f"Each dataset needs a unique 'id' field. Duplicate id: {dataset_id!r}.")
+        seen_ids.add(dataset_id)
+
+
 def sort_dataset_configs_by_dependencies(data_backend_config):
     """
     Sort dataset configurations to ensure source datasets are configured before
@@ -960,6 +971,7 @@ def sort_dataset_configs_by_dependencies(data_backend_config):
     Returns:
         List of sorted dataset configurations
     """
+    _validate_unique_dataset_ids(data_backend_config)
     # Build dependency graph
     # Key: dataset id, Value: list of datasets that depend on it
     dependencies = {}
@@ -4293,11 +4305,14 @@ class FactoryRegistry:
         """
         if data_backend_config is None:
             data_backend_config = self.load_configuration()
+        else:
+            _validate_unique_dataset_ids(data_backend_config)
 
         data_backend_config = self._inject_i2v_conditioning_configs(data_backend_config)
         data_backend_config = self._inject_grounding_configs(data_backend_config)
         data_backend_config = self._inject_s2v_audio_configs(data_backend_config)
         data_backend_config = self.process_conditioning_datasets(data_backend_config)
+        _validate_unique_dataset_ids(data_backend_config)
         data_backend_config = process_data_transforms(
             global_config=self.args,
             data_backend_config=data_backend_config,
