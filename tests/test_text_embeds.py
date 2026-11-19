@@ -241,7 +241,10 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
             TEXT_ENCODER_CONFIGURATION = {"text_encoder": {}}
 
             def encode_text_batch(self, prompts, **kwargs):
-                return {"prompt_embeds": torch.ones(len(prompts), 2, 3)}
+                return {
+                    "prompt_embeds": torch.ones(len(prompts), 2, 3),
+                    "attention_mask": torch.ones(len(prompts), 2).squeeze(0),
+                }
 
             def unpack_text_embeddings_from_cache(self, embeddings):
                 return embeddings
@@ -254,7 +257,15 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
         self.assertEqual(cache.precompute_embeddings(records, batch_size=2), 3)
         self.assertEqual(len(stored), 3)
         self.assertTrue(all(value["prompt_embeds"].shape == (1, 2, 3) for value in stored.values()))
+        cached = cache.hash_prompt_with_path({"prompt": "three"})
+        self.assertEqual(stored[cached]["attention_mask"].shape, (2,))
         cache.wait_for_pending_writes.assert_called()
+
+        cache.text_cache_ondemand = cache.text_cache_disable = True
+        cache.data_backend.read_cached_tensors = lambda keys: (stored.get(key) for key in keys)
+        online = cache.read_training_batch(["unknown", "three", "unknown"])
+        self.assertEqual([entry["attention_mask"].shape for entry in online], [(2,), (2,), (2,)])
+        self.assertTrue(torch.equal(online[0]["prompt_embeds"], online[1]["prompt_embeds"]))
 
     def test_precompute_cancellation_stops_source_consumption(self):
         cache = _make_cache(TextEmbedCacheKey.CAPTION)

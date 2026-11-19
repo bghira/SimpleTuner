@@ -285,6 +285,8 @@ class TextEmbeddingCache(WebhookMixin):
         attention_mask = text_encoder_output.get("attention_mask")
         true_length = None
         if isinstance(attention_mask, torch.Tensor):
+            if batch_size == 1 and attention_mask.ndim == 1:
+                return text_encoder_output
             if attention_mask.ndim < 2 or attention_mask.shape[0] != batch_size:
                 raise ValueError(
                     f"Batched attention_mask shape {tuple(attention_mask.shape)} does not match batch size {batch_size}."
