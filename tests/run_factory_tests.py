@@ -12,6 +12,7 @@ DEFAULT_SUITES = (
     "tests.test_full_integration",
     "tests.test_factory_edge_cases",
     "tests.test_factory_caption_backend",
+    "tests.test_factory_distiller_requirements",
     "tests.test_backend_builders",
     "tests.test_dataset_runtime",
     "tests.test_aws_backend",
