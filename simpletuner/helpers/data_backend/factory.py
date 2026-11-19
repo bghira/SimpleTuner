@@ -1331,7 +1331,7 @@ class FactoryRegistry:
         self.conditioning_image_embed_backends = {}
         self.caption_backends = {}
         self.distillation_cache_backends = {}
-        self.data_backends = {}
+        self.datasets: dict[str, DatasetRuntime] = {}
         self.default_text_embed_backend_id = None
         # Queue for backends needing deferred text embed processing (models requiring image context)
         self._deferred_text_embed_datasets: list[DatasetRuntime] = []
@@ -2720,10 +2720,10 @@ class FactoryRegistry:
         requirement_result = self._evaluate_distiller_requirements(data_backend_config)
         relax_primary_requirement = self._should_relax_primary_dataset_requirement(requirement_result)
         for source_id, targets in conditioning.items():
-            StateTracker.set_conditioning_datasets(source_id, targets)
+            self.datasets[source_id].conditioning_datasets = tuple(self.datasets[target_id] for target_id in targets)
             info_log(f"(id={source_id}) Connected conditioning datasets: {targets}")
         for source_id, targets in audio.items():
-            StateTracker.set_s2v_datasets(source_id, targets)
+            self.datasets[source_id].audio_datasets = tuple(self.datasets[target_id] for target_id in targets)
             info_log(f"(id={source_id}) Connected S2V audio datasets: {targets}")
 
         held_out = {
@@ -2745,9 +2745,6 @@ class FactoryRegistry:
             else:
                 info_log("No enabled data backends found in the configuration; skipping data backend setup.")
             return
-
-        if len(self.data_backends) == 0 and data_backend_count > 0:
-            raise ValueError("Must provide at least one data backend in the data backend config file.")
 
         requires_conditioning_dataset = self._requires_conditioning_dataset()
         if not has_conditioning_dataset and requires_conditioning_dataset:
@@ -3371,8 +3368,6 @@ class FactoryRegistry:
         runtime = init_backend["dataset_runtime"]
         runtime.config.update(captions)
         runtime.is_regularisation_data = is_regularisation_data
-        StateTracker.own_dataset_resource(init_backend["dataset_runtime"])
-        StateTracker.register_dataset(init_backend["dataset_runtime"])
         init_backend["sampler"] = MultiAspectSampler(
             dataset_runtime=init_backend["dataset_runtime"],
             model=self.model,
@@ -3416,7 +3411,6 @@ class FactoryRegistry:
         if instance_prompt is None and caption_strategy == "instanceprompt":
             raise ValueError(
                 f"Backend {init_backend['id']} has caption_strategy=instanceprompt, but no instance_prompt was provided. You must provide an instance_prompt, or change the caption_strategy."
-                f"\n -> backend: {init_backend}"
             )
 
     def _create_caption_dataloader(self, backend: Dict[str, Any], init_backend: Dict[str, Any]) -> None:
@@ -4023,6 +4017,7 @@ class FactoryRegistry:
         runtime.text_embed_cache = init_backend.get("text_embed_cache")
         StateTracker.own_dataset_resource(runtime)
         StateTracker.register_dataset(runtime)
+        self.datasets[runtime.id] = runtime
         self.caption_backends[init_backend["id"]] = init_backend
         info_log(f"(id={init_backend['id']}) Caption dataset registered.")
 
@@ -4134,16 +4129,16 @@ class FactoryRegistry:
             info_log(
                 f"(id={init_backend['id']}) Detected mocked data backend without mocked metadata backend; skipping runtime setup steps."
             )
-            self.data_backends[init_backend["id"]] = init_backend
             return
 
         if data_backend_is_mock and metadata_backend_is_mock:
             info_log(f"(id={init_backend['id']}) Detected fully mocked backend stack, skipping dataset creation steps.")
-            self.data_backends[init_backend["id"]] = init_backend
             return
 
         # Audio-only datasets contain no video stream to split into spatial buckets.
         self._bind_dataset_runtime(init_backend, conditioning_type)
+        runtime = init_backend["dataset_runtime"]
+        StateTracker.own_dataset_resource(runtime)
         self._handle_bucket_operations(backend, init_backend, conditioning_type, skip_bucket_split=is_audio_only_dataset)
 
         self._create_dataset_and_sampler(backend, init_backend, conditioning_type)
@@ -4184,9 +4179,8 @@ class FactoryRegistry:
                 conditioning_image_embed_backend,
             )
 
-        if runtime := init_backend.get("dataset_runtime"):
-            runtime.vae_cache = init_backend.get("vaecache")
-            runtime.conditioning_image_embed_cache = init_backend.get("conditioning_image_embed_cache")
+        runtime.vae_cache = init_backend.get("vaecache")
+        runtime.conditioning_image_embed_cache = init_backend.get("conditioning_image_embed_cache")
         self._handle_error_scanning_and_metadata(backend, init_backend, conditioning_type)
 
         if (
@@ -4217,7 +4211,8 @@ class FactoryRegistry:
         self._move_text_encoders_for_vae_cache(self.accelerator.device)
         init_backend["metadata_backend"].save_cache()
 
-        self.data_backends[init_backend["id"]] = init_backend
+        StateTracker.register_dataset(runtime)
+        self.datasets[runtime.id] = runtime
 
     def configure(self, data_backend_config: Optional[List[Dict[str, Any]]] = None) -> ConfiguredDatasets:
         """Open and prepare the resolved dataset plan and its bound artifacts."""
@@ -4257,7 +4252,7 @@ class FactoryRegistry:
         self._log_performance_metrics(
             "factory_configure_complete",
             {
-                "backends_configured": len(self.data_backends),
+                "backends_configured": len(self.datasets),
                 "text_embed_backends": len(self.text_embed_backends),
                 "image_embed_backends": len(self.image_embed_backends),
                 "conditioning_image_embed_backends": len(self.conditioning_image_embed_backends),
@@ -4266,7 +4261,7 @@ class FactoryRegistry:
             },
         )
         return ConfiguredDatasets(
-            datasets=StateTracker.get_datasets(),
+            datasets=dict(self.datasets),
             distillation_caches=tuple(entry["distillation_cache"] for entry in self.distillation_cache_backends.values()),
         )
 

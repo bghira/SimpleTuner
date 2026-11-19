@@ -611,14 +611,6 @@ class StateTracker:
         return dataset.training_batch_count() if dataset is not None and dataset.training_dataloader is not None else 0
 
     @classmethod
-    def set_conditioning_datasets(cls, data_backend_id: str, conditioning_backend_ids: list[str]):
-        cls.datasets[data_backend_id].conditioning_datasets = tuple(cls.datasets[id] for id in conditioning_backend_ids)
-
-    @classmethod
-    def set_s2v_datasets(cls, data_backend_id: str, s2v_backend_ids: list[str]):
-        cls.datasets[data_backend_id].audio_datasets = tuple(cls.datasets[id] for id in s2v_backend_ids)
-
-    @classmethod
     def get_data_backend_config(cls, data_backend_id: str):
         dataset = cls.datasets.get(data_backend_id)
         return dataset.config if dataset is not None else cls._pending_dataset_configs.get(data_backend_id, {})

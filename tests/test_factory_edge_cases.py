@@ -169,7 +169,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
         def register(backend, *_):
             dataset = DatasetRuntime(backend["id"], None, None, backend)
             StateTracker.register_dataset(dataset)
-            factory.data_backends[dataset.id] = backend
+            factory.datasets[dataset.id] = dataset
 
         with (
             patch.object(StateTracker, "datasets", {}),

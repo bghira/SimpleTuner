@@ -360,7 +360,7 @@ class CaptionGeneratorConfigTests(unittest.TestCase):
             factory.metrics = {"backend_counts": {}}
             factory.text_embed_backends = {"text": {}}
             factory.caption_backends = {}
-            factory.data_backends = {}
+            factory.datasets = {}
             factory.distiller_requirement_profile = None
             factory.distillation_method = None
             factory._log_performance_metrics = MagicMock()
@@ -385,7 +385,6 @@ class CaptionGeneratorConfigTests(unittest.TestCase):
                 self.assertEqual(backend["dataset_type"], "image")
                 image_paths = list(Path(backend["instance_data_dir"]).glob("*.png"))
                 self.assertEqual(len(image_paths), 1)
-                factory.data_backends[backend["id"]] = backend
 
             factory._configure_single_data_backend = MagicMock(side_effect=configure_image)
             config = [
@@ -401,7 +400,7 @@ class CaptionGeneratorConfigTests(unittest.TestCase):
                 patch("simpletuner.helpers.data_backend.factory.StateTracker") as state,
                 patch("simpletuner.helpers.data_backend.caption_generator.HfApi") as api,
             ):
-                state.get_data_backends.return_value = {}
+                state.get_datasets.return_value = {}
                 api.return_value.model_info.return_value.sha = "model-commit"
                 self.assertFalse(factory._caption_batches_supported())
                 factory.configure_data_backends(config)

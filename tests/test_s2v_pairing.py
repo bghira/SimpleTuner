@@ -72,7 +72,7 @@ class TestS2VConnectSamples(unittest.TestCase):
                 "config": {"instance_data_dir": str(self.audio_dir)},
             }
         )
-        StateTracker.set_s2v_datasets("video-backend", ["audio-backend"])
+        StateTracker.get_dataset("video-backend").audio_datasets = (StateTracker.get_dataset("audio-backend"),)
 
         # Create samples
         samples = (
@@ -126,7 +126,7 @@ class TestS2VConnectSamples(unittest.TestCase):
                 "config": {"instance_data_dir": str(self.audio_dir), "audio": {"sidecar_match": "relative_path"}},
             }
         )
-        StateTracker.set_s2v_datasets("video-backend", ["audio-backend"])
+        StateTracker.get_dataset("video-backend").audio_datasets = (StateTracker.get_dataset("audio-backend"),)
         sampler = self._create_mock_sampler()
 
         samples = tuple(
@@ -155,7 +155,7 @@ class TestS2VConnectSamples(unittest.TestCase):
                 "config": {"instance_data_dir": str(self.audio_dir)},
             }
         )
-        StateTracker.set_s2v_datasets("video-backend", ["audio-backend"])
+        StateTracker.get_dataset("video-backend").audio_datasets = (StateTracker.get_dataset("audio-backend"),)
 
         samples = (
             {"image_path": "/videos/video_wav.mp4"},
@@ -187,7 +187,7 @@ class TestS2VConnectSamples(unittest.TestCase):
                 "config": {"instance_data_dir": str(self.audio_dir)},
             }
         )
-        StateTracker.set_s2v_datasets("video-backend", ["audio-backend"])
+        StateTracker.get_dataset("video-backend").audio_datasets = (StateTracker.get_dataset("audio-backend"),)
 
         samples = (
             {"image_path": "/videos/video_001.mp4"},
@@ -247,7 +247,10 @@ class TestS2VConnectSamples(unittest.TestCase):
                 "config": {"instance_data_dir": str(audio_dir_2)},
             }
         )
-        StateTracker.set_s2v_datasets("video-backend", ["audio-backend-1", "audio-backend-2"])
+        StateTracker.get_dataset("video-backend").audio_datasets = (
+            StateTracker.get_dataset("audio-backend-1"),
+            StateTracker.get_dataset("audio-backend-2"),
+        )
 
         samples = (
             {"image_path": "/videos/video_001.mp4"},
@@ -272,7 +275,7 @@ class TestS2VConnectSamples(unittest.TestCase):
                 "config": {"instance_data_dir": str(self.audio_dir)},
             }
         )
-        StateTracker.set_s2v_datasets("video-backend", ["audio-backend"])
+        StateTracker.get_dataset("video-backend").audio_datasets = (StateTracker.get_dataset("audio-backend"),)
 
         # Create sample with image_metadata attribute
         sample = SimpleNamespace(
@@ -300,7 +303,7 @@ class TestS2VConnectSamples(unittest.TestCase):
                 "config": {"instance_data_dir": str(self.audio_dir)},
             }
         )
-        StateTracker.set_s2v_datasets("video-backend", ["audio-backend"])
+        StateTracker.get_dataset("video-backend").audio_datasets = (StateTracker.get_dataset("audio-backend"),)
 
         samples = ({"image_path": "/videos/video_001.mp4"},)
 
