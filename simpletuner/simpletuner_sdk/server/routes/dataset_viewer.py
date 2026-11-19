@@ -489,6 +489,7 @@ async def get_viewer_conditioning_pairs(
 async def get_viewer_conditioning_match(
     dataset_id: str,
     file_path: str,
+    view_revision: Optional[str] = None,
     _user: User = Depends(get_current_user),
 ) -> Optional[Dict[str, Any]]:
     """Find the conditioning image matching a source file."""
@@ -497,7 +498,10 @@ async def get_viewer_conditioning_match(
     except ValueError:
         return None
     config = _require_dataset_config(dataset_id)
-    return _get_viewer_service().get_conditioning_file_match(config, datasets, file_path)
+    try:
+        return _get_viewer_service().get_conditioning_file_match(config, datasets, file_path, view_revision=view_revision)
+    except DatasetViewChanged as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/viewer/conditioning-orphans", response_model=OrphanReport)

@@ -720,8 +720,7 @@ window.datasetViewerComponent = function () {
             if (hasConditioning) {
                 this.loadingConditioningMatch = true;
                 fetches.push(
-                    fetch('/api/datasets/viewer/conditioning-match?' + params)
-                        .then(r => r.ok ? r.json() : null)
+                    fetch('/api/datasets/viewer/conditioning-match?' + params).then(readDetail)
                 );
             }
 

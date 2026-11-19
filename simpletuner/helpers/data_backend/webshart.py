@@ -305,6 +305,14 @@ class WebshartDataBackend(BaseDataBackend):
         extensions = ("jpg", "jxl") if first_frame and extension == "png" else (extension,)
         return tuple(self.sample_id(position, int(row), f"{shard}/{row}.{suffix}") for suffix in extensions)
 
+    def conditioning_ref(self, pairing_key, *, admits):
+        if self.format == "parquet":
+            filename = self.parse_sample_id(pairing_key).filename if self.is_sample_id(pairing_key) else pairing_key
+            return next((ref for ref in self.parquet_sample_refs_for_filename(filename) if admits(ref)), None)
+        self._resolve_sample_ref(pairing_key)
+        ref = self.normalize_sample_id(pairing_key)
+        return ref if admits(ref) else None
+
     def _resolve_sample_ref(self, identifier: Union[str, Path]) -> WebshartSampleRef:
         ref = self.parse_sample_id(identifier)
         if self.format == "parquet":

@@ -116,6 +116,74 @@ class TestWebshartParquetBackend(unittest.TestCase):
                 ]
                 self.assertEqual(active, [stage["id"]])
 
+    def test_viewer_resolves_conditioning_against_each_parquet_catalogue(self):
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+        from simpletuner.simpletuner_sdk.server.services.cache_job_service import _CacheAcceleratorStub, _CacheArgsNamespace
+        from simpletuner.simpletuner_sdk.server.services.dataset_viewer_service import (
+            DatasetViewChanged,
+            DatasetViewerService,
+        )
+
+        target_root = self.root / "reference"
+        target_root.mkdir()
+        shutil.copyfile(self.source / "part.parquet", target_root / "part.parquet")
+        pq.write_table(pa.Table.from_pylist([self.rows[0]]), target_root / "ahead.parquet")
+        source = {
+            "id": "source",
+            "type": "webshart",
+            "source": str(self.source),
+            "conditioning_data": ["target"],
+            "caption_strategy": "webshart",
+            "resolution": 8,
+            "resolution_type": "pixel",
+            "crop": False,
+            "webshart": {
+                "format": "parquet",
+                "sampling_policy": "shard_local",
+                "cache_dir": str(self.root / "cache"),
+                "metadata_cache_dir": str(self.root / "metadata"),
+            },
+        }
+        target = {
+            **source,
+            "id": "target",
+            "source": str(target_root),
+            "dataset_type": "conditioning",
+            "conditioning_type": "reference_strict",
+            "conditioning_data": [],
+        }
+        args = _CacheArgsNamespace({"aspect_bucket_alignment": 8})
+        accelerator = _CacheAcceleratorStub(device="cpu")
+        publications = {}
+        for config in (source, target):
+            with closing(DatasetRuntime.from_config(config, args, accelerator)) as runtime:
+                runtime.prepare_view()
+                publications[config["id"]] = runtime.data_backend._cache_path(runtime.metadata_backend.cache_file)
+
+        service = DatasetViewerService(project_root=self.root)
+        with patch.object(service, "_find_cache_file", side_effect=lambda config, _: publications[config["id"]]):
+            report = service.get_conditioning_pairs(source, target, limit=1)
+            self.assertEqual(
+                report["pairs"],
+                [
+                    {
+                        "source_path": self.backend.sample_id(0, 0, "part.parquet/000000000000.jpg"),
+                        "conditioning_path": self.backend.sample_id(1, 0, "part.parquet/000000000000.jpg"),
+                    }
+                ],
+            )
+            match = service.get_conditioning_file_match(
+                source, [target], report["pairs"][0]["source_path"], view_revision=report["source_view_revision"]
+            )
+            self.assertEqual(match["file_path"], report["pairs"][0]["conditioning_path"])
+            self.assertEqual(match["view_revision"], report["conditioning_view_revision"])
+            self.assertIsNotNone(match["thumbnail"])
+            orphans = service.get_orphaned_files(source, target)
+            self.assertEqual(orphans.source_orphans, [])
+            self.assertEqual(orphans.conditioning_orphans, [self.backend.sample_id(0, 0, "ahead.parquet/000000000000.jpg")])
+            with self.assertRaises(DatasetViewChanged):
+                service.get_conditioning_file_match(source, [target], report["pairs"][0]["source_path"], view_revision="old")
+
     def test_transform_cache_eviction_preserves_membership_and_recomputes_only_requested_rows(self):
         from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBackend
 

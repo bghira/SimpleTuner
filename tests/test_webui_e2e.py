@@ -2138,6 +2138,7 @@ class DatasetViewerRevisionTestCase(_TrainerPageMixin, WebUITestCase):
             "type": "webshart",
             "id": "indexed",
             "dataset_type": "image",
+            "conditioning_data": ["reference"],
             "caption_strategy": "textfile",
             "webshart": {"source": str(source), "cache_dir": str(root), "format": "parquet", "manifest": "dataset.json"},
         }
@@ -2177,20 +2178,39 @@ class DatasetViewerRevisionTestCase(_TrainerPageMixin, WebUITestCase):
             )
             wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, ".viewer-card-header"))).click()
             wait.until(lambda d: "Unavailable" in d.find_element(By.CSS_SELECTOR, ".viewer-dataset-card").text)
-            bucket = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, ".viewer-bucket-btn")))
+            bucket_selector = (By.CSS_SELECTOR, ".viewer-bucket-list .viewer-bucket-btn")
+            bucket = wait.until(EC.element_to_be_clickable(bucket_selector))
             self.assertIn("square", bucket.text)
             write_membership(publication, {"wide": ["new"]}, properties)
             bucket.click()
             wait.until(lambda d: "wide" in d.find_element(By.CSS_SELECTOR, ".viewer-bucket-list").text)
             self.assertFalse(driver.find_elements(By.CSS_SELECTOR, ".viewer-bucket-btn.active"))
 
-            wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, ".viewer-bucket-btn"))).click()
+            wait.until(EC.element_to_be_clickable(bucket_selector)).click()
             thumbnail = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, ".viewer-thumbnail-item")))
             self.assertIn("new", thumbnail.text)
             write_membership(publication, {"portrait": ["latest"]}, properties)
+            driver.execute_script(
+                """
+                const originalFetch = window.fetch;
+                window.fetch = (url, options) => {
+                    const target = new URL(url, window.location.origin);
+                    if (target.pathname.endsWith('/file-metadata') || target.pathname.endsWith('/preview')) {
+                        return Promise.resolve(new Response('{}', {status: 200}));
+                    }
+                    if (target.pathname.endsWith('/conditioning-match')) {
+                        window.fetch = originalFetch;
+                        window.matchRevision = target.searchParams.get('view_revision');
+                        return Promise.resolve(new Response('{}', {status: 409}));
+                    }
+                    return originalFetch(url, options);
+                };
+                """
+            )
             thumbnail.click()
             wait.until(lambda d: "portrait" in d.find_element(By.CSS_SELECTOR, ".viewer-bucket-list").text)
             self.assertFalse(driver.find_elements(By.CSS_SELECTOR, ".viewer-bucket-btn.active"))
+            self.assertTrue(driver.execute_script("return Boolean(window.matchRevision);"))
 
         self.for_each_browser("test_replaced_view_refreshes_bucket_choices_from_bucket_and_file", scenario)
 

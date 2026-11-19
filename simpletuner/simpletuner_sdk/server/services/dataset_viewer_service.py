@@ -639,54 +639,56 @@ class DatasetViewerService:
             files=files, total=total, limit=limit, offset=offset, bucket_key=bucket_key, view_revision=revision
         )
 
+    @contextmanager
     def _webshart_view(self, dataset_config, view_revision):
         indices = self._find_cache_file(dataset_config, "indices") if dataset_config.get("type") == "webshart" else None
-        index = None
-        if indices is not None:
-            with indices.open("rb") as source:
+        with ExitStack() as stack:
+            index = None
+            if indices is not None:
+                source = stack.enter_context(indices.open("rb"))
                 try:
                     index = MembershipPages.open(source)
                 except IncompleteWebshartMembership:
                     indices = None
-        current_revision = index.header["view_revision"] if index is not None else None
-        if view_revision is not None and current_revision != view_revision:
-            raise DatasetViewChanged("The prepared dataset changed. Reopen its bucket to inspect the current view.")
-        return indices, index
+            current_revision = index.header["view_revision"] if index is not None else None
+            if view_revision is not None and current_revision != view_revision:
+                raise DatasetViewChanged("The prepared dataset changed. Reopen its bucket to inspect the current view.")
+            yield indices, index
 
     def get_file_metadata(
         self, dataset_config: Dict[str, Any], file_path: str, *, view_revision: Optional[str] = None
     ) -> Optional[FileMetadata]:
         """Read per-file metadata from the metadata cache."""
-        indices, index = self._webshart_view(dataset_config, view_revision)
-        current_revision = index.header["view_revision"] if index is not None else None
-        if index is not None and index.header.get("geometry_format") == "sqlite-v1":
-            if index.header.get("source_pins"):
-                with accepted_ref_lookup(indices, index) as contains:
-                    if not contains(file_path):
-                        return None
-            name = index.header["geometry_name"]
-            if Path(name).name != name:
-                raise ValueError("Invalid Webshart geometry filename.")
-            with closing(read_snapshot(indices.parent / name, index.header["geometry_sha256"])) as db:
-                lookup = geometry_lookup(indices, index.header, db)
-                if settings := index.header.get("transform_cache_recipe"):
-                    from simpletuner.helpers.metadata.backends.webshart_transforms import WebshartTransforms
+        with self._webshart_view(dataset_config, view_revision) as (indices, index):
+            current_revision = index.header["view_revision"] if index is not None else None
+            if index is not None and index.header.get("geometry_format") == "sqlite-v1":
+                if index.header.get("source_pins"):
+                    with accepted_ref_lookup(indices, index) as contains:
+                        if not contains(file_path):
+                            return None
+                name = index.header["geometry_name"]
+                if Path(name).name != name:
+                    raise ValueError("Invalid Webshart geometry filename.")
+                with closing(read_snapshot(indices.parent / name, index.header["geometry_sha256"])) as db:
+                    lookup = geometry_lookup(indices, index.header, db)
+                    if settings := index.header.get("transform_cache_recipe"):
+                        from simpletuner.helpers.metadata.backends.webshart_transforms import WebshartTransforms
 
-                    with (
-                        self._open_view_data_backend(dataset_config, current_revision) as source,
-                        closing(WebshartTransforms(source, settings, lookup.shard_revision)) as transforms,
-                    ):
-                        meta = transforms.read_batch([file_path])[0]
-                else:
-                    meta = lookup.get_metadata_by_filepath(file_path)
-        else:
-            cache_path = self._find_cache_file(dataset_config, "metadata")
-            if cache_path is None:
-                return None
-            try:
-                meta = self._load_cache(cache_path).get(file_path)
-            except (json.JSONDecodeError, OSError):
-                return None
+                        with (
+                            self._open_view_data_backend(dataset_config, current_revision) as source,
+                            closing(WebshartTransforms(source, settings, lookup.shard_revision)) as transforms,
+                        ):
+                            meta = transforms.read_batch([file_path])[0]
+                    else:
+                        meta = lookup.get_metadata_by_filepath(file_path)
+            else:
+                cache_path = self._find_cache_file(dataset_config, "metadata")
+                if cache_path is None:
+                    return None
+                try:
+                    meta = self._load_cache(cache_path).get(file_path)
+                except (json.JSONDecodeError, OSError):
+                    return None
         if meta is None:
             return None
 
@@ -1047,10 +1049,15 @@ class DatasetViewerService:
         if view_revision is None:
             yield None
             return
-        indices, index = self._webshart_view(dataset_config, view_revision)
-        if not index.header.get("source_pins"):
-            yield None
-            return
+        with self._webshart_view(dataset_config, view_revision) as (indices, index):
+            if not index.header.get("source_pins"):
+                yield None
+                return
+            with self._bind_view_data_backend(dataset_config, indices, index) as backend:
+                yield backend
+
+    @contextmanager
+    def _bind_view_data_backend(self, dataset_config, indices, index):
         backend = self._create_data_backend(dataset_config)
         if backend.dataset.fingerprint != index.header["source_revision"]:
             raise DatasetViewChanged("The source catalogue changed. Prepare the dataset again to browse the new source.")
@@ -1698,12 +1705,23 @@ class DatasetViewerService:
 
     @contextmanager
     def _indexed_conditioning_view(self, config, revision=None):
-        publication, pages = self._webshart_view(config, revision)
-        if pages is not None and pages.header.get("geometry_format") == "sqlite-v1":
-            with accepted_ref_lookup(publication, pages) as contains:
-                yield pages, contains
-            return
-        yield None
+        with self._webshart_view(config, revision) as (publication, pages):
+            if pages is not None and pages.header.get("geometry_format") == "sqlite-v1":
+                with accepted_ref_lookup(publication, pages) as contains:
+                    yield pages, contains, publication
+                return
+            yield None
+
+    def _bind_conditioning_matcher(self, stack, config, target, source_revision):
+        pages, contains, publication = target
+        if config.get("webshart", {}).get("format") == "parquet" and pages.header.get("source_revision") != source_revision:
+            backend = (
+                stack.enter_context(self._bind_view_data_backend(config, publication, pages))
+                if pages.header.get("source_pins")
+                else self._get_or_create_data_backend(config)
+            )
+            return lambda ref: backend.conditioning_ref(ref, admits=contains)
+        return lambda ref: ref if contains(ref) else None
 
     def get_conditioning_pairs(
         self,
@@ -1726,9 +1744,16 @@ class DatasetViewerService:
             ]
             if source or target:
                 can_pair = source is not None and target is not None
-                page = source[0].iter_refs(None, offset, limit) if can_pair else ()
+                pairs = []
+                if can_pair:
+                    match = self._bind_conditioning_matcher(
+                        stack, conditioning_config, target, source[0].header.get("source_revision")
+                    )
+                    for ref in source[0].iter_refs(None, offset, limit):
+                        if (matched := match(ref)) is not None:
+                            pairs.append({"source_path": ref, "conditioning_path": matched})
                 return {
-                    "pairs": [{"source_path": ref, "conditioning_path": ref} for ref in page if target[1](ref)],
+                    "pairs": pairs,
                     "scope": "source_page" if can_pair else "unavailable",
                     "source_total": source[0].count() if can_pair else None,
                     "total_pairs": None,
@@ -1793,9 +1818,17 @@ class DatasetViewerService:
                 )
                 if source and target:
                     result.scope = "sample_pages"
-                    result.source_orphans = [ref for ref in source[0].iter_refs(None, offset, limit) if not target[1](ref)]
+                    match_target = self._bind_conditioning_matcher(
+                        stack, conditioning_config, target, source[0].header.get("source_revision")
+                    )
+                    match_source = self._bind_conditioning_matcher(
+                        stack, source_config, source, target[0].header.get("source_revision")
+                    )
+                    result.source_orphans = [
+                        ref for ref in source[0].iter_refs(None, offset, limit) if match_target(ref) is None
+                    ]
                     result.conditioning_orphans = [
-                        ref for ref in target[0].iter_refs(None, offset, limit) if not source[1](ref)
+                        ref for ref in target[0].iter_refs(None, offset, limit) if match_source(ref) is None
                     ]
                 return result
         source_files = self.get_dataset_files(source_config, limit=1_000_000).files
@@ -1820,6 +1853,8 @@ class DatasetViewerService:
         source_config: Dict[str, Any],
         all_datasets: List[Dict[str, Any]],
         source_file_path: str,
+        *,
+        view_revision: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Find the conditioning image matching a source file by stem.
 
@@ -1830,10 +1865,12 @@ class DatasetViewerService:
         from simpletuner.helpers.data_backend.webshart import WebshartDataBackend
 
         native_ref = source_config.get("type") == "webshart" and WebshartDataBackend.is_sample_id(source_file_path)
-        if native_ref:
-            with self._indexed_conditioning_view(source_config) as source:
-                if source is not None and not source[1](source_file_path):
+        source_revision = None
+        with self._indexed_conditioning_view(source_config, view_revision) as source:
+            if source is not None:
+                if not source[1](source_file_path):
                     return None
+                source_revision = source[0].header.get("source_revision")
         source_stem = Path(source_file_path).stem
 
         # 1. Check conditioning_data references (datasets in the plan)
@@ -1845,18 +1882,26 @@ class DatasetViewerService:
             cond_config = next((d for d in all_datasets if d.get("id") == cond_id), None)
             if cond_config is None:
                 continue
-            with self._indexed_conditioning_view(cond_config) as target:
+            with ExitStack() as stack:
+                target = stack.enter_context(self._indexed_conditioning_view(cond_config))
                 if target is not None:
-                    if target[1](source_file_path):
-                        return {
-                            "conditioning_id": cond_id,
-                            "conditioning_type": cond_config.get("conditioning_type"),
-                            "file_path": source_file_path,
-                            "thumbnail": self._read_remote_thumbnail(
-                                cond_config, source_file_path, self.DEFAULT_THUMBNAIL_SIZE
-                            ),
-                        }
-                    continue
+                    match = self._bind_conditioning_matcher(stack, cond_config, target, source_revision)
+                    pairing_key = source_file_path
+                    if not native_ref:
+                        from simpletuner.helpers.utils.pathing import normalize_data_path
+
+                        pairing_key = normalize_data_path(source_file_path, source_config.get("instance_data_dir"))
+                    if (matched := match(pairing_key)) is None:
+                        continue
+                    revision = target[0].header["view_revision"]
+                    image = self._load_pil_image(cond_config, matched, view_revision=revision)
+                    return {
+                        "conditioning_id": cond_id,
+                        "conditioning_type": cond_config.get("conditioning_type"),
+                        "file_path": matched,
+                        "thumbnail": generate_thumbnail_from_pil(image, self.DEFAULT_THUMBNAIL_SIZE) if image else None,
+                        "view_revision": revision,
+                    }
             if native_ref:
                 root = cond_config.get("instance_data_dir")
                 if cond_config.get("type", "local") != "local" or not root:
