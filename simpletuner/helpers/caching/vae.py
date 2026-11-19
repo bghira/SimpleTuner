@@ -1633,14 +1633,14 @@ class VAECache(WebhookMixin):
         if not source_dataset_id or sample_rate is None:
             return waveform, metadata
 
-        source = StateTracker.get_dataset(source_dataset_id)
+        source = self.dataset.source_dataset if self.dataset is not None else None
         if source is None:
             raise ValueError(f"Video dataset {source_dataset_id} is unavailable for audio dataset {self.id}.")
-        (video_meta,) = source.read_samples([filepath])
+        (video_meta,) = source.read_samples([filepath], view=source.published_read_view())
         video_config = source.config.get("video") or {}
 
         target_num_frames = video_config.get("num_frames") or video_meta.get("num_frames")
-        fps = getattr(StateTracker.get_args(), "framerate", None)
+        fps = getattr(self.metadata_backend.runtime_args, "framerate", None)
         if not target_num_frames or not fps:
             return waveform, metadata
 

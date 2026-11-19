@@ -600,8 +600,10 @@ class CacheJobService:
             runtime = self._create_dataset_runtime(dataset_config, args, accelerator)
             scope.callback(runtime.close)
 
-            source_id = runtime.config.get("source_dataset_id")
-            if source_id and runtime.config["dataset_type"] == "conditioning":
+            audio = runtime.config.get("audio") or {}
+            source_id = runtime.config.get("source_dataset_id") or audio.get("source_dataset_id")
+            needs_source = runtime.config["dataset_type"] == "conditioning" or audio.get("source_from_video")
+            if source_id and needs_source:
                 source_config = next(
                     (
                         item

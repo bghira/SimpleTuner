@@ -997,8 +997,12 @@ def sort_dataset_configs_by_dependencies(data_backend_config):
     dependencies = {}
 
     for dataset_id, config in by_id.items():
-        for key in ("source_dataset_id", "metadata_clone_source_id"):
-            source = config.get(key)
+        audio = config.get("audio")
+        for source in (
+            config.get("source_dataset_id"),
+            audio.get("source_dataset_id") if isinstance(audio, dict) and audio.get("source_from_video") else None,
+            config.get("metadata_clone_source_id"),
+        ):
             if source in by_id:
                 dependencies.setdefault(dataset_id, []).append(source)
 
@@ -3362,7 +3366,8 @@ class FactoryRegistry:
         init_backend["dataset_runtime"].text_embed_cache = init_backend.get("text_embed_cache")
         init_backend["dataset_runtime"].is_regularisation_data = is_regularisation_data
         init_backend["dataset_runtime"].conditioning_type = conditioning_type
-        if source_id := init_backend["config"].get("source_dataset_id"):
+        audio = init_backend["config"].get("audio") or {}
+        if source_id := init_backend["config"].get("source_dataset_id") or audio.get("source_dataset_id"):
             init_backend["dataset_runtime"].source_dataset = StateTracker.get_dataset(source_id)
         init_backend["config"] = init_backend["dataset_runtime"].config
         StateTracker.own_dataset_resource(init_backend["dataset_runtime"])

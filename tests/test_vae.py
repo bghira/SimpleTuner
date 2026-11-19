@@ -343,16 +343,18 @@ class TestVaeCacheAudio(unittest.TestCase):
         vae_cache = VAECache.__new__(VAECache)
         vae_cache.id = "audio-cache"
         vae_cache.dataset_config = {"audio": {"source_from_video": True}, "source_dataset_id": "video"}
-        source = MagicMock(config={"video": {}})
+        view = object()
+        source = MagicMock(config={"video": {}}, published_read_view=MagicMock(return_value=view))
         source.read_samples.return_value = [{"num_frames": 3}]
+        vae_cache.dataset = SimpleNamespace(source_dataset=source)
+        vae_cache.metadata_backend = SimpleNamespace(runtime_args=SimpleNamespace(framerate=2))
         with (
-            patch.object(StateTracker, "get_dataset", return_value=source) as locate,
+            patch.object(StateTracker, "get_dataset", side_effect=AssertionError("global dataset lookup")),
             patch.object(StateTracker, "get_data_backend_config", side_effect=AssertionError("global config lookup")),
-            patch.object(StateTracker, "get_args", return_value=MagicMock(framerate=2)),
+            patch.object(StateTracker, "get_args", side_effect=AssertionError("global runtime args")),
         ):
             waveform, metadata = vae_cache._align_audio_waveform_to_video(torch.zeros(2, 350), 100, {}, "video/key.mp4")
-        locate.assert_called_once_with("video")
-        source.read_samples.assert_called_once_with(["video/key.mp4"])
+        source.read_samples.assert_called_once_with(["video/key.mp4"], view=view)
         self.assertEqual(waveform.shape, (2, 150))
         self.assertEqual(metadata["duration_seconds"], 1.5)
 
