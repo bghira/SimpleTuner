@@ -25,6 +25,8 @@ logger = logging.getLogger("HuggingfaceDatasetsBackend")
 
 
 class HuggingfaceDatasetsBackend(BaseDataBackend):
+    # The files SimpleTuner keeps beside a dataset; the dataset itself is read-only.
+    CACHE_FILE_EXTENSIONS = (".json", ".pt", ".msgpack", ".safetensors")
     _CAP_PROP_POS_FRAMES = 1
     _CAP_PROP_FRAME_WIDTH = 3
     _CAP_PROP_FRAME_HEIGHT = 4
@@ -514,8 +516,7 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
             location = str(location)
 
         # Handle cache files (.json, .pt, etc.) - these should be read from local filesystem
-        cache_extensions = [".json", ".pt", ".msgpack", ".safetensors"]
-        if any(location.endswith(ext) for ext in cache_extensions):
+        if location.endswith(self.CACHE_FILE_EXTENSIONS):
             # Try location as-is first (in case it's already a full path)
             location_path = Path(location)
             if location_path.exists():
@@ -814,8 +815,7 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
             filepath = str(filepath)
 
         # Allow writing cache files
-        cache_extensions = [".json", ".pt", ".msgpack", ".safetensors"]
-        if any(filepath.endswith(ext) for ext in cache_extensions):
+        if filepath.endswith(self.CACHE_FILE_EXTENSIONS):
             cache_path = self.cache_file_path(filepath)
             cache_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -854,8 +854,7 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
             filepath = str(filepath)
 
         # Check for cache files first
-        cache_extensions = [".json", ".pt", ".msgpack", ".safetensors"]
-        if any(filepath.endswith(ext) for ext in cache_extensions):
+        if filepath.endswith(self.CACHE_FILE_EXTENSIONS):
             # Check if it's already a full path
             filepath_path = Path(filepath)
             if filepath_path.exists():
@@ -891,8 +890,13 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
             return True
 
     def delete(self, filepath):
-        logger.warning("Delete operations are not supported for Hugging Face datasets")
-        raise NotImplementedError("Hugging Face datasets are read-only")
+        filepath = str(filepath)
+        if not filepath.endswith(self.CACHE_FILE_EXTENSIONS):
+            raise NotImplementedError("Hugging Face datasets are read-only except for cache files")
+        cache_path = self.cache_file_path(filepath)
+        if not cache_path.exists():
+            raise FileNotFoundError(f"{cache_path} not found.")
+        cache_path.unlink()
 
     def open_file(self, filepath, mode):
         if "w" in mode:

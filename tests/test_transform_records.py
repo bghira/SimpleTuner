@@ -517,6 +517,7 @@ class _HubDataset:
     type = "huggingface"
     image_column = "image"
     streaming = False
+    CACHE_FILE_EXTENSIONS = HuggingfaceDatasetsBackend.CACHE_FILE_EXTENSIONS
     cache_file_path = HuggingfaceDatasetsBackend.cache_file_path
     write = HuggingfaceDatasetsBackend.write
     read = HuggingfaceDatasetsBackend.read

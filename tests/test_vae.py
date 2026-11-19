@@ -550,3 +550,34 @@ class TestMetadataFilteredSample(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestVaeCacheClearsHuggingFaceLatents(unittest.TestCase):
+    """A Hugging Face dataset keeps its latents beside it; clearing the VAE cache must remove them."""
+
+    def test_clearing_the_cache_deletes_the_latents_the_dataset_backend_wrote(self):
+        import tempfile
+        from pathlib import Path
+
+        from simpletuner.helpers.data_backend.huggingface import HuggingfaceDatasetsBackend
+
+        with tempfile.TemporaryDirectory() as temp:
+            backend = HuggingfaceDatasetsBackend.__new__(HuggingfaceDatasetsBackend)
+            backend.id, backend.cache_dir = "hub", temp
+            latents = Path(temp) / "vae"
+            latents.mkdir()
+            for name in ("a.pt", "b.pt"):
+                backend.torch_save(torch.zeros(1), str(latents / name))
+            cache = VAECache.__new__(VAECache)
+            cache.id, cache.cache_dir, cache.cache_data_backend, cache.max_workers = "hub", str(latents), backend, 2
+            cache.debug_log = MagicMock()
+            with (
+                patch.object(StateTracker, "get_vae_cache_files", return_value=["a.pt", "b.pt"]),
+                patch.object(StateTracker, "set_vae_cache_files"),
+            ):
+                cache.clear_cache()
+            self.assertEqual(sorted(path.name for path in latents.iterdir()), [])
+            with self.assertRaises(FileNotFoundError):
+                backend.delete(str(latents / "a.pt"))
+            with self.assertRaises(NotImplementedError):
+                backend.delete("0.jpg")
