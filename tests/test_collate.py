@@ -206,6 +206,23 @@ class CollateFunctionTests(unittest.TestCase):
         backend_mock = active_mocks[5]
         backend_mock.assert_called()
 
+    def test_collate_returns_selected_s2v_audio_reference_and_dataset(self):
+        dataset = DatasetRuntime("backend-1", _make_stub_data_backend(), None, {"dataset_type": "video"})
+        paired_audio = DatasetRuntime("speech", None, None, {"dataset_type": "audio"})
+        dataset.audio_datasets = (paired_audio,)
+        model = _StubModel(uses_text_embeddings_cache=False)
+        example = self.base_batch[0]["training_samples"][0]
+        example.update(dataset_type="video", s2v_audio_path="speech.wav", s2v_audio_backend_id=paired_audio.id)
+        patchers, _ = self._patch_state_tracker(model=model, data_backend={}, text_outputs={})
+
+        with ExitStack() as stack:
+            for patcher in patchers:
+                stack.enter_context(patcher)
+            output = collate_fn(self.base_batch, dataset=dataset)
+
+        self.assertEqual(output["s2v_audio_paths"], ["speech.wav"])
+        self.assertEqual(output["s2v_audio_backend_ids"], ["speech"])
+
     def test_collate_passes_all_selected_reference_paths_to_text_encoding(self):
         from threading import Thread
 

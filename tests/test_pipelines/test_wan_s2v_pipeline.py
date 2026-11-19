@@ -161,18 +161,6 @@ class TestWanS2VCollateIntegration(unittest.TestCase):
             ],
         )
 
-    """Test that collate function handles s2v_audio_paths."""
-
-    def test_collate_returns_s2v_audio_paths(self):
-        """Test that collate function returns s2v_audio_paths field."""
-        # The function should include s2v_audio_paths in its return
-        import inspect
-
-        from simpletuner.helpers.training.collate import collate_fn
-
-        source = inspect.getsource(collate_fn)
-        self.assertIn("s2v_audio_paths", source)
-
 
 class TestWanS2VAudioInterpolation(unittest.TestCase):
     """Test audio interpolation functionality."""
