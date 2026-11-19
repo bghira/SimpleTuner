@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 class ScanStatus(str, Enum):
     PENDING = "pending"
     RUNNING = "running"
+    CANCELLING = "cancelling"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -39,6 +40,9 @@ class ScanJob:
     error: Optional[str] = None
     started_at: Optional[float] = None
     finished_at: Optional[float] = None
+    plan_scope: Optional[str] = None
+    queue_id: Optional[str] = None
+    queue_index: Optional[int] = None
 
 
 @dataclass
@@ -48,6 +52,8 @@ class ScanQueue:
     jobs: Dict[str, ScanJob] = field(default_factory=dict)
     current_index: int = 0
     cancelled: bool = False
+    finished: bool = False
+    plan_scope: Optional[str] = None
 
 
 class _ScanAcceleratorStub:
@@ -374,6 +380,7 @@ class DatasetScanService:
         clear_conditioning_cache: bool = False,
         *,
         dataset_plan=None,
+        plan_scope=None,
     ) -> str:
         """Start a background scan for a single dataset. Returns job_id."""
         # Prevent scanning while a cache job is active
@@ -393,7 +400,7 @@ class DatasetScanService:
                 raise RuntimeError("A scan is already in progress. Wait for it to finish.")
 
             job_id = str(uuid.uuid4())[:8]
-            job = ScanJob(job_id=job_id, dataset_id=dataset_id)
+            job = ScanJob(job_id=job_id, dataset_id=dataset_id, plan_scope=plan_scope)
             self._active_job = job
             self._active_queue = None
 
@@ -417,6 +424,7 @@ class DatasetScanService:
         force_rescan: bool = False,
         *,
         dataset_plan=None,
+        plan_scope=None,
     ) -> str:
         """Queue all datasets for sequential scanning. Returns queue_id."""
         try:
@@ -433,12 +441,14 @@ class DatasetScanService:
 
             queue_id = str(uuid.uuid4())[:8]
             dataset_ids = [ds.get("id", "") for ds in datasets]
-            queue = ScanQueue(queue_id=queue_id, dataset_ids=dataset_ids)
+            queue = ScanQueue(queue_id=queue_id, dataset_ids=dataset_ids, plan_scope=plan_scope)
 
-            for ds in datasets:
+            for index, ds in enumerate(datasets):
                 ds_id = ds.get("id", "")
                 job_id = str(uuid.uuid4())[:8]
-                queue.jobs[ds_id] = ScanJob(job_id=job_id, dataset_id=ds_id, status=ScanStatus.PENDING)
+                queue.jobs[ds_id] = ScanJob(
+                    job_id=job_id, dataset_id=ds_id, plan_scope=plan_scope, queue_id=queue_id, queue_index=index
+                )
 
             self._active_queue = queue
             self._active_job = queue.jobs.get(dataset_ids[0]) if dataset_ids else None
@@ -471,6 +481,8 @@ class DatasetScanService:
         completed = sum(1 for j in queue.jobs.values() if j.status == ScanStatus.COMPLETED)
         return {
             "queue_id": queue.queue_id,
+            "plan_scope": queue.plan_scope,
+            "active": not queue.finished,
             "total": len(queue.dataset_ids),
             "completed": completed,
             "current_index": queue.current_index,
@@ -481,33 +493,43 @@ class DatasetScanService:
     def get_active_status(self) -> Optional[Dict[str, Any]]:
         """Return status of whatever scan is currently active, if any."""
         job = self._active_job
-        if job and (job.status == ScanStatus.RUNNING or (self._scan_thread is not None and self._scan_thread.is_alive())):
+        if job and self._scan_thread is not None and self._scan_thread.is_alive():
             result = self._job_to_dict(job)
             queue = self._active_queue
-            if queue and not queue.cancelled:
-                result["queue_id"] = queue.queue_id
+            if queue and not queue.finished:
                 result["queue_total"] = len(queue.dataset_ids)
                 result["queue_completed"] = sum(1 for j in queue.jobs.values() if j.status == ScanStatus.COMPLETED)
             return result
         return None
 
-    def cancel_scan(self) -> bool:
+    def cancel_scan(self, *, job_id=None, queue_id=None, plan_scope=None) -> bool:
         """Cancel the active scan and any remaining queue."""
         with self._lock:
-            if self._active_queue:
-                self._active_queue.cancelled = True
-            if self._active_job and self._active_job.status in (ScanStatus.PENDING, ScanStatus.RUNNING):
-                self._active_job.status = ScanStatus.CANCELLED
-                self._active_job.finished_at = time.time()
+            job, queue = self._active_job, self._active_queue
+            if job is None or (job_id is not None and job.job_id != job_id):
+                return False
+            if plan_scope is not None and job.plan_scope != plan_scope:
+                return False
+            if queue_id is not None and (queue is None or queue.queue_id != queue_id):
+                return False
+            if queue is not None and not queue.finished:
+                queue.cancelled = True
+            elif job.status not in (ScanStatus.PENDING, ScanStatus.RUNNING):
+                return False
+            if job.status in (ScanStatus.PENDING, ScanStatus.RUNNING):
+                job.status = ScanStatus.CANCELLING
                 if self._cancel_event is not None:
                     self._cancel_event.set()
-                return True
-        return False
+                self._broadcast("dataset_scan", self._job_to_dict(job))
+            return True
 
     @staticmethod
     def _job_to_dict(job: ScanJob) -> Dict[str, Any]:
         return {
             "job_id": job.job_id,
+            "plan_scope": job.plan_scope,
+            "queue_id": job.queue_id,
+            "queue_index": job.queue_index,
             "dataset_id": job.dataset_id,
             "status": job.status.value,
             "current": job.current,
@@ -528,16 +550,15 @@ class DatasetScanService:
     ):
         context = multiprocessing.get_context("spawn")
         with self._lock:
-            if job.status == ScanStatus.CANCELLED or (self._active_queue and self._active_queue.cancelled):
+            if job.status == ScanStatus.CANCELLING or (self._active_queue and self._active_queue.cancelled):
                 job.status = ScanStatus.CANCELLED
+                job.finished_at = time.time()
+                self._broadcast("dataset_scan", self._job_to_dict(job))
                 return
             cancelled = self._cancel_event = context.Event()
             job.status = ScanStatus.RUNNING
             job.started_at = time.time()
-        self._broadcast(
-            "dataset_scan",
-            {"job_id": job.job_id, "dataset_id": job.dataset_id, "status": "running"},
-        )
+            self._broadcast("dataset_scan", self._job_to_dict(job))
 
         try:
             with dataset_worker(
@@ -547,45 +568,32 @@ class DatasetScanService:
                     if "error" in data:
                         raise RuntimeError(data["error"])
                     with self._lock:
-                        if job.status == ScanStatus.CANCELLED:
+                        if job.status == ScanStatus.CANCELLING:
                             continue
                         job.current, job.total = data["current"], data["total"]
-                    self._broadcast("dataset_scan", self._job_to_dict(job))
+                        self._broadcast("dataset_scan", self._job_to_dict(job))
             with self._lock:
-                if job.status == ScanStatus.CANCELLED:
+                if job.status == ScanStatus.CANCELLING:
                     return
                 if clear_vae_cache:
                     self.clear_vae_cache(dataset_config, global_config, dataset_plan=dataset_plan)
                 if clear_conditioning_cache:
                     self.clear_conditioning_cache(dataset_config, global_config)
                 job.status = ScanStatus.COMPLETED
-                job.finished_at = time.time()
-            self._broadcast(
-                "dataset_scan",
-                {
-                    "job_id": job.job_id,
-                    "dataset_id": job.dataset_id,
-                    "status": "completed",
-                    "total": job.total,
-                },
-            )
         except Exception as e:
             with self._lock:
-                if job.status == ScanStatus.CANCELLED:
+                if job.status == ScanStatus.CANCELLING:
                     return
                 job.status = ScanStatus.FAILED
                 job.error = str(e)
-                job.finished_at = time.time()
             logger.exception("Scan failed for %s", job.dataset_id)
-            self._broadcast(
-                "dataset_scan",
-                {
-                    "job_id": job.job_id,
-                    "dataset_id": job.dataset_id,
-                    "status": "failed",
-                    "error": str(e),
-                },
-            )
+        finally:
+            with self._lock:
+                self._cancel_event = None
+                if job.status == ScanStatus.CANCELLING:
+                    job.status = ScanStatus.CANCELLED
+                job.finished_at = time.time()
+                self._broadcast("dataset_scan", self._job_to_dict(job))
 
     def _run_queue(
         self,
@@ -597,7 +605,7 @@ class DatasetScanService:
     ):
         for i, ds_config in enumerate(datasets):
             if queue.cancelled:
-                for ds_id, j in queue.jobs.items():
+                for j in queue.jobs.values():
                     if j.status == ScanStatus.PENDING:
                         j.status = ScanStatus.CANCELLED
                 break
@@ -617,11 +625,15 @@ class DatasetScanService:
                 "dataset_scan_queue",
                 {
                     "queue_id": queue.queue_id,
+                    "plan_scope": queue.plan_scope,
                     "completed": i + 1,
                     "total": len(datasets),
                     "current_dataset_id": ds_id,
                 },
             )
+        with self._lock:
+            queue.finished = True
+            self._broadcast("dataset_scan_queue", self.get_queue_status(queue.queue_id))
 
     def _execute_scan(
         self,

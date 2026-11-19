@@ -219,8 +219,10 @@ class TestDatasetScanProcess(unittest.TestCase):
 
     def test_cancellation_reaches_the_running_process(self):
         progress = Event()
+        events = []
 
         def broadcast(*, event_type, data):
+            events.append(data)
             if data.get("current") == 1:
                 progress.set()
 
@@ -232,15 +234,36 @@ class TestDatasetScanProcess(unittest.TestCase):
             ),
             patch.object(service, "clear_vae_cache") as clear_vae,
         ):
-            job_id = service.scan_dataset("scan", {"id": "scan"}, force_rescan=True, clear_vae_cache=True)
+            job_id = service.scan_dataset(
+                "scan", {"id": "scan"}, force_rescan=True, clear_vae_cache=True, plan_scope="current"
+            )
             try:
                 self.assertTrue(progress.wait(timeout=20))
-                self.assertTrue(service.cancel_scan())
+                self.assertFalse(service.cancel_scan(job_id=job_id, plan_scope="previous"))
+                self.assertFalse(service.cancel_scan(job_id="stale", plan_scope="current"))
+                self.assertTrue(service.cancel_scan(job_id=job_id, plan_scope="current"))
             finally:
                 service._scan_thread.join(timeout=25)
             self.assertFalse(service._scan_thread.is_alive())
             clear_vae.assert_not_called()
         self.assertEqual(service.get_scan_status(job_id)["status"], "cancelled")
+        self.assertEqual([event["status"] for event in events[-2:]], ["cancelling", "cancelled"])
+        self.assertTrue(all(event["plan_scope"] == "current" and event["job_id"] == job_id for event in events))
+
+    def test_queue_publishes_terminal_status_even_after_failed_jobs(self):
+        events = []
+        service = DatasetScanService(broadcast_fn=lambda **event: events.append(event))
+        with patch("simpletuner.simpletuner_sdk.server.services.dataset_scan_service._execute_scan_process", reject_scan):
+            queue_id = service.scan_all([{"id": "first"}, {"id": "second"}], plan_scope="current")
+            service._scan_thread.join(timeout=30)
+        self.assertFalse(service._scan_thread.is_alive())
+        status = service.get_queue_status(queue_id)
+        self.assertEqual(status["plan_scope"], "current")
+        self.assertFalse(status["active"])
+        self.assertEqual(status["completed"], 0)
+        self.assertEqual([job["queue_index"] for job in status["datasets"].values()], [0, 1])
+        self.assertEqual([job["status"] for job in status["datasets"].values()], ["failed", "failed"])
+        self.assertEqual(events[-1], {"event_type": "dataset_scan_queue", "data": status})
 
 
 if __name__ == "__main__":

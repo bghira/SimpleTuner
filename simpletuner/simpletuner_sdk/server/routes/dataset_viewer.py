@@ -599,16 +599,20 @@ class ScanRequest(BaseModel):
     force_rescan: bool = False
     clear_vae_cache: bool = False
     clear_conditioning_cache: bool = False
+    plan_scope: Optional[str] = None
 
 
 class ScanAllRequest(BaseModel):
     force_rescan: bool = False
+    plan_scope: Optional[str] = None
 
 
 @router.post("/scan")
 async def start_dataset_scan(request: ScanRequest, _user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Start a metadata scan for a single dataset."""
-    plan, global_config, _ = _cache_plan()
+    plan, global_config, scope = _cache_plan()
+    if request.plan_scope is not None and request.plan_scope != scope:
+        raise HTTPException(status_code=409, detail="The dataset plan changed. Refresh it before scanning.")
     config = next((dataset for dataset in plan if dataset.get("id") == request.dataset_id), None)
     if config is None:
         raise HTTPException(status_code=404, detail=f"Dataset '{request.dataset_id}' not found in plan")
@@ -621,33 +625,37 @@ async def start_dataset_scan(request: ScanRequest, _user: User = Depends(get_cur
             clear_vae_cache=request.clear_vae_cache,
             clear_conditioning_cache=request.clear_conditioning_cache,
             dataset_plan=plan,
+            plan_scope=scope,
         )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(status_code=409, detail=str(e))
-    return {"job_id": job_id, "dataset_id": request.dataset_id}
+    return {"job_id": job_id, "dataset_id": request.dataset_id, "plan_scope": scope}
 
 
 @router.post("/scan/all")
 async def start_scan_all(request: ScanAllRequest, _user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Queue all browsable datasets for sequential scanning."""
-    try:
-        datasets = _load_plan()
-    except ValueError:
-        raise HTTPException(status_code=404, detail="No dataset plan found")
-
-    browsable = [ds for ds in datasets if str(ds.get("dataset_type", "")).lower() not in ("text_embeds", "image_embeds")]
+    datasets, global_config, scope = _cache_plan()
+    if request.plan_scope is not None and request.plan_scope != scope:
+        raise HTTPException(status_code=409, detail="The dataset plan changed. Refresh it before scanning.")
+    browsable = [
+        ds
+        for ds in datasets
+        if str(ds.get("dataset_type", "")).lower() not in ("text_embeds", "image_embeds", "conditioning_image_embeds")
+        and not (ds.get("disabled") or ds.get("disable"))
+    ]
     if not browsable:
         raise HTTPException(status_code=400, detail="No scannable datasets in plan")
 
     try:
         queue_id = get_scan_service().scan_all(
-            browsable, _get_global_config(), force_rescan=request.force_rescan, dataset_plan=datasets
+            browsable, global_config, force_rescan=request.force_rescan, dataset_plan=datasets, plan_scope=scope
         )
     except RuntimeError as e:
         raise HTTPException(status_code=409, detail=str(e))
-    return {"queue_id": queue_id, "dataset_count": len(browsable)}
+    return {"queue_id": queue_id, "dataset_count": len(browsable), "plan_scope": scope}
 
 
 @router.get("/scan/active")
@@ -655,17 +663,19 @@ async def get_active_scan(
     _user: User = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """Current active scan status, if any. Returns {active: false} when idle."""
+    _, _, scope = _cache_plan()
     result = get_scan_service().get_active_status()
-    if result is None:
-        return {"active": False}
+    if result is None or result["plan_scope"] != scope:
+        return {"active": False, "plan_scope": scope}
     return {"active": True, **result}
 
 
 @router.get("/scan/status")
 async def get_scan_status_endpoint(job_id: str, _user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Status of a scan job."""
+    _, _, scope = _cache_plan()
     result = get_scan_service().get_scan_status(job_id)
-    if result is None:
+    if result is None or result["plan_scope"] != scope:
         raise HTTPException(status_code=404, detail=f"Scan job '{job_id}' not found")
     return result
 
@@ -673,16 +683,20 @@ async def get_scan_status_endpoint(job_id: str, _user: User = Depends(get_curren
 @router.get("/scan/queue-status")
 async def get_scan_queue_status(queue_id: str, _user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Status of a scan queue."""
+    _, _, scope = _cache_plan()
     result = get_scan_service().get_queue_status(queue_id)
-    if result is None:
+    if result is None or result["plan_scope"] != scope:
         raise HTTPException(status_code=404, detail=f"Scan queue '{queue_id}' not found")
     return result
 
 
 @router.post("/scan/cancel")
-async def cancel_scan(_user: User = Depends(get_current_user)) -> Dict[str, Any]:
+async def cancel_scan(
+    job_id: Optional[str] = None, queue_id: Optional[str] = None, _user: User = Depends(get_current_user)
+) -> Dict[str, Any]:
     """Cancel the active scan and remaining queue."""
-    return {"cancelled": get_scan_service().cancel_scan()}
+    _, _, scope = _cache_plan()
+    return {"cancelled": get_scan_service().cancel_scan(job_id=job_id, queue_id=queue_id, plan_scope=scope)}
 
 
 # ---------------------------------------------------------------------------

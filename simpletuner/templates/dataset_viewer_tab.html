@@ -19,6 +19,8 @@
             <button type="button"
                     class="btn btn-outline-danger btn-sm"
                     x-show="scanning"
+                    aria-label="Cancel dataset scan"
+                    :disabled="_scanStarting || scanProgress.status === 'cancelling'"
                     @click="cancelScan()">
                 <i class="fas fa-stop me-1"></i> Cancel
             </button>
@@ -36,7 +38,8 @@
     <div x-show="scanning" class="viewer-scan-progress mb-3">
         <div class="d-flex justify-content-between align-items-center mb-1">
             <span class="small text-muted">
-                Scanning: <strong x-text="scanProgress.dataset_id || '...'"></strong>
+                <span x-text="scanProgress.status === 'cancelling' ? 'Cancelling' : 'Scanning'"></span>
+                <strong x-text="scanProgress.dataset_id || '...'"></strong>
             </span>
             <span class="small text-muted" x-show="scanProgress.total > 0"
                   x-text="scanProgress.current + ' / ' + scanProgress.total"></span>

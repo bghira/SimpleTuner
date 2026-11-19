@@ -1958,6 +1958,71 @@ class DatasetManagementTestCase(_TrainerPageMixin, WebUITestCase):
 class DatasetViewerRevisionTestCase(_TrainerPageMixin, WebUITestCase):
     MAX_BROWSERS = 1
 
+    def test_scan_progress_ignores_stale_events_and_waits_for_worker_shutdown(self) -> None:
+        self.seed_defaults()
+
+        def scenario(driver, _browser):
+            trainer = self._trainer_page(driver)
+            trainer.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer.switch_to_datasets_tab()
+            trainer.wait_for_tab("datasets")
+            wait = WebDriverWait(driver, 15)
+            wait.until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, "//button[contains(@class,'dataset-subtab-btn') and contains(.,'Viewer')]")
+                )
+            ).click()
+            driver.execute_async_script(
+                """
+                const done = arguments[0];
+                const view = Alpine.$data(document.querySelector('[x-data="datasetViewerComponent()"]'));
+                window.scanFixture = {
+                    active: true, plan_scope: 'current-plan', job_id: 'current-job', dataset_id: 'photos',
+                    status: 'running', current: 2, total: 10,
+                };
+                const originalFetch = window.fetch;
+                window.fetch = (url, options) => {
+                    const target = new URL(url, window.location.origin);
+                    const response = body => Promise.resolve(new Response(JSON.stringify(body)));
+                    if (target.pathname.endsWith('/scan/active') || target.pathname.endsWith('/scan/status'))
+                        return response(window.scanFixture);
+                    if (target.pathname.endsWith('/scan/cancel')) {
+                        window.cancelledScan = target.searchParams.get('job_id');
+                        window.scanFixture = {...window.scanFixture, status: 'cancelling'};
+                        return response({cancelled: true});
+                    }
+                    return originalFetch(url, options);
+                };
+                view._checkActiveScan().then(done);
+                """
+            )
+            cancel = (By.CSS_SELECTOR, "button[aria-label='Cancel dataset scan']")
+            button = wait.until(EC.element_to_be_clickable(cancel))
+            driver.execute_script(
+                """
+                for (const overrides of [{job_id: 'previous-job'}, {plan_scope: 'previous-plan'}]) {
+                    window.dispatchEvent(new CustomEvent('sse:dataset_scan', {
+                        detail: {...window.scanFixture, ...overrides, status: 'completed'},
+                    }));
+                }
+                """
+            )
+            self.assertTrue(button.is_displayed())
+            button.click()
+            wait.until(lambda d: not d.find_element(*cancel).is_enabled())
+            self.assertTrue(button.is_displayed())
+            self.assertEqual(driver.execute_script("return window.cancelledScan;"), "current-job")
+            driver.execute_script(
+                """
+                window.scanFixture = {...window.scanFixture, status: 'cancelled'};
+                window.dispatchEvent(new CustomEvent('sse:connected'));
+                """
+            )
+            wait.until(EC.invisibility_of_element_located(cancel))
+
+        self.for_each_browser("test_scan_progress_ignores_stale_events_and_waits_for_worker_shutdown", scenario)
+
     def test_text_cache_actions_follow_each_datasets_saved_store(self) -> None:
         root = self.home_path / "cache-capabilities"
         root.mkdir()

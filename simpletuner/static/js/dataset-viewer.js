@@ -39,6 +39,13 @@ window.datasetViewerComponent = function () {
         scanProgress: { dataset_id: '', current: 0, total: 0 },
         _scanHandler: null,
         _queueHandler: null,
+        _scanJobId: null,
+        _scanQueueId: null,
+        _scanQueueIndex: -1,
+        _scanPlanScope: null,
+        _scanRequest: 0,
+        _scanStatusVersion: 0,
+        _scanStarting: false,
 
         // Stage 3-5 state
         captionStatus: {},
@@ -92,6 +99,7 @@ window.datasetViewerComponent = function () {
 
         destroy() {
             this._cacheRequest++;
+            this._scanRequest++;
             this._teardownSSEListener();
             this._teardownConfigListener();
         },
@@ -144,7 +152,10 @@ window.datasetViewerComponent = function () {
                 const data = this._parseSSEDetail(event);
                 if (data) this._handleCacheEvent(data);
             };
-            this._cacheReconnectHandler = () => this._checkActiveCacheJob();
+            this._cacheReconnectHandler = () => {
+                this._checkActiveCacheJob();
+                this._checkActiveScan();
+            };
             window.addEventListener('sse:connected', this._cacheReconnectHandler);
             window.addEventListener('sse:dataset_scan', this._scanHandler);
             window.addEventListener('sse:dataset_scan_queue', this._queueHandler);
@@ -186,6 +197,10 @@ window.datasetViewerComponent = function () {
                 this.caching = false;
                 this.cacheError = '';
                 this.cacheCapabilities = { text_embeds: false, vae: false, conditioning_types: [] };
+                this._scanRequest++;
+                this._scanStarting = false;
+                this._scanPlanScope = null;
+                this._clearScanProgress();
                 this.loadAllSummaries();
                 this._checkActiveScan();
                 this._checkActiveCacheJob();
@@ -214,35 +229,43 @@ window.datasetViewerComponent = function () {
         },
 
         _handleScanEvent(data) {
-            if (data.status === 'running') {
+            if (data.plan_scope !== this._scanPlanScope) return;
+            if (this._scanQueueId ? data.queue_id !== this._scanQueueId : data.job_id !== this._scanJobId) return;
+            if (this._scanQueueId) {
+                if (data.queue_index < this._scanQueueIndex) return;
+                this._scanQueueIndex = data.queue_index;
+            }
+            this._scanStatusVersion++;
+            if (['pending', 'running', 'cancelling'].includes(data.status)) {
                 this.scanning = true;
                 this.scanProgress = {
+                    status: data.status,
                     dataset_id: data.dataset_id || this.scanProgress.dataset_id,
                     current: data.current || 0,
                     total: data.total || 0,
                 };
-            } else if (data.status === 'completed') {
-                this.scanning = false;
-                this.scanProgress = { dataset_id: '', current: 0, total: 0 };
-                this._refreshDatasetSummary(data.dataset_id);
-            } else if (data.status === 'failed' || data.status === 'cancelled') {
-                this.scanning = false;
-                this.scanProgress = { dataset_id: '', current: 0, total: 0 };
-                if (data.error) {
-                    console.error('Scan failed for', data.dataset_id, ':', data.error);
-                    if (window.showToast) {
-                        window.showToast('Scan failed: ' + data.error, 'error');
-                    }
-                }
+                return;
             }
+            if (!this._scanQueueId) this._clearScanProgress();
+            if (data.status === 'completed') this._refreshDatasetSummary(data.dataset_id);
+            if (data.status === 'failed' && data.error) window.showToast?.('Scan failed: ' + data.error, 'error');
         },
 
         _handleQueueEvent(data) {
-            if (data.completed >= data.total) {
-                this.scanning = false;
-                this.scanProgress = { dataset_id: '', current: 0, total: 0 };
+            if (data.queue_id !== this._scanQueueId || data.plan_scope !== this._scanPlanScope) return;
+            this._scanStatusVersion++;
+            if (data.active === false) {
+                this._clearScanProgress();
                 this.loadAllSummaries();
             }
+        },
+
+        _clearScanProgress() {
+            this._scanJobId = null;
+            this._scanQueueId = null;
+            this._scanQueueIndex = -1;
+            this.scanning = false;
+            this.scanProgress = { dataset_id: '', current: 0, total: 0 };
         },
 
         _handleCacheEvent(data) {
@@ -288,47 +311,48 @@ window.datasetViewerComponent = function () {
         // --- Scan operations ---
 
         async _checkActiveScan() {
+            if (this._scanStarting) return;
+            const request = this._scanRequest;
+            const version = this._scanStatusVersion;
+            const jobId = this._scanJobId;
+            const queueId = this._scanQueueId;
+            const endpoint = queueId ? '/queue-status?queue_id=' + encodeURIComponent(queueId)
+                : jobId ? '/status?job_id=' + encodeURIComponent(jobId) : '/active';
             try {
-                const resp = await fetch('/api/datasets/scan/active');
+                const resp = await fetch('/api/datasets/scan' + endpoint);
+                if (request !== this._scanRequest || version !== this._scanStatusVersion) return;
+                if ((queueId || jobId) && resp.status === 404) {
+                    this._clearScanProgress();
+                    return;
+                }
                 if (!resp.ok) return;
                 const data = await resp.json();
-                if (data.active) {
+                if (request !== this._scanRequest || version !== this._scanStatusVersion) return;
+                if (queueId) {
+                    this._handleQueueEvent(data);
+                    if (!data.active) return;
                     this.scanning = true;
-                    this.scanProgress = {
-                        dataset_id: data.dataset_id || '',
-                        current: data.current || 0,
-                        total: data.total || 0,
-                    };
+                    const job = Object.values(data.datasets)[data.current_index];
+                    if (job) this._handleScanEvent(job);
+                } else if (!jobId) {
+                    this._scanPlanScope = data.plan_scope;
+                    if (!data.active) return;
+                    this._scanJobId = data.job_id;
+                    this._scanQueueId = data.queue_id;
+                    this._handleScanEvent(data);
+                } else {
+                    this._handleScanEvent(data);
                 }
             } catch (e) { /* ignore */ }
         },
 
         async scanDataset(datasetId, { forceRescan = false, clearVaeCache = false, clearConditioningCache = false } = {}) {
-            this.scanning = true;
-            this.scanProgress = { dataset_id: datasetId, current: 0, total: 0 };
-            try {
-                const resp = await fetch('/api/datasets/scan', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        dataset_id: datasetId,
-                        force_rescan: forceRescan,
-                        clear_vae_cache: clearVaeCache,
-                        clear_conditioning_cache: clearConditioningCache,
-                    }),
-                });
-                if (!resp.ok) {
-                    const err = await resp.json().catch(() => ({ detail: 'Unknown error' }));
-                    throw new Error(err.detail || 'Scan request failed');
-                }
-                // Progress updates arrive via SSE
-            } catch (err) {
-                console.error('Error starting scan:', err);
-                this.scanning = false;
-                if (window.showToast) {
-                    window.showToast(err.message, 'error');
-                }
-            }
+            await this._startScan('', datasetId, {
+                dataset_id: datasetId,
+                force_rescan: forceRescan,
+                clear_vae_cache: clearVaeCache,
+                clear_conditioning_cache: clearConditioningCache,
+            });
         },
 
         showForceScanDialog(datasetId) {
@@ -354,34 +378,48 @@ window.datasetViewerComponent = function () {
         },
 
         async scanAll() {
+            await this._startScan('/all', 'all', {});
+        },
+
+        async _startScan(endpoint, datasetId, payload) {
+            const request = ++this._scanRequest;
+            this._scanStarting = true;
             this.scanning = true;
-            this.scanProgress = { dataset_id: 'all', current: 0, total: 0 };
+            this.scanProgress = { dataset_id: datasetId, status: 'pending', current: 0, total: 0 };
             try {
-                const resp = await fetch('/api/datasets/scan/all', {
+                const resp = await fetch('/api/datasets/scan' + endpoint, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({}),
+                    body: JSON.stringify({ ...payload, plan_scope: this._scanPlanScope }),
                 });
-                if (!resp.ok) {
-                    const err = await resp.json().catch(() => ({ detail: 'Unknown error' }));
-                    throw new Error(err.detail || 'Scan all request failed');
-                }
+                const data = await resp.json();
+                if (request !== this._scanRequest) return;
+                if (!resp.ok) throw new Error(data.detail || 'Scan request failed');
+                this._scanPlanScope = data.plan_scope;
+                this._scanJobId = data.job_id || null;
+                this._scanQueueId = data.queue_id || null;
             } catch (err) {
-                console.error('Error starting scan all:', err);
-                this.scanning = false;
-                if (window.showToast) {
-                    window.showToast(err.message, 'error');
+                if (request !== this._scanRequest) return;
+                this._clearScanProgress();
+                window.showToast?.(err.message, 'error');
+            } finally {
+                if (request === this._scanRequest) {
+                    this._scanStarting = false;
+                    await this._checkActiveScan();
                 }
             }
         },
 
         async cancelScan() {
+            const request = this._scanRequest;
+            const params = this._scanQueueId ? { queue_id: this._scanQueueId } : { job_id: this._scanJobId };
+            if (!this._scanQueueId && !this._scanJobId) return;
             try {
-                await fetch('/api/datasets/scan/cancel', { method: 'POST' });
-                this.scanning = false;
-                this.scanProgress = { dataset_id: '', current: 0, total: 0 };
+                const resp = await fetch('/api/datasets/scan/cancel?' + new URLSearchParams(params), { method: 'POST' });
+                if (!resp.ok) throw new Error('Cancel request failed');
+                if (request === this._scanRequest) await this._checkActiveScan();
             } catch (err) {
-                console.error('Error cancelling scan:', err);
+                if (request === this._scanRequest) window.showToast?.(err.message, 'error');
             }
         },
 
