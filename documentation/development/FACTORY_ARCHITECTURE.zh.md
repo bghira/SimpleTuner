@@ -2,7 +2,7 @@
 
 ## 数据集构建
 
-工厂验证标识符、展开生成的数据集，并在依赖方之前处理元数据源。构建器打开数据源和元数据提供方。`DatasetRuntime` 绑定提供方、解析后的配置、关联数据集和产物缓存。`StateTracker` 注册这些句柄，并为旧调用方保留兼容条目。
+工厂验证标识符、展开生成的数据集，并在依赖方之前处理元数据源。构建器打开数据源和元数据提供方。`DatasetRuntime` 绑定提供方、解析后的配置、关联数据集和产物缓存。`StateTracker` 按数据集 ID 注册这些句柄。
 
 ```text
 FactoryRegistry → builders → DatasetRuntime

@@ -2,7 +2,7 @@
 
 ## Construção do conjunto de dados
 
-A fábrica valida identificadores, expande conjuntos gerados e coloca as fontes de metadados antes dos seus dependentes. Os construtores abrem os provedores de origem e de metadados. O `DatasetRuntime` vincula os provedores, a configuração resolvida, os conjuntos relacionados e os caches de artefatos. O `StateTracker` registra os objetos e mantém as entradas usadas pelos consumidores legados.
+A fábrica valida identificadores, expande conjuntos gerados e coloca as fontes de metadados antes dos seus dependentes. Os construtores abrem os provedores de origem e de metadados. O `DatasetRuntime` vincula os provedores, a configuração resolvida, os conjuntos relacionados e os caches de artefatos. O `StateTracker` registra os objetos pelo ID do conjunto.
 
 ```text
 FactoryRegistry → builders → DatasetRuntime

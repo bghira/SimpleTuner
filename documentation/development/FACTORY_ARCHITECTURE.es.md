@@ -2,7 +2,7 @@
 
 ## Construcción del dataset
 
-La fábrica valida los identificadores, expande los datasets generados y ordena las fuentes de metadatos antes que sus dependientes. Los constructores abren los proveedores de origen y de metadatos. `DatasetRuntime` vincula los proveedores, la configuración resuelta, los datasets relacionados y las cachés de artefactos. `StateTracker` registra esos objetos y mantiene entradas para los consumidores antiguos.
+La fábrica valida los identificadores, expande los datasets generados y ordena las fuentes de metadatos antes que sus dependientes. Los constructores abren los proveedores de origen y de metadatos. `DatasetRuntime` vincula los proveedores, la configuración resuelta, los datasets relacionados y las cachés de artefactos. `StateTracker` registra esos objetos por ID.
 
 ```text
 FactoryRegistry → builders → DatasetRuntime

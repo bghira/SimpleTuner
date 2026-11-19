@@ -2,7 +2,7 @@
 
 ## Dataset construction
 
-The factory validates identifiers, expands generated datasets, and orders metadata sources before their dependents. Builders open the source and metadata providers. `DatasetRuntime` binds the providers, resolved configuration, related datasets, and artifact caches. `StateTracker` registers the handles and still mirrors entries for legacy callers.
+The factory validates identifiers, expands generated datasets, and orders metadata sources before their dependents. Builders open the source and metadata providers. `DatasetRuntime` binds the providers, resolved configuration, related datasets, and artifact caches. `StateTracker` registers the dataset handles by ID.
 
 ```text
 FactoryRegistry → builders → DatasetRuntime
