@@ -5158,10 +5158,7 @@ class Trainer:
         )
         self._emit_event(event)
         for dataset in self._registered_training_datasets().values():
-            if dataset.sampler is not None:
-                dataset.sampler.load_states(
-                    state_path=os.path.join(self.config.output_dir, path, self.model_hooks.training_state_path)
-                )
+            dataset.restore_checkpoint(os.path.join(self.config.output_dir, path, self.model_hooks.training_state_path))
         self.state["global_resume_step"] = self.state["global_step"] = StateTracker.get_global_step()
         StateTracker.set_global_resume_step(self.state["global_resume_step"])
         try:
@@ -5205,8 +5202,7 @@ class Trainer:
 
         # Log the current state of each data backend.
         for dataset in self._registered_training_datasets().values():
-            if dataset.sampler is not None:
-                dataset.sampler.log_state()
+            dataset.log_sampling_state()
         # We store the number of dataset resets that have occurred inside the checkpoint.
         self.state["first_epoch"] = StateTracker.get_epoch()
         if self.state["first_epoch"] > 1 or self.state["global_resume_step"] > 1:
@@ -6112,9 +6108,7 @@ class Trainer:
         if self.bf is not None:
             self.bf.stop_fetching()
         for dataset in StateTracker.get_datasets().values():
-            for component in (dataset.vae_cache, dataset.metadata_backend, dataset.text_embed_cache, dataset.sampler):
-                if component is not None:
-                    component.should_abort = True
+            dataset.abort()
         self.should_abort = True
 
     def cleanup(self) -> None:
@@ -6746,9 +6740,7 @@ class Trainer:
             )
         self.mark_optimizer_train()
         for dataset in self._registered_training_datasets().values():
-            if dataset.sampler is not None:
-                logger.debug("Saving sampler for dataset %s", dataset.id)
-                dataset.sampler.save_state(state_path=os.path.join(save_path_tmp, self.model_hooks.training_state_path))
+            dataset.save_checkpoint(os.path.join(save_path_tmp, self.model_hooks.training_state_path))
         if distributed_type != DistributedType.NO:
             self.accelerator.wait_for_everyone()
         if is_main_process:

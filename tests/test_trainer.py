@@ -599,6 +599,7 @@ wandb_module.log = lambda *_, **__: None
 wandb_module.config = {}
 sys.modules.setdefault("wandb", wandb_module)
 
+from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.models.common import PredictionTypes
 from simpletuner.helpers.training.attention_backend import AttentionBackendMode
@@ -3712,12 +3713,14 @@ class TestTrainer(unittest.TestCase):
         trainer.job_id = "test-job"
         trainer.model_hooks = SimpleNamespace(training_state_path="training_state-rank1.json")
         sampler = Mock()
+        dataset = DatasetRuntime("foo", None, None, {})
+        dataset.sampler = sampler
         lr_scheduler = Mock()
         lr_scheduler.state_dict.return_value = {"base_lrs": [0.1], "_last_lr": [0.1]}
 
         with patch(
             "simpletuner.helpers.training.trainer.StateTracker.get_datasets",
-            return_value={"foo": SimpleNamespace(id="foo", sampler=sampler)},
+            return_value={"foo": dataset},
         ):
             with patch("simpletuner.helpers.training.trainer.StateTracker.get_global_step", return_value=10):
                 with patch("simpletuner.helpers.training.trainer.StateTracker.set_global_resume_step"):

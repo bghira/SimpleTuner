@@ -973,11 +973,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
         outputs = list(samples)
 
-        def read_pair(sampler, sample_path, source_path):
-            options = {"paired_source": (self.id, source_path)}
-            if rng is not None:
-                options["rng"] = rng
-            return sampler.get_conditioning_sample(sample_path, **options)
+        def read_pair(dataset, sample_path, source_path):
+            return dataset.read_conditioning_sample(sample_path, paired_source=(self.id, source_path), rng=rng)
 
         if sampling_mode == "random" and len(conditioning_datasets) > 1:
             # Random mode: select one conditioning dataset per training sample
@@ -996,7 +993,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 else:
                     selected_idx = rng.randrange(len(conditioning_datasets))
                 selected_dataset = conditioning_datasets[selected_idx]
-                sampler = selected_dataset.sampler
 
                 self.debug_log(
                     f"Selected conditioning dataset {selected_dataset.id} "
@@ -1004,7 +1000,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 )
 
                 # Get the conditioning sample from the selected dataset
-                conditioning_sample = read_pair(sampler, sample_path, sample["image_path"])
+                conditioning_sample = read_pair(selected_dataset, sample_path, sample["image_path"])
                 if conditioning_sample is not None:
                     # Tag the sample with which dataset it came from for debugging
                     conditioning_sample._source_dataset_id = selected_dataset.id
@@ -1016,8 +1012,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                         if fallback_idx == selected_idx:
                             continue  # Skip the one we already tried
 
-                        fallback_sampler = fallback_dataset.sampler
-                        conditioning_sample = read_pair(fallback_sampler, sample_path, sample["image_path"])
+                        conditioning_sample = read_pair(fallback_dataset, sample_path, sample["image_path"])
                         if conditioning_sample is not None:
                             self.logger.warning(
                                 f"Sample {sample_path} not found in {selected_dataset.id}, "
@@ -1038,13 +1033,12 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             missing_samples = []
 
             for dataset in conditioning_datasets:
-                sampler = dataset.sampler
                 dataset_samples_added = 0
 
                 for sample in samples:
                     sample_path = self.dataset_runtime.pairing_key(sample["image_path"])
 
-                    conditioning_sample = read_pair(sampler, sample_path, sample["image_path"])
+                    conditioning_sample = read_pair(dataset, sample_path, sample["image_path"])
                     if conditioning_sample is not None:
                         # Tag the sample with which dataset it came from
                         conditioning_sample._source_dataset_id = dataset.id

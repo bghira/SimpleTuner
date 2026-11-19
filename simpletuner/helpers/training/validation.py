@@ -490,7 +490,7 @@ def _selected_validation_datasets(args, context, *dataset_types):
         for dataset in datasets.values()
         if (not selected or dataset.id in selected)
         and not dataset.config.get("disable_validation", False)
-        and dataset.sampler is not None
+        and dataset.supports_validation_samples
     )
 
 
@@ -538,7 +538,7 @@ def retrieve_validation_images():
     datasets = _selected_validation_datasets(args, f"{dataset_type_name} validation", *dataset_types)
     validation_set = []
     for dataset in datasets:
-        samples = dataset.sampler.retrieve_validation_set(batch_size=args.num_eval_images)
+        samples = dataset.validation_samples(batch_size=args.num_eval_images)
         prompts = [_normalise_validation_sample(sample, idx=idx) for idx, sample in enumerate(samples)]
         edge_length = model.validation_image_input_edge_length()
         if edge_length is not None:
@@ -559,15 +559,13 @@ def retrieve_validation_edit_images() -> list[ValidationPrompt]:
     for dataset in _selected_validation_datasets(args, "image validation", *_PREVIEW_DATASET_TYPES):
         if not dataset.conditioning_datasets:
             continue
-        for shortname, edited_prompt, sample_ref, _ in dataset.sampler.retrieve_validation_set(
-            batch_size=args.num_eval_images
-        ):
+        for shortname, edited_prompt, sample_ref, _ in dataset.validation_samples(batch_size=args.num_eval_images):
             pairing_key = dataset.pairing_key(sample_ref)
             if not pairing_key or os.path.isabs(pairing_key) or ".." in Path(pairing_key).parts:
                 continue
             references = []
             for target in dataset.conditioning_datasets:
-                reference = target.sampler.get_conditioning_sample(pairing_key, paired_source=(dataset.id, sample_ref))
+                reference = target.read_conditioning_sample(pairing_key, paired_source=(dataset.id, sample_ref))
                 if reference is not None:
                     references.append(reference)
             if len(references) != len(dataset.conditioning_datasets):
@@ -616,7 +614,7 @@ def retrieve_validation_s2v_samples() -> list[ValidationPrompt]:
     for dataset in _selected_validation_datasets(args, "video validation", *_PREVIEW_DATASET_TYPES):
         if not dataset.audio_datasets:
             continue
-        for sample in dataset.sampler.retrieve_validation_set(batch_size=args.num_eval_images):
+        for sample in dataset.validation_samples(batch_size=args.num_eval_images):
             # sample is (shortname, prompt, path, image)
             if len(sample) >= 4:
                 shortname, prompt, sample_path, reference_image = sample[:4]

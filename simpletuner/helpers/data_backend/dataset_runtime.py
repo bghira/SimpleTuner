@@ -107,9 +107,33 @@ class DatasetRuntime:
     def reset_evaluation(self):
         self.sampler.reset_evaluation()
 
+    @property
+    def supports_validation_samples(self):
+        return self.sampler is not None
+
+    def validation_samples(self, *, batch_size):
+        return self.sampler.retrieve_validation_set(batch_size=batch_size)
+
     def acknowledge_batch(self, continuation):
         """Commit the provider's continuation for a consumed training batch."""
         self.sampler.acknowledge_batch(continuation)
+
+    def save_checkpoint(self, state_path):
+        if self.sampler is not None:
+            self.sampler.save_state(state_path=state_path)
+
+    def restore_checkpoint(self, state_path):
+        if self.sampler is not None:
+            self.sampler.load_states(state_path=state_path)
+
+    def log_sampling_state(self):
+        if self.sampler is not None:
+            self.sampler.log_state()
+
+    def abort(self):
+        for component in (self.vae_cache, self.metadata_backend, self.text_embed_cache, self.sampler):
+            if component is not None:
+                component.should_abort = True
 
     @staticmethod
     def caption_config(config, args=None):
@@ -214,6 +238,12 @@ class DatasetRuntime:
     def conditioning_ref(self, relative_ref):
         """Resolve a training sample's pairing key inside this conditioning dataset."""
         return self.metadata_backend.conditioning_ref(relative_ref)
+
+    def read_conditioning_sample(self, relative_ref, *, paired_source, rng=None):
+        options = {"paired_source": paired_source}
+        if rng is not None:
+            options["rng"] = rng
+        return self.sampler.get_conditioning_sample(relative_ref, **options)
 
     def resolve_captions(self, sample_refs):
         lookup = self._caption_lookup(sample_refs)

@@ -26,6 +26,7 @@ def _checkpoint_worker(rank, port, output_dir):
     )
     from accelerate import Accelerator
 
+    from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
     from simpletuner.helpers.multiaspect.sampler import MultiAspectSampler
     from simpletuner.helpers.multiaspect.state import BucketStateManager
     from simpletuner.helpers.training.save_hooks import SaveHookManager
@@ -100,6 +101,8 @@ def _checkpoint_worker(rank, port, output_dir):
     sampler.metadata_backend = SimpleNamespace(
         aspect_ratio_bucket_indices={"1.0": [f"rank{rank}-a", f"rank{rank}-b"]}, seen_images={f"rank{rank}-a": 1}
     )
+    dataset = DatasetRuntime(sampler.id, None, sampler.metadata_backend, {})
+    dataset.sampler = sampler
     StateTracker.set_args(trainer.config)
     original_parameters = [p.detach().clone() for p in model.parameters()]
     for tempdir, rolling in [(True, False), (False, True)]:
@@ -108,9 +111,7 @@ def _checkpoint_worker(rank, port, output_dir):
         random.seed(100 + rank)
         np.random.seed(200 + rank)
         torch.manual_seed(300 + rank)
-        with patch.object(
-            StateTracker, "get_datasets", return_value={"dataset": SimpleNamespace(id="dataset", sampler=sampler)}
-        ):
+        with patch.object(StateTracker, "get_datasets", return_value={dataset.id: dataset}):
             path = trainer._save_rolling_checkpoint() if rolling else trainer._run_standard_checkpoint(None, None, 0)
         expected = (random.random(), np.random.random(), torch.rand(4))
         manifest = trainer.checkpoint_manager.load_manifest(path)
@@ -135,7 +136,7 @@ def _checkpoint_worker(rank, port, output_dir):
         assert expected[:2] == actual[:2]
         assert torch.equal(expected[2], actual[2])
         assert all(torch.equal(p, old) for p, old in zip(model.parameters(), original_parameters))
-        sampler.load_states(str(Path(path) / hooks.training_state_path))
+        dataset.restore_checkpoint(str(Path(path) / hooks.training_state_path))
         assert sampler.metadata_backend.aspect_ratio_bucket_indices == saved_sampler["aspect_ratio_bucket_indices"]
         assert sampler.metadata_backend.seen_images == saved_sampler["seen_images"]
         assert sampler.current_epoch == saved_sampler["current_epoch"]
