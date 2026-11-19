@@ -9,7 +9,7 @@ import random
 import subprocess
 import sys
 from contextlib import contextmanager, nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from io import BytesIO
 from pathlib import Path
@@ -59,8 +59,10 @@ from diffusers.utils.torch_utils import is_compiled_module
 from PIL import Image, ImageDraw, ImageFont
 from transformers.utils import ContextManagers
 
+from simpletuner.helpers.data_backend.dataset_runtime import DatasetValidationSample
 from simpletuner.helpers.data_backend.dataset_types import selected_dataset_ids
 from simpletuner.helpers.data_backend.runtime.context_parallel_sync import get_cp_info, get_model_replica_data_info
+from simpletuner.helpers.metadata.preparation import DatasetReadView
 from simpletuner.helpers.models.common import PipelineTypes
 from simpletuner.helpers.models.cosmos.scheduler import RectifiedFlowAB2Scheduler
 from simpletuner.helpers.models.hidream.schedule import FlowUniPCMultistepScheduler
@@ -136,6 +138,7 @@ class ValidationPrompt:
     bbox_entities: list[dict] | None = None
     bbox_keyframes: list[dict] | None = None
     lyrics: str | None = None
+    dataset_read_view: DatasetReadView | None = None
 
 
 def resize_validation_images(validation_images, edge_length):
@@ -154,20 +157,7 @@ def resize_validation_images(validation_images, edge_length):
         )
         # we can be less precise here
         training_sample_image = training_sample_image.resize(crop_to)
-        resized_validation_samples.append(
-            ValidationPrompt(
-                shortname=validation_prompt.shortname,
-                prompt=validation_prompt.prompt,
-                type=validation_prompt.type,
-                conditioning=training_sample_image,
-                image_path=validation_prompt.image_path,
-                data_backend_id=validation_prompt.data_backend_id,
-                adapter_strength=validation_prompt.adapter_strength,
-                bbox_entities=validation_prompt.bbox_entities,
-                bbox_keyframes=validation_prompt.bbox_keyframes,
-                lyrics=validation_prompt.lyrics,
-            )
-        )
+        resized_validation_samples.append(replace(validation_prompt, conditioning=training_sample_image))
     return resized_validation_samples
 
 
@@ -262,7 +252,16 @@ def _normalise_validation_sample(sample, idx: int = 0, fallback_shortname: str |
     bbox_keyframes: list[dict] | None = None
     lyrics: str | None = None
 
-    if isinstance(sample, PromptLibraryEntry):
+    view = None
+
+    if isinstance(sample, DatasetValidationSample):
+        shortname = sample.shortname
+        prompt = sample.prompt
+        conditioning = sample.image
+        image_path = sample.ref
+        data_backend_id = sample.dataset_id
+        view = sample.view
+    elif isinstance(sample, PromptLibraryEntry):
         prompt = sample.prompt
         adapter_strength = sample.adapter_strength
         bbox_entities = sample.bbox_entities
@@ -295,7 +294,7 @@ def _normalise_validation_sample(sample, idx: int = 0, fallback_shortname: str |
         conditioning = conditioning[0]
     if image_path is not None:
         image_path = str(image_path)
-        if shortname and "_" in shortname:
+        if data_backend_id is None and shortname and "_" in shortname:
             data_backend_id = shortname.rsplit("_", 1)[0]
 
     if not isinstance(prompt, str):
@@ -312,6 +311,7 @@ def _normalise_validation_sample(sample, idx: int = 0, fallback_shortname: str |
         bbox_entities=bbox_entities,
         bbox_keyframes=bbox_keyframes,
         lyrics=lyrics,
+        dataset_read_view=view,
     )
 
 
@@ -555,8 +555,11 @@ def retrieve_validation_edit_images() -> list[ValidationPrompt]:
     for dataset in _selected_validation_datasets(args, "image validation", *_PREVIEW_DATASET_TYPES):
         if not dataset.conditioning_datasets:
             continue
-        source_view = dataset.published_read_view()
-        for shortname, edited_prompt, sample_ref, _ in dataset.validation_samples(batch_size=args.num_eval_images):
+        for entry in dataset.validation_samples(batch_size=args.num_eval_images):
+            prompt = _normalise_validation_sample(entry)
+            sample_ref, source_view = prompt.image_path, prompt.dataset_read_view
+            if sample_ref is None:
+                continue
             pairing_key = dataset.pairing_key(sample_ref)
             if not pairing_key or os.path.isabs(pairing_key) or ".." in Path(pairing_key).parts:
                 continue
@@ -577,11 +580,11 @@ def retrieve_validation_edit_images() -> list[ValidationPrompt]:
                 logger.warning(f"Didn't find enough conditioning samples for {pairing_key}.")
                 continue
             validation_set.append(
-                ValidationPrompt(
-                    shortname=shortname,
-                    prompt=edited_prompt,
+                replace(
+                    prompt,
                     type=ValidationConditioningType.EDIT_REFERENCES,
                     conditioning=references[0] if len(references) == 1 else references,
+                    data_backend_id=dataset.id,
                 )
             )
 
@@ -602,33 +605,19 @@ def retrieve_validation_s2v_samples() -> list[ValidationPrompt]:
         if not dataset.audio_datasets:
             continue
         for sample in dataset.validation_samples(batch_size=args.num_eval_images):
-            # sample is (shortname, prompt, path, image)
-            if len(sample) >= 4:
-                shortname, prompt, sample_path, reference_image = sample[:4]
-            elif len(sample) == 3:
-                shortname, prompt, reference_image = sample
-                sample_path = None
-            else:
-                continue
-
-            pairing = dataset.resolve_s2v_audio(sample_path) if sample_path is not None else None
+            prompt = _normalise_validation_sample(sample)
+            pairing = dataset.resolve_s2v_audio(prompt.image_path) if prompt.image_path is not None else None
             if pairing is None:
-                logger.warning(f"No audio found for S2V validation sample: {shortname}")
+                logger.warning(f"No audio found for S2V validation sample: {prompt.shortname}")
                 continue
 
             audio_dataset, audio_path = pairing
-            conditioning = {
-                "image": reference_image,
-                "audio_path": audio_path,
-                "audio_dataset": audio_dataset,
-            }
             validation_set.append(
-                ValidationPrompt(
-                    shortname=shortname,
-                    prompt=prompt,
+                replace(
+                    prompt,
                     type=ValidationConditioningType.S2V,
-                    conditioning=conditioning,
-                    image_path=sample_path,
+                    conditioning={"image": prompt.conditioning, "audio_path": audio_path, "audio_dataset": audio_dataset},
+                    data_backend_id=dataset.id,
                 )
             )
 
@@ -1350,6 +1339,7 @@ def _build_validation_grounding_batch(
     vae_scale_factor: int,
     image_path: str | None = None,
     dataset=None,
+    view: DatasetReadView | None = None,
     bbox_entities: list[dict] | None = None,
     shortname: str | None = None,
     target_size: tuple[int, int] | None = None,
@@ -1384,7 +1374,7 @@ def _build_validation_grounding_batch(
     from simpletuner.helpers.training.grounding.collate import GroundingCollate
     from simpletuner.helpers.training.grounding.metadata import BboxMetadata
 
-    (metadata,) = dataset.read_samples([image_path], view=dataset.published_read_view())
+    (metadata,) = dataset.read_samples([image_path], view=view if view is not None else dataset.published_read_view())
     entity_dicts = metadata.get("bbox_entities")
     if not entity_dicts:
         sidecar_path = Path(image_path).with_suffix(".bbox")
@@ -1613,6 +1603,7 @@ class _ValidationWorkItem:
     bbox_entities: list[dict] | None = None
     bbox_keyframes: list[dict] | None = None
     lyrics: str | None = None
+    dataset_read_view: DatasetReadView | None = None
 
 
 @dataclass(frozen=True)
@@ -3784,6 +3775,7 @@ class Validation:
                     bbox_entities=validation_prompt.bbox_entities,
                     bbox_keyframes=validation_prompt.bbox_keyframes,
                     lyrics=validation_prompt.lyrics,
+                    dataset_read_view=validation_prompt.dataset_read_view,
                 )
             )
         return work_items
@@ -3876,6 +3868,7 @@ class Validation:
             bbox_entities=item.bbox_entities,
             bbox_keyframes=item.bbox_keyframes,
             lyrics=item.lyrics,
+            dataset_read_view=item.dataset_read_view,
         )
         return {
             "index": item.index,
@@ -4401,6 +4394,7 @@ class Validation:
         bbox_entities: list[dict] | None = None,
         bbox_keyframes: list[dict] | None = None,
         lyrics: str | None = None,
+        dataset_read_view: DatasetReadView | None = None,
     ):
         """Generate validation images for a single prompt."""
         self._check_abort()
@@ -4725,6 +4719,7 @@ class Validation:
                             vae_scale_factor=8,
                             image_path=image_path,
                             dataset=StateTracker.get_datasets().get(data_backend_id),
+                            view=dataset_read_view,
                         )
                     if grounding_batch is not None:
                         grounding_batch = grounding_batch.to(

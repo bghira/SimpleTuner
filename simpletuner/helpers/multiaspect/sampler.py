@@ -7,7 +7,7 @@ from collections import Counter
 import torch
 from accelerate.logging import get_logger
 
-from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime, DatasetValidationSample
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.metadata.backends.base import get_cp_aware_dp_info
 from simpletuner.helpers.metadata.preparation import DatasetReadView
@@ -435,7 +435,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         Args:
             batch_size (int): Number of images to return.
         Returns:
-            list: a list of tuples(validation_shortname, validation_prompt, validation_sample)
+            list[DatasetValidationSample]: input images and the dataset view used to prepare them
         """
         results = []
         positions = {}
@@ -444,7 +444,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         if not positions:
             return results
         revision = self.validation_cursor.state_dict()["view"] if self.dataset_runtime.uses_native_schedule else None
-        view = DatasetReadView(revision) if revision is not None else None
+        view = DatasetReadView(revision) if revision is not None else self.dataset_runtime.published_read_view()
         records = self.dataset_runtime.read_samples(list(positions), fields=("metadata", "image"), view=view)
         prepared = []
         caption_paths = []
@@ -480,11 +480,13 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 else:
                     validation_prompt = random.choice(validation_prompt)
             results.append(
-                (
-                    validation_shortname,
-                    validation_prompt,
-                    image_path,
-                    image,
+                DatasetValidationSample(
+                    shortname=validation_shortname,
+                    prompt=validation_prompt,
+                    ref=image_path,
+                    image=image,
+                    dataset_id=self.id,
+                    view=view,
                 )
             )
 

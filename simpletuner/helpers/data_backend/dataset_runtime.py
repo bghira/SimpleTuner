@@ -7,6 +7,7 @@ import os
 import random
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from copy import deepcopy
+from dataclasses import dataclass
 from itertools import batched, islice
 from typing import Any
 
@@ -24,6 +25,16 @@ from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.utils.pathing import normalize_data_path
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class DatasetValidationSample:
+    shortname: str
+    prompt: str
+    ref: str
+    image: Any
+    dataset_id: str
+    view: DatasetReadView | None
 
 
 class DatasetRuntime:

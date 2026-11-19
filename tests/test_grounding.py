@@ -542,8 +542,9 @@ class TestBuildInlineGroundingBatch(unittest.TestCase):
                         vae_scale_factor=8,
                         image_path=ref,
                         dataset=dataset,
+                        view=DatasetReadView("cursor-view"),
                     )
-                    backend.get_view_metadata.assert_called_once_with([ref], DatasetReadView("published"))
+                    backend.get_view_metadata.assert_called_once_with([ref], DatasetReadView("cursor-view"))
                     cache.compute_prompt_embeddings_with_model.assert_called_once_with(
                         prompt_records=[{"prompt": "cat", "key": f"{Path(ref).name}__bbox_0", "metadata": {}}]
                     )

@@ -568,7 +568,7 @@ class DatasetRuntimeTests(unittest.TestCase):
                     patch("simpletuner.helpers.multiaspect.sampler.random.choice", side_effect=lambda choices: choices[0]),
                 ):
                     results = sampler.retrieve_validation_set(1)
-                self.assertEqual(results[0][1], "source caption" if source_id else "first")
+                self.assertEqual(results[0].prompt, "source caption" if source_id else "first")
                 self.assertEqual(self.metadata["webshart"]["sample_idx"], 19)
                 if source_id:
                     source_runtime.resolve_captions.assert_called_once_with(["source.jpg"])

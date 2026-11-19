@@ -332,8 +332,10 @@ class TestWebshartParquetBackend(unittest.TestCase):
                 runtime.start_epoch(1)
                 cursor.load_state_dict(position)
                 (first_preview,) = sampler.retrieve_validation_set(1)
-            self.assertEqual(later_preview[:3], first_preview[:3])
-            self.assertEqual(later_preview[3].tobytes(), first_preview[3].tobytes())
+            self.assertEqual(later_preview.ref, first_preview.ref)
+            self.assertEqual(later_preview.prompt, first_preview.prompt)
+            self.assertEqual(later_preview.image.tobytes(), first_preview.image.tobytes())
+            self.assertEqual(later_preview.view.revision, position["view"])
             with (
                 patch.object(provider, "_published", {**provider._published, "view_revision": "new-revision"}),
                 patch.object(self.backend, "read_image_batch", side_effect=AssertionError("stale cursor fetched pixels")),
@@ -1916,12 +1918,14 @@ class TestWebshartParquetBackend(unittest.TestCase):
                 patch.object(sampler, "debug_log"),
             ):
                 random_state = random.getstate()
-                first_preview = sampler.retrieve_validation_set(1)
+                (first_preview,) = sampler.retrieve_validation_set(1)
                 self.assertEqual(random.getstate(), random_state)
                 sampler.validation_cursor.load_state_dict(validation_state)
-                same_preview = sampler.retrieve_validation_set(1)
-            self.assertEqual(first_preview[0][:3], same_preview[0][:3])
-            self.assertEqual(first_preview[0][3].tobytes(), same_preview[0][3].tobytes())
+                (same_preview,) = sampler.retrieve_validation_set(1)
+            self.assertEqual(first_preview.ref, same_preview.ref)
+            self.assertEqual(first_preview.prompt, same_preview.prompt)
+            self.assertEqual(first_preview.image.tobytes(), same_preview.image.tobytes())
+            self.assertEqual(first_preview.view.revision, validation_state["view"])
             self.assertEqual(sampler.training_cursor.state_dict(), training_state)
             sampler.reset_evaluation()
             self.assertEqual(next(iter(sampler))[0], first)

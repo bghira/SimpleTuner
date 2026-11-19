@@ -8,8 +8,9 @@ import torch
 from PIL import Image
 from torch.utils.data import DataLoader
 
-from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime, DatasetValidationSample
 from simpletuner.helpers.data_backend.local import LocalDataBackend
+from simpletuner.helpers.metadata.preparation import DatasetReadView
 from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.validation import (
@@ -214,15 +215,21 @@ class EvalDatasetSelectionTests(unittest.TestCase):
 
         target.read_conditioning_sample.reset_mock()
         native_ref = "webshart://3/152/shard.parquet/000000000152.jpg"
-        sampler.retrieve_validation_set.return_value = [("clip", "prompt", native_ref, None)]
+        view = DatasetReadView("cursor-view")
+        sampler.retrieve_validation_set.return_value = [
+            DatasetValidationSample("unrelated-name", "prompt", native_ref, None, source.id, view)
+        ]
         with (
             patch.object(StateTracker, "get_model", return_value=model),
             patch.object(StateTracker, "get_args", return_value=args),
         ):
             result = retrieve_validation_edit_images()
-        self.assertEqual(len(result), 1)
+        (prompt,) = result
+        self.assertEqual(prompt.image_path, native_ref)
+        self.assertEqual(prompt.data_backend_id, source.id)
+        self.assertIs(prompt.dataset_read_view, view)
         target.read_conditioning_sample.assert_called_once_with(
-            native_ref, source=source, source_ref=native_ref, source_view=None, model=model, rng=ANY
+            native_ref, source=source, source_ref=native_ref, source_view=view, model=model, rng=ANY
         )
 
     def test_i2v_with_validation_using_datasets_uses_image_backend(self):
