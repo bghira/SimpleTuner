@@ -71,14 +71,7 @@ class TestAudioSampler(unittest.TestCase):
             batch_size=2,
         )
 
-        # Bucket "10s" has 2 items. Bucket "20s" has 1 item.
-        # Batch size 2.
-        # Expect:
-        # 1. Batch of 2 from "10s" (a.wav, b.wav)
-        # 2. Batch of 2 from "20s" (c.wav + duplicate/exhausted fill?)
-        #    Wait, _handle_bucket_with_insufficient_images moves insufficient buckets to exhausted.
-        #    If "20s" has 1 item < batch_size 2, it might be moved to exhausted.
-        #    Then _yield_n_from_exhausted_bucket will fill it.
+        # Bucket "10s" has a.wav and b.wav; the cursor pads "20s", which only has c.wav, to fill its batch.
 
         iterator = iter(sampler)
 
@@ -87,8 +80,7 @@ class TestAudioSampler(unittest.TestCase):
         self.assertEqual(len(batch1), 2)
         # Should be from same bucket
         paths1 = [x["image_path"] for x in batch1]
-        # We don't know which bucket comes first (random or sequential init), but usually sequential [0].
-        # Let's check if they are consistent.
+        # The cursor's seeded schedule decides which bucket comes first.
         if "a.wav" in paths1:
             self.assertIn("b.wav", paths1)
         else:
@@ -115,21 +107,13 @@ class TestAudioSampler(unittest.TestCase):
         )
 
         iterator = iter(sampler)
-        # Total items = 3. Batch size = 2.
-        # Epoch 1:
-        # Batch 1: 2 items (e.g. 10s bucket)
-        # Batch 2: 2 items (e.g. 20s bucket, 1 item recycled)
-        # End of epoch.
-
-        # We expect MultiDatasetExhausted exception eventually if we keep iterating,
-        # OR it resets buckets and continues (depending on _reset_buckets raise_exhaustion_signal=True default)
+        # One batch from each bucket makes the epoch; the third draw ends it.
 
         from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
 
+        self.assertEqual([len(next(iterator)) for _ in range(2)], [2, 2])
         with self.assertRaises(MultiDatasetExhausted):
             next(iterator)
-            next(iterator)
-            next(iterator)  # Should raise here or before
 
     def test_missing_reloaded_metadata_does_not_require_image_crop_coordinates(self):
         self.mock_tracker.get_args.return_value.model_family = "minimaxmusic"
