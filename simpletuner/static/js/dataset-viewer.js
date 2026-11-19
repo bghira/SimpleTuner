@@ -18,6 +18,7 @@ window.datasetViewerComponent = function () {
         thumbnailLimit: 24,
         _thumbnailRequest: 0,
         selectedFile: null,
+        selectedFileDatasetId: null,
         loadingFileDetail: false,
         _fileRequest: 0,
         previewOriginal: null,
@@ -162,7 +163,7 @@ window.datasetViewerComponent = function () {
                 this.expandedDataset = null;
                 this.selectedBucket = null;
                 this.thumbnails = [];
-                this.selectedFile = null;
+                this.closeFileDetail();
                 this.conditioningPairs = null;
                 this.captionStatus = {};
                 this.filterReport = {};
@@ -688,6 +689,10 @@ window.datasetViewerComponent = function () {
             this.loadingFileDetail = true;
             this.loadingPreview = true;
             this.selectedFile = { path: filePath };
+            this.selectedFileDatasetId = datasetId;
+            this.savingCrop = false;
+            this.rebuildingMetadata = false;
+            this.deletingVaeCache = false;
             this.previewOriginal = null;
             this.previewIntermediary = null;
             this.previewCropped = null;
@@ -873,6 +878,7 @@ window.datasetViewerComponent = function () {
             this.loadingFileDetail = false;
             this.loadingPreview = false;
             this.selectedFile = null;
+            this.selectedFileDatasetId = null;
             this.previewOriginal = null;
             this.previewIntermediary = null;
             this.previewCropped = null;
@@ -919,73 +925,65 @@ window.datasetViewerComponent = function () {
             this.savingBbox = false;
         },
 
+        async _writeSelectedFile(action, method, fields = {}) {
+            const request = this._fileRequest;
+            const datasetId = this.selectedFileDatasetId;
+            const file = this.selectedFile;
+            const response = await fetch('/api/datasets/viewer/' + action, {
+                method,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    dataset_id: datasetId,
+                    file_path: file.path,
+                    view_revision: file.view_revision,
+                    ...fields,
+                }),
+            });
+            if (request !== this._fileRequest) return null;
+            if (response.status === 409) {
+                this.closeFileDetail();
+                await this._refreshStaleView(datasetId);
+                return null;
+            }
+            const data = await response.json().catch(() => null);
+            if (request !== this._fileRequest) return null;
+            if (!response.ok) throw new Error(data?.detail || 'File action failed');
+            return data;
+        },
+
         async saveBboxEntities() {
-            const f = this.selectedFile;
-            if (!f || !this.bboxCanvas || !this.expandedDataset) return;
+            if (!this.selectedFile || !this.bboxCanvas) return;
+            const request = this._fileRequest;
             this.savingBbox = true;
             try {
-                const entities = this.bboxCanvas.getBoxes();
-                const resp = await fetch('/api/datasets/viewer/bbox-entities', {
-                    method: 'PATCH',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        dataset_id: this.expandedDataset,
-                        file_path: f.path,
-                        bbox_entities: entities.length > 0 ? entities : null,
-                    }),
-                });
-                if (!resp.ok) {
-                    const err = await resp.json().catch(() => ({ detail: 'Unknown error' }));
-                    throw new Error(err.detail || 'Save failed');
-                }
-                this.selectedFile.bbox_entities = entities.length > 0 ? entities : null;
+                const boxes = this.bboxCanvas.getBoxes();
+                const entities = boxes.length > 0 ? boxes : null;
+                if (!await this._writeSelectedFile('bbox-entities', 'PATCH', { bbox_entities: entities })) return;
+                this.selectedFile.bbox_entities = entities;
                 this.bboxModified = false;
-                if (window.showToast) {
-                    window.showToast('Bounding boxes saved', 'success');
-                }
+                window.showToast?.('Bounding boxes saved', 'success');
             } catch (err) {
-                console.error('Error saving bbox entities:', err);
-                if (window.showToast) {
-                    window.showToast(err.message, 'error');
-                }
+                if (request === this._fileRequest) window.showToast?.(err.message, 'error');
             } finally {
-                this.savingBbox = false;
+                if (request === this._fileRequest) this.savingBbox = false;
             }
         },
 
         async saveCropCoordinates() {
-            const f = this.selectedFile;
-            if (!f || !f.crop_coordinates || !this.expandedDataset) return;
+            const coordinates = this.selectedFile?.crop_coordinates;
+            if (!coordinates) return;
+            const request = this._fileRequest;
             this.savingCrop = true;
             try {
-                const resp = await fetch('/api/datasets/viewer/crop-coordinates', {
-                    method: 'PATCH',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        dataset_id: this.expandedDataset,
-                        file_path: f.path,
-                        crop_coordinates: f.crop_coordinates,
-                    }),
-                });
-                if (!resp.ok) {
-                    const err = await resp.json().catch(() => ({ detail: 'Unknown error' }));
-                    throw new Error(err.detail || 'Save failed');
-                }
-                const data = await resp.json();
-                if (data.cropped) {
-                    this.previewCropped = data.cropped;
-                }
+                const data = await this._writeSelectedFile('crop-coordinates', 'PATCH', { crop_coordinates: coordinates });
+                if (!data) return;
+                if (data.cropped) this.previewCropped = data.cropped;
                 this.cropModified = false;
-                if (window.showToast) {
-                    window.showToast('Crop coordinates saved', 'success');
-                }
+                window.showToast?.('Crop coordinates saved', 'success');
             } catch (err) {
-                console.error('Error saving crop coordinates:', err);
-                if (window.showToast) {
-                    window.showToast(err.message, 'error');
-                }
+                if (request === this._fileRequest) window.showToast?.(err.message, 'error');
             } finally {
-                this.savingCrop = false;
+                if (request === this._fileRequest) this.savingCrop = false;
             }
         },
 
@@ -995,94 +993,39 @@ window.datasetViewerComponent = function () {
         deletingVaeCache: false,
 
         async rebuildFileMetadata() {
-            const f = this.selectedFile;
-            if (!f || !this.expandedDataset) return;
+            const file = this.selectedFile;
+            if (!file) return;
+            const datasetId = this.selectedFileDatasetId;
+            const request = this._fileRequest;
             this.rebuildingMetadata = true;
             try {
-                const resp = await fetch('/api/datasets/viewer/rebuild-metadata', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        dataset_id: this.expandedDataset,
-                        file_path: f.path,
-                    }),
-                });
-                if (!resp.ok) {
-                    const err = await resp.json().catch(() => ({ detail: 'Unknown error' }));
-                    throw new Error(err.detail || 'Rebuild failed');
-                }
-                const data = await resp.json();
-                if (data.metadata) {
-                    // Update the selected file with the new metadata
-                    const m = data.metadata;
-                    if (m.target_size) f.target_size = m.target_size;
-                    if (m.intermediary_size) f.intermediary_size = m.intermediary_size;
-                    if (m.crop_coordinates) f.crop_coordinates = m.crop_coordinates;
-                    if (m.aspect_ratio != null) f.aspect_ratio = m.aspect_ratio;
-                    // Recompute overlay and re-fetch previews
-                    this._computeCropOverlay();
-                    this.cropModified = false;
-                    // Refresh the preview images with updated metadata
-                    const params = new URLSearchParams({
-                        dataset_id: this.expandedDataset,
-                        file_path: f.path,
-                    });
-                    const pvResp = await fetch('/api/datasets/viewer/preview?' + params);
-                    if (pvResp.ok) {
-                        const pv = await pvResp.json();
-                        this.previewOriginal = pv.original || null;
-                        this.previewIntermediary = pv.intermediary || null;
-                        this.previewCropped = pv.cropped || null;
-                    }
-                }
-                if (window.showToast) {
-                    window.showToast('Metadata rebuilt successfully', 'success');
-                }
+                const data = await this._writeSelectedFile('rebuild-metadata', 'POST');
+                if (!data) return;
+                window.showToast?.('Metadata rebuilt successfully', 'success');
+                await this.showFileDetail(datasetId, file.path, data.view_revision ?? file.view_revision);
             } catch (err) {
-                console.error('Error rebuilding metadata:', err);
-                if (window.showToast) {
-                    window.showToast(err.message, 'error');
-                }
+                if (request === this._fileRequest) window.showToast?.(err.message, 'error');
             } finally {
-                this.rebuildingMetadata = false;
+                if (request === this._fileRequest) this.rebuildingMetadata = false;
             }
         },
 
         async deleteVaeCacheFile() {
-            const f = this.selectedFile;
-            if (!f || !this.expandedDataset) return;
+            if (!this.selectedFile) return;
+            const request = this._fileRequest;
             this.deletingVaeCache = true;
             try {
-                const resp = await fetch('/api/datasets/viewer/delete-vae-cache', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        dataset_id: this.expandedDataset,
-                        file_path: f.path,
-                    }),
-                });
-                if (!resp.ok) {
-                    const err = await resp.json().catch(() => ({ detail: 'Unknown error' }));
-                    throw new Error(err.detail || 'Delete failed');
-                }
-                const data = await resp.json();
+                const data = await this._writeSelectedFile('delete-vae-cache', 'POST');
+                if (!data) return;
                 if (data.deleted) {
-                    if (window.showToast) {
-                        window.showToast('VAE cache file deleted', 'success');
-                    }
+                    window.showToast?.('VAE cache file deleted', 'success');
                 } else {
-                    const reason = data.error || 'File not found';
-                    if (window.showToast) {
-                        window.showToast('VAE cache: ' + reason, 'warning');
-                    }
+                    window.showToast?.('VAE cache: ' + (data.error || 'File not found'), 'warning');
                 }
             } catch (err) {
-                console.error('Error deleting VAE cache file:', err);
-                if (window.showToast) {
-                    window.showToast(err.message, 'error');
-                }
+                if (request === this._fileRequest) window.showToast?.(err.message, 'error');
             } finally {
-                this.deletingVaeCache = false;
+                if (request === this._fileRequest) this.deletingVaeCache = false;
             }
         },
     };

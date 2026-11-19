@@ -2092,7 +2092,17 @@ class DatasetViewerRevisionTestCase(_TrainerPageMixin, WebUITestCase):
                     }
                     if (target.pathname.endsWith('/file-metadata') || target.pathname.endsWith('/preview')) {
                         window.detailQuery = Object.fromEntries(target.searchParams);
-                        return Promise.resolve(response({path: window.detailQuery.file_path, found: true}));
+                        return Promise.resolve(response({
+                            path: window.detailQuery.file_path,
+                            found: true,
+                            view_revision: window.detailQuery.view_revision,
+                        }));
+                    }
+                    if (target.pathname.endsWith('/rebuild-metadata')) {
+                        window.rebuildRequest = JSON.parse(options.body);
+                        return new Promise(resolve => {
+                            window.releaseRebuild = () => resolve(response({rebuilt: true}));
+                        });
                     }
                     return originalFetch(url, options);
                 };
@@ -2124,6 +2134,25 @@ class DatasetViewerRevisionTestCase(_TrainerPageMixin, WebUITestCase):
                 driver.execute_script("return window.detailQuery;"),
                 {"dataset_id": "second", "file_path": "page-6.jpg", "view_revision": "second-view"},
             )
+            click_when_visible((By.XPATH, "//button[@type='button' and contains(., 'Rebuild Metadata')]"))
+            self.assertEqual(
+                driver.execute_script("return window.rebuildRequest;"),
+                {"dataset_id": "second", "file_path": "page-6.jpg", "view_revision": "second-view"},
+            )
+            self.assertEqual(
+                driver.execute_async_script(
+                    """
+                    const done = arguments[0];
+                    const view = Alpine.$data(document.querySelector('[x-data="datasetViewerComponent()"]'));
+                    view.showFileDetail('first', 'other.jpg').then(() => {
+                        window.releaseRebuild();
+                        setTimeout(() => done(view.selectedFile?.path), 30);
+                    }).catch(error => done(String(error)));
+                    """
+                ),
+                "other.jpg",
+            )
+            self.assertEqual(driver.execute_script("return window.detailQuery.file_path;"), "other.jpg")
 
         self.for_each_browser("test_conditioning_pairs_keep_the_selected_link_and_view", scenario)
 

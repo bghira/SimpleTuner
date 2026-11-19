@@ -551,7 +551,7 @@
                                 Crop: <span x-text="selectedFile?.crop_coordinates?.join(', ')"></span>
                                 <span x-show="cropModified" class="text-warning ms-1">(modified)</span>
                             </span>
-                            <button x-show="cropModified"
+                            <button type="button" x-show="cropModified"
                                     class="btn btn-sm btn-info"
                                     :disabled="savingCrop"
                                     @click="saveCropCoordinates()">
@@ -611,7 +611,7 @@
                                     <span x-text="bboxCanvas ? bboxCanvas.getBoxes().length + ' box(es)' : ''"></span>
                                     <span x-show="bboxModified" class="text-warning ms-1">(modified)</span>
                                 </span>
-                                <button x-show="bboxModified"
+                                <button type="button" x-show="bboxModified"
                                         class="btn btn-sm btn-info"
                                         :disabled="savingBbox"
                                         @click="saveBboxEntities()">
@@ -667,7 +667,7 @@
 
                     <!-- Per-file actions -->
                     <div x-show="!loadingFileDetail && selectedFile" class="d-flex gap-2 mt-3 pt-3 border-top border-secondary">
-                        <button class="btn btn-sm btn-outline-info"
+                        <button type="button" class="btn btn-sm btn-outline-info"
                                 :disabled="rebuildingMetadata"
                                 @click="rebuildFileMetadata()"
                                 title="Recalculate target size, crop coordinates, and aspect ratio from current config">
@@ -675,7 +675,7 @@
                             <i class="fas fa-sync-alt me-1" x-show="!rebuildingMetadata"></i>
                             Rebuild Metadata
                         </button>
-                        <button class="btn btn-sm btn-outline-warning"
+                        <button type="button" class="btn btn-sm btn-outline-warning"
                                 :disabled="deletingVaeCache"
                                 @click="deleteVaeCacheFile()"
                                 title="Delete the cached VAE latent so it is regenerated on next training run">
