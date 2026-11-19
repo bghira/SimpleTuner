@@ -781,17 +781,21 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
             logger.error(traceback.format_exc())
             raise
 
+    def cache_write_path(self, filepath):
+        path = Path(filepath)
+        if path.is_absolute() and path.parent.is_dir():
+            return path
+        if not self.cache_dir:
+            raise ValueError(f"Cannot write cache file {filepath} - no cache_dir configured for HuggingFace backend")
+        return self._scoped_cache_file(path)
+
     def write(self, filepath: Union[str, Path], data: Any) -> None:
         if isinstance(filepath, Path):
             filepath = str(filepath)
 
         if filepath.endswith(self._CACHE_EXTENSIONS):
-            cache_path = Path(filepath)
-            if not cache_path.is_absolute() or not cache_path.parent.exists():
-                if not self.cache_dir:
-                    raise ValueError(f"Cannot write cache file {filepath} - no cache_dir configured for HuggingFace backend")
-                cache_path = self._scoped_cache_file(cache_path)
-                cache_path.parent.mkdir(parents=True, exist_ok=True)
+            cache_path = self.cache_write_path(filepath)
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
 
             # Write the file
             if filepath.endswith(".json"):

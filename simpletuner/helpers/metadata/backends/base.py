@@ -434,7 +434,8 @@ class MetadataBackend:
     def set_metadata(self, metadata_backend, update_json: bool = True):
         if not isinstance(metadata_backend, MetadataBackend):
             raise TypeError(f"Expected MetadataBackend instance, got {type(metadata_backend)}.")
-        self.image_metadata = metadata_backend.get_metadata()
+        metadata = metadata_backend.get_metadata()
+        self.image_metadata = metadata if isinstance(metadata, dict) else dict(metadata)
         self.aspect_ratio_bucket_indices = metadata_backend.aspect_ratio_bucket_indices.copy()
 
         self.image_metadata_loaded = True

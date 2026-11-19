@@ -125,6 +125,7 @@ class HuggingfaceMetadataBackendTests(unittest.TestCase):
         provider.id = source.id
         provider.read_only = False
         provider.bucket_report = None
+        provider.image_metadata = {}
         provider.aspect_ratio_bucket_indices = {"square": ["3.jpg", "1.jpg"], "wide": ["0.jpg", "2.jpg"]}
         with provider.open_preparation_view(worker=0, workers=3) as first:
             self.assertEqual(list(first), ["1.jpg", "0.jpg"])
@@ -216,6 +217,67 @@ class HuggingfaceMetadataBackendTests(unittest.TestCase):
             provider.close()
             provider.load_image_metadata()
             self.assertEqual(provider.get_metadata_by_filepath(expected[0]), {"target_size": [128, 64]})
+
+    def test_arrow_transform_cache_reopens_and_reprocesses_by_shard(self):
+        from simpletuner.helpers.metadata.backends.huggingface_transforms import HuggingFaceTransformStore
+
+        accelerator = SimpleNamespace(main_process_first=contextlib.nullcontext, wait_for_everyone=lambda: None)
+        source = HuggingfaceDatasetsBackend(accelerator, "arrow-geometry", "test")
+        source.dataset = Dataset.from_dict({"width": [512] * 4, "height": [256] * 4})
+        source._source_shard_lengths = (2, 0, 2)
+        prepared = SimpleNamespace(
+            aspect_ratio=2.0, target_size=(512, 256), crop_coordinates=(0, 0), intermediary_size=(512, 256)
+        )
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch("simpletuner.helpers.metadata.backends.huggingface.TrainingSample") as sample,
+        ):
+            root = Path(directory)
+            sample.return_value.prepare.return_value = prepared
+            options = {
+                "id": source.id,
+                "instance_data_dir": directory,
+                "cache_file": str(root / "buckets"),
+                "metadata_file": str(root / "geometry"),
+                "data_backend": source,
+                "accelerator": accelerator,
+                "batch_size": 1,
+                "resolution": 512,
+                "resolution_type": "pixel",
+                "hf_config": {"width_column": "width", "height_column": "height"},
+            }
+            with contextlib.closing(HuggingfaceMetadataBackend(**options)) as provider:
+                provider.compute_aspect_ratio_bucket_indices()
+                self.assertIsInstance(provider.image_metadata, HuggingFaceTransformStore)
+                original = provider.image_metadata.directory
+                self.assertEqual({path.name for path in original.glob("*.sqlite3")}, {"0.sqlite3", "2.sqlite3"})
+                self.assertFalse(list(root.glob("geometry*.json")))
+                refs = ["3.jpg", "0.jpg", "3.jpg", "8.jpg"]
+                first = provider.get_metadata_batch(refs)
+                self.assertEqual(first[0], first[2])
+                self.assertIsNone(first[-1])
+                provider.enqueue_prepared_metadata({"0.jpg": {**first[1], "target_size": [128, 64]}})
+
+            with contextlib.closing(HuggingfaceMetadataBackend(**options)) as reopened:
+                self.assertEqual(reopened.image_metadata.directory, original)
+                with reopened.open_preparation_view(worker=0, workers=3) as view:
+                    self.assertEqual(list(view), ["0.jpg", "1.jpg"])
+                    self.assertEqual(view.metadata.get_metadata_by_filepath("0.jpg")["target_size"], [128, 64])
+                    reopened.compute_aspect_ratio_bucket_indices(ignore_existing_cache=True)
+                    self.assertEqual(view.metadata.get_metadata_by_filepath("0.jpg")["target_size"], [128, 64])
+                self.assertNotEqual(reopened.image_metadata.directory, original)
+                self.assertEqual(reopened.get_metadata_batch(refs), first)
+                current = reopened.image_metadata.directory
+                with (
+                    patch.object(reopened, "_process_for_bucket", side_effect=KeyboardInterrupt),
+                    self.assertRaises(KeyboardInterrupt),
+                ):
+                    reopened.compute_aspect_ratio_bucket_indices(ignore_existing_cache=True)
+
+            with contextlib.closing(HuggingfaceMetadataBackend(**options)) as after_cancel:
+                self.assertEqual(after_cancel.image_metadata.directory, current)
+                self.assertEqual(after_cancel.get_metadata_batch(refs), first)
 
     def test_metadata_reload_keeps_existing_entries_visible_until_read_completes(self):
         read_started = threading.Event()

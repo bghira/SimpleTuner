@@ -9,8 +9,11 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing, contextmanager
 from itertools import batched, chain
 from threading import Lock
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Union
+from uuid import UUID, uuid4
 
+import ijson
 import numpy as np
 from huggingface_hub import hf_hub_download
 from huggingface_hub.utils import EntryNotFoundError, HfHubHTTPError, HFValidationError, LocalEntryNotFoundError
@@ -21,7 +24,8 @@ from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.dataset_types import ensure_dataset_type
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
-from simpletuner.helpers.metadata.preparation import PreparationView, ShardedPreparationIndex
+from simpletuner.helpers.metadata.backends.huggingface_transforms import HuggingFaceTransformStore
+from simpletuner.helpers.metadata.preparation import DatasetViewChangedError, PreparationView, ShardedPreparationIndex
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
 from simpletuner.helpers.training import image_file_extensions
 from simpletuner.helpers.training.multi_process import should_log
@@ -328,6 +332,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
 
     def reload_cache(self, set_config: bool = True):
         self._stale_geometry = False
+        self._published_geometry = None
         if self.data_backend.exists(self.cache_file):
             try:
                 cache_data_raw = self.data_backend.read(self.cache_file)
@@ -338,6 +343,8 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                 cache_data = {}
             stored_revision = cache_data.get("source_revision")
             self._stale_geometry = stored_revision is not None and stored_revision != self._source_revision()
+            if not self._stale_geometry:
+                self._published_geometry = cache_data.get("huggingface_geometry")
             self.aspect_ratio_bucket_indices = (
                 {} if self._stale_geometry else cache_data.get("aspect_ratio_bucket_indices", {})
             )
@@ -364,13 +371,20 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         cache_data = {
             "source_revision": self._source_revision(),
             "config": self.active_dataset_config,
-            "aspect_ratio_bucket_indices": aspect_ratio_bucket_indices_str,
         }
+        if isinstance(self.image_metadata, HuggingFaceTransformStore):
+            self.flush_prepared_metadata()
+            cache_data["huggingface_geometry"] = {
+                "generation": self.image_metadata.directory.name,
+                "shard_ends": list(self.image_metadata.boundaries),
+            }
+        cache_data["aspect_ratio_bucket_indices"] = aspect_ratio_bucket_indices_str
         # Include filtering statistics if available
         if self.filtering_statistics is not None:
             cache_data["filtering_statistics"] = self.filtering_statistics
         cache_data_str = json.dumps(cache_data)
         self.data_backend.write(self.cache_file, cache_data_str)
+        self._published_geometry = cache_data.get("huggingface_geometry")
         self._stale_geometry = False
         logger.debug("Aspect ratio cache saved.")
 
@@ -383,8 +397,14 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             if len(self._prepared_writes) == 4:
                 self._prepared_writes[0].result()
                 self._prepared_writes.popleft()
-            update = super().enqueue_prepared_metadata
-            self._prepared_writes.append(self._prepared_writer.submit(update, dict(records)))
+            target = self.image_metadata
+            records = dict(records)
+
+            def update():
+                with self.metadata_semaphor:
+                    target.update(records)
+
+            self._prepared_writes.append(self._prepared_writer.submit(update))
 
     def _drain_prepared_writes(self):
         while self._prepared_writes:
@@ -409,6 +429,8 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         super().close()
 
     def save_image_metadata(self):
+        if isinstance(self.image_metadata, HuggingFaceTransformStore):
+            return
         full_metadata_path = self.metadata_file
         if not str(self.metadata_file).endswith(".json"):
             full_metadata_path = f"{self.metadata_file}_{self.id}.json"
@@ -421,6 +443,19 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             with self.metadata_semaphor:
                 self.image_metadata = {}
                 self.image_metadata_loaded = False
+            return
+        publication = getattr(self, "_published_geometry", None)
+        if publication is not None:
+            shards = self.data_backend.preparation_shards
+            if shards is None or [shard.stop for shard in shards] != publication["shard_ends"]:
+                raise ValueError("Hugging Face transform cache requires the same Arrow shard layout. Reprocess the dataset.")
+            generation = UUID(hex=publication["generation"]).hex
+            directory = self._transform_directory(generation)
+            if not directory.is_dir():
+                raise FileNotFoundError("Hugging Face transform cache is missing. Reprocess the dataset.")
+            with self.metadata_semaphor:
+                self.image_metadata = HuggingFaceTransformStore(directory, shards, self.data_backend._get_index_from_path)
+                self.image_metadata_loaded = True
             return
         full_metadata_path = self.metadata_file
         if not str(self.metadata_file).endswith(".json"):
@@ -444,6 +479,24 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                 self.image_metadata = {}
                 self.image_metadata_loaded = False
             logger.debug(f"Metadata file does not exist: {full_metadata_path}")
+
+    def _transform_directory(self, generation):
+        publication = self.data_backend.cache_write_path(self.cache_file).resolve()
+        return publication.with_suffix(".transforms") / generation
+
+    def _start_sharded_geometry(self):
+        shards = self.data_backend.preparation_shards
+        if shards is None:
+            return
+        directory = self._transform_directory(uuid4().hex)
+        directory.mkdir(parents=True, exist_ok=False)
+        self.image_metadata = HuggingFaceTransformStore(directory, shards, self.data_backend._get_index_from_path)
+        self.image_metadata_loaded = True
+
+    def get_metadata_batch(self, refs):
+        if isinstance(self.image_metadata, HuggingFaceTransformStore):
+            return self.image_metadata.read_batch(refs)
+        return super().get_metadata_batch(refs)
 
     def _passes_quality_filter(self, quality_assessment: Dict) -> bool:
         if not self.quality_filter or not quality_assessment:
@@ -502,6 +555,17 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             return bisect_right(boundaries, row)
 
         with self.data_backend.open_read_stream(publication) as source:
+            if isinstance(self.image_metadata, HuggingFaceTransformStore):
+                generation = None
+                for field, _, value in ijson.parse(source):
+                    if field == "huggingface_geometry.generation":
+                        generation = value
+                        break
+                    if field == "aspect_ratio_bucket_indices":
+                        break
+                if generation != self.image_metadata.directory.name:
+                    raise DatasetViewChangedError("Hugging Face prepared geometry changed. Reload the dataset.")
+                source.seek(0)
             return ShardedPreparationIndex.open(
                 source, source_revision=dataset._fingerprint, partition_sizes=sizes, partition_for=partition_for
             )
@@ -515,8 +579,11 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             return
         if not index.accepted_samples:
             raise ValueError("No accepted samples in dataset metadata; scan the dataset before preparing text embeddings.")
+        lookup = self
+        if isinstance(self.image_metadata, HuggingFaceTransformStore):
+            lookup = SimpleNamespace(get_metadata_by_filepath=self.image_metadata.get)
         with closing(index.groups(worker, workers)) as groups:
-            yield PreparationView(chain.from_iterable(refs for _, refs in groups), self)
+            yield PreparationView(chain.from_iterable(refs for _, refs in groups), lookup)
 
     def iter_preparation_batches(self, worker, workers, batch_size):
         index = None if self._preparation_source is not None else self._sharded_preparation_index()
@@ -930,6 +997,12 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             self.aspect_ratio_bucket_indices = {}
             self.image_metadata = {}
             existing_files = set()
+        if ignore_existing_cache or not self.image_metadata_loaded:
+            self._start_sharded_geometry()
+            if isinstance(self.image_metadata, HuggingFaceTransformStore):
+                self.aspect_ratio_bucket_indices = {}
+                existing_files = set()
+                statistics["skipped"]["already_exists"] = 0
         if self.bucket_report:
             self.bucket_report.record_stage(
                 "existing_cache",
