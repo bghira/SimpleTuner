@@ -472,8 +472,8 @@ class TestCsvBackendBuilder(unittest.TestCase):
         call_kwargs = mock_csv_backend_class.call_args[1]
 
         self.assertEqual(call_kwargs["id"], "test_csv")
-        self.assertEqual(call_kwargs["csv_file"], "/tmp/data.csv")
-        self.assertEqual(call_kwargs["csv_cache_dir"], "/tmp/csv_cache")
+        self.assertEqual(call_kwargs["csv_file"], Path("/tmp/data.csv"))
+        self.assertEqual(call_kwargs["image_cache_loc"], "/tmp/csv_cache")
         self.assertEqual(call_kwargs["url_column"], "url")
         self.assertEqual(call_kwargs["caption_column"], "caption")
         self.assertEqual(call_kwargs["accelerator"], self.accelerator)
@@ -497,7 +497,6 @@ class TestCsvBackendBuilder(unittest.TestCase):
                 "csv_caption_column": "caption",
                 "csv_url_column": "url",
                 "csv_hash_filenames": True,
-                "csv_shorten_filenames": False,
             },
             self.args,
         )
@@ -506,7 +505,6 @@ class TestCsvBackendBuilder(unittest.TestCase):
 
         call_kwargs = mock_csv_backend_class.call_args[1]
         self.assertTrue(call_kwargs["hash_filenames"])
-        self.assertFalse(call_kwargs["shorten_filenames"])
 
     def test_validate_csv_config_success(self):
         """Test CSV config validation with valid configuration"""
@@ -599,7 +597,7 @@ class TestHuggingfaceBackendBuilder(unittest.TestCase):
         mock_hf_backend_class.assert_called_once()
         call_kwargs = mock_hf_backend_class.call_args[1]
 
-        self.assertEqual(call_kwargs["identifier"], "test_hf")
+        self.assertEqual(call_kwargs["id"], "test_hf")
         self.assertEqual(call_kwargs["dataset_name"], "test/dataset")
         self.assertEqual(call_kwargs["dataset_type"], "image")
         self.assertEqual(call_kwargs["accelerator"], self.accelerator)

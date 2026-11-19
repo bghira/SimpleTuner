@@ -60,13 +60,14 @@ class TestFactoryComparison(unittest.TestCase):
         self.args.gradient_accumulation_steps = 1
 
     @patch("simpletuner.helpers.data_backend.factory.StateTracker")
-    @patch("simpletuner.helpers.data_backend.factory.LocalDataBackend")
+    @patch("simpletuner.helpers.data_backend.builders.local.LocalDataBackend")
     @patch("simpletuner.helpers.data_backend.factory.TextEmbeddingCache")
     def test_simple_config_old_factory(self, mock_text_cache, mock_local_backend, mock_state_tracker):
         """Test simple config with old factory"""
         from simpletuner.helpers.data_backend.factory import configure_multi_databackend
 
         # Setup mocks
+        mock_local_backend.return_value.id = "test_backend"
         mock_state_tracker.get_args.return_value = self.args
         mock_state_tracker.get_accelerator.return_value = self.accelerator
         mock_state_tracker.get_webhook_handler.return_value = None
@@ -101,7 +102,7 @@ class TestFactoryComparison(unittest.TestCase):
             self.fail(f"Old factory failed: {str(e)}")
 
     @patch("simpletuner.helpers.data_backend.factory.StateTracker")
-    @patch("simpletuner.helpers.data_backend.factory.LocalDataBackend")
+    @patch("simpletuner.helpers.data_backend.builders.local.LocalDataBackend")
     @patch("simpletuner.helpers.data_backend.factory.TextEmbeddingCache")
     def test_simple_config_new_factory(self, mock_text_cache, mock_local_backend, mock_state_tracker):
         """Test simple config with new factory"""
@@ -109,6 +110,7 @@ class TestFactoryComparison(unittest.TestCase):
             from simpletuner.helpers.data_backend.factory import FactoryRegistry
 
             # Setup mocks
+            mock_local_backend.return_value.id = "test_backend"
             mock_state_tracker.get_args.return_value = self.args
             mock_state_tracker.get_accelerator.return_value = self.accelerator
             mock_state_tracker.get_webhook_handler.return_value = None

@@ -1523,7 +1523,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
         mock_state_tracker.load_aspect_resolution_map.return_value = None
 
         # Mock all the backend classes
-        local_backend_patcher = patch("simpletuner.helpers.data_backend.factory.LocalDataBackend")
+        local_backend_patcher = patch("simpletuner.helpers.data_backend.builders.local.LocalDataBackend")
         mock_local = local_backend_patcher.start()
         self.addCleanup(local_backend_patcher.stop)
         mock_local.return_value.list_files.return_value = ["image1.jpg", "image2.jpg"]
@@ -2141,7 +2141,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
             self._setup_state_tracker_mocks(mock_state_tracker)
             mock_state_tracker.get_vae.return_value = MagicMock()
 
-            with patch("simpletuner.helpers.data_backend.factory.LocalDataBackend") as mock_local:
+            with patch("simpletuner.helpers.data_backend.builders.local.LocalDataBackend") as mock_local:
                 mock_local.return_value.list_files.return_value = []
 
                 # Use autospec=True to validate constructor parameters

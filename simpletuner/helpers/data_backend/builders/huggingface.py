@@ -2,7 +2,6 @@
 
 import logging
 import os
-import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
@@ -14,21 +13,12 @@ from simpletuner.helpers.training.state_tracker import StateTracker
 from .base import BaseBackendBuilder
 
 logger = logging.getLogger("HuggingfaceBackendBuilder")
-_ORIGINAL_HF_BACKEND = HuggingfaceDatasetsBackend
 
 
 class HuggingfaceBackendBuilder(BaseBackendBuilder):
 
     def _create_backend(self, config: BaseBackendConfig) -> HuggingfaceDatasetsBackend:
         self._validate_huggingface_config(config)
-
-        factory_module = sys.modules.get("simpletuner.helpers.data_backend.factory")
-        factory_cls = getattr(factory_module, "HuggingfaceDatasetsBackend", None) if factory_module else None
-        if HuggingfaceDatasetsBackend is _ORIGINAL_HF_BACKEND and factory_cls is not None:
-            backend_cls = factory_cls
-        else:
-            backend_cls = HuggingfaceDatasetsBackend
-        is_mock_backend = hasattr(backend_cls, "_mock_children")
 
         dataset_name = getattr(config, "dataset_name", None)
         dataset_config = getattr(config, "dataset_config", None)
@@ -83,10 +73,7 @@ class HuggingfaceBackendBuilder(BaseBackendBuilder):
             auto_load = auto_load.lower() in {"1", "true", "yes", "y", "on"}
         backend_kwargs["auto_load"] = bool(auto_load) if auto_load is not None else False
 
-        if is_mock_backend:
-            backend_kwargs["identifier"] = config.id
-
-        data_backend = backend_cls(**backend_kwargs)
+        data_backend = HuggingfaceDatasetsBackend(**backend_kwargs)
 
         return data_backend
 

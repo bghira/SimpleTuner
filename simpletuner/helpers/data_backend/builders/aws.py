@@ -1,7 +1,6 @@
 """AWS backend builder for creating S3DataBackend instances."""
 
 import logging
-import sys
 from collections.abc import Sequence
 from typing import Any, Dict, Optional, Union
 
@@ -11,20 +10,12 @@ from simpletuner.helpers.data_backend.config.base import BaseBackendConfig
 from .base import BaseBackendBuilder
 
 logger = logging.getLogger("AwsBackendBuilder")
-_ORIGINAL_S3_BACKEND = S3DataBackend
 
 
 class AwsBackendBuilder(BaseBackendBuilder):
 
     def _create_backend(self, config: BaseBackendConfig) -> S3DataBackend:
         self._validate_aws_config(config)
-
-        factory_module = sys.modules.get("simpletuner.helpers.data_backend.factory")
-        factory_cls = getattr(factory_module, "S3DataBackend", None) if factory_module else None
-        if S3DataBackend is _ORIGINAL_S3_BACKEND and factory_cls is not None:
-            backend_cls = factory_cls
-        else:
-            backend_cls = S3DataBackend
 
         aws_bucket_name = getattr(config, "aws_bucket_name", None)
         aws_region_name = getattr(config, "aws_region_name", None)
@@ -36,7 +27,7 @@ class AwsBackendBuilder(BaseBackendBuilder):
         compress_cache = self._get_compression_setting(config)
         max_pool_connections = self._resolve_max_pool_connections(config)
 
-        data_backend = backend_cls(
+        data_backend = S3DataBackend(
             id=config.id,
             bucket_name=aws_bucket_name,
             accelerator=self.accelerator,
