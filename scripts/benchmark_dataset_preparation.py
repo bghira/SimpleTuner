@@ -3,6 +3,7 @@
 Run from the repository root with PYTHONPATH=. CPU timings include tracemalloc
 when --trace is selected. The encoding sink normalizes requests but creates no
 tensors or artifacts, so results do not represent text encoder throughput.
+Eager mode materializes the same requests that streaming mode passes incrementally.
 """
 
 import argparse
@@ -12,20 +13,20 @@ import subprocess
 import sys
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 
 def worker(args):
     import tracemalloc
     from types import SimpleNamespace
-    from unittest.mock import patch
 
     import psutil
 
     from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
     from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+    from simpletuner.helpers.metadata.preparation import PreparationView
     from simpletuner.helpers.models.common import TextEmbedCacheKey
-    from simpletuner.helpers.training.state_tracker import StateTracker
 
     counters = {"lookups": 0, "records_encoded": 0, "encode_calls": 0, "largest_encode_call": 0}
 
@@ -33,32 +34,32 @@ def worker(args):
         counters["lookups"] += 1
         if args.lookup_delay_ms:
             time.sleep(args.lookup_delay_ms / 1000)
-        return args.cache_state == "warm"
+        return args.cache_state == "warm" or (args.cache_state == "mixed" and counters["lookups"] % 2 == 0)
 
     backend = SimpleNamespace(
         id="benchmark",
-        exists=exists,
+        type="local",
+        create_directory=lambda _: None,
+        bulk_exists=lambda keys: [exists(key) for key in keys],
         get_caption=lambda ref: f"Caption {ref}: " + "a descriptive caption with several details. " * 5,
     )
-    metadata = SimpleNamespace(get_metadata_by_filepath=lambda ref: {})
+    metadata = SimpleNamespace(instance_data_dir="", get_metadata_by_filepath=lambda ref: {})
+
+    @contextmanager
+    def open_preparation_view(*, worker, workers):
+        refs = (f"sample-{index:012d}.jpg" for index in range(worker, args.samples, workers))
+        yield PreparationView(refs, metadata)
+
+    metadata.open_preparation_view = open_preparation_view
     model = SimpleNamespace(
         text_embed_cache_key=lambda: TextEmbedCacheKey.CAPTION,
         uses_text_embeddings_cache=lambda: True,
         requires_text_embed_image_context=lambda: False,
     )
     runtime = DatasetRuntime("benchmark", backend, metadata, {"caption_strategy": "csv"})
-    cache = object.__new__(TextEmbeddingCache)
-    cache.id = "benchmark"
-    cache.model = model
-    cache.model_type = "benchmark"
-    cache.data_backend = backend
-    cache.cache_dir = "benchmark-cache"
-    cache.rank_info = ""
-    cache.key_type = TextEmbedCacheKey.CAPTION
-    cache._requires_path_based_keys = False
-    cache.batch_write_thread = SimpleNamespace(is_alive=lambda: True, join=lambda **kwargs: None)
-    cache.debug_log = lambda *_: None
-    cache.wait_for_pending_writes = lambda: None
+    cache = TextEmbeddingCache(
+        backend.id, backend, [], [], None, model=model, model_type="benchmark", text_cache_disable=True
+    )
 
     def encode_sink(records, **_kwargs):
         normalized = cache._normalize_prompt_records(records)
@@ -79,23 +80,14 @@ def worker(args):
 
     sampler = threading.Thread(target=sample_rss)
     sampler.start()
-    if args.trace:
-        tracemalloc.start()
-    started = time.perf_counter()
-    refs = (f"sample-{index:012d}.jpg" for index in range(args.samples))
-    records = runtime.iter_text_embed_records(model, refs, init_backend={})
     try:
+        if args.trace:
+            tracemalloc.start()
+        started = time.perf_counter()
+        records = runtime.iter_preparation_text_records(model, batch_size=args.batch_size)
         if args.mode == "eager":
             records = list(records)
-            inventory = (
-                {cache.hash_prompt_with_path(record): False for record in records} if args.cache_state == "warm" else {}
-            )
-            with patch.object(StateTracker, "get_text_cache_files", return_value=inventory):
-                cache.compute_embeddings_for_prompts(
-                    records, return_concat=False, load_from_cache=False, split_between_processes=False
-                )
-        else:
-            cache.precompute_embeddings(records, batch_size=args.batch_size)
+        cache.precompute_embeddings(records, batch_size=args.batch_size)
         seconds = time.perf_counter() - started
         python_peak = tracemalloc.get_traced_memory()[1] if args.trace else None
         rss_peak[0] = max(rss_peak[0], process.memory_info().rss)
@@ -104,7 +96,8 @@ def worker(args):
         sampler.join()
         if args.trace:
             tracemalloc.stop()
-    expected = args.samples if args.cache_state == "cold" else 0
+        cache.close()
+    expected = {"cold": args.samples, "warm": 0, "mixed": (args.samples + 1) // 2}[args.cache_state]
     if counters["records_encoded"] != expected:
         raise AssertionError(f"Expected {expected} encoded records, got {counters['records_encoded']}")
     return {
@@ -127,7 +120,7 @@ def main():
     parser.add_argument("--mode", choices=("eager", "streaming"))
     parser.add_argument("--samples", type=int, default=20000)
     parser.add_argument("--counts", type=int, nargs="+", default=[2000, 20000, 100000])
-    parser.add_argument("--cache-state", choices=("cold", "warm"), default="cold")
+    parser.add_argument("--cache-state", choices=("cold", "warm", "mixed"), default="cold")
     parser.add_argument("--batch-size", type=int, default=128)
     parser.add_argument("--lookup-delay-ms", type=float, default=0)
     parser.add_argument("--trace", action="store_true")
@@ -138,7 +131,7 @@ def main():
         return
     results = []
     for count in args.counts:
-        for state in ("cold", "warm"):
+        for state in ("cold", "warm", "mixed"):
             for mode in ("eager", "streaming"):
                 command = [
                     sys.executable,
