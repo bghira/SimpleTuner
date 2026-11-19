@@ -66,7 +66,8 @@ class TestVaeCacheTraversal(unittest.TestCase):
     def _run_pipeline(self, webshart, training_rank=False):
         wide0, wide1 = "webshart://0/0/wide.jpg", "webshart://1/0/wide.jpg"
         square0, square1 = "webshart://0/1/square.jpg", "webshart://1/1/square.jpg"
-        restored = "webshart://0/2/restored.jpg"
+        # Uncached, in the metadata, but in no bucket this cache traverses: another rank's share, or a removed sample.
+        elsewhere = "webshart://0/2/elsewhere.jpg"
         buckets = {
             "wide": [wide1, "cached", wide0, "other-rank"],
             "square": [square1, square0],
@@ -79,7 +80,7 @@ class TestVaeCacheTraversal(unittest.TestCase):
         cache.metadata_backend = Mock()
         if training_rank:
             # The metadata holds every rank's samples; the cursor says which of them are this rank's.
-            cache.metadata_backend.read_cache.return_value = {"wide": [*buckets["wide"], "not-ours"], "square": ["not-ours"]}
+            cache.metadata_backend.read_cache.return_value = {"wide": [*buckets["wide"], elsewhere], "square": []}
             cache.dataset_runtime = SimpleNamespace(
                 cursor=lambda: SimpleNamespace(rank_share=lambda: copy.deepcopy(buckets))
             )
@@ -87,7 +88,7 @@ class TestVaeCacheTraversal(unittest.TestCase):
             cache.metadata_backend.read_cache.return_value = buckets
             cache.dataset_runtime = None
         cache.metadata_backend.get_metadata_attribute_by_filepath.return_value = "wide"
-        cache.local_unprocessed_files = [wide0, wide1, square0, square1, "cached", restored]
+        cache.local_unprocessed_files = [wide0, wide1, square0, square1, "cached", elsewhere]
         cache.generate_vae_cache_filename = lambda path: (path + ".pt", path)
         cache._image_filename_from_vaecache_filename = lambda path: path
         cache.already_cached = Mock(return_value=False)
@@ -147,12 +148,12 @@ class TestVaeCacheTraversal(unittest.TestCase):
         # Whether samples were filtered out reaches the caller, so the ranks can take their new shares.
         self.assertIs(cache.process_buckets(progress_callback=progress), True)
 
-        expected = [wide0, restored, square0, wide1, square1] if webshart else [wide1, wide0, restored, square1, square0]
+        expected = [wide0, square0, wide1, square1] if webshart else [wide1, wide0, square1, square0]
         self.assertEqual(read_order, expected)
         self.assertEqual(scanned, expected)
         self.assertCountEqual(written, expected)
         self.assertEqual(cache._vae_cache_written_count, len(expected))
-        self.assertEqual(group_input, [{"wide": [wide1, wide0, restored], "square": [square1, square0]}])
+        self.assertEqual(group_input, [{"wide": [wide1, wide0], "square": [square1, square0]}])
         self.assertEqual(buckets, original)
         self.assertTrue(encoded_batches)
         for batch in encoded_batches:

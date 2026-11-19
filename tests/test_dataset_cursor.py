@@ -209,6 +209,18 @@ class TestRankShare(unittest.TestCase):
         owners = Counter(ref for cursor in cursors for ref in cursor.rank_share()["1.0"])
         self.assertEqual(sorted(owners.values()), [2, 3, 3])
 
+    def test_every_sample_is_in_some_rank_share(self):
+        # Each rank encodes only its share, so the shares together must hold the whole dataset.
+        buckets = make_buckets(b1_0=17, b1_5=5, b0_75=3)
+        every = {ref for refs in buckets.values() for ref in refs}
+        for dp_size in (2, 3, 8):
+            with self.subTest(dp_size=dp_size):
+                shares = [
+                    make_cursor(buckets, dp_size=dp_size, dp_rank=rank, allow_oversubscription=True).rank_share()
+                    for rank in range(dp_size)
+                ]
+                self.assertEqual({ref for share in shares for refs in share.values() for ref in refs}, every)
+
     def test_shared_dataset_is_whole_on_every_rank(self):
         buckets = make_buckets(b1_0=3)
         for rank in range(4):
