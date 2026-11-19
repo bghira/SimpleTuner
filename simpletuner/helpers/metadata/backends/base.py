@@ -398,6 +398,9 @@ class MetadataBackend:
             f"\n-> Aspect Ratio Buckets: {len(self.aspect_ratio_bucket_indices)}"
         )
 
+    def close_transforms(self) -> None:
+        """Release the store of recorded geometry. A backend that keeps it in its own metadata holds none."""
+
     def set_readonly(self):
         self.read_only = True
         logger.info(f"MetadataBackend {self.id} is now read-only.")

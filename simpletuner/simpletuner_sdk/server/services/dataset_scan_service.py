@@ -561,6 +561,7 @@ class DatasetScanService:
         StateTracker.set_args(scan_args)
 
         config_id = None
+        metadata_backend = None
         try:
             # Create config object
             args_dict = {k: getattr(scan_args, k, None) for k in vars(scan_args)}
@@ -607,6 +608,8 @@ class DatasetScanService:
             )
         finally:
             # Restore original args and clean up registered config
+            if metadata_backend is not None:
+                metadata_backend.close_transforms()
             StateTracker.set_args(original_args)
             if config_id is not None:
                 StateTracker.data_backends.pop(config_id, None)

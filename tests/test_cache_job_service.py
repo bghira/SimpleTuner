@@ -332,6 +332,27 @@ class TestStateTrackerSetup(unittest.TestCase):
         finally:
             StateTracker.set_accelerator(original)
 
+    def test_every_cache_job_closes_the_store_of_recorded_geometry(self):
+        """A WebUI process outlives its cache jobs, so each one releases the store it opened."""
+        for execute in ("_execute_vae_cache", "_execute_text_embed_cache", "_execute_conditioning_cache"):
+            with self.subTest(execute=execute):
+                metadata_backend = MagicMock()
+                service = CacheJobService(broadcast_fn=MagicMock())
+                job = CacheJob(job_id="test", dataset_id="ds1", cache_type="vae", status=CacheJobStatus.PENDING)
+                with (
+                    patch.object(CacheJobService, "_load_model", return_value=MagicMock()),
+                    patch.object(
+                        CacheJobService,
+                        "_create_data_backend_and_metadata",
+                        return_value=(MagicMock(), MagicMock(), metadata_backend, None),
+                    ),
+                    patch.object(CacheJobService, "_collect_image_files_from_metadata", return_value=["a.png"]),
+                    patch.object(CacheJobService, "_resolve_cache_dir", side_effect=RuntimeError("stop")),
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "stop"):
+                        getattr(service, execute)(job, {"id": "ds1"}, {})
+                metadata_backend.close_transforms.assert_called_once_with()
+
 
 class TestStreamingTextPreparation(unittest.TestCase):
     def test_job_streams_accepted_samples_without_inventory_discovery(self):
@@ -342,6 +363,7 @@ class TestStreamingTextPreparation(unittest.TestCase):
         metadata = SimpleNamespace(
             read_cache=lambda: {"1.0": ["accepted.jpg", "also-accepted.jpg"]},
             get_metadata_by_filepath=lambda ref: {},
+            close_transforms=lambda: None,
         )
         data_backend = SimpleNamespace(id="stream-test")
         model = SimpleNamespace(

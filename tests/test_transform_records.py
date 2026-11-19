@@ -253,7 +253,7 @@ class DiscoveryTransformRecordTests(unittest.TestCase):
             resolution_type="area",
             cache_file_suffix="images",
         )
-        self.addCleanup(backend._close_transforms)
+        self.addCleanup(backend.close_transforms)
         return backend
 
     def compute(self, backend, decide, ignore_existing_cache=False):
@@ -451,7 +451,7 @@ class ParquetTransformRecordTests(unittest.TestCase):
             },
             cache_file_suffix="images",
         )
-        self.addCleanup(backend._close_transforms)
+        self.addCleanup(backend.close_transforms)
         return backend
 
     def saved(self, kind):
@@ -578,7 +578,7 @@ class HuggingfaceTransformRecordTests(unittest.TestCase):
             metadata_update_interval=metadata_update_interval,
             cache_file_suffix="hub",
         )
-        self.addCleanup(backend._close_transforms)
+        self.addCleanup(backend.close_transforms)
         return backend
 
     def metadata_directory(self):
@@ -704,7 +704,7 @@ class CopiedDatasetGeometryTests(unittest.TestCase):
                 resolution=1.0,
                 resolution_type="area",
             )
-            self.addCleanup(metadata._close_transforms)
+            self.addCleanup(metadata.close_transforms)
             entry = StateTracker.get_data_backend(dataset_id)
             entry.update(metadata_backend=metadata, instance_data_dir=directory, dataset_type=dataset_type)
             backends[dataset_id] = entry

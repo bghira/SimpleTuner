@@ -142,6 +142,12 @@ class TestScanUsesTrainingSettings(unittest.TestCase):
         self.scan({"aspect_bucket_disable_rebuild": True})
         self.assertEqual(self.recipe(), "discovery")
 
+    def test_a_scan_leaves_no_store_writer_running(self):
+        import threading
+
+        self.scan({})
+        self.assertNotIn("transform-cache-writer", [thread.name for thread in threading.enumerate()])
+
     def test_the_store_directory_follows_the_training_cache_dir(self):
         from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend
         from simpletuner.helpers.training.state_tracker import StateTracker

@@ -538,6 +538,7 @@ class CacheJobService:
         StateTracker.set_args(args)
         StateTracker.set_accelerator(accelerator)
         config_id = None
+        metadata_backend = None
         model = None
         vae_cache = None
 
@@ -634,6 +635,8 @@ class CacheJobService:
             vae_cache.process_buckets(progress_callback=_vae_progress)
 
         finally:
+            if metadata_backend is not None:
+                metadata_backend.close_transforms()
             StateTracker.set_args(original_args)
             StateTracker.set_accelerator(original_accelerator)
             if config_id is not None:
@@ -651,6 +654,7 @@ class CacheJobService:
         StateTracker.set_args(args)
         StateTracker.set_accelerator(accelerator)
         config_id = None
+        metadata_backend = None
         model = None
         text_cache = None
 
@@ -740,6 +744,8 @@ class CacheJobService:
             self._broadcast("dataset_cache", self._job_to_dict(job))
 
         finally:
+            if metadata_backend is not None:
+                metadata_backend.close_transforms()
             StateTracker.set_args(original_args)
             StateTracker.set_accelerator(original_accelerator)
             if config_id is not None:
@@ -757,6 +763,7 @@ class CacheJobService:
         StateTracker.set_args(args)
         StateTracker.set_accelerator(accelerator)
         config_id = None
+        metadata_backend = None
         model = None
         embed_cache = None
 
@@ -844,6 +851,8 @@ class CacheJobService:
                 embed_cache.process_files(pending, progress_callback=_cond_progress)
 
         finally:
+            if metadata_backend is not None:
+                metadata_backend.close_transforms()
             StateTracker.set_args(original_args)
             StateTracker.set_accelerator(original_accelerator)
             if config_id is not None:

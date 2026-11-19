@@ -279,7 +279,7 @@ class RecordedGeometry:
     def _transform_store(self) -> PythonTransformCache:
         """This process's handle on the store of the recipe in force."""
         if self._transforms is None or self._transforms.recipe != self._recipe:
-            self._close_transforms()
+            self.close_transforms()
             if self._metadata_on_local_disk():
                 directory = self._metadata_directory() / "transforms"
             else:
@@ -293,7 +293,7 @@ class RecordedGeometry:
             self._transforms = PythonTransformCache(directory, self._recipe, max_batch_bytes=_TRANSFORM_BATCH_BYTES)
         return self._transforms
 
-    def _close_transforms(self) -> None:
+    def close_transforms(self) -> None:
         if self._transforms is not None:
             self._transforms.close()
             self._transforms = None
@@ -302,7 +302,7 @@ class RecordedGeometry:
     def _discard_transforms(self) -> None:
         """A forced rescan decides every sample again, so what its recipe recorded is dropped first."""
         path = self._transform_store().path(self.id)
-        self._close_transforms()
+        self.close_transforms()
         path.unlink(missing_ok=True)
 
     def _published_transforms(self, store: PythonTransformCache) -> str:

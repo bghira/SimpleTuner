@@ -7,7 +7,7 @@ from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -505,6 +505,18 @@ class TestWholeDatasetIndexing(WebshartSource, unittest.TestCase):
             as_json({path: {key: metadata[key] for key in DECIDED} for path, metadata in reloaded.image_metadata.items()}),
             as_json(decided),
         )
+
+    def test_closing_the_store_releases_it_and_a_later_read_opens_it_again(self):
+        backend = self.whole("closed")
+        geometry = as_json(backend.image_metadata)
+        recipe, store = backend._transforms
+        closed = MagicMock(wraps=store)
+        backend._transforms = (recipe, closed)
+        backend.close_transforms()
+        closed.close.assert_called_once_with()
+        self.assertIsNone(backend._transforms)
+        backend.load_image_metadata()
+        self.assertEqual(as_json(backend.image_metadata), geometry)
 
     def test_bucketing_again_reads_back_what_was_recorded(self):
         backend = self.whole("again")

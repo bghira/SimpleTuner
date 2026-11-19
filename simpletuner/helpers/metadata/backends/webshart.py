@@ -356,6 +356,11 @@ class WebshartMetadataBackend(MetadataBackend):
             self._transforms = (recipe, cache)
         return self._transforms[1]
 
+    def close_transforms(self) -> None:
+        if self._transforms is not None:
+            self._transforms[1].close()
+            self._transforms = None
+
     def close_unit(self, unit: int) -> None:
         for sample_path in self._open_units.pop(unit):
             del self.image_metadata[sample_path]
