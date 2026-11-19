@@ -1420,20 +1420,23 @@ class TestClearVaeCache(unittest.TestCase):
         self.tmpdir = tempfile.mkdtemp()
 
     @patch("simpletuner.simpletuner_sdk.server.services.dataset_scan_service" ".DatasetScanService._resolve_scan_output_dir")
-    def test_clear_vae_cache_deletes_directory(self, mock_resolve):
+    def test_clear_vae_cache_preserves_unrelated_files(self, mock_resolve):
         from simpletuner.simpletuner_sdk.server.services.dataset_scan_service import DatasetScanService
 
         mock_resolve.return_value = self.tmpdir
         vae_dir = Path(self.tmpdir) / "cache" / "vae" / "test-ds"
         vae_dir.mkdir(parents=True, exist_ok=True)
-        (vae_dir / "latent_001.pt").write_bytes(b"fake")
-        (vae_dir / "latent_002.pt").write_bytes(b"fake")
+        latent = vae_dir / ("1" * 64 + ".pt")
+        latent.write_bytes(b"fake")
+        checkpoint = vae_dir / "checkpoint.pt"
+        checkpoint.write_bytes(b"keep")
 
         service = DatasetScanService()
         config = {"id": "test-ds", "cache_dir_vae": str(vae_dir)}
         result = service.clear_vae_cache(config, {})
         self.assertIsNotNone(result)
-        self.assertFalse(vae_dir.exists())
+        self.assertFalse(latent.exists())
+        self.assertTrue(checkpoint.is_file())
 
     @patch("simpletuner.simpletuner_sdk.server.services.dataset_scan_service" ".DatasetScanService._resolve_scan_output_dir")
     def test_clear_vae_cache_no_dir_returns_none(self, mock_resolve):
@@ -1460,7 +1463,8 @@ class TestClearVaeCache(unittest.TestCase):
         mock_resolve.return_value = self.tmpdir
         vae_dir = Path(self.tmpdir) / "cache" / "vae" / "flux" / "my-ds"
         vae_dir.mkdir(parents=True, exist_ok=True)
-        (vae_dir / "latent.pt").write_bytes(b"fake")
+        latent = vae_dir / ("1" * 64 + ".pt")
+        latent.write_bytes(b"fake")
 
         service = DatasetScanService()
         config = {
@@ -1470,7 +1474,7 @@ class TestClearVaeCache(unittest.TestCase):
         global_config = {"model_family": "flux"}
         result = service.clear_vae_cache(config, global_config)
         self.assertIsNotNone(result)
-        self.assertFalse(vae_dir.exists())
+        self.assertFalse(latent.exists())
 
 
 if __name__ == "__main__":

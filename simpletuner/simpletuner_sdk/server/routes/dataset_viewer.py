@@ -608,8 +608,10 @@ class ScanAllRequest(BaseModel):
 @router.post("/scan")
 async def start_dataset_scan(request: ScanRequest, _user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Start a metadata scan for a single dataset."""
-    config = _require_dataset_config(request.dataset_id)
-    global_config = _get_global_config()
+    plan, global_config, _ = _cache_plan()
+    config = next((dataset for dataset in plan if dataset.get("id") == request.dataset_id), None)
+    if config is None:
+        raise HTTPException(status_code=404, detail=f"Dataset '{request.dataset_id}' not found in plan")
     try:
         job_id = get_scan_service().scan_dataset(
             request.dataset_id,
@@ -618,7 +620,10 @@ async def start_dataset_scan(request: ScanRequest, _user: User = Depends(get_cur
             force_rescan=request.force_rescan,
             clear_vae_cache=request.clear_vae_cache,
             clear_conditioning_cache=request.clear_conditioning_cache,
+            dataset_plan=plan,
         )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(status_code=409, detail=str(e))
     return {"job_id": job_id, "dataset_id": request.dataset_id}

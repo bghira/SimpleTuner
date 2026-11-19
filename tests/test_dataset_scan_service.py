@@ -134,7 +134,10 @@ class TestDatasetScanProcess(unittest.TestCase):
             Image.new("RGB", (128, 128)).save(root / "image.png")
             vae_dir = root / "latents"
             vae_dir.mkdir()
-            (vae_dir / "existing.pt").touch()
+            latent = vae_dir / ("0" * 64 + ".pt")
+            latent.touch()
+            other_file = vae_dir / "existing.pt"
+            other_file.touch()
             config = {
                 "id": "example",
                 "type": "local",
@@ -160,7 +163,23 @@ class TestDatasetScanProcess(unittest.TestCase):
                 self.assertEqual(StateTracker._pending_dataset_configs, {})
                 self.assertIs(StateTracker.get_args(), training_args)
                 self.assertTrue((root / "output" / "all_image_files_example.json").is_file())
-                self.assertFalse(vae_dir.exists())
+                self.assertFalse(latent.exists())
+                self.assertTrue(other_file.is_file())
+
+    def test_latent_clear_checks_configured_store_and_source(self):
+        service = DatasetScanService()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            latent = root / ("0" * 64 + ".pt")
+            latent.touch()
+            config = {"id": "video", "instance_data_dir": str(root), "cache_dir_vae": str(root)}
+            with self.assertRaisesRegex(ValueError, "overlaps a dataset source"):
+                service.clear_vae_cache(config, {})
+            config["image_embeds"] = "remote"
+            plan = [config, {"id": "remote", "type": "aws", "dataset_type": "image_embeds"}]
+            with self.assertRaisesRegex(ValueError, "Local artifact store"):
+                service.scan_dataset("video", config, force_rescan=True, clear_vae_cache=True, dataset_plan=plan)
+            self.assertTrue(latent.exists())
 
     def test_failed_scan_does_not_clear_existing_artifacts(self):
         service = DatasetScanService()

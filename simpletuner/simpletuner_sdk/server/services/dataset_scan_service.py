@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import multiprocessing
 import os
+import re
 import shutil
 import threading
 import time
@@ -239,15 +240,42 @@ class DatasetScanService:
         )
         return os.path.abspath(resolved) if resolved else None
 
-    def clear_vae_cache(self, dataset_config: Dict[str, Any], global_config: Dict[str, Any]) -> Optional[str]:
-        """Delete the VAE cache directory for a dataset. Returns the path cleared, or None."""
-        vae_dir = self._resolve_vae_cache_dir(dataset_config, global_config)
-        if not vae_dir or not os.path.isdir(vae_dir):
+    def _local_vae_clear_directory(self, dataset_config, global_config, dataset_plan):
+        from .cache_job_service import resolve_image_artifact_entry
+
+        store = resolve_image_artifact_entry(dataset_config, dataset_plan, "image_embeds") or dataset_config
+        if store.get("type", "local") != "local":
+            raise ValueError("Clearing latents during a rescan requires a Local artifact store.")
+        cache_path = self._resolve_vae_cache_dir(dataset_config, global_config)
+        if cache_path is None:
+            return None
+        directory = Path(cache_path).resolve()
+        for item in dataset_plan or [dataset_config]:
+            if item.get("type", "local") in {"local", "csv"}:
+                root = item.get("csv_cache_dir") or item.get("instance_data_dir")
+                for source in [root] if isinstance(root, str) else root or []:
+                    if Path(source).resolve().is_relative_to(directory):
+                        raise ValueError("The latent cache directory overlaps a dataset source directory.")
+            if item.get("id") != dataset_config["id"]:
+                other_cache = self._resolve_vae_cache_dir(item, global_config)
+                if other_cache:
+                    other_directory = Path(other_cache).resolve()
+                    if other_directory.is_relative_to(directory) or directory.is_relative_to(other_directory):
+                        raise ValueError("The latent cache directory overlaps another dataset's latent cache.")
+        return directory
+
+    def clear_vae_cache(self, dataset_config, global_config, *, dataset_plan=None) -> Optional[str]:
+        """Clear generated latent files while keeping the store directory and other files."""
+        directory = self._local_vae_clear_directory(dataset_config, global_config, dataset_plan)
+        if directory is None or not directory.is_dir():
             return None
 
-        shutil.rmtree(vae_dir)
-        logger.info("Cleared VAE cache directory: %s", vae_dir)
-        return vae_dir
+        for root, _, files in os.walk(directory):
+            for name in files:
+                if re.fullmatch(r"[0-9a-f]{64}\.pt", name):
+                    (Path(root) / name).unlink(missing_ok=True)
+        logger.info("Cleared VAE cache files from: %s", directory)
+        return str(directory)
 
     def clear_conditioning_cache(self, dataset_config: Dict[str, Any], global_config: Dict[str, Any]) -> List[str]:
         """Delete auto-generated conditioning data directories for a dataset.
@@ -342,6 +370,8 @@ class DatasetScanService:
         force_rescan: bool = False,
         clear_vae_cache: bool = False,
         clear_conditioning_cache: bool = False,
+        *,
+        dataset_plan=None,
     ) -> str:
         """Start a background scan for a single dataset. Returns job_id."""
         # Prevent scanning while a cache job is active
@@ -352,6 +382,9 @@ class DatasetScanService:
                 raise RuntimeError("A cache job is in progress. Wait for it to finish first.")
         except ImportError:
             pass
+
+        if clear_vae_cache:
+            self._local_vae_clear_directory(dataset_config, global_config or {}, dataset_plan)
 
         with self._lock:
             if self._scan_thread is not None and self._scan_thread.is_alive():
@@ -365,7 +398,11 @@ class DatasetScanService:
             self._scan_thread = threading.Thread(
                 target=self._run_scan,
                 args=(job, dataset_config, global_config or {}, force_rescan),
-                kwargs={"clear_vae_cache": clear_vae_cache, "clear_conditioning_cache": clear_conditioning_cache},
+                kwargs={
+                    "clear_vae_cache": clear_vae_cache,
+                    "clear_conditioning_cache": clear_conditioning_cache,
+                    "dataset_plan": dataset_plan,
+                },
                 daemon=True,
             )
             self._scan_thread.start()
@@ -483,6 +520,7 @@ class DatasetScanService:
         *,
         clear_vae_cache: bool = False,
         clear_conditioning_cache: bool = False,
+        dataset_plan=None,
     ):
         context = multiprocessing.get_context("spawn")
         with self._lock:
@@ -513,7 +551,7 @@ class DatasetScanService:
                 if job.status == ScanStatus.CANCELLED:
                     return
                 if clear_vae_cache:
-                    self.clear_vae_cache(dataset_config, global_config)
+                    self.clear_vae_cache(dataset_config, global_config, dataset_plan=dataset_plan)
                 if clear_conditioning_cache:
                     self.clear_conditioning_cache(dataset_config, global_config)
                 job.status = ScanStatus.COMPLETED
