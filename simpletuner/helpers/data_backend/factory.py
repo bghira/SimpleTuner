@@ -3072,8 +3072,8 @@ class FactoryRegistry:
         if has_metadata_clone_source:
             info_log(f"Duplicating metadata for generated dataset from {metadata_clone_source_id}")
             DatasetDuplicator.copy_metadata(
-                source_backend=self.data_backends[metadata_clone_source_id],
-                target_backend=init_backend,
+                source=StateTracker.get_dataset(metadata_clone_source_id),
+                target=init_backend["dataset_runtime"],
                 generated=backend.get("auto_generated", False),
             )
         elif clone_conditioning:
@@ -3083,9 +3083,9 @@ class FactoryRegistry:
             target_dataset_id = backend.get("id")
             if source_dataset_id is None:
                 # other configuration style where the *source* dataset config has conditioning_data defined
-                for source_backend in self.data_backends.values():
-                    logger.debug("Checking backend %s for strict conditioning source", source_backend.get("id"))
-                    source_conditioning_data_config = source_backend.get("config", {}).get("conditioning_data", None)
+                for source in StateTracker.get_datasets().values():
+                    logger.debug("Checking dataset %s for strict conditioning source", source.id)
+                    source_conditioning_data_config = source.config.get("conditioning_data")
                     if (
                         isinstance(source_conditioning_data_config, str)
                         and source_conditioning_data_config == target_dataset_id
@@ -3093,7 +3093,7 @@ class FactoryRegistry:
                         isinstance(source_conditioning_data_config, list)
                         and target_dataset_id in source_conditioning_data_config
                     ):
-                        source_dataset_id = source_backend["id"]
+                        source_dataset_id = source.id
                         break
             if source_dataset_id is None:
                 raise ValueError(
@@ -3101,8 +3101,8 @@ class FactoryRegistry:
                 )
             info_log(f"Duplicating metadata for {conditioning_type} conditioning dataset from {source_dataset_id}")
             DatasetDuplicator.copy_metadata(
-                source_backend=self.data_backends[source_dataset_id],
-                target_backend=init_backend,
+                source=StateTracker.get_dataset(source_dataset_id),
+                target=init_backend["dataset_runtime"],
             )
             if skip_bucket_split:
                 info_log(f"(id={init_backend['id']}) Skipping bucket split for audio-only dataset.")
@@ -3298,6 +3298,23 @@ class FactoryRegistry:
                 )
         print_bucket_info(init_backend["metadata_backend"], init_backend.get("dataset_type"))
 
+    def _bind_dataset_runtime(self, init_backend, conditioning_type):
+        config = init_backend["config"]
+        config["dataset_type"] = ensure_dataset_type(init_backend.get("dataset_type"), default=DatasetType.IMAGE)
+        runtime = DatasetRuntime(
+            id=init_backend["id"],
+            data_backend=init_backend["data_backend"],
+            metadata_backend=init_backend["metadata_backend"],
+            config=config,
+        )
+        runtime.text_embed_cache = init_backend.get("text_embed_cache")
+        runtime.conditioning_type = conditioning_type
+        audio = config.get("audio") or {}
+        if source_id := config.get("source_dataset_id") or audio.get("source_dataset_id"):
+            runtime.source_dataset = StateTracker.get_dataset(source_id)
+        init_backend["config"] = runtime.config
+        init_backend["dataset_runtime"] = runtime
+
     def _create_dataset_and_sampler(
         self, backend: Dict[str, Any], init_backend: Dict[str, Any], conditioning_type: Optional[str]
     ) -> None:
@@ -3351,23 +3368,9 @@ class FactoryRegistry:
             if init_backend["metadata_backend"].resolution < 256:
                 warning_log("Increasing resolution to 256, as is required for DF Stage II.")
 
-        init_backend["dataset_runtime"] = DatasetRuntime(
-            id=init_backend["id"],
-            data_backend=init_backend["data_backend"],
-            metadata_backend=init_backend["metadata_backend"],
-            config={
-                **init_backend["config"],
-                "dataset_type": dataset_type,
-                **captions,
-            },
-        )
-        init_backend["dataset_runtime"].text_embed_cache = init_backend.get("text_embed_cache")
-        init_backend["dataset_runtime"].is_regularisation_data = is_regularisation_data
-        init_backend["dataset_runtime"].conditioning_type = conditioning_type
-        audio = init_backend["config"].get("audio") or {}
-        if source_id := init_backend["config"].get("source_dataset_id") or audio.get("source_dataset_id"):
-            init_backend["dataset_runtime"].source_dataset = StateTracker.get_dataset(source_id)
-        init_backend["config"] = init_backend["dataset_runtime"].config
+        runtime = init_backend["dataset_runtime"]
+        runtime.config.update(captions)
+        runtime.is_regularisation_data = is_regularisation_data
         StateTracker.own_dataset_resource(init_backend["dataset_runtime"])
         StateTracker.register_dataset(init_backend["dataset_runtime"])
         init_backend["sampler"] = MultiAspectSampler(
@@ -4140,6 +4143,7 @@ class FactoryRegistry:
             return
 
         # Audio-only datasets contain no video stream to split into spatial buckets.
+        self._bind_dataset_runtime(init_backend, conditioning_type)
         self._handle_bucket_operations(backend, init_backend, conditioning_type, skip_bucket_split=is_audio_only_dataset)
 
         self._create_dataset_and_sampler(backend, init_backend, conditioning_type)

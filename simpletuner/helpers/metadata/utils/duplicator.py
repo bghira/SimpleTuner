@@ -3,7 +3,6 @@ import os
 
 from simpletuner.helpers.data_backend.base import conditioning_file_path
 from simpletuner.helpers.training.multi_process import should_log
-from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.utils.pathing import normalize_data_path
 
 logger = logging.getLogger(__name__)
@@ -36,10 +35,10 @@ class DatasetDuplicator:
         return new_path
 
     @staticmethod
-    def copy_metadata(source_backend, target_backend, *, generated=False):
+    def copy_metadata(source, target, *, generated=False):
         """Copy metadata from source backend to target backend with path updates."""
-        source_meta = source_backend.get("metadata_backend", None)
-        target_meta = target_backend.get("metadata_backend", None)
+        source_meta = source.metadata_backend
+        target_meta = target.metadata_backend
 
         if source_meta is None or target_meta is None:
             raise ValueError(f"Both backends must have metadata_backend defined. Received {source_meta} \n\n {target_meta}")
@@ -48,15 +47,15 @@ class DatasetDuplicator:
         target_meta.reload_cache(set_config=False)
 
         # Get the instance directories for path translation
-        source_dir = source_backend.get("instance_data_dir", "")
-        target_dir = target_backend.get("instance_data_dir", "")
-        target_config = target_backend.get("config", {}) or {}
-        conditioning_config = target_config.get("conditioning_config") or target_backend.get("conditioning_config") or {}
+        source_dir = source.instance_data_dir
+        target_dir = target.instance_data_dir
+        target_config = target.config
+        conditioning_config = target_config.get("conditioning_config") or {}
         conditioning_data_type = conditioning_config.get("type")
 
         # Check if we need to update paths (for conditioning datasets)
-        source_data = source_backend.get("data_backend")
-        target_data = target_backend.get("data_backend")
+        source_data = source.data_backend
+        target_data = target.data_backend
         shared_sample_ids = (
             getattr(source_data, "type", None) == "webshart"
             and getattr(target_data, "type", None) == "webshart"
@@ -65,7 +64,7 @@ class DatasetDuplicator:
                 getattr(source_data, field) == getattr(target_data, field) for field in ("source", "metadata", "subfolder")
             )
         )
-        needs_path_update = source_dir != target_dir and target_backend.get("dataset_type") == "conditioning"
+        needs_path_update = source_dir != target_dir and target.config["dataset_type"] == "conditioning"
 
         def translate(path):
             if not needs_path_update or shared_sample_ids:
@@ -109,8 +108,8 @@ class DatasetDuplicator:
             logger.info("Copying metadata without path translation")
             target_meta.set_metadata(metadata_backend=source_meta, update_json=False)
 
-        source_config = source_backend.get("config", {}) or {}
-        conditioning_type = target_config.get("conditioning_type") or target_backend.get("conditioning_type")
+        source_config = source.config
+        conditioning_type = target_config.get("conditioning_type") or target.conditioning_type
 
         propagated_fields = [
             "resolution",
@@ -129,10 +128,6 @@ class DatasetDuplicator:
             for field in alignment_fields:
                 if field in source_config:
                     target_config[field] = source_config[field]
-
-        target_backend["config"] = target_config
-        if target_backend.get("id"):
-            StateTracker.set_data_backend_config(target_backend["id"], target_config)
 
         if "repeats" in target_config:
             target_meta.repeats = int(target_config.get("repeats") or 0)

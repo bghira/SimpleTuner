@@ -783,6 +783,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
             patch("simpletuner.helpers.data_backend.factory.torch.utils.data.DataLoader"),
         ):
             factory._handle_config_versioning(backend, init_backend)
+            factory._bind_dataset_runtime(init_backend, None)
             factory._create_dataset_and_sampler(backend, init_backend, conditioning_type=None)
 
         set_config.assert_called_once()
@@ -846,6 +847,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 ):
                     metadata.reload_cache()
                     self.assertIs(init_backend["config"], live_config)
+                    factory._bind_dataset_runtime(init_backend, None)
                     factory._create_dataset_and_sampler(backend, init_backend, conditioning_type=None)
                 self.assertIs(init_backend["config"], init_backend["dataset_runtime"].config)
                 self.assertEqual(sampler.call_args.kwargs["batch_size"], dataset_batch_size or 8)
@@ -2065,6 +2067,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
     @patch("simpletuner.helpers.data_backend.factory.DatasetDuplicator.copy_metadata")
     @patch("simpletuner.helpers.data_backend.factory.StateTracker")
     def test_metadata_clone_requires_explicit_source_marker(self, mock_state_tracker, mock_copy_metadata):
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
 
         self.args.skip_file_discovery = "aspect"
@@ -2077,6 +2080,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
             "config": {},
             "dataset_type": "audio",
             "metadata_backend": metadata_backend,
+            "data_backend": MagicMock(),
         }
         factory = FactoryRegistry(
             args=self.args,
@@ -2095,8 +2099,9 @@ class TestFactoryEdgeCases(unittest.TestCase):
 
         mock_copy_metadata.assert_not_called()
 
-        source = {"id": "primary"}
-        factory.data_backends["primary"] = source
+        source = DatasetRuntime("primary", None, None, {})
+        mock_state_tracker.get_dataset.return_value = source
+        factory._bind_dataset_runtime(init_backend, None)
         factory._handle_bucket_operations(
             backend={
                 "id": "generated-conditioning",
@@ -2108,8 +2113,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
             conditioning_type=None,
         )
 
-        mock_state_tracker.get_data_backend.assert_not_called()
-        mock_copy_metadata.assert_called_once_with(source_backend=source, target_backend=init_backend, generated=True)
+        mock_state_tracker.get_dataset.assert_called_once_with("primary")
+        mock_copy_metadata.assert_called_once_with(source=source, target=init_backend["dataset_runtime"], generated=True)
 
     def test_image_embeds_backend_configuration(self):
         """Image embed configuration should not instantiate VAE cache directly."""

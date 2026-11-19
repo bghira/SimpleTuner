@@ -6,6 +6,7 @@ from copy import deepcopy
 from io import BytesIO
 from types import SimpleNamespace
 
+from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend
 from simpletuner.helpers.metadata.utils.duplicator import DatasetDuplicator
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -191,13 +192,7 @@ class TestConditioningSplitAlignment(unittest.TestCase):
             repeats=int(source_config.get("repeats", 0) or 0),
         )
         training_metadata.aspect_ratio_bucket_indices = deepcopy(base_buckets)
-        source_entry = {
-            "id": source_id,
-            "config": source_config,
-            "metadata_backend": training_metadata,
-            "instance_data_dir": source_dir,
-            "dataset_type": "image",
-        }
+        source = DatasetRuntime(source_id, train_backend, training_metadata, source_config)
         training_metadata.split_buckets_between_processes(apply_padding=apply_padding)
 
         conditioning_config = {
@@ -228,13 +223,12 @@ class TestConditioningSplitAlignment(unittest.TestCase):
             minimum_image_size=conditioning_config.get("minimum_image_size"),
             repeats=int(conditioning_config.get("repeats", 0) or 0),
         )
-        conditioning_entry = {
-            "id": conditioning_id,
-            "config": conditioning_config,
-            "metadata_backend": conditioning_metadata,
-            "instance_data_dir": conditioning_dir,
-            "dataset_type": "conditioning",
-        }
+        target = DatasetRuntime(
+            conditioning_id,
+            conditioning_backend,
+            conditioning_metadata,
+            {**conditioning_config, "dataset_type": "conditioning"},
+        )
 
         if before_copy_callback:
             before_copy_callback(
@@ -242,11 +236,11 @@ class TestConditioningSplitAlignment(unittest.TestCase):
                 conditioning_metadata,
                 train_backend,
                 conditioning_backend,
-                source_entry,
-                conditioning_entry,
+                source,
+                target,
             )
 
-        DatasetDuplicator.copy_metadata(source_entry, conditioning_entry, generated=generated)
+        DatasetDuplicator.copy_metadata(source, target, generated=generated)
         return training_metadata, conditioning_metadata
 
     def test_generated_preparation_follows_canonical_source_membership_after_training_split(self):
@@ -283,10 +277,10 @@ class TestConditioningSplitAlignment(unittest.TestCase):
         accelerator = self._init_state(num_processes=1, process_index=0)
 
         def set_webshart_backends(train_meta, cond_meta, train_backend, cond_backend, source, target):
-            source["data_backend"] = SimpleNamespace(
+            source.data_backend = SimpleNamespace(
                 type="webshart", format="parquet", source="paired", metadata="index", subfolder=None
             )
-            target["data_backend"] = SimpleNamespace(
+            target.data_backend = SimpleNamespace(
                 type="webshart", format="parquet", source="paired", metadata="index", subfolder=None
             )
             train_meta.image_metadata = {path: {"original_size": [1024, 1024]} for path in paths}
@@ -432,7 +426,7 @@ class TestConditioningSplitAlignment(unittest.TestCase):
             conditioning_config_overrides=conditioning_config_overrides,
         )
 
-        conditioning_config = StateTracker.get_data_backend_config(conditioning_id)
+        conditioning_config = cond_meta.config
 
         self.assertEqual(conditioning_config["repeats"], source_config_overrides["repeats"])
         self.assertEqual(cond_meta.repeats, source_config_overrides["repeats"])

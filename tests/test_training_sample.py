@@ -302,26 +302,21 @@ class TestTrainingSample(unittest.TestCase):
         target_meta.aspect_ratio_bucket_indices = {}
         target_meta.image_metadata = {}
         with tempfile.TemporaryDirectory() as tmpdir:
-            source_backend = {
-                "id": "source",
-                "dataset_type": "video",
-                "instance_data_dir": "",
-                "metadata_backend": source_meta,
-                "config": {"resolution": 480, "resolution_type": "pixel_area"},
-            }
-            target_backend = {
-                "id": "conditioning",
-                "dataset_type": "conditioning",
-                "instance_data_dir": tmpdir,
-                "metadata_backend": target_meta,
-                "conditioning_type": "reference_strict",
-                "config": {
+            source_meta.instance_data_dir = ""
+            target_meta.instance_data_dir = tmpdir
+            source = DatasetRuntime("source", None, source_meta, {"resolution": 480, "resolution_type": "pixel_area"})
+            target = DatasetRuntime(
+                "conditioning",
+                None,
+                target_meta,
+                {
+                    "dataset_type": "conditioning",
                     "conditioning_type": "reference_strict",
                     "conditioning_config": {"type": "i2v_first_frame"},
                 },
-            }
-            with patch.object(StateTracker, "set_data_backend_config"):
-                DatasetDuplicator.copy_metadata(source_backend, target_backend)
+            )
+            with patch.object(StateTracker, "set_data_backend_config", side_effect=AssertionError("global dataset write")):
+                DatasetDuplicator.copy_metadata(source, target)
 
             expected_path = os.path.join(tmpdir, "25.png")
             self.assertEqual(target_meta.aspect_ratio_bucket_indices["1.0"], [expected_path])
