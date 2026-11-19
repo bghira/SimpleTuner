@@ -41,6 +41,8 @@ class DatasetDuplicator:
 
         if source_meta is None or target_meta is None:
             raise ValueError(f"Both backends must have metadata_backend defined. Received {source_meta} \n\n {target_meta}")
+        # An epoch rollover copies the target again from this source rather than bucketing it.
+        target_backend["metadata_source_id"] = source_backend["id"]
 
         logger.debug("Reloading target metadata cache...")
         target_meta.reload_cache(set_config=False)

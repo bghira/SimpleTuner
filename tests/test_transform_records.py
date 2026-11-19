@@ -731,7 +731,9 @@ class CopiedDatasetGeometryTests(unittest.TestCase):
         return control["metadata_backend"].get_metadata()[f"{self.root}/control/a.png"]["target_size"]
 
     def test_a_copied_dataset_keeps_the_source_geometry_without_reading_its_own_files(self):
-        self.assertEqual(self.target_size(self.copy()), (128, 64))
+        control = self.copy()
+        self.assertEqual(self.target_size(control), (128, 64))
+        self.assertEqual(control["metadata_source_id"], "source")
 
     def test_the_other_ranks_keep_the_copied_geometry_after_preparation(self):
         control = self.copy(process_index=1)
@@ -746,6 +748,144 @@ class CopiedDatasetGeometryTests(unittest.TestCase):
         Image.new("RGB", (64, 32)).save(f"{self.root}/control/a.png")
         self.prepare(control, process_index=0)
         self.assertEqual(self.target_size(control), (128, 64))
+
+
+class CopiedDatasetRolloverTests(unittest.TestCase):
+    """At an epoch rollover a copy of a re-cropping dataset takes the source's new lists on every rank."""
+
+    NAMES = [f"{index}.png" for index in range(12)]
+    SOURCE = {
+        "resolution": 64,
+        "resolution_type": "pixel",
+        "crop": True,
+        "crop_aspect": "random",
+        "crop_aspect_buckets": [0.5, 1.0, 2.0],
+        "crop_style": "center",
+        "dataset_type": "image",
+    }
+    CONTROL = {"resolution": 64, "resolution_type": "pixel", "dataset_type": "conditioning"}
+
+    def setUp(self):
+        from PIL import Image
+
+        temp = TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        for directory in ("source", "control"):
+            (self.root / directory).mkdir()
+            for index, name in enumerate(self.NAMES):
+                Image.new("RGB", (64 + 32 * (index % 4), 96)).save(self.root / directory / name)
+        self.args = SimpleNamespace(
+            enable_multiprocessing=False,
+            aspect_bucket_worker_count=1,
+            aspect_bucket_disable_rebuild=False,
+            aspect_bucket_alignment=8,
+            aspect_bucket_rounding=2,
+            cache_dir=str(self.root / "cache"),
+            disable_bucket_pruning=True,
+            train_batch_size=1,
+            gradient_accumulation_steps=1,
+            ignore_missing_files=True,
+            model_type="",
+            resolution=64,
+            resolution_type="pixel",
+            minimum_image_size=None,
+            delete_problematic_images=False,
+            delete_unwanted_images=False,
+            output_dir=str(self.root / "output"),
+            metadata_update_interval=3600,
+            num_train_epochs=3,
+            lr_scheduler="constant",
+        )
+        StateTracker.set_args(self.args)
+        StateTracker.set_model(None)
+        for dataset_id in ("source", "control"):
+            self.addCleanup(StateTracker.data_backends.pop, dataset_id, None)
+            self.addCleanup(StateTracker.all_image_files.pop, dataset_id, None)
+
+    def rank(self, index):
+        accelerator = _Accelerator(index)
+        accelerator.wait_for_everyone = lambda: None
+        backends = {}
+        for dataset_id, config in (("source", self.SOURCE), ("control", self.CONTROL)):
+            StateTracker.register_data_backend({"id": dataset_id})
+            StateTracker.set_data_backend_config(dataset_id, dict(config))
+            directory = self.root / dataset_id
+            StateTracker.all_image_files[dataset_id] = dict.fromkeys(str(directory / name) for name in self.NAMES)
+            metadata = DiscoveryMetadataBackend(
+                id=dataset_id,
+                instance_data_dir=str(directory),
+                cache_file=str(directory / "aspect_ratio_bucket_indices"),
+                metadata_file=str(directory / "aspect_ratio_bucket_metadata"),
+                data_backend=LocalDataBackend(accelerator=None, id=dataset_id),
+                accelerator=accelerator,
+                batch_size=1,
+                resolution=64,
+                resolution_type="pixel",
+            )
+            self.addCleanup(metadata.close_transforms)
+            backends[dataset_id] = {
+                "id": dataset_id,
+                "metadata_backend": metadata,
+                "instance_data_dir": str(directory),
+                "dataset_type": config["dataset_type"],
+                "config": dict(config, conditioning_type="reference_strict") if dataset_id == "control" else dict(config),
+                "dataset_runtime": SimpleNamespace(rebuild_cursor=lambda: None),
+            }
+        return accelerator, backends
+
+    def copy(self, backends):
+        with patch.object(StateTracker, "get_data_backend", side_effect=backends.get):
+            DatasetDuplicator.copy_metadata(backends["source"], backends["control"])
+
+    def rollover(self, accelerator, backends):
+        from simpletuner.helpers.training.trainer import Trainer
+
+        trainer = object.__new__(Trainer)
+        trainer.state = {"first_epoch": 1, "current_epoch": 1}
+        trainer.accelerator, trainer.config, trainer.extra_lr_scheduler_kwargs = accelerator, self.args, {}
+        trainer.get_steps_per_epoch_for_epoch = lambda epoch: 10
+        with (
+            patch.object(StateTracker, "get_data_backends", return_value=backends),
+            patch.object(
+                StateTracker,
+                "get_data_backend_config",
+                side_effect=lambda backend_id=None, data_backend_id=None: backends[backend_id or data_backend_id]["config"],
+            ),
+            patch.object(StateTracker, "get_data_backend", side_effect=backends.get),
+        ):
+            trainer._epoch_rollover(2)
+
+    @staticmethod
+    def decided(backend):
+        metadata = backend["metadata_backend"]
+        lists = {
+            bucket: sorted(Path(path).name for path in paths)
+            for bucket, paths in metadata.aspect_ratio_bucket_indices.items()
+        }
+        geometry = {
+            Path(path).name: (tuple(record["target_size"]), tuple(record["crop_coordinates"]))
+            for path, record in metadata.get_metadata().items()
+        }
+        return {bucket: paths for bucket, paths in lists.items() if paths}, geometry
+
+    def test_the_copy_follows_the_rebuilt_source_on_every_rank(self):
+        main, main_backends = self.rank(0)
+        main_backends["source"]["metadata_backend"].compute_aspect_ratio_bucket_indices()
+        self.copy(main_backends)
+        other, other_backends = self.rank(1)
+        # As preparation does on every rank but the main one.
+        other_backends["source"]["metadata_backend"].reload_cache()
+        other_backends["source"]["metadata_backend"].load_image_metadata()
+        self.copy(other_backends)
+
+        self.rollover(main, main_backends)
+        self.rollover(other, other_backends)
+
+        source = self.decided(main_backends["source"])
+        self.assertEqual(self.decided(main_backends["control"]), source)
+        self.assertEqual(self.decided(other_backends["control"]), source)
+        self.assertEqual(self.decided(other_backends["source"]), source)
 
 
 class ViewerTransformRecordTests(unittest.TestCase):

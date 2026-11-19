@@ -57,6 +57,7 @@ from simpletuner.helpers.data_backend.runtime.context_parallel_sync import (
 from simpletuner.helpers.data_backend.runtime.schedule import normalize_start_epoch, normalize_start_step
 from simpletuner.helpers.distillation.composition import resolve_configured_distiller_requirement_profile
 from simpletuner.helpers.distillation.requirements import EMPTY_PROFILE, DistillerRequirementProfile
+from simpletuner.helpers.metadata.utils.duplicator import DatasetDuplicator
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.musubi_block_swap import prepare_musubi_model_for_ddp
 from simpletuner.helpers.publishing import PublishingManager
@@ -6052,10 +6053,15 @@ class Trainer:
         logger.debug(
             f"Just completed epoch {self.state['current_epoch'] - 1}. Beginning epoch {epoch}. Starting epoch was {self.state['first_epoch']}. Final epoch will be {self.config.num_train_epochs}"
         )
+        rebuilt, copies = set(), []
         for backend_id, backend in StateTracker.get_data_backends().items():
             backend_config = StateTracker.get_data_backend_config(backend_id)
             if shuffle_window(backend_config) is not None:
                 # Its shards are indexed again as they open in the new epoch.
+                continue
+            if "metadata_source_id" in backend:
+                # A copy takes its source's new lists and geometry once the source is rebuilt.
+                copies.append((backend_id, backend))
                 continue
             if (recrops_each_epoch(backend_config, self.config) and "metadata_backend" in backend) or (
                 backend_config.get("vae_cache_clear_each_epoch") and "vaecache" in backend
@@ -6086,7 +6092,18 @@ class Trainer:
                         if not self.accelerator.is_main_process:
                             backend["metadata_backend"].reload_cache(set_config=False)
                         backend["dataset_runtime"].rebuild_cursor()
+                rebuilt.add(backend_id)
                 # no need to manually call metadata_backend.save_cache() here.
+        for backend_id, backend in copies:
+            source_rebuilt = backend["metadata_source_id"] in rebuilt
+            if source_rebuilt:
+                DatasetDuplicator.copy_metadata(StateTracker.get_data_backend(backend["metadata_source_id"]), backend)
+                backend["dataset_runtime"].rebuild_cursor()
+            clears_vae_cache = StateTracker.get_data_backend_config(backend_id).get("vae_cache_clear_each_epoch")
+            if "vaecache" in backend and (source_rebuilt or clears_vae_cache):
+                # A copy is not written back; every rank filters the whole copy itself.
+                if backend["vaecache"].rebuild_cache():
+                    backend["dataset_runtime"].rebuild_cursor()
         if self.config.lr_scheduler == "cosine_with_restarts":
             self.extra_lr_scheduler_kwargs["epoch"] = epoch
 

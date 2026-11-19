@@ -2382,6 +2382,77 @@ class TestTrainer(unittest.TestCase):
                 expected = ["reload", "rebuild_cursor", "rebuild_vae_cache", *after]
                 self.assertEqual([name for name, _args, _kwargs in calls.mock_calls], expected)
 
+    def _copy_fixture(self, copy_config):
+        trainer, backends = self._rollover_fixture(bucket_contents={"1.0": ["image-0.jpg"]})
+        copy = {
+            "metadata_backend": MagicMock(),
+            "vaecache": MagicMock(),
+            "dataset_runtime": MagicMock(),
+            "metadata_source_id": "train",
+        }
+        copy["vaecache"].rebuild_cache.return_value = False
+        # Listed before its source, so the copy cannot rely on the order datasets were configured in.
+        backends = {"control": copy, **backends}
+        configs = {"control": copy_config, "train": {"crop": True, "crop_aspect": "random"}}
+        return trainer, backends, configs
+
+    @contextmanager
+    def _copy_patches(self, backends, configs):
+        with (
+            patch("simpletuner.helpers.training.trainer.StateTracker.set_epoch"),
+            patch("simpletuner.helpers.training.trainer.StateTracker.get_data_backends", return_value=backends),
+            patch(
+                "simpletuner.helpers.training.trainer.StateTracker.get_data_backend_config",
+                side_effect=lambda backend_id: configs[backend_id],
+            ),
+            patch("simpletuner.helpers.training.trainer.StateTracker.get_data_backend", side_effect=backends.get),
+            patch("simpletuner.helpers.training.trainer.DatasetDuplicator.copy_metadata") as copy_metadata,
+        ):
+            yield copy_metadata
+
+    def test_a_copy_is_copied_again_from_its_rebuilt_source_instead_of_bucketed(self):
+        trainer, backends, configs = self._copy_fixture({"crop": True, "crop_aspect": "random"})
+        copy, source = backends["control"], backends["train"]
+        calls = Mock()
+        calls.attach_mock(source["vaecache"].rebuild_cache, "rebuild_source_vae_cache")
+
+        with self._copy_patches(backends, configs) as copy_metadata:
+            calls.attach_mock(copy_metadata, "copy")
+            calls.attach_mock(copy["dataset_runtime"].rebuild_cursor, "rebuild_copy_cursor")
+            calls.attach_mock(copy["vaecache"].rebuild_cache, "rebuild_copy_vae_cache")
+            trainer._epoch_rollover(2)
+
+        copy["metadata_backend"].compute_aspect_ratio_bucket_indices.assert_not_called()
+        copy["metadata_backend"].reload_cache.assert_not_called()
+        self.assertEqual(
+            [name for name, _args, _kwargs in calls.mock_calls],
+            ["rebuild_source_vae_cache", "copy", "rebuild_copy_cursor", "rebuild_copy_vae_cache"],
+        )
+        self.assertEqual(copy_metadata.call_args.args, (source, copy))
+
+    def test_a_copy_takes_its_share_again_when_its_vae_rebuild_filters_samples(self):
+        trainer, backends, configs = self._copy_fixture({})
+        copy = backends["control"]
+        copy["vaecache"].rebuild_cache.return_value = True
+        with self._copy_patches(backends, configs):
+            trainer._epoch_rollover(2)
+        # Once after the copy and once after the filter; a copy is not written back, so it is not reloaded.
+        self.assertEqual(copy["dataset_runtime"].rebuild_cursor.call_count, 2)
+        copy["metadata_backend"].reload_cache.assert_not_called()
+
+    def test_a_copy_whose_source_was_not_rebuilt_keeps_its_lists(self):
+        for copy_config, rebuilds_vae_cache in (({}, False), ({"vae_cache_clear_each_epoch": True}, True)):
+            with self.subTest(copy_config=copy_config):
+                trainer, backends, configs = self._copy_fixture(copy_config)
+                configs["train"] = {}
+                copy = backends["control"]
+                with self._copy_patches(backends, configs) as copy_metadata:
+                    trainer._epoch_rollover(2)
+                copy_metadata.assert_not_called()
+                copy["metadata_backend"].compute_aspect_ratio_bucket_indices.assert_not_called()
+                copy["dataset_runtime"].rebuild_cursor.assert_not_called()
+                self.assertEqual(copy["vaecache"].rebuild_cache.called, rebuilds_vae_cache)
+
     def test_epoch_rollover_drops_what_is_left_of_the_previous_epoch(self):
         # A rank stopped by another rank's epoch end must not carry its unread batches forward.
         trainer, backends = self._rollover_fixture(bucket_contents={"1.0": ["image-0.jpg"]})
