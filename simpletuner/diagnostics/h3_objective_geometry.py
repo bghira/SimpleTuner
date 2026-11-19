@@ -376,19 +376,36 @@ def _load_adapter(trainer, checkpoint_dir: Path) -> None:
     trainer.model.load_lora_weights([component], str(checkpoint_dir))
 
 
-def _first_raw_batch():
-    from simpletuner.helpers.data_backend.runtime import random_dataloader_iterator
-    from simpletuner.helpers.training.state_tracker import StateTracker
+def _first_raw_batch(trainer):
+    from simpletuner.helpers.data_backend.runtime.dataloader_iterator import DatasetMixer, random_dataloader_iterator
 
-    backends = {
-        dataset_id: dataset.training_dataloader
-        for dataset_id, dataset in StateTracker.get_datasets("image", "video", "audio", "caption").items()
-        if dataset.training_dataloader is not None and not StateTracker.backend_status(dataset_id)
-    }
-    raw_batch = random_dataloader_iterator(1, backends)
-    if raw_batch is False or not isinstance(raw_batch, dict):
+    datasets = trainer._training_datasets()
+    mixer = DatasetMixer(datasets, epoch=1, step=0)
+    raw_batch = random_dataloader_iterator(1, datasets, mixer=mixer, update_epoch_step=False)
+    if not isinstance(raw_batch, dict):
         raise RuntimeError("Unable to fetch a diagnostic batch from the configured training data backend.")
-    return raw_batch
+    return raw_batch, datasets[raw_batch["data_backend_id"]]
+
+
+def _describe_batch(dataset, raw_batch):
+    view = dataset.published_read_view()
+    cache = dataset.text_embed_cache
+    if cache is None or cache.disabled:
+        text_mode = "disabled"
+    elif cache.text_cache_encode_only:
+        text_mode = "encode_only"
+    elif cache.text_cache_disable:
+        text_mode = "read_existing"
+    elif cache.text_cache_ondemand:
+        text_mode = "ondemand"
+    else:
+        text_mode = "precomputed"
+    return {
+        "data_backend_id": dataset.id,
+        "view_revision": view.revision if view is not None else None,
+        "text_cache_mode": text_mode,
+        "filepaths": [str(path) for path in raw_batch.get("filepaths", [])],
+    }
 
 
 def _forbid_text_encoder_load(model, *args, **kwargs):
@@ -628,7 +645,7 @@ def run_diagnostic(args: argparse.Namespace) -> None:
     trainer = initialize_trainer(config, skip_text_encoder=args.skip_text_encoder)
     try:
         _seed_everything(args.seed)
-        raw_batch = _first_raw_batch()
+        raw_batch, dataset = _first_raw_batch(trainer)
         prepared_batch = trainer.model.prepare_batch(raw_batch, state=trainer.state)
         points = prepare_geometry_points(trainer, prepared_batch, args.timesteps, args.branches, args.seed)
 
@@ -685,10 +702,7 @@ def run_diagnostic(args: argparse.Namespace) -> None:
                     "branches": args.branches,
                     "seed": args.seed,
                     "max_vector_elements": args.max_vector_elements,
-                    "batch": {
-                        "data_backend_id": prepared_batch.get("data_backend_id"),
-                        "filepaths": [str(path) for path in prepared_batch.get("filepaths", [])],
-                    },
+                    "batch": _describe_batch(dataset, raw_batch),
                 },
                 handle,
                 indent=2,
