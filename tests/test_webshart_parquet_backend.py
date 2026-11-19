@@ -158,7 +158,11 @@ class TestWebshartParquetBackend(unittest.TestCase):
         self.assertNotEqual(centered["view_revision"], randomized["view_revision"])
 
     def test_fixed_shape_epoch_recrop_projects_only_requested_rows(self):
+        import torch
+
+        from simpletuner.helpers.caching.vae import VAECache
         from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+        from simpletuner.helpers.data_backend.local import LocalDataBackend
         from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
         from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBackend
 
@@ -173,13 +177,16 @@ class TestWebshartParquetBackend(unittest.TestCase):
             "vae_cache_clear_each_epoch": True,
         }
         args = SimpleNamespace(seed=5, aspect_bucket_alignment=8, aspect_bucket_rounding=2, disable_bucket_pruning=True)
+        accelerator = SimpleNamespace(
+            num_processes=1, process_index=0, is_main_process=True, is_local_main_process=True, wait_for_everyone=Mock()
+        )
         provider = WebshartMetadataBackend(
             id=self.backend.id,
             instance_data_dir=self.backend.cache_dir,
             cache_file=str(self.root / "buckets"),
             metadata_file=str(self.root / "metadata"),
             data_backend=self.backend,
-            accelerator=SimpleNamespace(num_processes=1, process_index=0),
+            accelerator=accelerator,
             batch_size=1,
             resolution=8,
             resolution_type="pixel",
@@ -189,16 +196,44 @@ class TestWebshartParquetBackend(unittest.TestCase):
         self.addCleanup(provider.close)
         runtime = DatasetRuntime(self.backend.id, self.backend, provider, config)
         runtime.sampler = Mock()
-        runtime.vae_cache = Mock()
         runtime.prepare_view()
         (ref, other), count = runtime.read_page(limit=2)
         self.assertEqual(count, 2)
         self.assertTrue(runtime.recrops_lazily)
         revision = runtime.describe().view_revision
         (base,) = runtime.read_samples([ref])
-        model = SimpleNamespace(config=SimpleNamespace())
+        model = Mock(config=SimpleNamespace())
         base_vae_key = provider.image_artifact_key(ref, "vae", model)
         base_embed_key = provider.image_artifact_key(ref, "conditioning", model)
+        store = LocalDataBackend(accelerator, "artifacts")
+        cache_dir = str(self.root / "latents")
+
+        def new_cache(run):
+            return VAECache(
+                runtime.id,
+                model,
+                vae=None,
+                accelerator=accelerator,
+                metadata_backend=provider,
+                instance_data_dir=provider.instance_data_dir,
+                image_data_backend=self.backend,
+                cache_data_backend=store,
+                cache_dir=cache_dir,
+                cache_inventory_dir=str(self.root / run),
+                dataset_config=runtime.config,
+                vae_cache_ondemand=True,
+            )
+
+        cache = runtime.vae_cache = new_cache("training-run")
+        prior_key = cache.cache_path_for_image(ref)
+        foreign_key = new_cache("other-run").cache_path_for_image(ref)
+        unscoped_key = str(Path(cache_dir) / f"{base_vae_key}.pt")
+        tensor = torch.zeros(1)
+        store.write_batch([prior_key, foreign_key, unscoped_key], [tensor] * 3)
+
+        def encode(*, image_pixel_values, disable_queue):
+            return [(cache.cache_path_for_image(path), path, value) for value, path, _, _ in image_pixel_values]
+
         with (
             patch.object(provider, "_scan_rows", side_effect=AssertionError("epoch scanned source rows")),
             patch.object(provider, "iter_preparation_batches", side_effect=AssertionError("epoch scanned membership")),
@@ -206,12 +241,24 @@ class TestWebshartParquetBackend(unittest.TestCase):
             patch.object(self.backend.dataset, "read_metadata_rows", side_effect=AssertionError("warm projection")),
             patch.object(self.backend, "read_image_batch", side_effect=AssertionError("geometry read image bytes")),
             patch.object(provider._transforms, "read_batch", wraps=provider._transforms.read_batch) as read,
+            patch.object(cache, "_encode_images_in_batch", side_effect=encode) as encoder,
         ):
             coordinates = []
             for epoch in range(2, 5):
                 runtime.prepare_epoch(epoch, rebuild_random_aspect=True, gradient_accumulation_steps=1, apply_padding=False)
                 runtime.start_epoch(epoch)
                 read.assert_not_called()
+                self.assertFalse(store.exists(prior_key))
+                self.assertTrue(store.exists(foreign_key))
+                self.assertTrue(store.exists(unscoped_key))
+                prior_key = cache.cache_path_for_image(ref)
+                self.assertFalse(store.exists(prior_key))
+                latent = cache.encode_images([torch.tensor([epoch])], [ref])[0]
+                repeated = cache.encode_images([torch.tensor([-1])], [ref])[0]
+                torch.testing.assert_close(latent, repeated)
+                encoder.assert_called_once()
+                encoder.reset_mock()
+                read.reset_mock()
                 transformed = runtime.read_samples([ref, ref])
                 read.assert_called_once_with([ref, ref])
                 read.reset_mock()
@@ -225,7 +272,10 @@ class TestWebshartParquetBackend(unittest.TestCase):
             with provider.open_preparation_view() as view:
                 self.assertEqual(view.metadata.get_metadata_by_filepath(ref)["crop_coordinates"], base["crop_coordinates"])
             self.assertTrue(all(other not in call.args[0] for call in read.call_args_list))
-        runtime.vae_cache.rebuild_prepared_cache.assert_not_called()
+            resumed_cache = new_cache("training-run")
+            runtime.start_epoch(epoch)
+            self.assertEqual(resumed_cache.cache_path_for_image(ref), prior_key)
+            torch.testing.assert_close(resumed_cache.encode_images([torch.tensor([-1])], [ref])[0], latent)
         self.assertEqual(runtime.describe().view_revision, revision)
         self.assertEqual(runtime.read_page(limit=2), ([ref, other], 2))
 
@@ -241,6 +291,17 @@ class TestWebshartParquetBackend(unittest.TestCase):
         self.assertEqual(cropped.image.tobytes(), image.crop((left, top, left + width, top + height)).tobytes())
         runtime.start_epoch(1)
         self.assertEqual(runtime.read_samples([ref]), [base])
+
+        runtime.config["vae_cache_clear_each_epoch"] = False
+        cache = runtime.vae_cache = new_cache("persistent-run")
+        stable_key = cache.cache_path_for_image(ref)
+        store.write(stable_key, tensor)
+        runtime.prepare_epoch(2, rebuild_random_aspect=True, gradient_accumulation_steps=1, apply_padding=False)
+        runtime.start_epoch(2)
+        self.assertEqual(cache.cache_path_for_image(ref), stable_key)
+        self.assertEqual(runtime.read_samples([ref]), [base])
+        with patch.object(cache, "_encode_images_in_batch", side_effect=AssertionError("re-encoded a stable latent")):
+            torch.testing.assert_close(cache.encode_images([torch.ones(1)], [ref])[0], tensor)
 
     def test_prepared_geometry_reads_compact_and_existing_text_records(self):
         from simpletuner.helpers.metadata.backends.webshart_geometry import GeometryLookup, PreparedGeometry
@@ -1706,6 +1767,9 @@ class TestWebshartParquetBackend(unittest.TestCase):
             key = metadata.image_artifact_key(ref, "vae", encoder)
             with patch("simpletuner.helpers.metadata.backends.webshart.file_digest", side_effect=AssertionError("rehash")):
                 self.assertEqual(metadata.image_artifact_key(ref, "vae", encoder), key)
+            with patch.dict(metadata.dataset_config, vae_cache_clear_each_epoch=True):
+                with patch.object(StateTracker, "epoch", 3):
+                    self.assertEqual(metadata.image_artifact_key(ref, "vae", encoder), key)
             encoder.config.revision = "v2"
             self.assertNotEqual(metadata.image_artifact_key(ref, "vae", encoder), key)
             encoder.config.revision = "v1"

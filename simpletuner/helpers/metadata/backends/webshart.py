@@ -674,8 +674,8 @@ class WebshartMetadataBackend(MetadataBackend):
         ]
         if self.dataset_config.get("crop") and self.dataset_config.get("crop_style") != "face":
             spec.append("prepared-crop-v1")
-        if kind == "vae" and self.dataset_config.get("vae_cache_clear_each_epoch"):
-            spec.append(self._training_epoch if self.recrops_lazily else StateTracker.get_epoch())
+        if kind == "vae" and self.recrops_lazily:
+            spec.append(self._training_epoch)
         return sha256(json.dumps(spec, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
     def load_image_metadata(self):

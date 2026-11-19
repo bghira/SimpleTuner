@@ -91,12 +91,17 @@ class DatasetRuntime:
             gradient_accumulation_steps=gradient_accumulation_steps,
             apply_padding=apply_padding,
         )
-        if cache is None or self.recrops_lazily:
+        if cache is None:
             return
         clear_latents = self.config.get("vae_cache_clear_each_epoch")
         if self.requires_complete_preparation is True:
             accelerator = metadata.accelerator
-            if clear_latents:
+            if clear_latents and self.uses_native_schedule:
+                cache.expire_epoch_latents()
+                if not self.recrops_lazily and not cache.vae_cache_ondemand:
+                    cache.prepare_dataset(self, worker=accelerator.process_index, workers=accelerator.num_processes)
+                    accelerator.wait_for_everyone()
+            elif clear_latents:
                 cache.rebuild_prepared_cache(self, worker=accelerator.process_index, workers=accelerator.num_processes)
             elif rebuilt and not cache.vae_cache_ondemand:
                 cache.prepare_dataset(self, worker=accelerator.process_index, workers=accelerator.num_processes)

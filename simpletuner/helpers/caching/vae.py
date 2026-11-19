@@ -89,6 +89,8 @@ def prepare_sample(image, data_backend_id, filepath, model, *, metadata, config)
 
 
 class VAECache(WebhookMixin):
+    _epoch_cache_dir: str | None = None
+
     def __init__(
         self,
         id: str,
@@ -176,7 +178,13 @@ class VAECache(WebhookMixin):
         self.rank_info = rank_info()
         self.metadata_backend = metadata_backend
         self.dataset_config = getattr(metadata_backend, "dataset_config", None) if dataset_config is None else dataset_config
-        if self.metadata_backend and not self.metadata_backend.image_metadata_loaded:
+        if getattr(metadata_backend, "native_policy", None) in ("global", "shard_local") and self.dataset_config.get(
+            "vae_cache_clear_each_epoch"
+        ):
+            run_scope = os.path.abspath(cache_inventory_dir or ".")
+            owner = sha256(json.dumps([self.id, run_scope]).encode()).hexdigest()
+            self._epoch_cache_dir = os.path.join(self.cache_dir, "epoch-latents-v1", owner)
+        if self.metadata_backend is not None and not self.metadata_backend.image_metadata_loaded:
             self.metadata_backend.load_image_metadata()
 
         self.vae_cache_ondemand = vae_cache_ondemand
@@ -612,6 +620,8 @@ class VAECache(WebhookMixin):
             sample_id = self.image_data_backend.normalize_sample_id(filepath)
             if getattr(self.metadata_backend, "native_policy", None) in ("global", "shard_local"):
                 name = self.metadata_backend.image_artifact_key(sample_id, "vae", self.model) + ".pt"
+                if self._epoch_cache_dir is not None:
+                    return os.path.join(self._epoch_cache_dir, name[:2], name[2:4], name), name
                 return os.path.join(self.cache_dir, name), name
             base_filename = str(sha256(sample_id.encode()).hexdigest()) if self.hash_filenames else sample_id
             base_filename = str(base_filename).replace("/", "_").replace(":", "_") + ".pt"
@@ -889,6 +899,30 @@ class VAECache(WebhookMixin):
             self.debug_log("-> Process VAE cache")
             self.process_buckets()
         self.debug_log("-> Completed cache rebuild")
+
+    def expire_epoch_latents(self):
+        """Retire this run's epoch-scoped artifacts once all ranks have finished reading them."""
+        accelerator, store = self.accelerator, self.cache_data_backend
+        prefix = self._epoch_cache_dir + "/"
+        is_shared_store = store.type == "aws"
+        should_delete = accelerator.is_main_process if is_shared_store else accelerator.is_local_main_process
+        accelerator.wait_for_everyone()
+        failure = None
+        if should_delete:
+            try:
+                for key in store.iter_file_keys(["pt"], prefix):
+                    if not key.startswith(prefix):
+                        raise ValueError("Epoch latent listing returned a key outside its prefix.")
+                    try:
+                        store.delete(key)
+                    except FileNotFoundError:
+                        # Node leaders can share a filesystem and race to remove the same entry.
+                        pass
+            except Exception as exc:
+                failure = f"{type(exc).__name__}: {exc}"
+        failures = [error for error in gather_across_processes(failure) if error is not None]
+        if failures:
+            raise RuntimeError(f"Could not expire epoch latents for {self.id}: {failures[0]}")
 
     def rebuild_prepared_cache(self, dataset, *, worker, workers):
         for _, refs in dataset.iter_preparation_batches(worker=worker, workers=workers, batch_size=self.write_batch_size):
@@ -1174,7 +1208,10 @@ class VAECache(WebhookMixin):
         if isinstance(distribution, DiagonalGaussianDistribution):
             generators = []
             for filename in filenames:
-                key = os.path.relpath(filename, self.cache_dir)
+                if self._epoch_cache_dir is not None and filename.startswith(self._epoch_cache_dir + os.sep):
+                    key = os.path.basename(filename)
+                else:
+                    key = os.path.relpath(filename, self.cache_dir)
                 digest = sha256(f"vae-cache-posterior:{key}".encode()).digest()
                 seed = int.from_bytes(digest[:8], "big")
                 generators.append(torch.Generator(device="cpu").manual_seed(seed))

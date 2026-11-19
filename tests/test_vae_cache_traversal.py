@@ -112,6 +112,11 @@ class TestVaeCacheTraversal(unittest.TestCase):
         cache.cache_dir = "another-store"
         single = cache._sample_latent_distribution(DiagonalGaussianDistribution(params[:1]), ["another-store/b.pt"])
         torch.testing.assert_close(batched[1:2], single, rtol=0, atol=0)
+        cache._epoch_cache_dir = "another-store/epoch-latents-v1/run"
+        scoped = cache._sample_latent_distribution(
+            DiagonalGaussianDistribution(params[:1]), [cache._epoch_cache_dir + "/bc/de/b.pt"]
+        )
+        torch.testing.assert_close(single, scoped, rtol=0, atol=0)
         self.assertFalse(torch.equal(batched[0], batched[1]))
         self.assertTrue(torch.equal(rng, torch.get_rng_state()))
 
@@ -243,6 +248,31 @@ class TestVaeCacheTraversal(unittest.TestCase):
         cache.cache_data_backend.iter_file_keys.assert_not_called()
         cache.prepare_dataset.assert_called_once_with(dataset, worker=3, workers=8)
         self.assertEqual(cache.accelerator.wait_for_everyone.call_count, 2)
+
+    def test_epoch_latent_expiry_uses_scoped_s3_prefix_on_global_leader(self):
+        cache = VAECache.__new__(VAECache)
+        cache.id = "dataset"
+        cache._epoch_cache_dir = "latents/epoch-latents-v1/run"
+        store = cache.cache_data_backend = Mock(type="aws")
+        cache.accelerator = Mock(is_main_process=False, is_local_main_process=True)
+        prefix = cache._epoch_cache_dir + "/"
+        key = prefix + "ab/cd/one.pt"
+
+        cache.expire_epoch_latents()
+        store.iter_file_keys.assert_not_called()
+
+        cache.accelerator.is_main_process = True
+        store.iter_file_keys.return_value = iter([key])
+        cache.expire_epoch_latents()
+        store.iter_file_keys.assert_called_once_with(["pt"], prefix)
+        store.delete.assert_called_once_with(key)
+        self.assertEqual(cache.accelerator.wait_for_everyone.call_count, 2)
+
+        store.delete.reset_mock()
+        store.iter_file_keys.return_value = iter(["latents/epoch-latents-v1/run-other/one.pt"])
+        with self.assertRaisesRegex(RuntimeError, "outside its prefix"):
+            cache.expire_epoch_latents()
+        store.delete.assert_not_called()
 
     def test_accepted_partition_drives_cold_mixed_and_warm_latents(self):
         dataset = Mock(requires_complete_preparation=True, uses_native_schedule=False)

@@ -2408,16 +2408,18 @@ class TestTrainer(unittest.TestCase):
         trainer.accelerator.num_processes = 8
         dataset = backends["train"]
         dataset.config["vae_cache_clear_each_epoch"] = False
+        vae_cache.vae_cache_ondemand = False
         with self._rollover_patches(backends):
             trainer._epoch_rollover(2)
-            vae_cache.rebuild_prepared_cache.assert_not_called()
+            vae_cache.expire_epoch_latents.assert_not_called()
             dataset.config["vae_cache_clear_each_epoch"] = True
             trainer._epoch_rollover(3)
 
         metadata.compute_aspect_ratio_bucket_indices.assert_not_called()
         metadata.reload_cache.assert_not_called()
         metadata.split_buckets_between_processes.assert_not_called()
-        vae_cache.rebuild_prepared_cache.assert_called_once_with(dataset, worker=2, workers=8)
+        vae_cache.expire_epoch_latents.assert_called_once_with()
+        vae_cache.prepare_dataset.assert_called_once_with(dataset, worker=2, workers=8)
 
     def test_epoch_rollover_reuses_legacy_random_aspect_crops_when_clearing_is_disabled(self):
         trainer, metadata, cache, backends = self._rollover_fixture({"1.0": ["image.jpg"]})
