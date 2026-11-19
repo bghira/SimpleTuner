@@ -1896,15 +1896,16 @@ class TestFactoryEdgeCases(unittest.TestCase):
         )
         factory._handle_config_versioning = MagicMock()
 
-        def finish_discovery():
+        def finish_discovery(failure):
+            self.assertIsNone(failure)
             Path(self.temp_dir, f"aspect_resolution_map-{resolution}.json").write_text(json.dumps({"0.68": expected_size}))
+            return []
 
         def check_geometry(**kwargs):
             target_size, _, aspect = MultiaspectImage.calculate_new_size_by_pixel_area(0.68, resolution, (680, 1000))
             self.assertEqual(aspect, 0.68)
             self.assertEqual(target_size, expected_size)
 
-        self.accelerator.wait_for_everyone.side_effect = finish_discovery
         for is_main_process in (True, False):
             with self.subTest(is_main_process=is_main_process):
                 self.accelerator.is_main_process = is_main_process
@@ -1920,6 +1921,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 with (
                     patch.object(StateTracker, "args", self.args),
                     patch.object(StateTracker, "aspect_resolution_map", {resolution: {"0.68": (1264, 1856)}}),
+                    patch("simpletuner.helpers.data_backend.factory.gather_across_processes", side_effect=finish_discovery),
                 ):
                     factory._handle_bucket_operations(
                         backend={"id": "train"},
@@ -1928,6 +1930,37 @@ class TestFactoryEdgeCases(unittest.TestCase):
                     )
                 metadata_backend.reload_cache.assert_called_once_with()
                 metadata_backend.split_buckets_between_processes.assert_called_once()
+
+    def test_bucket_discovery_failure_keeps_every_rank_out_of_reload(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        factory = FactoryRegistry(
+            args=self.args,
+            accelerator=self.accelerator,
+            text_encoders=self.text_encoders,
+            tokenizers=self.tokenizers,
+            model=self.model,
+        )
+        self.accelerator.num_processes = 2
+        self.args.skip_file_discovery = ""
+        for is_local_main in (True, False):
+            with self.subTest(is_local_main=is_local_main):
+                self.accelerator.is_local_main_process = is_local_main
+                self.accelerator.process_index = int(not is_local_main)
+                metadata = MagicMock()
+                metadata.refresh_buckets.side_effect = FileNotFoundError("source moved")
+                with patch(
+                    "simpletuner.helpers.data_backend.factory.gather_across_processes",
+                    return_value=["rank 0: FileNotFoundError: source moved"],
+                ) as gather:
+                    with self.assertRaisesRegex(FileNotFoundError if is_local_main else RuntimeError, "source moved"):
+                        factory._handle_bucket_operations(
+                            {"id": "train"}, {"id": "train", "metadata_backend": metadata}, None
+                        )
+                    gather.assert_called_once_with("rank 0: FileNotFoundError: source moved" if is_local_main else None)
+                metadata.reload_cache.assert_not_called()
+                metadata.split_buckets_between_processes.assert_not_called()
+                self.accelerator.wait_for_everyone.assert_not_called()
 
     def test_loading_another_resolution_preserves_the_first_geometry_map(self):
         from simpletuner.helpers.training.state_tracker import StateTracker

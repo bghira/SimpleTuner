@@ -4,7 +4,7 @@ import os
 import sys
 import time
 import tracemalloc
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from copy import deepcopy
 from functools import partial
 from math import sqrt
@@ -122,7 +122,7 @@ from simpletuner.helpers.training.collate import collate_fn
 from simpletuner.helpers.training.default_settings import default, latest_config_version
 from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
 from simpletuner.helpers.training.multi_process import _get_rank as get_rank
-from simpletuner.helpers.training.multi_process import rank_info, should_log
+from simpletuner.helpers.training.multi_process import gather_across_processes, rank_info, should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 from .builders import build_backend_from_config, create_backend_builder
@@ -3028,6 +3028,30 @@ class FactoryRegistry:
             if hasattr(metadata_backend, "configure_mock"):
                 metadata_backend.configure_mock(id=init_backend["id"])
 
+    @contextmanager
+    def _dataset_startup_phase(self, dataset_id, phase):
+        if not self._is_multi_process():
+            yield
+            return
+
+        local_error = None
+        try:
+            yield
+        except Exception as error:
+            local_error = error
+
+        failure = (
+            f"rank {self.accelerator.process_index}: {type(local_error).__name__}: {local_error}"
+            if local_error is not None
+            else None
+        )
+        failures = gather_across_processes(failure)
+        if local_error is not None:
+            raise local_error
+        peer_failure = next((message for message in failures if message is not None), None)
+        if peer_failure is not None:
+            raise RuntimeError(f"(id={dataset_id}) {phase} failed on {peer_failure}")
+
     def _handle_bucket_operations(
         self,
         backend: Dict[str, Any],
@@ -3063,32 +3087,19 @@ class FactoryRegistry:
             )
         )
         if discovers_buckets:
-            if self.accelerator.is_local_main_process:
-                info_log(f"(id={init_backend['id']}) Refreshing aspect buckets on main process.")
-                try:
-                    init_backend["metadata_backend"].refresh_buckets(rank_info())
-                except FileNotFoundError:
-                    warning_log(
-                        f"(id={init_backend['id']}) Skipping bucket refresh because data directory was not found: {init_backend.get('instance_data_dir')}"
-                    )
-                    if init_backend.get("bucket_report"):
-                        init_backend["bucket_report"].add_note(
-                            "Bucket refresh skipped because instance_data_dir could not be found."
-                        )
-                    return
-
-        if self._is_multi_process():
+            with self._dataset_startup_phase(init_backend["id"], "Bucket discovery"):
+                if self.accelerator.is_local_main_process:
+                    info_log(f"(id={init_backend['id']}) Refreshing aspect buckets on main process.")
+                    metadata.refresh_buckets(rank_info())
+        elif self._is_multi_process():
             self.accelerator.wait_for_everyone()
 
-        # When the main process rebuilds buckets, make every rank partition the same
-        # serialized cache rather than mixing rank 0's in-memory order with reloaded order.
         if self._is_multi_process() and discovers_buckets:
-            info_log(f"(id={init_backend['id']}) Reloading bucket manager cache on subprocesses after refresh.")
-            init_backend["metadata_backend"].reload_cache()
-            # Discovery also populates the geometry used when preparing VAE inputs.
-            StateTracker.load_aspect_resolution_map(
-                dataloader_resolution=init_backend["config"]["resolution"],
-            )
+            # Partition the same published order and geometry on every rank.
+            with self._dataset_startup_phase(init_backend["id"], "Bucket reload"):
+                info_log(f"(id={init_backend['id']}) Reloading bucket manager cache after refresh.")
+                metadata.reload_cache()
+                StateTracker.load_aspect_resolution_map(dataloader_resolution=init_backend["config"]["resolution"])
 
         if (
             not has_metadata_clone_source
