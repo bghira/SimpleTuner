@@ -291,7 +291,11 @@ class DatasetRuntime:
         return records
 
     def pairing_key(self, sample_ref: str) -> str:
-        return normalize_data_path(sample_ref, self.metadata_backend.instance_data_dir)
+        return normalize_data_path(sample_ref, self.instance_data_dir)
+
+    @property
+    def instance_data_dir(self):
+        return self.metadata_backend.instance_data_dir
 
     def conditioning_ref(self, relative_ref):
         """Resolve a training sample's pairing key inside this conditioning dataset."""
@@ -327,6 +331,7 @@ class DatasetRuntime:
         )
         if source is not None:
             sample.paired_source = (source.id, source_ref)
+        sample.dataset_read_view = view
         if isinstance(sample.image, np.ndarray) and sample.image.ndim >= 4:
             sample.image = sample.image[0]
         elif isinstance(sample.image, list) and sample.image:

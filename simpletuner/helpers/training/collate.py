@@ -2,6 +2,8 @@ import concurrent.futures
 import logging
 import os
 from collections import Counter, defaultdict
+from copy import copy
+from itertools import repeat
 from os import environ
 
 import numpy as np
@@ -10,6 +12,7 @@ from PIL import Image
 
 from simpletuner.helpers.data_backend.dataset_runtime import text_embed_request
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
+from simpletuner.helpers.metadata.preparation import DatasetViewChangedError
 from simpletuner.helpers.models.common import TextEmbedCacheKey
 from simpletuner.helpers.training.multi_process import _get_rank, rank_info
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -208,104 +211,51 @@ _REQUIRED_GEOMETRY_KEYS = (
 )
 
 
-def _build_training_sample_for_conditioning(training_fp, training_example, training_data_backend_id: str) -> TrainingSample:
-    """Prefer metadata from the collated training example when preparing conditioning samples."""
-    metadata = None
-    if isinstance(training_example, dict):
-        metadata = training_example.copy()
-    elif isinstance(training_example, TrainingSample):
-        metadata = training_example.image_metadata.copy() if training_example.image_metadata else None
-        if metadata is None:
-            return training_example
-    elif hasattr(training_example, "image_metadata"):
-        metadata = getattr(training_example, "image_metadata")
-        if isinstance(metadata, dict):
-            metadata = metadata.copy()
-
-    if metadata and all(metadata.get(key) is not None for key in _REQUIRED_GEOMETRY_KEYS):
-        metadata.setdefault("image_path", training_fp)
-        return TrainingSample(
-            image=None,
-            data_backend_id=training_data_backend_id,
-            image_metadata=metadata,
-            image_path=metadata.get("image_path", training_fp),
-        )
-
-    if not training_fp:
-        raise ValueError("Training sample path was not provided for conditioning alignment.")
-
-    return TrainingSample.from_image_path(
-        image_path=training_fp,
-        data_backend_id=training_data_backend_id,
+def _build_training_sample_for_conditioning(training_ref, example, dataset, model, view) -> TrainingSample:
+    if isinstance(example, TrainingSample) and not example.image_metadata:
+        return example
+    metadata = example if isinstance(example, dict) else getattr(example, "image_metadata", None)
+    image = None
+    if not metadata or any(metadata.get(key) is None for key in _REQUIRED_GEOMETRY_KEYS):
+        if not training_ref:
+            raise ValueError("Training sample path was not provided for conditioning alignment.")
+        (metadata,) = dataset.read_samples([training_ref], fields=("image", "metadata"), view=view)
+        image = metadata.pop("image")
+    return TrainingSample(
+        image=image,
+        data_backend_id=dataset.id,
+        image_metadata=metadata.copy(),
+        image_path=metadata.get("image_path", training_ref),
+        data_backend_config=dataset.config,
+        model=model,
     )
 
 
-def fetch_conditioning_pixel_values(
-    fp,
-    training_fp,
-    training_example,
-    conditioning_data_backend_id: str,
-    training_data_backend_id: str,
-):
-    """Worker method to fetch pixel values for a single image."""
-    # Prefer metadata captured during the original training sample preparation
-    training_sample = _build_training_sample_for_conditioning(training_fp, training_example, training_data_backend_id)
-
-    conditioning_sample = TrainingSample.from_image_path(
-        image_path=fp,
-        data_backend_id=conditioning_data_backend_id,
+def fetch_conditioning_pixel_values(pair, dataset, model, view):
+    reference, training_ref, example = pair
+    source = _build_training_sample_for_conditioning(training_ref, example, dataset, model, view)
+    is_aligned = reference.conditioning_type in MASK_CONDITIONING_TYPES or reference.conditioning_type == "controlnet"
+    if is_aligned and source.valid_metadata:
+        source.image_metadata["prepared_geometry"] = True
+    sample = TrainingSample(
+        image=copy(reference.image),
+        data_backend_id=reference.data_backend_id,
+        image_metadata=reference.image_metadata.copy(),
+        image_path=reference.image_path(basename_only=False),
+        data_backend_config=dataset.config if is_aligned else reference.data_backend_config,
+        conditioning_type=reference.conditioning_type,
+        model=model,
     )
-
-    cond_image = conditioning_sample.image
-    if isinstance(cond_image, np.ndarray) and cond_image.ndim >= 4:
-        conditioning_sample.image = cond_image[0]
-    elif isinstance(cond_image, list) and len(cond_image) > 0:
-        conditioning_sample.image = cond_image[0]
-
-    if isinstance(conditioning_sample.image, np.ndarray):
-        frame = conditioning_sample.image
-        if frame.ndim == 3:
-            conditioning_sample.image = Image.fromarray(frame.astype(np.uint8))
-        elif frame.ndim > 3:
-            conditioning_sample.image = Image.fromarray(frame[0].astype(np.uint8))
-
-    if conditioning_sample.model is not None and getattr(conditioning_sample.model, "_is_i2v_like_flavour", lambda: False)():
-        conditioning_sample.transforms = conditioning_sample.model.get_transforms(dataset_type="image")
-
-    prepared_like = conditioning_sample.prepare_like(training_sample, return_tensor=True).image
-
-    return prepared_like
+    if model is not None and getattr(model, "_is_i2v_like_flavour", lambda: False)():
+        sample.transforms = model.get_transforms(dataset_type="image")
+    return sample.prepare_like(source, return_tensor=True).image
 
 
-def conditioning_pixels(
-    filepaths,
-    training_filepaths,
-    training_examples,
-    conditioning_data_backend_id: str,
-    training_data_backend_id: str,
-):
-    """For pixel-based conditioning images that must be prepared matching a paired image's metadata.."""
-    try:
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            pixels = list(
-                executor.map(
-                    fetch_conditioning_pixel_values,
-                    filepaths,
-                    training_filepaths,
-                    training_examples,
-                    [conditioning_data_backend_id] * len(filepaths),
-                    [training_data_backend_id] * len(filepaths),
-                )
-            )
-    except Exception as e:
-        logger.error(
-            f"(conditioning_data_backend_id={conditioning_data_backend_id}) Error while retrieving or transforming pixels (training data id={training_data_backend_id}): {e}"
-        )
-        raise
-    pixels = torch.stack(pixels)
-    pixels = pixels.to(memory_format=torch.contiguous_format).float()
-
-    return pixels
+def conditioning_pixels(pairs, *, dataset, model, view=None):
+    """Apply source occurrence geometry to the already loaded conditioning pixels."""
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        pixels = list(executor.map(fetch_conditioning_pixel_values, pairs, repeat(dataset), repeat(model), repeat(view)))
+    return torch.stack(pixels).to(memory_format=torch.contiguous_format).float()
 
 
 def compute_latents(filepaths, data_backend_id: str, model, *, vae_cache=None, dataset=None, view=None):
@@ -646,8 +596,7 @@ def collate_fn(batch, *, dataset=None):
         # Fallback: collect metadata so audio models (e.g. ACE-Step) can build attention masks from lengths.
         if latent_metadata is None and StateTracker.get_args().model_family == "ace_step":
             latent_metadata = []
-            for path, metadata in zip(filepaths, dataset.metadata_backend.get_metadata_batch(filepaths), strict=True):
-                record = dict(metadata or {})
+            for path, record in zip(filepaths, dataset.read_samples(filepaths, view=view), strict=True):
                 record.setdefault("filepath", path)
                 record.setdefault("data_backend_id", batch_backend_id)
                 latent_metadata.append(record)
@@ -891,10 +840,20 @@ def collate_fn(batch, *, dataset=None):
                         continue
                     _examples = [pair[0] for pair in backend_pairs]
                     _filepaths = [sample.image_path(basename_only=False) for sample in _examples]
+                    reference_dataset = references[backend_id]
+                    views = {getattr(sample, "dataset_read_view", None) for sample in _examples}
+                    if len(views) != 1:
+                        raise DatasetViewChangedError(
+                            f"Conditioning dataset {backend_id} supplied multiple views in one batch."
+                        )
+                    (reference_view,) = views
                     _latents = compute_latents(
                         _filepaths,
                         backend_id,
                         model,
+                        vae_cache=reference_dataset.vae_cache,
+                        dataset=reference_dataset,
+                        view=reference_view,
                     )
                     debug_log(
                         f"Conditioning latents computed: {len(_latents)} items with shapes: {[_latent.shape for _latent in _latents]}"
@@ -911,6 +870,8 @@ def collate_fn(batch, *, dataset=None):
                         backend_id,
                         _examples,
                         is_conditioning=(backend_cond_type == "reference_loose"),
+                        vae_cache=reference_dataset.vae_cache,
+                        view=reference_view,
                     )
                     conditioning_latents.append(_latents)
                     conditioning_latents_type.append(backend_cond_type)
@@ -923,22 +884,12 @@ def collate_fn(batch, *, dataset=None):
                     backend_pairs = conditioning_pairs_by_backend.get(backend_id, [])
                     if not backend_pairs:
                         continue
-                    _examples = [pair[0] for pair in backend_pairs]
-                    _filepaths = [sample.image_path(basename_only=False) for sample in _examples]
-                    paired_training_paths = [pair[1] for pair in backend_pairs]
-                    paired_training_examples = [pair[2] for pair in backend_pairs]
-                    _pixel_values = conditioning_pixels(
-                        _filepaths,
-                        paired_training_paths,
-                        paired_training_examples,
-                        backend_id,
-                        data_backend_id,
-                    )
+                    _pixel_values = conditioning_pixels(backend_pairs, dataset=dataset, model=model, view=view)
                     debug_log(f"Found {len(_pixel_values)} reference pixel values for image context.")
                     conditioning_pixel_values.append(
                         torch.stack([pixels.to(StateTracker.get_accelerator().device) for pixels in _pixel_values])
                     )
-                    for paired, pixels in zip(paired_training_examples, conditioning_pixel_values[-1], strict=True):
+                    for (_, _, paired), pixels in zip(backend_pairs, conditioning_pixel_values[-1], strict=True):
                         reference_pixels.setdefault(id(paired), pixels)
 
             # Collect pixels from mask backends (for loss masking)
@@ -950,17 +901,7 @@ def collate_fn(batch, *, dataset=None):
                     backend_pairs = conditioning_pairs_by_backend.get(backend_id, [])
                     if not backend_pairs:
                         continue
-                    _examples = [pair[0] for pair in backend_pairs]
-                    _filepaths = [sample.image_path(basename_only=False) for sample in _examples]
-                    paired_training_paths = [pair[1] for pair in backend_pairs]
-                    paired_training_examples = [pair[2] for pair in backend_pairs]
-                    _pixel_values = conditioning_pixels(
-                        _filepaths,
-                        paired_training_paths,
-                        paired_training_examples,
-                        backend_id,
-                        data_backend_id,
-                    )
+                    _pixel_values = conditioning_pixels(backend_pairs, dataset=dataset, model=model, view=view)
                     debug_log(f"Found {len(_pixel_values)} mask pixel values.")
                     conditioning_pixel_values.append(
                         torch.stack([pixels.to(StateTracker.get_accelerator().device) for pixels in _pixel_values])
@@ -1224,7 +1165,7 @@ def collate_fn(batch, *, dataset=None):
             grounding_num_frames = latent_batch.shape[2]
         grounding_batch = grounding_collate.build_batch(
             examples=examples,
-            dataset_root=dataset.metadata_backend.instance_data_dir,
+            dataset_root=dataset.instance_data_dir,
             text_embed_cache=text_embed_cache,
             grounding_image_cache=dataset.grounding_image_embed_cache,
             num_frames=grounding_num_frames,

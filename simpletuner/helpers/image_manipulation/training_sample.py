@@ -62,6 +62,7 @@ class TrainingSample:
         self.conditioning_type = conditioning_type
         self.data_backend_id = data_backend_id
         self.paired_source: tuple[str, str] | None = None
+        self.dataset_read_view = None
         self.image_metadata = (
             image_metadata
             if image_metadata or data_backend_config is not None

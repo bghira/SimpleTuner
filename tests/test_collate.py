@@ -370,8 +370,11 @@ class CollateFunctionTests(unittest.TestCase):
             stack.enter_context(
                 patch(
                     "simpletuner.helpers.training.collate.conditioning_pixels",
-                    side_effect=lambda paths, *_: torch.stack(
-                        [torch.full((3, 8, 8), 0.25 if path == refs[0] else 0.75) for path in paths]
+                    side_effect=lambda pairs, **_: torch.stack(
+                        [
+                            torch.full((3, 8, 8), 0.25 if reference.image_path() == refs[0] else 0.75)
+                            for reference, _, _ in pairs
+                        ]
                     ),
                 )
             )
@@ -704,10 +707,45 @@ class CollateFunctionTests(unittest.TestCase):
                 result = collate_fn(batch)
 
         pixels_mock.assert_called_once()
-        self.assertEqual(pixels_mock.call_args[0][1], ["/train/custom.png"])
-        self.assertEqual(pixels_mock.call_args[0][2][0]["image_path"], "/train/custom.png")
+        (pair,) = pixels_mock.call_args.args[0]
+        self.assertEqual(pair[1], "/train/custom.png")
+        self.assertEqual(pair[2]["image_path"], "/train/custom.png")
         self.assertIsNotNone(result["conditioning_pixel_values"])
         self.assertIsNotNone(result["conditioning_latents"])
+
+    def test_pixel_alignment_reuses_loaded_mask_and_source_occurrence_crop(self):
+        from torchvision.transforms import ToTensor
+
+        from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
+        from simpletuner.helpers.training.collate import conditioning_pixels
+
+        image = Image.linear_gradient("L").rotate(90).resize((16, 8)).convert("RGB")
+        geometry = {
+            "original_size": (16, 8),
+            "target_size": (8, 8),
+            "intermediary_size": (16, 8),
+            "aspect_ratio": 1.0,
+            "crop_coordinates": (0, 3),
+        }
+        config = {"resolution_type": "pixel", "resolution": 8, "crop": True, "crop_style": "random", "crop_aspect": "square"}
+        model = SimpleNamespace(get_transforms=lambda **kwargs: ToTensor(), MAXIMUM_CANVAS_SIZE=None)
+        dataset = SimpleNamespace(
+            id="images", config=config, read_samples=MagicMock(side_effect=AssertionError("source read"))
+        )
+        mask = TrainingSample(
+            image=image,
+            data_backend_id="masks",
+            image_path="mask.png",
+            image_metadata={**geometry, "crop_coordinates": (0, 0)},
+            data_backend_config={**config, "crop": False},
+            conditioning_type="mask",
+            model=model,
+        )
+        with patch.object(StateTracker, "get_data_backend_config", side_effect=AssertionError("global config")):
+            (pixels,) = conditioning_pixels([(mask, "sample.png", geometry)], dataset=dataset, model=model)
+        torch.testing.assert_close(pixels, ToTensor()(image.crop((3, 0, 11, 8))))
+        self.assertEqual(mask.image.size, (16, 8))
+        self.assertEqual(tuple(mask.image_metadata["crop_coordinates"]), (0, 0))
 
     def test_collate_fn_handles_slash_prefixed_training_pairs(self):
         text_outputs = {"prompt_embeds": torch.zeros(1, 1)}
