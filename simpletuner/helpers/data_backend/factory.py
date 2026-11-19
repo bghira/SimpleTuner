@@ -17,29 +17,6 @@ import psutil
 from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime, TextRequestBuilder
 
 
-class _ArgsProxy(SimpleNamespace):
-    """Lightweight namespace that proxies unknown attributes to a backing object."""
-
-    def __init__(self, base: Any, **overrides: Any) -> None:
-        super().__init__(**overrides)
-        object.__setattr__(self, "_base", base)
-
-    def __getattr__(self, item: str) -> Any:
-        try:
-            return super().__getattribute__(item)
-        except AttributeError:
-            return getattr(self._base, item)
-
-
-def _set_arg_value(args: Any, key: str, value: Any) -> None:
-    """Safely set a value on an args mapping or namespace."""
-
-    if isinstance(args, dict):
-        args[key] = value
-    else:
-        setattr(args, key, value)
-
-
 def _as_bool(value: Any) -> bool:
     """Coerce common config boolean values without inventing fallback behavior."""
 
@@ -241,42 +218,6 @@ def _is_primary_training_backend(backend: Dict[str, Any]) -> bool:
         return ensure_dataset_type(raw_type, default=DatasetType.IMAGE) in primary_types
     except ValueError:
         return False
-
-
-def _synchronise_state_tracker(args: Any, accelerator: Any) -> Any:
-    """Ensure both the patched and real StateTracker references mirror the provided args/accelerator."""
-    if hasattr(args, "_mock_children"):
-        default_output_dir = os.path.join(os.getcwd(), ".simpletuner_output")
-        Path(default_output_dir).mkdir(parents=True, exist_ok=True)
-        overrides: Dict[str, Any] = {key: value for key, value in vars(args).items() if not key.startswith("_")}
-        overrides["output_dir"] = default_output_dir
-        args_for_tracker: Any = _ArgsProxy(args, **overrides)
-    else:
-        current_output_dir = _get_arg_value(args, "output_dir")
-        if not isinstance(current_output_dir, (str, os.PathLike)) or not str(current_output_dir):
-            current_output_dir = os.path.join(os.getcwd(), ".simpletuner_output")
-            Path(current_output_dir).mkdir(parents=True, exist_ok=True)
-            _set_arg_value(args, "output_dir", current_output_dir)
-        args_for_tracker = args
-
-    if hasattr(StateTracker, "set_args"):
-        StateTracker.set_args(args)
-    if hasattr(StateTracker, "set_accelerator"):
-        StateTracker.set_accelerator(accelerator)
-
-    try:
-        from simpletuner.helpers.training import state_tracker as _state_tracker_module
-
-        real_state_tracker = getattr(_state_tracker_module, "StateTracker", None)
-        if real_state_tracker is not None:
-            if hasattr(real_state_tracker, "set_args"):
-                real_state_tracker.set_args(args_for_tracker)
-            if hasattr(real_state_tracker, "set_accelerator"):
-                real_state_tracker.set_accelerator(accelerator)
-    except ImportError:
-        pass
-
-    return args_for_tracker
 
 
 def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
@@ -1315,12 +1256,13 @@ class FactoryRegistry:
             >>> factory = FactoryRegistry(args, accelerator, text_encoders, tokenizers, model)
             >>> data_backend_config = factory.load_configuration()
         """
-        synchronized_args = _synchronise_state_tracker(args, accelerator)
-
-        self.original_args = args
-        if isinstance(synchronized_args, dict):
-            synchronized_args = SimpleNamespace(**synchronized_args)
-        self.args = synchronized_args
+        self.args = SimpleNamespace(**args) if isinstance(args, dict) else args
+        output_dir = getattr(self.args, "output_dir", None)
+        if not isinstance(output_dir, (str, os.PathLike)) or not str(output_dir):
+            self.args.output_dir = os.path.join(os.getcwd(), ".simpletuner_output")
+            Path(self.args.output_dir).mkdir(parents=True, exist_ok=True)
+        StateTracker.set_args(self.args)
+        StateTracker.set_accelerator(accelerator)
         self.accelerator = accelerator
         self.text_encoders = text_encoders
         self.tokenizers = tokenizers
@@ -4391,10 +4333,7 @@ def configure_multi_databackend(
     """Configure the dataset runtimes for a training run."""
 
     StateTracker.clear_data_backends()
-    StateTracker.set_accelerator(accelerator)
     logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO" if accelerator.is_main_process else "ERROR"))
-
-    args = _synchronise_state_tracker(args, accelerator)
 
     factory = FactoryRegistry(
         args,

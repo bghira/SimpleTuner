@@ -439,6 +439,10 @@ class TestFactoryDistillerRequirements(unittest.TestCase):
         self.model.get_vae.return_value = MagicMock()
         self.model.AUTOENCODER_CLASS = "AutoencoderKL"
 
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        self.enterContext(patch.object(StateTracker, "args", self.args))
+        self.enterContext(patch.object(StateTracker, "accelerator", self.accelerator))
         self.state_tracker_patch = patch("simpletuner.helpers.data_backend.factory.StateTracker")
         self.mock_state_tracker = self.state_tracker_patch.start()
         self.addCleanup(self.state_tracker_patch.stop)

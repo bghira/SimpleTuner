@@ -69,6 +69,11 @@ class TestFactoryEdgeCases(unittest.TestCase):
 
         self.temp_dir = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.temp_dir)
+        self.args.output_dir = self.temp_dir
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        self.enterContext(patch.object(StateTracker, "args", self.args))
+        self.enterContext(patch.object(StateTracker, "accelerator", self.accelerator))
 
     def _setup_args(self):
         """Set up args with default values."""
