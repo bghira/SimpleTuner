@@ -531,7 +531,10 @@ class WanS2V(VideoModelFoundation):
             audio_path = conditioning.get("audio_path")
             if audio_path is not None:
                 # Load audio waveform for pipeline
-                waveform, sample_rate = torchaudio.load(audio_path)
+                dataset = conditioning.get("audio_dataset")
+                waveform, sample_rate = (
+                    torchaudio.load(audio_path) if dataset is None else dataset.read_audio_sample(audio_path)
+                )
                 if sample_rate != self.AUDIO_SAMPLE_RATE:
                     resampler = torchaudio.transforms.Resample(sample_rate, self.AUDIO_SAMPLE_RATE)
                     waveform = resampler(waveform)

@@ -4,10 +4,12 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import torch
 from PIL import Image
 from torch.utils.data import DataLoader
 
 from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+from simpletuner.helpers.data_backend.local import LocalDataBackend
 from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.validation import (
@@ -96,6 +98,7 @@ class EvalDatasetSelectionTests(unittest.TestCase):
             audio_file.touch()
             video = self._register("video", sampler=sampler, config={"dataset_type": "video"})
             audio = self._register("audio", config={"dataset_type": "audio", "instance_data_dir": tmpdir})
+            audio.data_backend = LocalDataBackend(None, audio.id)
             video.audio_datasets = (audio,)
 
             with (
@@ -105,7 +108,40 @@ class EvalDatasetSelectionTests(unittest.TestCase):
                 result = retrieve_validation_s2v_samples()
 
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0].conditioning, {"image": image, "audio_path": str(audio_file)})
+        self.assertEqual(result[0].conditioning, {"image": image, "audio_path": str(audio_file), "audio_dataset": audio})
+
+    def test_s2v_validation_reads_remote_embedded_audio_through_the_bound_provider(self):
+        from simpletuner.helpers.models.wan_s2v.model import WanS2V
+
+        video_ref = "videos/nested/clip.mp4"
+        image = Image.new("RGB", (8, 8))
+        video_sampler = MagicMock()
+        video_sampler.retrieve_validation_set.return_value = [("clip", "prompt", video_ref, image)]
+        video = self._register("video", sampler=video_sampler, config={"dataset_type": "video"})
+        audio = self._register(
+            "audio", config={"dataset_type": "audio", "instance_data_dir": "videos", "audio": {"source_from_video": True}}
+        )
+        audio.metadata_backend = MagicMock()
+        waveform = torch.arange(8, dtype=torch.float32).reshape(1, -1)
+        audio.data_backend = MagicMock(type="aws")
+        audio.data_backend.read_image.return_value = (waveform, WanS2V.AUDIO_SAMPLE_RATE)
+        video.audio_datasets = (audio,)
+        model = self._build_base_model_mock()
+        model.requires_s2v_validation_inputs.return_value = True
+        with (
+            patch.object(StateTracker, "get_model", return_value=model),
+            patch.object(StateTracker, "get_args", return_value=self._build_args(eval_dataset_id="video")),
+            patch(
+                "simpletuner.helpers.models.wan_s2v.model.torchaudio.load", side_effect=AssertionError("local audio read")
+            ),
+        ):
+            (prompt,) = retrieve_validation_s2v_samples()
+            kwargs = WanS2V.update_pipeline_call_kwargs(WanS2V.__new__(WanS2V), {"_s2v_conditioning": prompt.conditioning})
+
+        audio.metadata_backend.get_metadata_by_filepath.assert_called_once_with(video_ref)
+        audio.data_backend.read_image.assert_called_once_with(video_ref)
+        torch.testing.assert_close(kwargs["audio"], waveform.squeeze(0))
+        self.assertIs(kwargs["image"], image)
 
     def test_missing_eval_dataset_raises_for_standard_validation(self):
         model = self._build_base_model_mock()

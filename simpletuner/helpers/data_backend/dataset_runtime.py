@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import os
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from copy import deepcopy
 from itertools import batched, islice
@@ -282,6 +283,45 @@ class DatasetRuntime:
         if rng is not None:
             options["rng"] = rng
         return self.sampler.get_conditioning_sample(relative_ref, **options)
+
+    def resolve_s2v_audio(self, video_ref):
+        """Resolve a video to its attached audio dataset and sample reference."""
+        key = self._s2v_sidecar_key(video_ref)
+        for audio in self.audio_datasets:
+            if audio.config.get("audio", {}).get("source_from_video"):
+                if audio.metadata_backend is None or audio.metadata_backend.get_metadata_by_filepath(video_ref) is not None:
+                    root = audio.config.get("instance_data_dir")
+                    is_local = getattr(audio.data_backend, "type", None) == "local"
+                    ref = os.path.join(root, video_ref) if root and is_local else video_ref
+                    return audio, ref
+                continue
+            root = audio.config.get("instance_data_dir")
+            if root is None or key is None:
+                continue
+            roots = (root,) if isinstance(root, str) else root
+            for directory in roots:
+                for extension in (".wav", ".mp3", ".flac", ".ogg", ".m4a"):
+                    ref = os.path.join(directory, key + extension)
+                    if audio.data_backend.exists(ref):
+                        return audio, ref
+        return None
+
+    def _s2v_sidecar_key(self, video_ref):
+        root = self.config.get("instance_data_dir") or getattr(self.metadata_backend, "instance_data_dir", None)
+        if getattr(self.data_backend, "type", None) == "aws":
+            if isinstance(root, (list, tuple)):
+                root = root[0] if len(root) == 1 else None
+            prefix = root.rstrip("/") if root else ""
+            relative_ref = video_ref.removeprefix(prefix + "/") if prefix else video_ref
+        else:
+            relative_ref = normalize_data_path(video_ref, root)
+        if not relative_ref or os.path.isabs(relative_ref) or "://" in relative_ref or ".." in relative_ref.split("/"):
+            return None
+        return os.path.splitext(relative_ref)[0]
+
+    def read_audio_sample(self, ref):
+        """Read a waveform and sample rate from the bound audio provider."""
+        return self.data_backend.read_image(ref)
 
     def resolve_captions(self, sample_refs):
         lookup = self._caption_lookup(sample_refs)

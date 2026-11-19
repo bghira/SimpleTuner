@@ -41,7 +41,8 @@ class TestS2VConnectSamples(unittest.TestCase):
 
         dataset_id = bundle["id"]
         backend = LocalDataBackend(None, dataset_id)
-        StateTracker.register_dataset(DatasetRuntime(dataset_id, backend, None, bundle.get("config", {})))
+        config = {"instance_data_dir": "/videos", **bundle.get("config", {})}
+        StateTracker.register_dataset(DatasetRuntime(dataset_id, backend, None, config))
         StateTracker.register_data_backend(bundle)
 
     def _create_mock_sampler(self, backend_id: str = "video-backend"):
@@ -86,6 +87,25 @@ class TestS2VConnectSamples(unittest.TestCase):
         self.assertEqual(len(result), 2)
         self.assertEqual(result[0]["s2v_audio_path"], str(self.audio_dir / "video_001.wav"))
         self.assertEqual(result[1]["s2v_audio_path"], str(self.audio_dir / "video_002.wav"))
+
+    def test_connect_s2v_samples_preserves_relative_video_directories(self):
+        for subdirectory in ("first", "second"):
+            (self.audio_dir / subdirectory).mkdir()
+            (self.audio_dir / subdirectory / "clip.wav").touch()
+        self._create_audio_file("clip")
+        self._register_dataset({"id": "video-backend"})
+        self._register_dataset({"id": "audio-backend", "config": {"instance_data_dir": str(self.audio_dir)}})
+        StateTracker.set_s2v_datasets("video-backend", ["audio-backend"])
+        sampler = self._create_mock_sampler()
+
+        samples = tuple(
+            {"image_path": f"/videos/{subdirectory}/clip.mp4"} for subdirectory in ("first", "second", "missing")
+        )
+        result = sampler.connect_s2v_samples(samples)
+        self.assertEqual(
+            [item["s2v_audio_path"] for item in result],
+            [str(self.audio_dir / "first" / "clip.wav"), str(self.audio_dir / "second" / "clip.wav"), None],
+        )
 
     def test_connect_s2v_samples_handles_different_extensions(self):
         """Test that different audio extensions are matched correctly."""

@@ -326,6 +326,9 @@ class TestS2VSampleConnection(unittest.TestCase):
             sampler.id = "test-videos"
             from types import SimpleNamespace
 
+            from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+
+            sampler.dataset_runtime = DatasetRuntime("test-videos", None, None, {})
             sampler.dataset_runtime.audio_datasets = [
                 SimpleNamespace(**{"id": "audio", "metadata_backend": None, "data_backend": None, **entry})
                 for entry in s2v_datasets
@@ -366,6 +369,9 @@ class TestS2VSampleConnection(unittest.TestCase):
             sampler.id = "test-videos"
             from types import SimpleNamespace
 
+            from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+
+            sampler.dataset_runtime = DatasetRuntime("test-videos", None, None, {})
             sampler.dataset_runtime.audio_datasets = [
                 SimpleNamespace(**{"id": "audio", "metadata_backend": None, "data_backend": None, **entry})
                 for entry in s2v_datasets

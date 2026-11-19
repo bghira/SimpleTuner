@@ -585,31 +585,13 @@ def retrieve_validation_edit_images() -> list[ValidationPrompt]:
 
 
 def retrieve_validation_s2v_samples() -> list[ValidationPrompt]:
-    """
-    Retrieve validation samples for S2V (Speech-to-Video) models.
-
-    Returns:
-        list of validation prompts where conditioning contains:
-        - "image": PIL Image (first frame / reference image)
-        - "audio_path": str path to audio file
-    """
+    """Read validation inputs and their attached audio references."""
     model = StateTracker.get_model()
     if not getattr(model, "requires_s2v_validation_inputs", lambda: False)():
         return []
 
     args = StateTracker.get_args()
     validation_set = []
-
-    def resolve_video_sample_path(sample_path: str, dataset) -> str:
-        if Path(sample_path).is_absolute():
-            return sample_path
-        sample_root = dataset.config.get("instance_data_dir") or dataset.metadata_backend.instance_data_dir
-        return os.path.join(sample_root, sample_path) if sample_root else sample_path
-
-    def local_audio_path_or_none(audio_path: str | None) -> str | None:
-        if not audio_path:
-            return None
-        return audio_path if Path(audio_path).exists() else None
 
     for dataset in _selected_validation_datasets(args, "video validation", *_PREVIEW_DATASET_TYPES):
         if not dataset.audio_datasets:
@@ -624,42 +606,16 @@ def retrieve_validation_s2v_samples() -> list[ValidationPrompt]:
             else:
                 continue
 
-            # Find matching audio from s2v_datasets
-            audio_path = None
-            if sample_path is not None:
-                resolved_sample_path = resolve_video_sample_path(sample_path, dataset)
-                video_stem = Path(sample_path).stem
-
-                for audio_dataset in dataset.audio_datasets:
-                    s2v_config = audio_dataset.config
-                    audio_config = s2v_config.get("audio", {})
-                    if audio_config.get("source_from_video", False):
-                        audio_path = local_audio_path_or_none(resolved_sample_path)
-                        break
-                    audio_root = s2v_config.get("instance_data_dir")
-                    if not audio_root:
-                        continue
-
-                    audio_backend = audio_dataset.data_backend
-                    # Search for matching audio files
-                    audio_extensions = [".wav", ".mp3", ".flac", ".ogg", ".m4a"]
-                    for ext in audio_extensions:
-                        candidate = os.path.join(audio_root, f"{video_stem}{ext}")
-                        exists = audio_backend.exists(candidate) if audio_backend is not None else Path(candidate).exists()
-                        if exists:
-                            audio_path = candidate
-                            break
-                    if audio_path:
-                        break
-
-            if audio_path is None:
+            pairing = dataset.resolve_s2v_audio(sample_path) if sample_path is not None else None
+            if pairing is None:
                 logger.warning(f"No audio found for S2V validation sample: {shortname}")
                 continue
 
-            # Create conditioning dict with image and audio path
+            audio_dataset, audio_path = pairing
             conditioning = {
                 "image": reference_image,
                 "audio_path": audio_path,
+                "audio_dataset": audio_dataset,
             }
             validation_set.append(
                 ValidationPrompt(
@@ -4480,6 +4436,7 @@ class Validation:
                 extra_validation_kwargs["_s2v_conditioning"] = {
                     "image": validation_input_image_for_resolution,
                     "audio_path": s2v_audio_path,
+                    "audio_dataset": validation_input_image.get("audio_dataset"),
                 }
                 if resolution[0] > 0 and resolution[1] > 0:
                     if isinstance(extra_validation_kwargs["image"], list):

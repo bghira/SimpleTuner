@@ -135,7 +135,13 @@ class InfiniteTalk(Wan):
             pipeline_kwargs["num_videos_per_prompt"] = pipeline_kwargs.pop("num_images_per_prompt")
         conditioning = pipeline_kwargs.pop("_s2v_conditioning", None)
         if conditioning is not None:
-            pipeline_kwargs["audio"] = conditioning.get("audio_path")
+            audio = conditioning.get("audio_path")
+            dataset = conditioning.get("audio_dataset")
+            if audio is not None and dataset is not None:
+                audio, sample_rate = dataset.read_audio_sample(audio)
+                if sample_rate != self.AUDIO_SAMPLE_RATE:
+                    audio = torchaudio.functional.resample(audio, sample_rate, self.AUDIO_SAMPLE_RATE)
+            pipeline_kwargs["audio"] = audio
             pipeline_kwargs["image"] = conditioning.get("image")
         return pipeline_kwargs
 

@@ -1080,21 +1080,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         return tuple(outputs)
 
     def connect_s2v_samples(self, samples: tuple):
-        """
-        Connect S2V audio samples to video samples.
-
-        For S2V (Speech-to-Video) models, this method looks up audio files
-        from s2v_datasets that match video file paths by base filename
-        (without extension), and adds the audio paths to each sample's metadata.
-
-        When an S2V dataset has `source_from_video: True`, the audio is extracted
-        from the video file itself, so the video path is used directly as the audio path.
-        """
-        s2v_datasets = self.dataset_runtime.audio_datasets
-        if not s2v_datasets:
+        """Attach the linked audio reference to each video occurrence."""
+        if not self.dataset_runtime.audio_datasets:
             return samples
-
-        from pathlib import Path
 
         outputs = []
         for sample in samples:
@@ -1107,45 +1095,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 outputs.append(sample)
                 continue
 
-            # Extract base filename without extension
-            video_stem = Path(video_path).stem
-
-            # Look through s2v_datasets for matching audio file
-            audio_path = None
-            audio_backend_id = None
-            for s2v_dataset in s2v_datasets:
-                s2v_config = s2v_dataset.config
-                audio_config = s2v_config.get("audio", {})
-
-                # Check if audio is extracted from video files
-                if audio_config.get("source_from_video", False):
-                    metadata_backend = s2v_dataset.metadata_backend
-                    if metadata_backend is not None:
-                        metadata = metadata_backend.get_metadata_by_filepath(video_path)
-                        if metadata is None:
-                            self.debug_log(f"No matching audio found for video: {video_path}")
-                            continue
-                    # Audio comes from the video file itself
-                    audio_path = video_path
-                    audio_backend_id = s2v_dataset.id
-                    break
-
-                # Original matching logic - look for separate audio files
-                audio_root = s2v_config.get("instance_data_dir")
-                if not audio_root:
-                    continue
-
-                # Try common audio extensions
-                audio_backend = s2v_dataset.data_backend
-                for ext in [".wav", ".mp3", ".flac", ".ogg", ".m4a"]:
-                    candidate = os.path.join(audio_root, f"{video_stem}{ext}")
-                    exists = audio_backend.exists(candidate) if audio_backend is not None else Path(candidate).exists()
-                    if exists:
-                        audio_path = candidate
-                        audio_backend_id = s2v_dataset.id
-                        break
-                if audio_path:
-                    break
+            pairing = self.dataset_runtime.resolve_s2v_audio(video_path)
+            audio_dataset, audio_path = pairing if pairing is not None else (None, None)
+            audio_backend_id = audio_dataset.id if audio_dataset is not None else None
 
             # Add audio path to sample metadata
             if isinstance(sample, dict):

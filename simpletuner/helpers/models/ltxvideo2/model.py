@@ -1560,7 +1560,8 @@ class LTXVideo2(VideoModelFoundation):
         if conditioning is not None:
             audio_path = conditioning.get("audio_path")
             if audio_path is not None:
-                audio_latents = self._load_audio_latents_for_validation(audio_path)
+                dataset = conditioning.get("audio_dataset")
+                audio_latents = self._load_audio_latents_for_validation(audio_path, dataset=dataset)
                 if audio_latents is not None:
                     pipeline_kwargs["audio_latents"] = audio_latents
         return pipeline_kwargs
@@ -1621,8 +1622,9 @@ class LTXVideo2(VideoModelFoundation):
             if not eval_ids or dataset_id in eval_ids
         )
 
-    def _load_audio_latents_for_validation(self, audio_path: str) -> Optional[torch.Tensor]:
-        dataset = self._resolve_audio_dataset(audio_path)
+    def _load_audio_latents_for_validation(self, audio_path: str, *, dataset=None) -> Optional[torch.Tensor]:
+        if dataset is None:
+            dataset = self._resolve_audio_dataset(audio_path)
         if dataset is None:
             raise ValueError(
                 f"Unable to resolve audio backend for validation audio '{audio_path}'. "
