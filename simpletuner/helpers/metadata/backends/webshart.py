@@ -67,7 +67,6 @@ from simpletuner.helpers.multiaspect.image import ImageGeometry, MultiaspectImag
 from simpletuner.helpers.prompts import CaptionNotFoundError
 from simpletuner.helpers.training import video_file_extensions
 from simpletuner.helpers.training.multi_process import should_log
-from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger("WebshartMetadataBackend")
 if should_log():
@@ -86,6 +85,7 @@ def _empty_filtering_statistics():
 class WebshartMetadataBackend(MetadataBackend):
     native_policy = None
     epoch_recrop_version = 1
+    maximum_canvas_size = None
     collect_exclusions = collect_exclusions
 
     def __init__(
@@ -114,6 +114,7 @@ class WebshartMetadataBackend(MetadataBackend):
         runtime_args=None,
         max_num_samples: int = None,
         preparation_only: bool = False,
+        maximum_canvas_size: int | None = None,
     ):
         if not isinstance(data_backend, WebshartDataBackend):
             raise ValueError("WebshartMetadataBackend requires WebshartDataBackend")
@@ -156,6 +157,7 @@ class WebshartMetadataBackend(MetadataBackend):
 
         context = accelerator.main_process_first() if hasattr(accelerator, "main_process_first") else nullcontext()
         self._geometry_digest = None
+        self.maximum_canvas_size = maximum_canvas_size
         self.native_policy = (self.dataset_config.get("webshart") or {}).get("sampling_policy")
         self._artifact_models = {}
         self._snapshot = None
@@ -996,7 +998,8 @@ class WebshartMetadataBackend(MetadataBackend):
             MultiaspectImage._get_rounding(2, args=self.runtime_args),
         )
         seed = getattr(self.runtime_args, "seed", None) or 0
-        return PreparationGeometry(deepcopy(config), sizing, seed, StateTracker.get_model())
+        model_geometry = SimpleNamespace(MAXIMUM_CANVAS_SIZE=self.maximum_canvas_size)
+        return PreparationGeometry(deepcopy(config), sizing, seed, model_geometry)
 
     def _scan_rows(
         self, existing_files, statistics, require_captions, progress_callback, *, recipe=None, shard_indices=None, stop=None

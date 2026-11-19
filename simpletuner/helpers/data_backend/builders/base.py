@@ -41,6 +41,7 @@ def create_metadata_provider(
     bucket_report=None,
     aligned_source=None,
     dataset_config=None,
+    model=None,
 ):
     """Construct the resolved metadata provider for a trainer or standalone dataset job."""
     metadata_backend_args = {}
@@ -102,6 +103,13 @@ def create_metadata_provider(
             raise ValueError("Webshart metadata backend is not supported for caption-only datasets.")
         MetadataBackendCls = WebshartMetadataBackend
         metadata_backend_args["preparation_only"] = preparation_only
+        if (backend_dict.get("webshart") or {}).get("sampling_policy"):
+            model_family = get_arg_value(args, "model_family")
+            if model is None and model_family:
+                from simpletuner.helpers.models.registry import ModelRegistry
+
+                model = ModelRegistry.get(model_family)
+            metadata_backend_args["maximum_canvas_size"] = getattr(model, "MAXIMUM_CANVAS_SIZE", None)
     else:
         raise ValueError(f"Unknown metadata backend type: {metadata_backend_type}")
 

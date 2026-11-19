@@ -455,8 +455,11 @@ class TestWebshartParquetBackend(unittest.TestCase):
             self.assertEqual(metadata.describe().accepted_samples, 2)
 
     def test_standalone_scan_reuses_configured_training_geometry(self):
+        from simpletuner.helpers.data_backend.builders.base import create_metadata_provider
+        from simpletuner.helpers.data_backend.config import create_backend_config
         from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
         from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBackend
+        from simpletuner.helpers.models.hidream.model import HiDream
         from simpletuner.helpers.training.state_tracker import StateTracker
         from simpletuner.simpletuner_sdk.server.services.dataset_scan_service import (
             DatasetScanService,
@@ -471,7 +474,7 @@ class TestWebshartParquetBackend(unittest.TestCase):
             "source": str(self.source),
             "webshart": {"format": "parquet", "sampling_policy": "global", "cache_dir": str(self.root / "scan")},
             "caption_strategy": "webshart",
-            "resolution": 128,
+            "resolution": 1536,
             "resolution_type": "pixel",
             "crop": True,
             "crop_style": "random",
@@ -480,7 +483,7 @@ class TestWebshartParquetBackend(unittest.TestCase):
             "seed": 17,
             "aspect_bucket_alignment": 32,
             "aspect_bucket_rounding": 3,
-            "model_family": "sd1x",
+            "model_family": "hidream",
             "train_batch_size": 2,
             "disable_bucket_pruning": False,
             "framerate": 30,
@@ -492,18 +495,46 @@ class TestWebshartParquetBackend(unittest.TestCase):
         with (
             patch.object(StateTracker, "set_args"),
             patch.object(StateTracker, "set_accelerator"),
-            patch.object(StateTracker, "get_model", return_value=None),
+            patch.object(StateTracker, "get_model", side_effect=AssertionError("global model lookup")),
             patch.object(DatasetScanService, "_resolve_scan_output_dir", side_effect=lambda path: path),
         ):
             DatasetScanService()._execute_scan(config, global_config, False, lambda *_: None)
+            args = _ScanArgsNamespace(run_settings)
+            accelerator = _ScanAcceleratorStub()
+            with closing(DatasetRuntime.from_config(config, args, accelerator)) as runtime:
+                refs, count = runtime.read_page()
+                self.assertEqual(count, 2)
+                before = runtime.read_samples(refs)
+                for record in before:
+                    width, height = record["target_size"]
+                    self.assertLessEqual(width * height, HiDream.MAXIMUM_CANVAS_SIZE)
+                revision = runtime.describe().view_revision
+                self.assertEqual(
+                    runtime.metadata_backend._published["transform_cache_recipe"]["canvas_limit"],
+                    HiDream.MAXIMUM_CANVAS_SIZE,
+                )
+
+            scratch_backend = WebshartDataBackend(
+                None, "standalone", str(self.source), format="parquet", cache_dir=config["webshart"]["cache_dir"]
+            )
+            resolved = create_backend_config(config, vars(args)).to_dict()["config"]
+            provider = create_metadata_provider(
+                config["id"],
+                resolved,
+                scratch_backend,
+                accelerator,
+                args,
+                instance_data_dir=scratch_backend.cache_dir,
+                cache_root=scratch_backend.cache_dir,
+                model=HiDream.__new__(HiDream),
+            )
             with (
-                closing(
-                    DatasetRuntime.from_config(config, _ScanArgsNamespace(run_settings), _ScanAcceleratorStub())
-                ) as runtime,
+                closing(provider),
                 patch.object(WebshartMetadataBackend, "_scan_rows", side_effect=AssertionError("recomputed geometry")),
             ):
-                runtime.prepare_view()
-                self.assertEqual(runtime.describe().accepted_samples, 2)
+                provider.compute_aspect_ratio_bucket_indices()
+                self.assertEqual(provider.describe().view_revision, revision)
+                self.assertEqual(provider.get_metadata_batch(refs)[0]["target_size"], before[0]["target_size"])
 
     def test_capture_catalogue_uses_the_configured_metadata_cache(self):
         if not getattr(type(self.backend.dataset), "supports_catalogue_cache", False):
@@ -1220,6 +1251,7 @@ class TestWebshartParquetBackend(unittest.TestCase):
         factory = object.__new__(FactoryRegistry)
         factory.accelerator = accelerator
         factory.args = args
+        factory.model = None
         store = LocalDataBackend(accelerator, "reference")
         config = {
             "id": store.id,

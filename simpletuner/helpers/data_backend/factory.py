@@ -2950,6 +2950,7 @@ class FactoryRegistry:
             bucket_report=init_backend.get("bucket_report"),
             aligned_source=aligned_source,
             dataset_config=init_backend["config"],
+            model=self.model,
         )
         if backend.get("metadata_backend") == "filesystem":
             backend["metadata_backend"] = "discovery"
