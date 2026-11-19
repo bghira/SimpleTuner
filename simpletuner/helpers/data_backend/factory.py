@@ -961,107 +961,49 @@ def _validate_unique_dataset_ids(configs):
 
 
 def sort_dataset_configs_by_dependencies(data_backend_config):
-    """
-    Sort dataset configurations to ensure source datasets are configured before
-    their conditioning datasets (especially for reference_strict).
-
-    Args:
-        data_backend_config: List of dataset configuration dictionaries
-
-    Returns:
-        List of sorted dataset configurations
-    """
+    """Place every source before metadata consumers, preserving enabled declarations."""
     _validate_unique_dataset_ids(data_backend_config)
-    # Build dependency graph
-    # Key: dataset id, Value: list of datasets that depend on it
+    enabled = [config for config in data_backend_config if not (config.get("disabled") or config.get("disable"))]
+    by_id = {config["id"]: config for config in enabled if config.get("id")}
     dependencies = {}
-    dataset_by_id = {}
 
-    # First pass: index datasets by ID and identify disabled ones
-    enabled_configs = []
-    for config in data_backend_config:
-        if config.get("disabled", False) or config.get("disable", False):
-            continue
-        enabled_configs.append(config)
-        dataset_id = config.get("id")
-        if dataset_id:
-            dataset_by_id[dataset_id] = config
+    for dataset_id, config in by_id.items():
+        for key in ("source_dataset_id", "metadata_clone_source_id"):
+            source = config.get(key)
+            if source in by_id:
+                dependencies.setdefault(dataset_id, []).append(source)
 
-    # Second pass: build dependency relationships
-    for config in enabled_configs:
-        dataset_id = config.get("id")
-        if not dataset_id:
-            continue
-
-        source_id = None
-
-        # Method 1: Explicit source_dataset_id (auto-generated style)
-        if config.get("source_dataset_id"):
-            source_id = config["source_dataset_id"]
-
-        # Method 2: Find which dataset references this as conditioning_data
-        if source_id is None:
-            for other_config in enabled_configs:
-                other_id = other_config.get("id")
-                if other_id == dataset_id:
-                    continue
-                conditioning_data = other_config.get("conditioning_data")
-                if conditioning_data == dataset_id or (
-                    isinstance(conditioning_data, list) and dataset_id in conditioning_data
-                ):
-                    source_id = other_id
-                    break
-
-        if source_id and source_id in dataset_by_id:
-            if dataset_id not in dependencies:
-                dependencies[dataset_id] = []
-            dependencies[dataset_id].append(source_id)
-
-    # Topological sort using DFS
-    visited = set()
-    temp_visited = set()
-    sorted_ids = []
-
-    def visit(dataset_id):
-        if dataset_id in temp_visited:
-            raise ValueError(f"Circular dependency detected involving dataset '{dataset_id}'")
-        if dataset_id in visited:
-            return
-
-        temp_visited.add(dataset_id)
-
-        if dataset_id in dependencies:
-            for dependent_id in dependencies[dataset_id]:
-                if dependent_id in dataset_by_id:
-                    visit(dependent_id)
-
-        temp_visited.remove(dataset_id)
-        visited.add(dataset_id)
-        sorted_ids.append(dataset_id)
-
-    # Visit all datasets
-    for dataset_id in dataset_by_id:
-        if dataset_id not in visited:
-            visit(dataset_id)
+        conditioning = config.get("conditioning_data")
+        if isinstance(conditioning, str):
+            conditioning = [conditioning]
+        if isinstance(conditioning, list):
+            for target in conditioning:
+                if target in by_id and target != dataset_id:
+                    dependencies.setdefault(target, []).append(dataset_id)
 
     if not dependencies:
-        return [cfg for cfg in data_backend_config if not cfg.get("disabled", False) and not cfg.get("disable", False)]
+        return enabled
 
-    # Build the final sorted list
-    sorted_configs = []
-    seen_ids = set()
+    complete = set()
+    visiting = set()
+    ordered = []
 
-    for dataset_id in sorted_ids:
-        if dataset_id not in seen_ids:
-            sorted_configs.append(dataset_by_id[dataset_id])
-            seen_ids.add(dataset_id)
+    def visit(dataset_id):
+        if dataset_id in visiting:
+            raise ValueError(f"Circular dependency detected involving dataset '{dataset_id}'")
+        if dataset_id in complete:
+            return
+        visiting.add(dataset_id)
+        for source in dependencies.get(dataset_id, ()):
+            visit(source)
+        visiting.remove(dataset_id)
+        complete.add(dataset_id)
+        ordered.append(by_id[dataset_id])
 
-    # handle configs without IDs
-    for config in enabled_configs:
-        if not config.get("id") or config.get("id") not in seen_ids:
-            sorted_configs.append(config)
+    for dataset_id in by_id:
+        visit(dataset_id)
 
-    return sorted_configs
+    return ordered + [config for config in enabled if not config.get("id")]
 
 
 def fill_variables_in_config_paths(args: dict, config: list[dict]) -> dict:
@@ -4322,7 +4264,7 @@ class FactoryRegistry:
         data_backend_config = self._inject_grounding_configs(data_backend_config)
         data_backend_config = self._inject_s2v_audio_configs(data_backend_config)
         data_backend_config = self.process_conditioning_datasets(data_backend_config)
-        _validate_unique_dataset_ids(data_backend_config)
+        data_backend_config = sort_dataset_configs_by_dependencies(data_backend_config)
         data_backend_config = process_data_transforms(
             global_config=self.args,
             data_backend_config=data_backend_config,

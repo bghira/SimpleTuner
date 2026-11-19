@@ -127,6 +127,31 @@ class TestFactoryEdgeCases(unittest.TestCase):
                         factory.configure(None if use_file else config)
                     configure_artifacts.assert_not_called()
 
+    def test_sort_prepares_all_shared_conditioning_sources_before_the_target(self):
+        from simpletuner.helpers.data_backend.factory import sort_dataset_configs_by_dependencies
+
+        sources = [
+            {"id": "first", "dataset_type": "image", "conditioning_data": "target"},
+            {"id": "second", "dataset_type": "image", "conditioning_data": ["target"]},
+        ]
+        for explicit_source in (None, "first"):
+            with self.subTest(explicit_source=explicit_source):
+                target = {"id": "target", "dataset_type": "conditioning", "source_dataset_id": explicit_source}
+                generated = {"id": "derived", "metadata_clone_source_id": "target"}
+                ordered = sort_dataset_configs_by_dependencies([generated, target, *sources])
+                self.assertEqual([item["id"] for item in ordered], ["first", "second", "target", "derived"])
+
+    def test_sort_diagnoses_a_cycle_in_a_later_inbound_dependency(self):
+        from simpletuner.helpers.data_backend.factory import sort_dataset_configs_by_dependencies
+
+        configs = [
+            {"id": "target"},
+            {"id": "first", "conditioning_data": "target"},
+            {"id": "second", "source_dataset_id": "target", "conditioning_data": "target"},
+        ]
+        with self.assertRaisesRegex(ValueError, "Circular dependency"):
+            sort_dataset_configs_by_dependencies(configs)
+
     def test_audio_dataset_materializes_audio_only_for_capable_model(self):
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
 
