@@ -1442,6 +1442,7 @@ Webshart データセットは `webshart` パッケージで WebDataset 形式�
 - `metadata` は任意で、captions を含む別 metadata location を指定できます。`webshart/conceptual-captions-12m-webdataset-metadata` のような Hugging Face metadata repo では repo id だけを渡します。Webshart は source shard の `data/` などのサブフォルダ構成に従います。
 - `metadata_backend` は `webshart`、`caption_strategy` は `webshart` または `instanceprompt` にします。
 - `webshart.cache_dir` は SimpleTuner metadata と Webshart caches を保存します。`shard_cache_gb` と `parallel_downloads` は Webshart の shard cache に渡されます。`shard_cache_gb` を `0` にすると、shard 全体の cache を無効にし、index 付き range read を維持します。
+- リモートの Parquet でシャード全体のキャッシュが有効な場合、各バックエンドは読み取りの合間にキャッシュ済みシャードのリーダーを 1 つ保持します。同時ダウンロードと、使用中のリーダーがロックしているシャードのために、`shard_cache_gb` を超える空き容量を確保してください。Webshart は古いシャードを削除する前に、ダウンロード内容を一時ファイルに書き込みます。
 - `webshart.sampling_policy=global` は準備済みの各アスペクト比バケット内でサンプルをシャッフルします。`shard_local` はストレージ上で近いサンプルからバッチを作り、DataComp のようなリモートデータセットでシャードキャッシュの入れ替えを抑えます。省略すると従来のサンプラーを使用します。
 - インデックスがない Parquet 画像データセットで、`shard_local`、固定の `max_train_steps`、`data_backend_sampling=uniform`、オンデマンドのテキストと潜在表現のエンコードを設定すると、小さなシャードグループ単位で学習中にジオメトリを準備します。テキストはスケジュールされたバッチのみエンコードします。各グループの末尾では不完全なグローバルバッチを破棄します。既存のインデックス、グローバルシャッフル、自動重み付け、オフラインのキャッシュ準備では、インデックス化されたサンプル集合を使用します。
 - Webshart のネイティブサンプリングでは、`scan_for_errors` が準備済みビューの VAE エントリを上限のあるバッチで検査します。`vae_cache_scan_behaviour: recreate` を設定すると、不正な値や空間サイズを持つ読み込み済み潜在表現をアーティファクトストアから削除します。準備済みビューは不変です。

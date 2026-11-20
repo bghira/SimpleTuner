@@ -1440,6 +1440,7 @@ Webshart 数据集通过 `webshart` 包加载 WebDataset 风格的 tar shards。
 - `metadata` 可选，可指向包含 captions 的独立 metadata location。对于 `webshart/conceptual-captions-12m-webdataset-metadata` 这样的 Hugging Face metadata repo，传 repo id 即可；Webshart 会跟随 source shard 的 `data/` 等子目录布局。
 - `metadata_backend` 必须为 `webshart`；`caption_strategy` 应为 `webshart` 或 `instanceprompt`。
 - `webshart.cache_dir` 存储 SimpleTuner metadata 与 Webshart caches。`shard_cache_gb` 和 `parallel_downloads` 会传给 Webshart 的 shard cache；将 `shard_cache_gb` 设为 `0` 可禁用整 shard cache，并保留基于索引的 range reads。
+- 为远程 Parquet 启用整分片缓存时，每个后端在两次读取之间保留一个已缓存分片的读取器。除 `shard_cache_gb` 外，还需为并发下载和仍被读取器锁定的分片预留磁盘空间。Webshart 先将下载内容写入临时文件，再清理旧分片。
 - 将 `webshart.sampling_policy` 设为 `global`，可在每个准备好的宽高比分桶内打乱样本顺序。设为 `shard_local` 时，批次优先从存储位置相近的样本组成，从而减少 DataComp 等远程数据集的分片缓存换入换出。省略此字段可保留现有采样器。
 - 对于尚无索引的 Parquet 图像数据集，使用 `shard_local`、固定的 `max_train_steps`、`data_backend_sampling=uniform` 以及按需文本和潜变量编码时，训练会在访问每个小分片组时准备图像几何信息。文本编码仅对已调度的批次执行。每个分片组末尾不足一个全局批次的样本将被丢弃。已有索引、全局打乱、自动加权和离线缓存准备均使用已建立索引的样本集合。
 - 使用 Webshart 原生采样策略时，`scan_for_errors` 会按有界批次检查已准备视图中的 VAE 缓存条目。设置 `vae_cache_scan_behaviour: recreate` 可从制品存储中删除已读取且数值或空间尺寸无效的潜变量。已准备视图不可变。

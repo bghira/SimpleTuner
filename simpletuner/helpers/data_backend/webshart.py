@@ -132,7 +132,13 @@ class WebshartDataBackend(BaseDataBackend):
 
         discovery = {}
         if self.format == "parquet":
-            discovery = {"format": "parquet", "manifest": self.manifest, "metadata_cache_size": 8}
+            # Each retained payload reader locks its shard against shared-cache eviction.
+            cache_remote_shards = self.shard_cache_dir is not None and not Path(self.source).is_dir()
+            discovery = {
+                "format": "parquet",
+                "manifest": self.manifest,
+                "metadata_cache_size": 1 if cache_remote_shards else self._shard_metadata_cache_limit,
+            }
             if (
                 self.manifest is not None
                 and getattr(self.webshart.ParquetDataset, "supports_catalogue_cache", False) is True

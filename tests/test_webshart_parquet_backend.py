@@ -762,6 +762,21 @@ class TestWebshartParquetBackend(unittest.TestCase):
                 self.assertEqual(provider.describe().view_revision, revision)
                 self.assertEqual(provider.get_metadata_batch(refs)[0]["target_size"], before[0]["target_size"])
 
+    def test_remote_shard_cache_bounds_retained_readers(self):
+        import webshart
+
+        for source, limit, readers in ((str(self.source), 25, 8), ("s3://capture", 25, 1), ("s3://capture", 0, 8)):
+            with (
+                self.subTest(source=source, limit=limit),
+                patch.object(webshart, "discover_dataset", return_value=self.backend.dataset) as discover,
+            ):
+                backend = WebshartDataBackend(
+                    None, "capture", source, format="parquet", cache_dir=str(self.root / "cache"), shard_cache_gb=limit
+                )
+                self.assertEqual(discover.call_args.kwargs["metadata_cache_size"], readers)
+                backend.open_refresh_source()
+                self.assertEqual(discover.call_args.kwargs["metadata_cache_size"], readers)
+
     def test_capture_catalogue_uses_the_configured_metadata_cache(self):
         if not getattr(type(self.backend.dataset), "supports_catalogue_cache", False):
             self.skipTest("installed Webshart has no shared capture catalogue")
