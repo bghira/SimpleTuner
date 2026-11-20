@@ -191,6 +191,61 @@ class HuggingfaceMetadataBackendTests(unittest.TestCase):
             self.assertEqual(provider.aspect_ratio_bucket_indices, {})
             self.assertEqual(provider.image_metadata, {})
 
+    def test_peer_keeps_copied_geometry_when_target_membership_has_an_old_revision(self):
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+        from simpletuner.helpers.metadata.utils.duplicator import DatasetDuplicator
+
+        accelerator = SimpleNamespace(
+            num_processes=2,
+            process_index=1,
+            is_main_process=False,
+            main_process_first=contextlib.nullcontext,
+            wait_for_everyone=lambda: None,
+        )
+        args = SimpleNamespace(skip_file_discovery="", only_instance_prompt=False)
+        with tempfile.TemporaryDirectory() as directory:
+
+            def runtime(name, role):
+                data = HuggingfaceDatasetsBackend(None, name, "fixture", cache_dir=directory)
+                data.dataset = Dataset.from_dict({"text": ["current"]})
+                config = {"dataset_type": role, "caption_strategy": "instanceprompt"}
+                metadata = HuggingfaceMetadataBackend(
+                    id=name,
+                    instance_data_dir=directory,
+                    cache_file=str(Path(directory) / (name + "-members")),
+                    metadata_file=str(Path(directory) / (name + "-geometry")),
+                    data_backend=data,
+                    accelerator=accelerator,
+                    batch_size=1,
+                    resolution=64,
+                    resolution_type="pixel",
+                    hf_config={},
+                    dataset_config=config,
+                    runtime_args=args,
+                )
+                self.addCleanup(metadata.close)
+                return DatasetRuntime(name, data, metadata, config)
+
+            source = runtime("source", "image")
+            target = runtime("target", "conditioning")
+            target.data_backend.write(target.metadata_backend.cache_file, {"source_revision": "old"})
+            row = {"target_size": [128, 64], "crop_coordinates": [8, 12]}
+            source.metadata_backend.image_metadata = {"0.jpg": row}
+            source.metadata_backend.image_metadata_loaded = True
+            source.metadata_backend.aspect_ratio_bucket_indices = {"2.0": ["0.jpg"]}
+            DatasetDuplicator.copy_metadata(source, target)
+            self.assertEqual(target.metadata_backend.get_metadata()["0.jpg"], row)
+
+            factory = FactoryRegistry.__new__(FactoryRegistry)
+            factory.accelerator, factory.args = accelerator, args
+            factory._handle_error_scanning_and_metadata(
+                {"metadata_clone_source_id": source.id},
+                {"id": target.id, "metadata_backend": target.metadata_backend},
+                "reference_strict",
+            )
+            self.assertEqual(target.metadata_backend.get_metadata().get("0.jpg"), row)
+
     def test_preparation_scan_uses_the_same_sample_cap_as_discovery(self):
         rows = Dataset.from_dict({"width": [512] * 18, "height": [256] * 18})
         prepared = SimpleNamespace(

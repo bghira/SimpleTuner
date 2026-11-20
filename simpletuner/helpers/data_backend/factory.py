@@ -3760,9 +3760,10 @@ class FactoryRegistry:
 
         if self._is_multi_process():
             self.accelerator.wait_for_everyone()
-        if not self.accelerator.is_main_process:
+        metadata = init_backend["metadata_backend"]
+        if not self.accelerator.is_main_process and not metadata.has_copied_metadata:
             try:
-                init_backend["metadata_backend"].load_image_metadata()
+                metadata.load_image_metadata()
             except FileNotFoundError:
                 warning_log(
                     f"(id={init_backend['id']}) Skipping metadata load because data directory was not found: {init_backend.get('instance_data_dir')}"
