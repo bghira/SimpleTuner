@@ -115,21 +115,12 @@ class TestAudioSampler(unittest.TestCase):
         )
 
         iterator = iter(sampler)
-        # Total items = 3. Batch size = 2.
-        # Epoch 1:
-        # Batch 1: 2 items (e.g. 10s bucket)
-        # Batch 2: 2 items (e.g. 20s bucket, 1 item recycled)
-        # End of epoch.
-
-        # We expect MultiDatasetExhausted exception eventually if we keep iterating,
-        # OR it resets buckets and continues (depending on _reset_buckets raise_exhaustion_signal=True default)
-
         from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
 
+        self.assertEqual(len(next(iterator)), 2)
+        self.assertEqual(len(next(iterator)), 2)
         with self.assertRaises(MultiDatasetExhausted):
             next(iterator)
-            next(iterator)
-            next(iterator)  # Should raise here or before
 
     def test_missing_reloaded_metadata_does_not_require_image_crop_coordinates(self):
         self.mock_tracker.get_args.return_value.model_family = "minimaxmusic"

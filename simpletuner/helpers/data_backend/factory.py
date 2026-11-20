@@ -2925,17 +2925,12 @@ class FactoryRegistry:
         backend: Dict[str, Any],
         init_backend: Dict[str, Any],
         conditioning_type: Optional[str],
-        skip_bucket_split: bool = False,
         preparation: TrainingPreparation | None = None,
     ) -> None:
-        """Handle bucket refreshing and validation.
-
-        Args:
-            skip_bucket_split: If True, skip split_buckets_between_processes (used for audio-only datasets).
-        """
+        """Refresh and partition training buckets, keeping held-out evaluation datasets whole."""
         metadata = init_backend["metadata_backend"]
         eval_ids = selected_dataset_ids(_get_arg_value(self.args, "eval_dataset_id"))
-        skip_bucket_split = skip_bucket_split or init_backend["id"] in eval_ids
+        skip_bucket_split = init_backend["id"] in eval_ids
         if isinstance(metadata, AlignedConditioningMetadata):
             self._handle_config_versioning(backend, init_backend)
             return
@@ -3960,7 +3955,7 @@ class FactoryRegistry:
 
         init_backend = init_backend_config(backend, self.args, self.accelerator)
         dataset_type_enum = ensure_dataset_type(init_backend.get("dataset_type"), default=DatasetType.IMAGE)
-        is_audio_only_dataset = self._materialize_audio_only_mode(backend, init_backend)
+        self._materialize_audio_only_mode(backend, init_backend)
         if (
             dataset_type_enum in {DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.CONDITIONING}
             and "cache_dir_vae" not in backend
@@ -4031,9 +4026,7 @@ class FactoryRegistry:
             ondemand_latents=ondemand_latents or getattr(self.model, "AUTOENCODER_CLASS", None) is None,
             requires_complete_view=needs_complete_view,
         )
-        self._handle_bucket_operations(
-            backend, init_backend, conditioning_type, skip_bucket_split=is_audio_only_dataset, preparation=preparation
-        )
+        self._handle_bucket_operations(backend, init_backend, conditioning_type, preparation=preparation)
 
         self._create_dataset_and_sampler(backend, init_backend, conditioning_type)
 
