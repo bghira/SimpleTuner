@@ -1088,6 +1088,7 @@ class WebshartMetadataBackend(MetadataBackend):
             self.image_metadata = {}
             existing_files = set()
 
+        existing_files.update(self.removed_samples)
         last_save_time = time.time()
         for key, ref, record in self._scan_rows(existing_files, statistics, require_captions, progress_callback):
             self.aspect_ratio_bucket_indices.setdefault(key, []).append(ref)

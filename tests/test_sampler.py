@@ -744,6 +744,7 @@ class TestIterationUnseenIndex(unittest.TestCase):
     def _sampler(self, buckets, seen, use_index, *, track_consumed=False, repeats=0):
         metadata_backend = object.__new__(DiscoveryMetadataBackend)
         metadata_backend.id = "unseen"
+        metadata_backend.removed_samples = set()
         metadata_backend.instance_data_dir = ""
         metadata_backend.aspect_ratio_bucket_indices = copy.deepcopy(buckets)
         metadata_backend.seen_images = dict(seen)

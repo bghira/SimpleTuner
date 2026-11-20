@@ -314,6 +314,7 @@ class TestWebshartMetadataCaptionFiltering(unittest.TestCase):
         backend.id = "test-backend"
         backend.dataset_type = DatasetType.IMAGE
         backend.native_policy = None
+        backend.removed_samples = set()
         backend._runtime_args = SimpleNamespace(only_instance_prompt=False)
         backend.bind_dataset_config({"caption_strategy": "webshart"})
         backend.max_num_samples = None

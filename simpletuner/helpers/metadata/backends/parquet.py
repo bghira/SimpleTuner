@@ -421,7 +421,7 @@ class ParquetMetadataBackend(MetadataBackend):
                 progress_callback(file_idx + 1, total_files)
 
             current_time = time.time()
-            if file not in existing_files_set:
+            if file not in existing_files_set and file not in self.removed_samples:
                 metadata_updates = {}
                 if self.should_abort:
                     return

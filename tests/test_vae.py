@@ -476,6 +476,7 @@ class TestMetadataFilterOnSplitShard(unittest.TestCase):
 
         backend = MagicMock(spec=MetadataBackend)
         backend.id = "filtered-shard"
+        backend.removed_samples = set()
         backend.batch_size = 1
         backend.repeats = 0
         backend.bucket_report = None

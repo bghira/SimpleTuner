@@ -92,6 +92,7 @@ class FakeMetadataBackend(MetadataBackend):
 class FakeReadOnlyMetadataBackend(MetadataBackend):
     def __init__(self, split_cache, unsplit_cache):
         self.id = "nsfw-fixture"
+        self.removed_samples = set()
         self.cache_file = "membership.json"
         self.data_backend = Mock()
         self.data_backend.exists.return_value = True

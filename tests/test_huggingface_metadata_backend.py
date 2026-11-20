@@ -226,11 +226,62 @@ class HuggingfaceMetadataBackendTests(unittest.TestCase):
             provider.compute_aspect_ratio_bucket_indices(ignore_existing_cache=True)
             self.assertEqual(provider.read_page(limit=10), (expected, 3))
             self.assertEqual(set(provider.image_metadata), set(expected))
+            provider.remove_images([expected[-1]])
+            provider.compute_aspect_ratio_bucket_indices(ignore_existing_cache=True)
+            provider.reload_cache()
+            self.assertEqual(provider.read_page(limit=10), (expected[:-1], 2))
             provider.enqueue_prepared_metadata({expected[0]: {"target_size": [64, 32]}})
             provider.enqueue_prepared_metadata({expected[0]: {"target_size": [128, 64]}})
             provider.close()
             provider.load_image_metadata()
             self.assertEqual(provider.get_metadata_by_filepath(expected[0]), {"target_size": [128, 64]})
+
+    def test_missing_caption_stays_out_of_warm_membership_and_epoch_recrop(self):
+        accelerator = SimpleNamespace(main_process_first=contextlib.nullcontext, wait_for_everyone=lambda: None)
+        source = HuggingfaceDatasetsBackend(accelerator, "captioned", "test")
+        source.dataset = Dataset.from_dict(
+            {"width": [512] * 3, "height": [256] * 3, "caption": ["first", "", ""], "fallback": ["", "", "third"]}
+        )
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch("simpletuner.helpers.metadata.backends.huggingface.TrainingSample") as sample,
+        ):
+            sample.return_value.prepare.return_value = SimpleNamespace(
+                aspect_ratio=2.0, target_size=(512, 256), crop_coordinates=(0, 0), intermediary_size=(512, 256)
+            )
+            settings = dict(
+                id=source.id,
+                instance_data_dir=directory,
+                cache_file=str(Path(directory) / "buckets"),
+                metadata_file=str(Path(directory) / "geometry"),
+                data_backend=source,
+                accelerator=accelerator,
+                batch_size=1,
+                resolution=512,
+                resolution_type="pixel",
+                hf_config={"width_column": "width", "height_column": "height", "fallback_caption_column": "fallback"},
+                dataset_config={"caption_strategy": "huggingface"},
+                runtime_args={"only_instance_prompt": True},
+            )
+            with_instance_prompt = HuggingfaceMetadataBackend(**settings)
+            with_instance_prompt.compute_aspect_ratio_bucket_indices(ignore_existing_cache=True)
+            self.assertEqual(with_instance_prompt.read_page(limit=10)[0], ["0.jpg", "1.jpg", "2.jpg"])
+            with_instance_prompt.close()
+            settings["runtime_args"]["only_instance_prompt"] = False
+            provider = HuggingfaceMetadataBackend(**settings)
+            self.addCleanup(provider.close)
+            self.assertEqual(provider.read_page(limit=10)[0], ["0.jpg", "2.jpg"])
+            provider.compute_aspect_ratio_bucket_indices(ignore_existing_cache=True)
+            provider.reload_cache()
+            self.assertEqual(provider.read_page(limit=10)[0], ["0.jpg", "2.jpg"])
+            self.assertEqual(provider.read_caption_batch(["0.jpg", "2.jpg"]), ["first", "third"])
+            # A fresh scan also rejects the empty row before it enters any cache.
+            settings["cache_file"] += "-fresh"
+            settings["metadata_file"] += "-fresh"
+            fresh = HuggingfaceMetadataBackend(**settings)
+            self.addCleanup(fresh.close)
+            fresh.compute_aspect_ratio_bucket_indices(ignore_existing_cache=True)
+            self.assertEqual(fresh.read_page(limit=10)[0], ["0.jpg", "2.jpg"])
 
     def test_arrow_transform_cache_reopens_and_reprocesses_by_shard(self):
         from simpletuner.helpers.metadata.backends.huggingface_transforms import HuggingFaceTransformStore

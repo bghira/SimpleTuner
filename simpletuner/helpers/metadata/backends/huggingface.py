@@ -166,6 +166,15 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             self.reload_cache()
             if self._published_geometry is None:
                 self.load_image_metadata()
+            if not data_backend.streaming and self.uses_caption_strategy("huggingface"):
+                missing = set()
+                for refs in batched(chain.from_iterable(self.aspect_ratio_bucket_indices.values()), 128):
+                    missing.update(
+                        ref for ref, caption in zip(refs, self.read_caption_batch(refs), strict=True) if caption is None
+                    )
+                if missing:
+                    self.remove_images(missing)
+                    self.save_cache()
         accelerator.wait_for_everyone()
 
     def _select_caption_columns(self, dataset):
@@ -786,6 +795,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         statistics: Optional[dict] = None,
         aspect_ratio_rounding: int = 2,
         filtered_files_queue=None,
+        require_caption=False,
     ) -> Dict:
         if statistics is None:
             statistics = {}
@@ -810,6 +820,10 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                     statistics.setdefault("skipped", {}).setdefault("quality", 0)
                     statistics["skipped"]["quality"] += 1
                     return aspect_ratio_bucket_indices
+            if require_caption and self._extract_caption_from_item(item) is None:
+                statistics["skipped"]["missing_caption"] += 1
+                return aspect_ratio_bucket_indices
+
             dataset_type_value = _dataset_type_value(self.dataset_type)
             if dataset_type_value == "audio":
                 sample_metadata = dict(self.image_metadata.get(image_path_str, {}))
@@ -994,6 +1008,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             "total_processed": 0,
             "skipped": {
                 "already_exists": 0,
+                "missing_caption": 0,
                 "quality": 0,
                 "metadata_missing": 0,
                 "not_found": 0,
@@ -1030,6 +1045,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         metadata_updates = {}
 
         indices = self._limited_dataset_indices()
+        require_caption = self.uses_caption_strategy("huggingface")
         if self.bucket_report:
             pending_items = max(len(indices) - len(existing_files), 0)
             self.bucket_report.record_stage(
@@ -1051,7 +1067,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
 
             virtual_path = f"{idx}.{self.file_extension}"
 
-            if virtual_path in existing_files:
+            if virtual_path in existing_files or virtual_path in self.removed_samples:
                 continue
 
             aspect_ratio_bucket_updates = self._process_for_bucket(
@@ -1060,6 +1076,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                 metadata_updates=metadata_updates,
                 delete_problematic_images=self.delete_problematic_images,
                 statistics=statistics,
+                require_caption=require_caption,
             )
             statistics["total_processed"] += 1
             if len(metadata_updates) >= 128:
@@ -1102,16 +1119,6 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             for bucket in self.aspect_ratio_bucket_indices.values()
             if repeat_len(bucket) >= self.batch_size
         )
-
-    def remove_images(self, image_paths: List[str]):
-        if not isinstance(image_paths, list):
-            image_paths = [image_paths]
-
-        for image_path in image_paths:
-            for bucket, images in self.aspect_ratio_bucket_indices.items():
-                if image_path in images:
-                    self.aspect_ratio_bucket_indices[bucket].remove(image_path)
-                    logger.debug(f"Removed {image_path} from bucket {bucket}")
 
     def refresh_buckets(self, rank: int = None):
         # override refresh_buckets for HuggingFace datasets

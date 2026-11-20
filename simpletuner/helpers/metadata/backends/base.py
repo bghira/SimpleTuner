@@ -21,7 +21,7 @@ from PIL import Image
 from tqdm import tqdm
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend, conditioning_file_path
-from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
+from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type, get_arg_value
 from simpletuner.helpers.data_backend.filters import build_dataset_filter
 from simpletuner.helpers.data_backend.runtime.context_parallel_sync import get_cp_info
 from simpletuner.helpers.metadata.preparation import (
@@ -158,6 +158,7 @@ class MetadataBackend:
         self.cache_file = Path(f"{cache_file}.json")
         self.metadata_file = Path(f"{metadata_file}.json")
         self._aspect_ratio_bucket_indices = {}
+        self.removed_samples = set()
         self.image_metadata = {}  # Store image metadata
         self.seen_images = {}
         self.config = {}
@@ -212,6 +213,15 @@ class MetadataBackend:
     def active_dataset_config(self):
         config = getattr(self, "_bound_config", None)
         return (StateTracker.get_data_backend_config(self.id) or {}) if config is None else config
+
+    def uses_caption_strategy(self, strategy):
+        config = self.active_dataset_config
+        return (
+            config.get("caption_strategy") == strategy
+            and config.get("use_captions", True)
+            and not config.get("only_instance_prompt")
+            and not get_arg_value(self.runtime_args, "only_instance_prompt", False)
+        )
 
     def bind_dataset_config(self, config):
         self._bound_config = config
@@ -599,6 +609,8 @@ class MetadataBackend:
                     f"Error loading image metadata. You may have to remove the metadata json file '{self.metadata_file}' and VAE cache manually: {e}"
                 )
         new_files = self._discover_new_files(ignore_existing_cache=ignore_existing_cache)
+        if self.removed_samples:
+            new_files = [ref for ref in new_files if ref not in self.removed_samples]
 
         # Audio datasets use duration-based bucketing, not spatial aspect ratios.
         if self.dataset_type is DatasetType.AUDIO:
@@ -629,6 +641,8 @@ class MetadataBackend:
             # Rebuild buckets from all metadata (existing + new)
             self.aspect_ratio_bucket_indices = {}
             for sample_path, meta in self.image_metadata.items():
+                if sample_path in self.removed_samples:
+                    continue
                 duration_seconds = None
                 if isinstance(meta, dict):
                     duration_seconds = (
@@ -1100,6 +1114,12 @@ class MetadataBackend:
         if image_path in self.aspect_ratio_bucket_indices[bucket]:
             self.aspect_ratio_bucket_indices[bucket].remove(image_path)
 
+    def remove_images(self, paths):
+        removed = {paths} if isinstance(paths, str) else set(paths)
+        self.removed_samples.update(removed)
+        for refs in self.aspect_ratio_bucket_indices.values():
+            refs[:] = [ref for ref in refs if ref not in removed]
+
     def discard_bucket_membership(self, image_path, bucket=None, *, preserve_split=False):
         """Remove every matching occurrence from the selected legacy buckets."""
         buckets = self.aspect_ratio_bucket_indices
@@ -1113,6 +1133,8 @@ class MetadataBackend:
                 removed = True
             if preserve_split and self.read_only and paths and len(paths) < previous_length:
                 paths.extend([paths[-1]] * (previous_length - len(paths)))
+        if removed:
+            self.removed_samples.add(image_path)
         return removed
 
     def update_buckets_with_existing_files(self, existing_files: set):
