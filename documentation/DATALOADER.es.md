@@ -936,6 +936,7 @@ Consulta la sección [Solución de Problemas](#solución-de-problemas-de-dataset
 - Activa esta opción para reconstruir la caché del VAE al inicio de cada época de entrenamiento posterior a la primera. Con `crop: true` y `crop_style: random`, también se renuevan los recortes aleatorios de los conjuntos de datos mutables.
 - Con esta opción desactivada, el entrenamiento reutiliza los mismos recortes y latentes almacenados entre épocas, incluso si se configuraron recortes aleatorios. Las repeticiones del conjunto de datos reutilizan los latentes de la misma época en ambos modos.
 - Los conjuntos de imágenes en Parquet con muestreo nativo de Webshart, tamaños de destino fijos y sin entradas de condicionamiento emparejadas reutilizan la vista preparada. El proveedor elige nuevos desplazamientos de recorte al leer las filas y codifica bajo demanda los latentes VAE correspondientes. Al pasar a la siguiente época, se eliminan de la caché de esta ejecución los latentes de la época anterior.
+- Cuando cambia el recorte de un conjunto de origen mutable, los conjuntos de condicionamiento que copian sus metadatos heredan las nuevas coordenadas. Sus latentes en caché se actualizan para reflejar el cambio.
 
 ### `vae_cache_ondemand`
 

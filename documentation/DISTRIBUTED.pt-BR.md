@@ -171,7 +171,11 @@ Se seu dataset for menor que o batch size efetivo:
 
 A flag `--allow_dataset_oversubscription` (documentada em [OPTIONS.md](OPTIONS.md#--allow_dataset_oversubscription)) calcula e aplica automaticamente o minimo de repeats exigidos para sua configuracao, sendo ideal para prototipagem ou experimentos com datasets pequenos.
 
-Em uma captura Parquet do Webshart com amostragem nativa, cada rank abre a visão preparada de amostras e lê lotes de referências. A geometria dos cortes de imagem compatíveis é armazenada em disco por shard. Mantenha o cache acessível aos ranks que o usam e preserve os objetos da fonte e o manifesto. Ao retomar de um checkpoint, mantenha as regras do conjunto, a semente, a política de amostragem, o número de ranks, os tamanhos dos lotes e as opções de acumulação. O prefetch mantém lotes em um buffer e o checkpoint registra os lotes consumidos pelo treinamento.
+O treinamento apenas com áudio também distribui cada grupo de duração entre os ranks de paralelismo de dados. Os ranks de paralelismo de contexto de uma mesma réplica compartilham sua parte. Quando a preparação do VAE remove amostras do índice, os ranks repartem as amostras salvas antes da próxima leitura.
+
+Em uma captura Parquet indexada do Webshart com amostragem nativa, cada rank abre a visão preparada de amostras e lê lotes de referências. A geometria dos cortes de imagem compatíveis é armazenada em disco por shard. Mantenha o cache acessível aos ranks que o usam e preserve os objetos da fonte e o manifesto. Ao retomar de um checkpoint, mantenha as regras do conjunto, a semente, a política de amostragem, o número de ranks, os tamanhos dos lotes e as opções de acumulação. O prefetch mantém lotes em um buffer e o checkpoint registra os lotes consumidos pelo treinamento.
+
+Em um conjunto de imagens Parquet sem índice compatível com `shard_local`, todos os ranks de paralelismo de dados percorrem a mesma janela de até quatro shards adjacentes. Cada rank recebe sua parte de cada lote global. Ao final da janela, as amostras de cada grupo de proporção que não completam um ciclo de acumulação são descartadas. A retomada reabre a janela salva e continua a partir do último lote consumido.
 
 ### Varredura/descoberta lenta de imagens
 

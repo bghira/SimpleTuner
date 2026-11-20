@@ -171,7 +171,11 @@ Si tu dataset es más pequeño que el tamaño efectivo de batch:
 
 El flag `--allow_dataset_oversubscription` (documentado en [OPTIONS.md](OPTIONS.md#--allow_dataset_oversubscription)) calculará y aplicará automáticamente los repeats mínimos requeridos para tu configuración, haciéndolo ideal para prototipos o experimentos con datasets pequeños.
 
-En una captura Parquet de Webshart con muestreo nativo, cada rank abre una vista de membresía preparada y lee lotes de referencias. La geometría de los recortes compatibles se guarda en disco por shard. Mantén esta caché en almacenamiento accesible para los ranks que la abren y conserva los objetos de origen y el manifiesto. Para reanudar desde un checkpoint, usa las mismas reglas del dataset, semilla, política de muestreo, número de ranks, tamaños de lote y parámetros de acumulación. La precarga almacena lotes temporalmente y el checkpoint guarda cuáles consumió el entrenamiento.
+En el entrenamiento solo con audio, cada grupo de duración también se reparte entre los ranks de paralelismo de datos. Los ranks de paralelismo de contexto de una misma réplica comparten su parte. Si la preparación del VAE elimina muestras del índice, los ranks vuelven a repartirse las muestras guardadas antes de entrenar.
+
+En una captura Parquet indexada de Webshart con muestreo nativo, cada rank abre una vista de membresía preparada y lee lotes de referencias. La geometría de los recortes compatibles se guarda en disco por shard. Mantén esta caché en almacenamiento accesible para los ranks que la abren y conserva los objetos de origen y el manifiesto. Para reanudar desde un checkpoint, usa las mismas reglas del dataset, semilla, política de muestreo, número de ranks, tamaños de lote y parámetros de acumulación. La precarga almacena lotes temporalmente y el checkpoint guarda cuáles consumió el entrenamiento.
+
+Con un conjunto de imágenes Parquet sin indexar que admite `shard_local`, todos los ranks de paralelismo de datos recorren la misma ventana de hasta cuatro shards contiguos. Cada rank recibe su parte de cada lote global. Al terminar la ventana se descartan las muestras de cada grupo de aspecto que no alcanzan para completar un ciclo de acumulación. Al reanudar, se abre la ventana guardada y se continúa desde el último lote consumido.
 
 ### Escaneo/descubrimiento lento de imágenes
 

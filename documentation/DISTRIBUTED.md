@@ -171,7 +171,11 @@ If your dataset is smaller than the effective batch size:
 
 The `--allow_dataset_oversubscription` flag (documented in [OPTIONS.md](OPTIONS.md#--allow_dataset_oversubscription)) will automatically calculate and apply the minimum required repeats for your configuration, making it ideal for prototyping or small dataset experiments.
 
-For a Webshart Parquet capture with native sampling, each rank opens a prepared membership view and reads batches of references. Geometry for supported image crops is cached by shard on disk. Keep this cache on storage available to the ranks that open it. Keep the source objects and manifest stable. A checkpoint resumes with the same dataset rules, seed, sampling policy, world size, batch sizes, and accumulation settings. Prefetch buffers batches, and the checkpoint records which batches training consumed.
+Audio-only training also partitions each duration bucket across data-parallel ranks. Context-parallel ranks within one replica share its slice. When VAE preparation removes samples from a training index, the ranks repartition the saved membership before sampling.
+
+For an indexed Webshart Parquet capture with native sampling, each rank opens a prepared membership view and reads batches of references. Geometry for supported image crops is cached by shard on disk. Keep this cache on storage available to the ranks that open it. Keep the source objects and manifest stable. A checkpoint resumes with the same dataset rules, seed, sampling policy, world size, batch sizes, and accumulation settings. Prefetch buffers batches, and the checkpoint records which batches training consumed.
+
+With an eligible unindexed Parquet image dataset and `shard_local`, all data-parallel ranks visit the same window of up to four adjacent shards. Each rank receives its slice of each global batch. Samples left in an aspect bucket that cannot fill a complete accumulation group are dropped at the window boundary. Resume reopens the saved window at the last consumed batch.
 
 ### Slow image scan / discovery
 

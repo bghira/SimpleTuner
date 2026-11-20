@@ -938,6 +938,7 @@ See the [Troubleshooting](#troubleshooting-filtered-datasets) section below for 
 - Enable this option to rebuild the VAE cache at the start of each subsequent training epoch. With `crop: true` and `crop_style: random`, mutable datasets also refresh their random crops.
 - With this option disabled, training reuses the same crops and cached latents across epochs, including when random cropping is configured. Dataset repeats reuse cached latents within the same epoch in either mode.
 - Native Webshart Parquet image datasets with fixed target shapes and no paired conditioning inputs reuse the prepared view. The provider chooses new crop offsets as rows are read and encodes the corresponding VAE latents on demand. Epoch rollover deletes the previous epoch’s latents from this run’s cache.
+- When a mutable source recrops, conditioning datasets that copy its metadata inherit the new crop coordinates. Their cached latents are refreshed to match.
 
 ### `vae_cache_ondemand`
 
