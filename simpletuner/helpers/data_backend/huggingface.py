@@ -847,8 +847,9 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
             return True
 
     def delete(self, filepath):
-        logger.warning("Delete operations are not supported for Hugging Face datasets")
-        raise NotImplementedError("Hugging Face datasets are read-only")
+        if Path(filepath).suffix not in self._CACHE_EXTENSIONS:
+            raise NotImplementedError("Hugging Face datasets are read-only except for cache files")
+        self.cache_write_path(filepath).unlink()
 
     def open_file(self, filepath, mode):
         if "w" in mode:

@@ -48,6 +48,20 @@ class _MinimalHuggingfaceMetadataBackend(HuggingfaceMetadataBackend):
 
 
 class HuggingfaceMetadataBackendTests(unittest.TestCase):
+
+    def test_delete_uses_the_artifact_write_path_and_protects_dataset_samples(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = HuggingfaceDatasetsBackend(None, "images", "test", cache_dir=directory)
+            for key in ("relative.pt", str(Path(directory) / "absolute.pt")):
+                source.write(key, b"latent")
+                self.assertTrue(source.exists(key))
+                source.delete(key)
+                self.assertFalse(source.exists(key))
+                with self.assertRaises(FileNotFoundError):
+                    source.delete(key)
+            with self.assertRaises(NotImplementedError):
+                source.delete("0.jpg")
+
     def test_cached_membership_stream_stays_pinned_when_the_file_is_replaced(self):
         with tempfile.TemporaryDirectory() as directory:
             source = HuggingfaceDatasetsBackend(None, "arrow", "test", cache_dir=directory)
