@@ -476,19 +476,14 @@ class TestVaeCacheTraversal(unittest.TestCase):
         wide0, wide1 = "webshart://0/0/wide.jpg", "webshart://1/0/wide.jpg"
         square0, square1 = "webshart://0/1/square.jpg", "webshart://1/1/square.jpg"
         restored = "webshart://0/2/restored.jpg"
-        buckets = {
-            "wide": [wide1, "cached", wide0, "other-rank"],
-            "square": [square1, square0],
-        }
-        original = copy.deepcopy(buckets)
         cache = VAECache.__new__(VAECache)
         cache.id = "cache-traversal"
         cache.debug_log = Mock()
         cache._list_cached_images = Mock(return_value={"cached"})
         cache.metadata_backend = Mock()
-        cache.metadata_backend.read_cache.return_value = buckets
-        cache.metadata_backend.get_metadata_attribute_by_filepath.return_value = "wide"
-        cache.local_unprocessed_files = [wide0, wide1, square0, square1, "cached", restored]
+        assigned = {"wide": [wide1, wide0, restored], "square": [square1, square0]}
+        cache.metadata_backend.iter_preparation_batches.return_value = assigned.items()
+        cache.local_unprocessed_files = [wide0, wide1, square0, square1, "cached", restored, "other-rank"]
         cache.generate_vae_cache_filename = lambda path, *, view=None: (path + ".pt", path)
         cache.cache_path_for_image = lambda path: path + ".pt"
         cache._image_filename_from_vaecache_filename = lambda key: key.removesuffix(".pt")
@@ -497,7 +492,9 @@ class TestVaeCacheTraversal(unittest.TestCase):
         cache.max_workers = 2
         cache._vae_cache_written_lock = threading.Lock()
         cache._vae_cache_written_count = 0
-        cache.accelerator = SimpleNamespace(is_local_main_process=False, wait_for_everyone=Mock())
+        cache.accelerator = SimpleNamespace(
+            is_local_main_process=False, process_index=1, num_processes=2, wait_for_everyone=Mock()
+        )
         cache._close_nsfw_classifier_store = Mock()
         cache._finalize_deferred_metadata_filters = Mock()
         cache._write_nsfw_scan_report = Mock()
@@ -554,7 +551,7 @@ class TestVaeCacheTraversal(unittest.TestCase):
         self.assertCountEqual(written, expected)
         self.assertEqual(cache._vae_cache_written_count, len(expected))
         self.assertEqual(group_input, [{"wide": [wide1, wide0, restored], "square": [square1, square0]}])
-        self.assertEqual(buckets, original)
+        cache.metadata_backend.iter_preparation_batches.assert_called_once_with(1, 2, 2)
         self.assertTrue(encoded_batches)
         for batch in encoded_batches:
             self.assertEqual(len({bucket for _, bucket in batch}), 1)
