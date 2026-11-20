@@ -183,8 +183,8 @@ def fetch_latent(fp, data_backend_id: str, vae_cache, view=None):
     return latent
 
 
-def deepfloyd_pixels(filepaths, data_backend_id: str, model, *, dataset=None, view=None):
-    """DeepFloyd doesn't use the VAE. We retrieve, normalise, and stack the pixel tensors directly."""
+def pixel_batch(filepaths, data_backend_id: str, model, *, dataset=None, view=None):
+    """Stack normalised pixel tensors for models without an autoencoder."""
     if dataset is None:
         dataset = StateTracker.get_dataset(data_backend_id)
     pixels = []
@@ -261,10 +261,8 @@ def conditioning_pixels(pairs, *, dataset, model, view=None):
 def compute_latents(filepaths, data_backend_id: str, model, *, vae_cache=None, dataset=None, view=None):
     # Use a thread pool to fetch latents concurrently
     try:
-        if "deepfloyd" in StateTracker.get_args().model_family:
-            latents = deepfloyd_pixels(filepaths, data_backend_id, model, dataset=dataset, view=view)
-
-            return latents
+        if getattr(model, "AUTOENCODER_CLASS", None) is None:
+            return pixel_batch(filepaths, data_backend_id, model, dataset=dataset, view=view)
         if vae_cache is None:
             if dataset is None:
                 dataset = StateTracker.get_dataset(data_backend_id)
@@ -607,7 +605,7 @@ def collate_fn(batch, *, dataset=None):
                 record.setdefault("filepath", path)
                 record.setdefault("data_backend_id", batch_backend_id)
                 latent_metadata.append(record)
-    if "deepfloyd" not in StateTracker.get_args().model_family:
+    if getattr(model, "AUTOENCODER_CLASS", None) is not None:
         debug_log("Check latents")
         latent_batch = check_latent_shapes(
             latent_batch, filepaths, batch_backend_id, examples, vae_cache=dataset.vae_cache, view=view

@@ -15,13 +15,15 @@ from simpletuner.helpers.training.collate import (
     collate_fn,
     compute_latents,
     compute_prompt_embeddings,
-    deepfloyd_pixels,
     describe_missing_conditioning_pairs,
+    pixel_batch,
 )
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 
 class _StubModel:
+    AUTOENCODER_CLASS = object
+
     def __init__(
         self,
         requires_conditioning: bool = False,
@@ -545,7 +547,38 @@ class CollateFunctionTests(unittest.TestCase):
         self.assertEqual(latents, ["latent"])
         vae_cache.encode_images.assert_called_once_with([None], ["sample.png"], view=None)
 
-    def test_deepfloyd_reads_ordered_payloads_and_geometry_together(self):
+    def test_models_without_an_autoencoder_train_on_pixels_regardless_of_family(self):
+        dataset = SimpleNamespace(vae_cache=None)
+        pixels = torch.zeros(1, 3, 8, 8)
+        model = SimpleNamespace(AUTOENCODER_CLASS=None)
+        with (
+            patch.object(StateTracker, "get_args", return_value=self.base_args),
+            patch("simpletuner.helpers.training.collate.pixel_batch", return_value=pixels) as read_pixels,
+        ):
+            result = compute_latents(["sample.png"], "backend-1", model, dataset=dataset)
+        self.assertIs(result, pixels)
+        read_pixels.assert_called_once_with(["sample.png"], "backend-1", model, dataset=dataset, view=None)
+
+    def test_pixel_batches_skip_the_latent_cache_check(self):
+        text_outputs = {"prompt_embeds": torch.zeros(1, 1), "pooled_prompt_embeds": torch.zeros(1, 1)}
+        backend_dict = {
+            "text_embed_cache": SimpleNamespace(disabled=False),
+            "data_backend": _make_stub_data_backend(),
+            "config": {"instance_data_dir": "/train"},
+        }
+        model = _StubModel()
+        model.AUTOENCODER_CLASS = None
+        patchers, _ = self._patch_state_tracker(
+            model=model, data_backend=backend_dict, text_outputs=text_outputs, backend_lookup={"backend-1": backend_dict}
+        )
+        with ExitStack() as stack:
+            for patcher in patchers:
+                stack.enter_context(patcher)
+            check = stack.enter_context(patch("simpletuner.helpers.training.collate.check_latent_shapes"))
+            collate_fn(self.base_batch)
+        check.assert_not_called()
+
+    def test_pixel_batch_reads_ordered_payloads_and_geometry_together(self):
         from simpletuner.helpers.metadata.preparation import DatasetReadView
 
         view = DatasetReadView("revision", epoch=3)
@@ -557,7 +590,7 @@ class CollateFunctionTests(unittest.TestCase):
             patch.object(StateTracker, "get_dataset", side_effect=AssertionError("global dataset lookup")),
             patch("simpletuner.helpers.training.collate.TrainingSample", side_effect=samples) as constructor,
         ):
-            pixels = deepfloyd_pixels(["b.png", "a.png", "b.png"], "backend-1", MagicMock(), dataset=dataset, view=view)
+            pixels = pixel_batch(["b.png", "a.png", "b.png"], "backend-1", MagicMock(), dataset=dataset, view=view)
         self.assertEqual(pixels.shape, (3, 3, 8, 8))
         dataset.read_samples.assert_called_once_with(["b.png", "a.png", "b.png"], fields=("image", "metadata"), view=view)
         self.assertEqual([call.kwargs["image_path"] for call in constructor.call_args_list], ["b.png", "a.png", "b.png"])
