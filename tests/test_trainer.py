@@ -2443,6 +2443,16 @@ class TestTrainer(unittest.TestCase):
         ):
             yield
 
+    def test_rollover_clears_exhausted_datasets_only_when_starting_a_new_epoch(self):
+        trainer, _, _, backends = self._rollover_fixture({"1.0": ["sample.jpg"]})
+        self.addCleanup(StateTracker.clear_exhausted_buckets)
+        StateTracker.set_exhausted_backends(["train"])
+        with self._rollover_patches(backends):
+            trainer._epoch_rollover(1)
+            self.assertEqual(StateTracker.exhausted_backends, ["train"])
+            trainer._epoch_rollover(2)
+        self.assertEqual(StateTracker.exhausted_backends, [])
+
     def test_epoch_rollover_keeps_native_geometry_and_rebuilds_only_requested_artifacts(self):
         trainer, metadata, vae_cache, backends = self._rollover_fixture({}, provider=WebshartMetadataBackend)
         metadata.native_policy = "shard_local"

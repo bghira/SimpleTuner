@@ -6008,6 +6008,7 @@ class Trainer:
         StateTracker.set_epoch(epoch)
 
         if self.state["first_epoch"] != epoch:
+            StateTracker.clear_exhausted_buckets()
             datasets = self._training_datasets()
             logger.debug(
                 f"Just completed epoch {epoch - 1}. Beginning epoch {epoch}. Starting epoch was {self.state['first_epoch']}. Final epoch will be {self.config.num_train_epochs}"
