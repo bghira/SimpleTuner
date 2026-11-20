@@ -106,6 +106,51 @@ class TestDatasetScanServiceOutputDir(unittest.TestCase):
         self.assertEqual(resolved, "/var/tmp/simpletuner-scan")
 
 
+class TestActiveConfigKeys(unittest.TestCase):
+    """Saved training configs key their settings as the CLI does; the WebUI's cache paths must resolve as training's."""
+
+    def test_cache_paths_resolve_from_a_cli_style_active_config(self):
+        from simpletuner.simpletuner_sdk.server.routes.dataset_viewer import _get_global_config
+        from simpletuner.simpletuner_sdk.server.services.cache_job_service import CacheJobService
+        from simpletuner.simpletuner_sdk.server.services.configs_service import ConfigsService
+
+        active = {"config": {"--output_dir": "/runs/a", "--model_family": "flux"}}
+        dataset = {"id": "train", "cache_dir_vae": "{output_dir}/cache/vae/{model_family}/{id}"}
+        with patch.object(ConfigsService, "get_active_config", return_value=active):
+            global_config = _get_global_config()
+        self.assertEqual(global_config, {"output_dir": "/runs/a", "model_family": "flux"})
+        expected = "/runs/a/cache/vae/flux/train"
+        self.assertEqual(
+            DatasetScanService.__new__(DatasetScanService)._resolve_vae_cache_dir(dataset, global_config), expected
+        )
+        self.assertEqual(CacheJobService._resolve_cache_dir(dataset["cache_dir_vae"], global_config, dataset), expected)
+
+
+class TestActiveConfigKeysReachCacheRoutes(unittest.TestCase):
+    def test_cache_capabilities_read_the_model_family_of_a_cli_style_config(self):
+        from fastapi.testclient import TestClient
+
+        from simpletuner.simpletuner_sdk.server import ServerMode
+        from simpletuner.simpletuner_sdk.server.services.cache_job_service import CacheJobService
+        from simpletuner.simpletuner_sdk.server.services.configs_service import ConfigsService
+        from tests.unittest_support import APITestCase
+
+        api = APITestCase()
+        api.setUp()
+        self.addCleanup(api.tearDown)
+        client = TestClient(api.create_test_client(ServerMode.TRAINER).app)
+        self.addCleanup(client.close)
+        store = Mock(load=Mock(return_value=([], None, None)), path=Path("plan.json"))
+        with (
+            patch.object(ConfigsService, "get_active_config", return_value={"config": {"--model_family": "flux"}}),
+            patch("simpletuner.simpletuner_sdk.server.routes.datasets._store", return_value=store),
+            patch.object(CacheJobService, "get_capabilities", return_value={"datasets": {}}) as capabilities,
+        ):
+            response = client.get("/api/datasets/cache/capabilities")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(capabilities.call_args.args[0], "flux")
+
+
 def wait_for_scan_cancel(connection, cancelled, *_):
     with connection:
         connection.send({"current": 1, "total": 2})

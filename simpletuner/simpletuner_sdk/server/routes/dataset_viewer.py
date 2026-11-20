@@ -75,13 +75,14 @@ def _require_dataset_config(dataset_id: str) -> Dict[str, Any]:
 
 
 def _get_global_config() -> Dict[str, Any]:
-    """Get global training config values relevant to scanning."""
+    """Get global training config values relevant to scanning, keyed without the CLI's ``--``."""
     try:
         from simpletuner.simpletuner_sdk.server.services.configs_service import ConfigsService
 
-        return ConfigsService().get_active_config().get("config", {})
+        config = ConfigsService().get_active_config().get("config", {})
     except Exception:
         return {}
+    return {key.removeprefix("--"): value for key, value in config.items()}
 
 
 # ---------------------------------------------------------------------------
@@ -763,7 +764,7 @@ def _cache_plan():
 async def get_cache_capabilities(_user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Available cache types based on model family and dataset configuration."""
     datasets, global_config, scope = _cache_plan()
-    model_family = global_config.get("model_family") or global_config.get("--model_family", "")
+    model_family = global_config.get("model_family", "")
 
     from simpletuner.simpletuner_sdk.server.services.cache_job_service import CacheJobService
 
@@ -781,7 +782,7 @@ async def start_cache_job(request: CacheStartRequest, _user: User = Depends(get_
         raise HTTPException(status_code=404, detail=f"Dataset '{request.dataset_id}' not found in plan")
     service = get_cache_service()
     if request.cache_type != "conditioning":
-        model_family = global_config.get("model_family") or global_config.get("--model_family", "")
+        model_family = global_config.get("model_family", "")
         capabilities = service.get_capabilities(model_family, plan, global_config)
         available = capabilities["datasets"].get(request.dataset_id, {}).get(request.cache_type, {})
         if not available.get("prepare"):
