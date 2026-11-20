@@ -863,8 +863,22 @@ class MetadataBackend:
                 )
         return True
 
+    _bucket_split = None
+
+    def refresh_filtered_membership(self):
+        """Reopen the filtered index using the training partition selected at startup."""
+        if self._bucket_split is None and (self.read_only or self.accelerator.num_processes == 1):
+            return
+        rank = self.accelerator.process_index
+        with agree_process_failure(f"(id={self.id}) Filtered membership reload", rank):
+            self.reload_cache(set_config=False)
+        if self._bucket_split is not None:
+            with agree_process_failure(f"(id={self.id}) Filtered bucket partition", rank):
+                self.split_buckets_between_processes(*self._bucket_split)
+
     def split_buckets_between_processes(self, gradient_accumulation_steps=1, apply_padding=False):
         """split bucket contents across processes for distributed training"""
+        self._bucket_split = (gradient_accumulation_steps, apply_padding)
         new_aspect_ratio_bucket_indices = {}
         total_samples = sum([len(bucket) for bucket in self.aspect_ratio_bucket_indices.values()])
         logger.debug(f"Count of items before split: {total_samples}")

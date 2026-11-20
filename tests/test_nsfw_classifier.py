@@ -1,6 +1,6 @@
 import threading
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import numpy as np
 from PIL import Image
@@ -74,6 +74,8 @@ class FakeAccelerator:
 
 
 class FakeMetadataBackend(MetadataBackend):
+    accelerator = FakeAccelerator()
+
     def __init__(self):
         self.read_only = False
         self.filtering_statistics = None
@@ -271,6 +273,25 @@ class VaeNsfwFilterTest(unittest.TestCase):
         self.assertEqual(vae.metadata_backend.saved_cache, {"1.0": ["good.png"], "2.0": ["other.png"]})
         self.assertEqual(vae.image_data_backend.deleted, [bad])
         self.assertEqual(vae._nsfw_scan_report["deleted_images"], 1)
+
+    def test_peer_reloads_and_repartitions_after_another_rank_filters_a_sample(self):
+        vae = make_vae_for_nsfw_filter({}, rejected_paths=set())
+        vae.accelerator.is_main_process = False
+        backend = FakeReadOnlyMetadataBackend({"1.0": ["bad.png"]}, {"1.0": ["good.png"]})
+        backend.accelerator = vae.accelerator
+        backend.accelerator.process_index = 1
+        backend.accelerator.num_processes = 2
+        backend._bucket_split = (2, True)
+        backend.split_buckets_between_processes = Mock()
+        vae.metadata_backend = backend
+        with (
+            patch("simpletuner.helpers.caching.vae.gather_across_processes", return_value=[[{"filepath": "bad.png"}], []]),
+            patch("simpletuner.helpers.caching.vae.broadcast_object_from_main", return_value=True),
+        ):
+            vae._finalize_deferred_metadata_filters()
+
+        self.assertEqual(backend.aspect_ratio_bucket_indices, {"1.0": ["good.png"]})
+        backend.split_buckets_between_processes.assert_called_once_with(2, True)
 
     def test_missing_unsplit_membership_prevents_source_deletion(self):
         bad = "bad.png"

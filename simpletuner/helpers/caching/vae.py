@@ -41,7 +41,13 @@ from simpletuner.helpers.models.wan import compute_wan_posterior
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
 from simpletuner.helpers.training import audio_file_extensions, image_file_extensions, video_file_extensions
 from simpletuner.helpers.training.multi_process import _get_rank as get_rank
-from simpletuner.helpers.training.multi_process import agree_process_failure, gather_across_processes, rank_info, should_log
+from simpletuner.helpers.training.multi_process import (
+    agree_process_failure,
+    broadcast_object_from_main,
+    gather_across_processes,
+    rank_info,
+    should_log,
+)
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.webhooks.events import lifecycle_stage_event
 from simpletuner.helpers.webhooks.mixin import WebhookMixin
@@ -445,13 +451,11 @@ class VAECache(WebhookMixin):
         metadata_backend = self.metadata_backend
         try:
             with metadata_backend.edit_persisted_membership():
-                removed_count = 0
                 for action in actions:
                     filepath = action["filepath"]
                     bucket = action.get("bucket")
                     reason = action.get("reason", "other")
                     if metadata_backend.discard_bucket_membership(filepath, bucket):
-                        removed_count += 1
                         self._record_filter_stat(
                             reason=reason,
                             bucket=bucket,
@@ -460,8 +464,7 @@ class VAECache(WebhookMixin):
                             update_bucket_report=False,
                         )
 
-                if removed_count > 0 or any(action.get("delete_from_backend") for action in actions):
-                    metadata_backend.save_cache(enforce_constraints=False)
+                metadata_backend.save_cache(enforce_constraints=False)
             return True
         except Exception as exc:
             logger.error(
@@ -478,23 +481,20 @@ class VAECache(WebhookMixin):
             with self._metadata_filter_actions_lock:
                 self._deferred_metadata_filter_actions = []
 
-        if not self._is_main_process():
-            if self._is_multi_process():
-                self.accelerator.wait_for_everyone()
-            return
-
         gathered_actions = [
             action
             for action_group in gathered_action_groups
             for action in action_group
             if isinstance(action, dict) and action.get("filepath")
         ]
-        deduplicated_actions = self._deduplicate_filter_actions(gathered_actions)
-        if not deduplicated_actions:
-            if self._is_multi_process():
-                self.accelerator.wait_for_everyone()
+        if not gathered_actions:
             return
+        published = self._publish_filter_actions(gathered_actions) if self._is_main_process() else None
+        if broadcast_object_from_main(published):
+            self.metadata_backend.refresh_filtered_membership()
 
+    def _publish_filter_actions(self, gathered_actions):
+        deduplicated_actions = self._deduplicate_filter_actions(gathered_actions)
         metadata_cache_updated = self._apply_filter_actions_to_metadata_cache(deduplicated_actions)
         if not metadata_cache_updated:
             pending_deletes = sum(1 for action in deduplicated_actions if action.get("delete_from_backend"))
@@ -503,9 +503,7 @@ class VAECache(WebhookMixin):
                     "Skipping %s destructive source delete(s) because the metadata cache could not be updated.",
                     pending_deletes,
                 )
-            if self._is_multi_process():
-                self.accelerator.wait_for_everyone()
-            return
+            return False
 
         deleted_nsfw_images = 0
         for action in deduplicated_actions:
@@ -516,8 +514,7 @@ class VAECache(WebhookMixin):
                     deleted_nsfw_images += 1
         self._nsfw_scan_report["deleted_images"] += deleted_nsfw_images
 
-        if self._is_multi_process():
-            self.accelerator.wait_for_everyone()
+        return True
 
     def _scan_sample_for_nsfw(self, filepath: str, sample, bucket: str, *, exclusions=None) -> bool:
         classifier_store = self._get_nsfw_classifier_store()
