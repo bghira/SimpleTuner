@@ -3109,7 +3109,8 @@ class FactoryRegistry:
             for key, _ in prev_config.items():
                 logger.debug(f"Checking config key: {key}")
                 if key not in excluded_keys and not should_skip_public_config_key(key):
-                    if key in backend and prev_config[key] != backend[key]:
+                    current_value = init_backend["config"].get(key, backend.get(key))
+                    if key in backend and prev_config[key] != current_value:
                         if not self.args.override_dataset_config:
                             logger.error(
                                 f"Dataset {init_backend['id']} has inconsistent config, and --override_dataset_config was not provided."
@@ -3121,7 +3122,7 @@ class FactoryRegistry:
                             backend[key] = prev_config[key]
                         else:
                             warning_log(f"Using the configured value of {key}.")
-                            prev_config[key] = backend[key]
+                            prev_config[key] = current_value
                     elif key not in backend:
                         if should_log():
                             warning_log(

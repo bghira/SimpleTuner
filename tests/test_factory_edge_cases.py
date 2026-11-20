@@ -638,6 +638,38 @@ class TestFactoryEdgeCases(unittest.TestCase):
         result = init_backend_config(backend, self.args, self.accelerator)
         self.assertEqual(result["config"]["instance_data_dir"], "/data/edit")
 
+    def test_config_versioning_compares_normalised_vae_cache_settings(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry, init_backend_config
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        self.enterContext(patch.object(StateTracker, "set_data_backend_config"))
+        factory = FactoryRegistry.__new__(FactoryRegistry)
+        factory.args = self.args
+        self.args.override_dataset_config = False
+        user = {"id": "train", "type": "local", "instance_data_dir": "/data", "vae_cache_disable": True}
+        saved = init_backend_config(dict(user, vae_cache_ondemand=False), self.args, self.accelerator)["config"]
+        self.assertTrue(saved["vae_cache_ondemand"])
+        for current, flagged in (
+            (dict(user, vae_cache_ondemand=False), False),
+            ({**user, "vae_cache_disable": False}, True),
+        ):
+            with self.subTest(current=current):
+                result = init_backend_config(dict(current), self.args, self.accelerator)
+                result["metadata_backend"] = MagicMock(config=deepcopy(saved))
+                result["metadata_backend"].__len__.return_value = 1
+                with patch("simpletuner.helpers.data_backend.factory.logger") as logger:
+                    factory._handle_config_versioning(dict(current), result)
+                self.assertEqual(logger.error.called, flagged)
+
+        self.args.override_dataset_config = True
+        before = init_backend_config({**user, "vae_cache_disable": False}, self.args, self.accelerator)["config"]
+        result = init_backend_config(dict(user, vae_cache_ondemand=False), self.args, self.accelerator)
+        result["metadata_backend"] = MagicMock(config=deepcopy(before))
+        result["metadata_backend"].__len__.return_value = 1
+        factory._handle_config_versioning(dict(user, vae_cache_ondemand=False), result)
+        self.assertTrue(result["metadata_backend"].config["vae_cache_ondemand"])
+        self.args.override_dataset_config = False
+
     def test_webshart_path_filter_reaches_metadata_config(self):
         from simpletuner.helpers.data_backend.factory import init_backend_config
         from simpletuner.helpers.data_backend.filters import build_dataset_filter
