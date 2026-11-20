@@ -19,6 +19,7 @@ from simpletuner.helpers.data_backend.dataset_types import get_arg_value
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.helpers.metadata.preparation import DatasetReadView
+from simpletuner.helpers.metadata.utils.duplicator import DatasetDuplicator
 from simpletuner.helpers.prompts import CaptionNotFoundError, PromptHandler
 from simpletuner.helpers.training import video_file_extensions
 from simpletuner.helpers.training.multi_process import agree_process_failure
@@ -70,6 +71,7 @@ class DatasetRuntime:
         self.training_dataset = None
         self.training_dataloader = None
         self.conditioning_datasets = ()
+        self.metadata_copies = {}
         self.source_dataset = None
         self.audio_datasets = ()
         self.conditioning_image_embed_cache = None
@@ -127,8 +129,33 @@ class DatasetRuntime:
             gradient_accumulation_steps=gradient_accumulation_steps,
             apply_padding=apply_padding,
         )
-        if cache is None:
-            return
+        if rebuilt and self.metadata_copies:
+            accelerator = metadata.accelerator
+            with agree_process_failure(f"(id={self.id}) Source geometry reload", accelerator.process_index):
+                if not accelerator.is_main_process:
+                    metadata.load_image_metadata()
+        if cache is not None:
+            self._refresh_epoch_latents(epoch, rebuilt)
+        if rebuilt and self.metadata_copies:
+            self._refresh_metadata_copies()
+
+    def _refresh_metadata_copies(self):
+        accelerator = self.metadata_backend.accelerator
+        for target, generated in self.metadata_copies.values():
+            with agree_process_failure(f"(id={target.id}) Copied geometry refresh", accelerator.process_index):
+                DatasetDuplicator.copy_metadata(self, target, generated=generated, publish=accelerator.is_main_process)
+            if target.vae_cache is not None:
+                if target.requires_complete_preparation:
+                    target.vae_cache.rebuild_prepared_cache(
+                        target, worker=accelerator.process_index, workers=accelerator.num_processes
+                    )
+                else:
+                    target.vae_cache.rebuild_cache()
+            if target.metadata_copies:
+                target._refresh_metadata_copies()
+
+    def _refresh_epoch_latents(self, epoch, rebuilt):
+        metadata, cache = self.metadata_backend, self.vae_cache
         clear_latents = self.config.get("vae_cache_clear_each_epoch")
         if self.requires_complete_preparation is True:
             accelerator = metadata.accelerator

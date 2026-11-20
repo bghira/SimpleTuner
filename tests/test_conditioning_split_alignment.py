@@ -5,6 +5,7 @@ import unittest
 from copy import deepcopy
 from io import BytesIO
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend
@@ -242,6 +243,42 @@ class TestConditioningSplitAlignment(unittest.TestCase):
 
         DatasetDuplicator.copy_metadata(source, target, generated=generated)
         return training_metadata, conditioning_metadata
+
+    def test_copied_geometry_and_latents_follow_the_source_recrop(self):
+        src, dst = "/source/sample.png", "/conditioning/sample.png"
+        runtimes = []
+
+        def bind(metadata, _, storage, target_store, source, target):
+            runtimes.extend((source, target))
+            metadata.image_metadata = {src: {"crop_coordinates": [0, 0]}}
+            target.vae_cache = Mock()
+
+        source_meta, target_meta = self._prepare_metadata_backends(
+            accelerator=self._init_state(num_processes=1, process_index=0),
+            base_buckets={"1.0": [src]},
+            source_id="source",
+            conditioning_id="conditioning",
+            source_dir="/source",
+            conditioning_dir="/conditioning",
+            conditioning_config_overrides={"conditioning_type": "reference_strict"},
+            before_copy_callback=bind,
+        )
+        source, target = runtimes
+        self.assertEqual(target_meta.image_metadata[dst]["crop_coordinates"], [0, 0])
+
+        def recrop(epoch, **kwargs):
+            source_meta.image_metadata[src] = {"crop_coordinates": [8, 12]}
+            return True
+
+        source_meta.refresh_epoch_geometry = recrop
+        source.prepare_epoch(2, rebuild_random_aspect=True, gradient_accumulation_steps=1, apply_padding=False)
+        self.assertEqual(target_meta.image_metadata[dst]["crop_coordinates"], [8, 12])
+        target.vae_cache.rebuild_cache.assert_called_once_with()
+        target_meta.scan_for_metadata = Mock()
+        target_meta.handle_vae_cache_inconsistencies = Mock()
+        target.scan_cache_and_metadata("recreate")
+        target_meta.scan_for_metadata.assert_not_called()
+        target_meta.handle_vae_cache_inconsistencies.assert_called_once_with(target.vae_cache, "recreate")
 
     def test_generated_preparation_follows_canonical_source_membership_after_training_split(self):
         refs = ["day1/clip.mp4", "day2/clip.mp4", "day3/clip.mp4", "day4/clip.mp4"]

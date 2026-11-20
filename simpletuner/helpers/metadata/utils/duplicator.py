@@ -43,7 +43,7 @@ class DatasetDuplicator:
         return new_path
 
     @staticmethod
-    def copy_metadata(source, target, *, generated=False):
+    def copy_metadata(source, target, *, generated=False, publish=True):
         """Copy metadata from source backend to target backend with path updates."""
         source_meta = source.metadata_backend
         target_meta = target.metadata_backend
@@ -51,8 +51,8 @@ class DatasetDuplicator:
         if source_meta is None or target_meta is None:
             raise ValueError(f"Both backends must have metadata_backend defined. Received {source_meta} \n\n {target_meta}")
 
-        logger.debug("Reloading target metadata cache...")
-        target_meta.reload_cache(set_config=False)
+        if target.id not in source.metadata_copies:
+            target_meta.reload_cache(set_config=False)
 
         # Get the instance directories for path translation
         source_dir = source.instance_data_dir
@@ -93,8 +93,10 @@ class DatasetDuplicator:
             }
 
             # Copy other metadata
-            if hasattr(source_meta, "image_metadata") and source_meta.image_metadata:
-                target_meta.image_metadata = {}
+            if not source_meta.image_metadata and not source_meta.image_metadata_loaded:
+                source_meta.load_image_metadata()
+            target_meta.image_metadata = {}
+            if source_meta.image_metadata:
                 for path, metadata in source_meta.image_metadata.items():
                     new_path = translate(path)
                     copied_metadata = dict(metadata)
@@ -105,6 +107,7 @@ class DatasetDuplicator:
                 logger.debug(f"Copied {len(target_meta.image_metadata)} image_metadata entries")
             else:
                 logger.debug("No image_metadata to copy from source")
+            target_meta.image_metadata_loaded = True
 
             # Copy any other attributes that need to be preserved
             for attr in ["metadata_update_interval", "cache_file_suffix"]:
@@ -152,16 +155,14 @@ class DatasetDuplicator:
 
         target_meta.config = target_config
 
-        if conditioning_data_type == "i2v_first_frame" and hasattr(target_meta, "save_cache"):
+        if publish and conditioning_data_type == "i2v_first_frame" and hasattr(target_meta, "save_cache"):
             target_meta.save_cache()
 
         # Bucket indices may be rank-local here; do not overwrite the canonical target cache.
         target_meta.set_readonly()
-        if hasattr(target_meta, "save_image_metadata"):
+        if publish:
             target_meta.save_image_metadata()
-            logger.debug("Saved image_metadata to disk")
-        else:
-            logger.warning("target_meta does not have save_image_metadata method")
+        source.metadata_copies[target.id] = (target, generated)
 
         logger.info("Metadata copied successfully.")
         source_meta.print_debug_info()
