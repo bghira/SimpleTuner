@@ -839,7 +839,7 @@ _BLUEPRINTS: List[BackendBlueprint] = [
                     "advanced": True,
                 },
                 {
-                    "id": "webshart.cache_dir",
+                    "id": "cache_dir",
                     "label": "dataset cache",
                     "description": "optional hugging face cache directory override",
                     "type": "text",
