@@ -7,6 +7,7 @@ preventing AttributeError crashes during standalone scans.
 """
 
 import unittest
+from unittest.mock import Mock
 
 from simpletuner.simpletuner_sdk.server.services.dataset_scan_service import (
     DatasetScanService,
@@ -226,6 +227,8 @@ class TestScanServiceActiveStatus(unittest.TestCase):
         DatasetScanService._scan_thread = None
 
     def test_returns_status_when_running(self):
+        self.service._scan_thread = Mock()
+        self.service._scan_thread.is_alive.return_value = True
         result = self.service.get_active_status()
         self.assertIsNotNone(result)
         self.assertEqual(result["dataset_id"], "my-dataset")

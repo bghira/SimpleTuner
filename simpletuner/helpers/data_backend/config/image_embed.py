@@ -33,9 +33,8 @@ class ImageEmbedBackendConfig(BaseBackendConfig):
                 compress_arg = getattr(args, "compress_disk_cache", None)
         if compress_arg is not None:
             config.compress_cache = bool(compress_arg)
-            config.config["compress_cache"] = config.compress_cache
 
-        config._apply_memory_backend_settings(backend_dict)
+        config._apply_artifact_storage_settings(backend_dict)
 
         config.apply_defaults(args)
 
@@ -59,7 +58,7 @@ class ImageEmbedBackendConfig(BaseBackendConfig):
         result = {
             "id": self.id,
             "dataset_type": DatasetType.IMAGE_EMBEDS.value,
-            "config": self._memory_backend_settings_dict(),
+            "config": self.config.copy(),
         }
 
         return result

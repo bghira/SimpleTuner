@@ -2,12 +2,16 @@ import hashlib
 import logging
 import os
 import tempfile
+from bisect import bisect_left
+from functools import cached_property
 from io import BytesIO
+from itertools import accumulate, pairwise
 from pathlib import Path
 from typing import Any, BinaryIO, Dict, Optional, Union
 
 import numpy as np
 import torch
+from atomicwrites import atomic_write
 from PIL import Image
 
 try:
@@ -80,12 +84,10 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         self._auto_load = auto_load
 
         self._dataset = None
+        self._source_shard_lengths = None
         self._dataset_loaded = False
         self._loading_dataset = False
 
-        # Virtual file system mapping: index -> virtual path
-        self._path_to_index = {}
-        self._index_to_path = {}
         if should_log():
             logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
         else:
@@ -142,6 +144,13 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
                 download_mode=download_mode,
             )
 
+            source_shard_lengths = None
+            if not self.streaming:
+                split_info = (self.dataset.info.splits or {}).get(self.split)
+                lengths = split_info.shard_lengths if split_info is not None else None
+                if lengths and len(lengths) > 1 and sum(lengths) == len(self.dataset):
+                    source_shard_lengths = tuple(lengths)
+
             # Log the initial size
             if not self.streaming:
                 logger.info(f"Loaded dataset with {len(self.dataset)} items")
@@ -163,8 +172,7 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
                 )
                 logger.info(f"Dataset filtered from {original_size} to {len(self.dataset)} items")
 
-            # Build virtual path mapping
-            self._build_path_mapping()
+            self._source_shard_lengths = source_shard_lengths
             self._dataset_loaded = True
         finally:
             if not self._dataset_loaded:
@@ -408,43 +416,29 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
     @dataset.setter
     def dataset(self, value):
         self._dataset = value
+        self._source_shard_lengths = None
+        self.__dict__.pop("preparation_shards", None)
         self._dataset_loaded = value is not None
 
-    def _build_path_mapping(self):
-        self._ensure_dataset_loaded()
-        self._path_to_index.clear()
-        self._index_to_path.clear()
-        if not self.streaming:
-            dataset_len = len(self.dataset)
-            for idx in range(dataset_len):
-                # Create virtual paths based on composite configuration
-                virtual_path = f"{idx}.{self.file_extension}"
-
-                self._path_to_index[virtual_path] = idx
-                self._index_to_path[idx] = virtual_path
-
-                # Also map the simple format for backwards compatibility
-                simple_path = f"{idx}.{self.file_extension}"
-                if simple_path != virtual_path:
-                    self._path_to_index[simple_path] = idx
-        else:
-            logger.warning("Streaming mode enabled - path mapping will be built on demand")
+    @cached_property
+    def preparation_shards(self):
+        """Logical row ranges aligned with the published Arrow shards of one full split."""
+        dataset = self.dataset
+        if self._source_shard_lengths is None:
+            return None
+        boundaries = accumulate(self._source_shard_lengths, initial=0)
+        # Dataset.filter preserves physical row order. Its Arrow index maps logical rows to physical rows.
+        if dataset._indices is not None:
+            positions = dataset._indices.column("indices")
+            boundaries = (
+                bisect_left(range(len(dataset)), boundary, key=lambda i: positions[i].as_py()) for boundary in boundaries
+            )
+        return tuple(range(start, end) for start, end in pairwise(boundaries))
 
     def _get_index_from_path(self, filepath: str) -> Optional[int]:
-        if isinstance(filepath, Path):
-            filepath = str(filepath)
-
-        # Handle absolute paths by taking just the filename
         basename = os.path.basename(filepath)
-
-        # Try direct lookup first
-        if basename in self._path_to_index:
-            return self._path_to_index[basename]
-
-        # Handle simple format (e.g., "123.{self.file_extension}" -> 123)
         try:
-            index = int(os.path.splitext(basename)[0])
-            return index
+            return int(os.path.splitext(basename)[0])
         except ValueError:
             logger.error(f"Could not extract index from path: {filepath}")
             raise
@@ -509,45 +503,39 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
             auto_load=False,
         )
 
+    _CACHE_EXTENSIONS = (".json", ".pt", ".msgpack", ".safetensors")
+
+    def _scoped_cache_file(self, filepath):
+        path = Path(filepath)
+        if path.suffix == ".json":
+            folder = "huggingface_metadata"
+        elif path.suffix in {".pt", ".safetensors"}:
+            folder = "vae"
+        else:
+            folder = "cache"
+        return Path(self.cache_dir) / folder / self.id / path.name
+
+    def _existing_cache_file(self, filepath):
+        path = Path(filepath)
+        if not path.exists() and self.cache_dir:
+            return self._scoped_cache_file(path)
+        return path
+
+    def open_read_stream(self, identifier):
+        return self._existing_cache_file(identifier).open("rb")
+
     def read(self, location, as_byteIO: bool = False):
         if isinstance(location, Path):
             location = str(location)
 
-        # Handle cache files (.json, .pt, etc.) - these should be read from local filesystem
-        cache_extensions = [".json", ".pt", ".msgpack", ".safetensors"]
-        if any(location.endswith(ext) for ext in cache_extensions):
-            # Try location as-is first (in case it's already a full path)
-            location_path = Path(location)
-            if location_path.exists():
-                with open(location_path, "rb") as f:
-                    data = f.read()
-                if as_byteIO:
-                    return BytesIO(data)
-                return data
-
-            # Otherwise, check standard cache directories based on file type
-            if hasattr(self, "cache_dir") and self.cache_dir:
-                filename = Path(location).name
-
-                # Determine cache directory based on file type (matching write logic)
-                if location.endswith(".json"):
-                    cache_path = Path(self.cache_dir) / "huggingface_metadata" / self.id / filename
-                elif any(location.endswith(ext) for ext in [".pt", ".safetensors"]):
-                    cache_path = Path(self.cache_dir) / "vae" / self.id / filename
-                else:
-                    cache_path = Path(self.cache_dir) / "cache" / self.id / filename
-
-                if cache_path.exists():
-                    with open(cache_path, "rb") as f:
-                        data = f.read()
-                    if as_byteIO:
-                        return BytesIO(data)
-                    return data
-                else:
-                    logger.warning(f"Could not read from location: {cache_path}")
-
-            logger.error(f"Cache file not found: {location}")
-            return None
+        if location.endswith(self._CACHE_EXTENSIONS):
+            try:
+                with self.open_read_stream(location) as stream:
+                    data = stream.read()
+            except FileNotFoundError:
+                logger.error("Cache file not found: %s", location)
+                return None
+            return BytesIO(data) if as_byteIO else data
 
         # Handle virtual dataset files (the existing logic)
         self._ensure_dataset_loaded()
@@ -793,36 +781,21 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
             logger.error(traceback.format_exc())
             raise
 
+    def cache_write_path(self, filepath):
+        path = Path(filepath)
+        if path.is_absolute() and path.parent.is_dir():
+            return path
+        if not self.cache_dir:
+            raise ValueError(f"Cannot write cache file {filepath} - no cache_dir configured for HuggingFace backend")
+        return self._scoped_cache_file(path)
+
     def write(self, filepath: Union[str, Path], data: Any) -> None:
         if isinstance(filepath, Path):
             filepath = str(filepath)
 
-        # Allow writing cache files
-        cache_extensions = [".json", ".pt", ".msgpack", ".safetensors"]
-        if any(filepath.endswith(ext) for ext in cache_extensions):
-            # Determine cache directory based on file path
-            filepath_path = Path(filepath)
-
-            # If it's already an absolute path with a directory, use it
-            if filepath_path.is_absolute() and filepath_path.parent.exists():
-                cache_path = filepath_path
-            else:
-                # Otherwise, create a cache directory structure
-                if not hasattr(self, "cache_dir") or not self.cache_dir:
-                    raise ValueError(f"Cannot write cache file {filepath} - no cache_dir configured for HuggingFace backend")
-
-                # Determine subdirectory based on file type
-                if filepath.endswith(".json"):
-                    cache_subdir = Path(self.cache_dir) / "huggingface_metadata" / self.id
-                elif any(filepath.endswith(ext) for ext in [".pt", ".safetensors"]):
-                    # VAE cache files
-                    cache_subdir = Path(self.cache_dir) / "vae" / self.id
-                else:
-                    # Other cache files
-                    cache_subdir = Path(self.cache_dir) / "cache" / self.id
-
-                cache_subdir.mkdir(parents=True, exist_ok=True)
-                cache_path = cache_subdir / Path(filepath).name
+        if filepath.endswith(self._CACHE_EXTENSIONS):
+            cache_path = self.cache_write_path(filepath)
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
 
             # Write the file
             if filepath.endswith(".json"):
@@ -833,11 +806,11 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
                 elif not isinstance(data, str):
                     data = str(data)
 
-                with open(cache_path, "w") as f:
+                with atomic_write(cache_path, mode="w", encoding="utf-8", overwrite=True) as f:
                     f.write(data)
             else:
                 # Binary data
-                with open(cache_path, "wb") as f:
+                with atomic_write(cache_path, mode="wb", overwrite=True) as f:
                     if isinstance(data, bytes):
                         f.write(data)
                     elif hasattr(data, "save"):
@@ -858,30 +831,8 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         if isinstance(filepath, Path):
             filepath = str(filepath)
 
-        # Check for cache files first
-        cache_extensions = [".json", ".pt", ".msgpack", ".safetensors"]
-        if any(filepath.endswith(ext) for ext in cache_extensions):
-            # Check if it's already a full path
-            filepath_path = Path(filepath)
-            if filepath_path.exists():
-                return True
-
-            # Check standard cache directories based on file type
-            if hasattr(self, "cache_dir") and self.cache_dir:
-                filename = Path(filepath).name
-
-                # Determine cache directory based on file type (matching write logic)
-                if filepath.endswith(".json"):
-                    cache_path = Path(self.cache_dir) / "huggingface_metadata" / self.id / filename
-                elif any(filepath.endswith(ext) for ext in [".pt", ".safetensors"]):
-                    cache_path = Path(self.cache_dir) / "vae" / self.id / filename
-                else:
-                    cache_path = Path(self.cache_dir) / "cache" / self.id / filename
-
-                if cache_path.exists():
-                    return True
-
-            return False
+        if filepath.endswith(self._CACHE_EXTENSIONS):
+            return self._existing_cache_file(filepath).exists()
 
         # For virtual files, check index
         self._ensure_dataset_loaded()
@@ -896,8 +847,9 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
             return True
 
     def delete(self, filepath):
-        logger.warning("Delete operations are not supported for Hugging Face datasets")
-        raise NotImplementedError("Hugging Face datasets are read-only")
+        if Path(filepath).suffix not in self._CACHE_EXTENSIONS:
+            raise NotImplementedError("Hugging Face datasets are read-only except for cache files")
+        self.cache_write_path(filepath).unlink()
 
     def open_file(self, filepath, mode):
         if "w" in mode:
@@ -923,21 +875,14 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
                 result.append((root, dirs, filtered_files))
             return result
 
-        if self.streaming:
-            logger.warning("Cannot list files in streaming mode")
-            return []
+        return [] if self.streaming else [("", [], list(self.iter_file_keys(file_extensions)))]
 
-        # For HF datasets, we use a flat structure (no subdirectories)
-        self._ensure_dataset_loaded()
-        files = []
-        for idx in range(len(self.dataset)):
-            virtual_path = self._index_to_path.get(idx, f"{idx}.{self.file_extension}")
-            if file_extensions:
-                ext = os.path.splitext(virtual_path)[1].lower().strip(".")
-                if ext not in file_extensions:
-                    continue
-            files.append(virtual_path)
-        return [("", [], files)]
+    def iter_file_keys(self, file_extensions=None, instance_data_dir=None):
+        if instance_data_dir:
+            yield from super().iter_file_keys(file_extensions, instance_data_dir)
+        elif not self.streaming and (not file_extensions or self.file_extension in file_extensions):
+            for index in range(len(self.dataset)):
+                yield f"{index}.{self.file_extension}"
 
     def get_abs_path(self, sample_path: str) -> str:
         # for virtual paths, just return if it exists

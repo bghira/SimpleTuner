@@ -3,14 +3,16 @@ import logging
 import os
 import time
 from collections.abc import Sequence
+from contextlib import closing
 from io import BytesIO
+from itertools import batched
 from os.path import splitext
 from typing import Any, Dict, Optional, Union
 
 import boto3
 import torch
 from botocore.config import Config
-from botocore.exceptions import NoCredentialsError, PartialCredentialsError
+from botocore.exceptions import ClientError, NoCredentialsError, PartialCredentialsError
 from torch import Tensor
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
@@ -62,6 +64,8 @@ def normalise_s3_prefixes(prefix: Union[str, Sequence[str], None]) -> tuple[str,
 
 
 class S3DataBackend(BaseDataBackend):
+    supports_artifact_presence_listing = True
+
     # Storing the list_files output in a local dict.
     _list_cache: dict = {}
 
@@ -176,7 +180,11 @@ class S3DataBackend(BaseDataBackend):
             except (NoCredentialsError, PartialCredentialsError) as e:
                 raise e  # Raise credential errors to the caller
             except Exception as e:
-                if "An error occurred (404) when calling the HeadObject operation: Not Found" in str(e):
+                if isinstance(e, ClientError) and e.response.get("Error", {}).get("Code") in {
+                    "404",
+                    "NoSuchKey",
+                    "NotFound",
+                }:
                     return False
                 logger.error(f'Error checking existence of S3 key "{s3_key}": {e}')
                 if i == self.read_retry_limit - 1:
@@ -186,16 +194,28 @@ class S3DataBackend(BaseDataBackend):
 
     def read(self, s3_key):
         """Retrieve and return the content of the file from S3."""
+        return self._read_object(s3_key)
+
+    def _read_object(self, s3_key, *, stream=False):
         for i in range(self.read_retry_limit):
             try:
-                response = self.client.get_object(Bucket=self.bucket_name, Key=str(s3_key))
-                return response["Body"].read()
+                body = self.client.get_object(Bucket=self.bucket_name, Key=str(s3_key))["Body"]
+                if stream:
+                    return body
+                with closing(body):
+                    return body.read()
             except self.client.exceptions.NoSuchKey:
                 logger.debug(f"File {s3_key} does not exist in S3 bucket ({self.bucket_name})")
                 return None
             except (NoCredentialsError, PartialCredentialsError) as e:
                 raise e  # Raise credential errors to the caller
             except Exception as e:
+                if isinstance(e, ClientError) and e.response.get("Error", {}).get("Code") in {
+                    "404",
+                    "NoSuchKey",
+                    "NotFound",
+                }:
+                    return None
                 logger.error(f'Error reading S3 key "{s3_key}": {e}')
                 if i == self.read_retry_limit - 1:
                     raise e
@@ -205,6 +225,12 @@ class S3DataBackend(BaseDataBackend):
     def open_file(self, s3_key, mode):
         """Open the file in the specified mode."""
         return self.read(s3_key)
+
+    def open_read_stream(self, identifier):
+        body = self._read_object(identifier, stream=True)
+        if body is None:
+            raise FileNotFoundError(str(identifier))
+        return closing(body)
 
     def write(self, s3_key, data):
         """
@@ -239,6 +265,18 @@ class S3DataBackend(BaseDataBackend):
                 else:
                     time.sleep(self.write_retry_interval)
 
+    def delete_batch(self, identifiers):
+        """Delete keys in bounded S3 requests, surfacing per-object failures."""
+        for keys in batched(identifiers, 1000):
+            response = self.client.delete_objects(
+                Bucket=self.bucket_name,
+                Delete={"Objects": [{"Key": str(key)} for key in keys], "Quiet": True},
+            )
+            if errors := response.get("Errors"):
+                raise ClientError(
+                    {"Error": errors[0], "ResponseMetadata": response.get("ResponseMetadata", {})}, "DeleteObjects"
+                )
+
     def list_by_prefix(self, prefix=""):
         """List all files under a specific path (prefix) in the S3 bucket."""
         prefixes = normalise_s3_prefixes(prefix)
@@ -256,47 +294,30 @@ class S3DataBackend(BaseDataBackend):
                 keys.append(key)
         return keys
 
-    def list_files(self, file_extensions: list, instance_data_dir: Union[str, Sequence[str], None] = None):
-        results = []
-        if not file_extensions:
-            file_extensions = self._default_file_extensions()
-
-        def splitext_(path):
-            ext = splitext(path)[1].lower()
-            return ext[1:] if ext else ext
-
-        start_time = time.time()
-        paginator = self.client.get_paginator("list_objects_v2")
-        prefix_dict = {}
+    def iter_file_keys(self, file_extensions, instance_data_dir=None):
+        file_extensions = file_extensions or self._default_file_extensions()
         prefixes = normalise_s3_prefixes(instance_data_dir if instance_data_dir not in (None, "") else self.data_prefixes)
-        seen_keys = set()
-
-        logger.debug(
-            f"Listing files in S3 bucket {self.bucket_name} in prefixes {prefixes} with extensions: {file_extensions}"
-        )
-
-        for prefix in prefixes:
+        paginator = self.client.get_paginator("list_objects_v2")
+        for index, prefix in enumerate(prefixes):
+            earlier_prefixes = prefixes[:index]
+            if earlier_prefixes and prefix.startswith(earlier_prefixes):
+                continue
             for page in paginator.paginate(Bucket=self.bucket_name, Prefix=prefix, MaxKeys=1000):
                 for obj in page.get("Contents", []):
                     key = obj.get("Key")
-                    if not key or key in seen_keys:
+                    if not key or key.endswith("/") or key.startswith(earlier_prefixes):
                         continue
-                    seen_keys.add(key)
-                    ext = splitext_(key)
-                    if file_extensions and ext not in file_extensions:
-                        continue
-                    parts = key.split("/")
-                    subdir = "/".join(parts[:-1])
-                    filename = parts[-1]
-                    if not filename:
-                        continue
+                    extension = splitext(key)[1].lower().lstrip(".")
+                    if not file_extensions or extension in file_extensions:
+                        yield key
 
-                    if subdir not in prefix_dict:
-                        prefix_dict[subdir] = []
-                    prefix_dict[subdir].append(key)
-
-        for subdir, files in prefix_dict.items():
-            results.append((subdir, [], files))
+    def list_files(self, file_extensions: list, instance_data_dir: Union[str, Sequence[str], None] = None):
+        start_time = time.time()
+        prefix_dict = {}
+        for key in self.iter_file_keys(file_extensions, instance_data_dir):
+            directory, _, _ = key.rpartition("/")
+            prefix_dict.setdefault(directory, []).append(key)
+        results = [(directory, [], keys) for directory, keys in prefix_dict.items()]
 
         end_time = time.time()
         total_time = end_time - start_time
@@ -467,6 +488,13 @@ class S3DataBackend(BaseDataBackend):
                 else:
                     logging.info(f"Retrying... ({i+1}/{self.read_retry_limit})")
 
+    def read_cached_tensors(self, keys):
+        """Fetch cache hits and misses directly with a bounded number of GETs."""
+        workers = max(1, min(self.max_pool_connections, 16))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+            for batch in batched(keys, workers):
+                yield from pool.map(self.torch_load, batch)
+
     def torch_save(self, data, s3_key):
         """
         Save a torch object (tensor or dict) to S3 using possible compression.
@@ -506,11 +534,15 @@ class S3DataBackend(BaseDataBackend):
             return list(executor.map(self.read, s3_keys))
 
     def bulk_exists(self, s3_keys, prefix=""):
-        """Check the existence of a list of S3 keys in bulk."""
-        objects = self.client.list_objects_v2(Bucket=self.bucket_name, Prefix=prefix)
-        existing_keys = set(obj["Key"] for obj in objects.get("Contents", []))
-
-        return [key in existing_keys for key in s3_keys]
+        """Probe requested keys in order with a bounded number of concurrent HEADs."""
+        keys = iter(s3_keys)
+        workers = max(1, min(self.max_pool_connections, 16))
+        result = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+            for batch in batched(keys, workers):
+                matches = {key: pool.submit(self.exists, key) for key in dict.fromkeys(batch) if str(key).startswith(prefix)}
+                result.extend(key in matches and matches[key].result() for key in batch)
+        return result
 
 
 def test_s3_connection(

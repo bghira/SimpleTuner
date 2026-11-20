@@ -27,7 +27,7 @@ class TextEncoderUnloadTestCase(unittest.TestCase):
         cache = types.SimpleNamespace(text_encoders=["encoder"], pipeline="pipeline")
 
         with (
-            patch("simpletuner.helpers.training.trainer.StateTracker.get_data_backends", return_value={}),
+            patch("simpletuner.helpers.training.trainer.StateTracker.get_datasets", return_value={}),
             patch("simpletuner.helpers.training.trainer.StateTracker.any_text_cache_uses_ondemand", return_value=False),
             patch("simpletuner.helpers.training.trainer.reclaim_memory") as mock_reclaim,
             patch("simpletuner.helpers.training.trainer.TextEmbeddingCache.active_caches", return_value=[cache]),

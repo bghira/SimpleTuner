@@ -20,7 +20,7 @@ class WebUITestCase(SeleniumTestCase):
             shutil.rmtree(self.state_dir)
         if self.config_dir.exists():
             shutil.rmtree(self.config_dir)
-        self.state_dir.mkdir(parents=True)
+        self.state_dir.mkdir(parents=True, exist_ok=True)
         self.config_dir.mkdir()
         (self.state_dir / "onboarding.json").write_text(json.dumps({"steps": {}}), encoding="utf-8")
         self._seed_default_environment()

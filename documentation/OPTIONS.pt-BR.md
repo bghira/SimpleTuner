@@ -2911,13 +2911,9 @@ options:
                         files. This will save substantial disk space, but may
                         slow down the training process
   --aspect_bucket_disable_rebuild [ASPECT_BUCKET_DISABLE_REBUILD]
-                        When using a randomised aspect bucket list, the VAE
-                        and aspect cache are rebuilt on each epoch. With a
-                        large and diverse enough dataset, rebuilding the
-                        aspect list may take a long time, and this may be
-                        undesirable. This option will not override
-                        vae_cache_clear_each_epoch. If both options are
-                        provided, only the VAE cache will be rebuilt
+                        Skip random aspect bucket rebuilding for datasets
+                        with vae_cache_clear_each_epoch enabled. The VAE
+                        cache still refreshes each epoch for those datasets.
   --keep_vae_loaded [KEEP_VAE_LOADED]
                         If set, will keep the VAE loaded in memory. This can
                         reduce disk churn, but consumes VRAM during the
@@ -3192,7 +3188,7 @@ options:
 
 `--distillation_method=assistant_lora` treina um adaptador auxiliar positivo com novas gerações do modelo base, desativando o adaptador e usando datasets de legendas. O suporte inicial é Qwen Image 2.1. `distillation_config.assistant_lora` aceita `num_inference_steps` (40), `resolutions` (`[[1024, 1024]]`, largura e altura, múltiplos de 32) e `seed` (42). Exige embeddings de texto pré-calculados; não armazena latentes finais. Consulte o [guia do Qwen](quickstart/QWEN_IMAGE_2-1.pt-BR.md).
 
-Datasets de legendas exigem `dataloader_prefetch: false` para que o cursor do checkpoint corresponda às legendas consumidas. A retomada rejeita mudanças nos identificadores/textos, lote, repetições, embaralhamento, semente, acumulação ou configuração distribuída. Os checkpoints do auxiliar também rejeitam mudanças na semente de geração, na lista de resoluções ou no número de passos de inferência do professor.
+Datasets de legendas aceitam `dataloader_prefetch: true` quando todos os datasets de treinamento salvam no checkpoint a posição dos lotes consumidos. Isso inclui datasets de legendas, o agendamento nativo do Webshart e os amostradores de imagem, vídeo e áudio que salvam a posição dos lotes consumidos. A retomada rejeita mudanças nos identificadores/textos, lote, repetições, embaralhamento, semente, acumulação ou configuração distribuída. Os checkpoints do auxiliar também rejeitam mudanças na semente de geração, na lista de resoluções ou no número de passos de inferência do professor.
 
 Assistant LoRA e AnyFlow elevam temporariamente o limite do cache de compilação Dynamo por código para pelo menos 32, acomodando variantes do professor, treino e validação. Um limite maior do usuário é preservado; o original é restaurado ao sair, inclusive após erros.
 

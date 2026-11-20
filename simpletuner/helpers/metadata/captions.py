@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import json
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
@@ -38,6 +41,17 @@ class CaptionRecord:
         )
 
 
+def caption_records_revision(records: Iterable[CaptionRecord]) -> str:
+    """Hash the ordered IDs and text in the caption checkpoint format."""
+    digest = hashlib.sha256(b"[")
+    for index, record in enumerate(records):
+        if index:
+            digest.update(b", ")
+        digest.update(json.dumps([record.metadata_id, record.caption_text], ensure_ascii=False).encode("utf-8"))
+    digest.update(b"]")
+    return digest.hexdigest()
+
+
 def normalize_caption_text(value: Any) -> str:
     """
     Convert arbitrary input into a clean caption string.
@@ -55,4 +69,4 @@ def normalize_caption_text(value: Any) -> str:
     return text
 
 
-__all__ = ["CaptionRecord", "normalize_caption_text"]
+__all__ = ["CaptionRecord", "caption_records_revision", "normalize_caption_text"]

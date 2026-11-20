@@ -51,6 +51,11 @@ class LocalDataBackend(BaseDataBackend):
             compress_cache=representation.get("compress_cache", False),
         )
 
+    def read_embedded_audio(self, identifier, *, sample_rate, channels):
+        from simpletuner.helpers.audio import load_audio_from_video
+
+        return load_audio_from_video(identifier, sample_rate, channels)
+
     def read(self, filepath: str, as_byteIO: bool = False) -> Any:
         """Read and return the content of the file."""
         try:
@@ -131,6 +136,13 @@ class LocalDataBackend(BaseDataBackend):
         logger.debug(
             f"LocalDataBackend.list_files: file_extensions={file_extensions}, instance_data_dir={instance_data_dir}"
         )
+        return [(root, [], files) for root, files in self._iter_file_groups(file_extensions, instance_data_dir)]
+
+    def iter_file_keys(self, file_extensions, instance_data_dir=None):
+        for _, keys in self._iter_file_groups(file_extensions, instance_data_dir):
+            yield from keys
+
+    def _iter_file_groups(self, file_extensions, instance_data_dir):
         if not instance_data_dir:
             raise ValueError("instance_data_dir must be specified.")
 
@@ -147,7 +159,6 @@ class LocalDataBackend(BaseDataBackend):
         }
         extensions = tuple(f".{ext.lower().lstrip('.')}" for ext in file_extensions) if file_extensions else None
 
-        path_dict = {}
         seen_directories = set()
         for root, dirs, files in os.walk(instance_data_dir, followlinks=True):
             real_root = os.path.realpath(root)
@@ -164,10 +175,7 @@ class LocalDataBackend(BaseDataBackend):
                     continue
                 matching_files.append(os.path.join(absolute_root, filename))
             if matching_files:
-                path_dict.setdefault(root, []).extend(matching_files)
-
-        results = [(subdir, [], files) for subdir, files in path_dict.items()]
-        return results
+                yield root, matching_files
 
     def get_abs_path(self, sample_path: str) -> str:
         """
@@ -311,9 +319,7 @@ class LocalDataBackend(BaseDataBackend):
         Load a torch tensor from a file.
         """
         if not self.exists(filename):
-            error_msg = f"{filename} not found."
-            logger.error(error_msg)
-            raise FileNotFoundError(error_msg)
+            raise FileNotFoundError(f"{filename} not found.")
 
         try:
             with self.read(filename, as_byteIO=True) as stored_tensor:

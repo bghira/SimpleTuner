@@ -119,8 +119,7 @@ class BatchedTrainingSamples:
 
     def process_aspect_grouped_images(
         self,
-        grouped_data: Dict[str, List[Tuple[str, Any, str]]],
-        metadata_backend=None,
+        grouped_data: Dict[str, List[Tuple[str, Any, Dict[str, Any]]]],
     ) -> List[Tuple[str, np.ndarray, Dict[str, Any]]]:
         processed_results = []
 
@@ -131,46 +130,13 @@ class BatchedTrainingSamples:
                 batch_filepaths = []
                 batch_metadata = []
 
-                for filepath, image, _ in group_data:
+                for filepath, image, metadata in group_data:
                     if isinstance(image, Image.Image):
-                        img_array = np.array(image)
-                        if len(img_array.shape) == 3 and img_array.shape[2] == 3:
-                            batch_images.append(img_array)
-                            batch_filepaths.append(filepath)
-                            # fetch metadata
-                            metadata = None
-                            if metadata_backend:
-                                try:
-                                    metadata = metadata_backend.get_metadata_by_filepath(filepath)
-                                    if self.debug_enabled:
-                                        logger.debug(
-                                            f"Retrieved metadata for {filepath}: "
-                                            f"{'found' if metadata else 'not found'}"
-                                            f"{', keys: ' + str(list(metadata.keys())) if metadata else ''}"
-                                        )
-                                except Exception as e:
-                                    logger.debug(f"Exception getting metadata for {filepath}: {e}")
-                                    metadata = None
-                            batch_metadata.append(metadata or {})
-                        else:
-                            logger.warning(f"Skipping image {filepath} with unexpected shape: {img_array.shape}")
-                    elif isinstance(image, np.ndarray):
+                        image = np.array(image if image.mode == "RGB" else image.convert("RGB"))
+                    if isinstance(image, np.ndarray):
                         batch_images.append(image)
                         batch_filepaths.append(filepath)
-                        metadata = None
-                        if metadata_backend:
-                            try:
-                                metadata = metadata_backend.get_metadata_by_filepath(filepath)
-                                if self.debug_enabled:
-                                    logger.debug(
-                                        f"Retrieved metadata for {filepath}: "
-                                        f"{'found' if metadata else 'not found'}"
-                                        f"{', keys: ' + str(list(metadata.keys())) if metadata else ''}"
-                                    )
-                            except Exception as e:
-                                logger.debug(f"Exception getting metadata for {filepath}: {e}")
-                                metadata = None
-                        batch_metadata.append(metadata or {})
+                        batch_metadata.append(dict(metadata or {}))
 
                 if not batch_images:
                     continue
@@ -247,12 +213,11 @@ class BatchedTrainingSamples:
             except Exception as e:
                 logger.error(f"Error in batch processing for aspect {aspect_bucket}: {e}")
                 # fallback without batch processing
-                for filepath, image, _ in group_data:
+                for filepath, image, metadata in group_data:
                     if isinstance(image, Image.Image):
-                        img_array = np.array(image)
-                        processed_results.append((filepath, img_array, {}))
-                    elif isinstance(image, np.ndarray):
-                        processed_results.append((filepath, image, {}))
+                        image = np.array(image)
+                    if isinstance(image, np.ndarray):
+                        processed_results.append((filepath, image, metadata))
 
         return processed_results
 

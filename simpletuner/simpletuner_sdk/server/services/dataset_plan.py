@@ -11,8 +11,13 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 from pydantic import BaseModel
 
 import simpletuner.helpers.distillation.factory  # noqa: F401
-from simpletuner.helpers.data_backend.config.validators import validate_caption_data_generator
+from simpletuner.helpers.data_backend.config.relationships import DatasetRelationshipError, resolve_dataset_relationships
+from simpletuner.helpers.data_backend.config.validators import (
+    validate_caption_data_generator,
+    validate_webshart_sampling_policy,
+)
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
+from simpletuner.helpers.data_backend.runtime.schedule import dataset_is_active
 from simpletuner.helpers.distillation.registry import DistillationRegistry
 from simpletuner.helpers.distillation.requirements import (
     EMPTY_PROFILE,
@@ -118,6 +123,11 @@ def compute_validations(
         )
         return validations
 
+    try:
+        resolve_dataset_relationships(datasets, authored=True)
+    except DatasetRelationshipError as exc:
+        validations.append(ValidationMessage(field=f"{exc.dataset_id}.{exc.field}", message=str(exc), level="error"))
+
     effective_datasets = [
         (
             {**dataset, "dataset_type": "image"}
@@ -172,6 +182,15 @@ def compute_validations(
                     level="error",
                 )
             )
+        if backend_type.lower() == "webshart":
+            settings = dataset.get("webshart")
+            try:
+                validate_webshart_sampling_policy(settings)
+            except ValueError as error:
+                field = "webshart.sampling_policy" if isinstance(settings, dict) else "webshart"
+                validations.append(
+                    ValidationMessage(field=f"{_normalise_identifier(dataset)}.{field}", message=str(error), level="error")
+                )
         normalized_type = _dataset_type(dataset)
         if dataset.get("data_generator") is not None:
             try:
@@ -405,7 +424,7 @@ def compute_validations(
         dataset
         for dataset in datasets
         if _dataset_type(dataset) in {DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.AUDIO}
-        and not dataset.get("disabled")
+        and not (dataset.get("disabled") or dataset.get("disable"))
     ]
     if training_datasets:
         immediate_datasets = [dataset for dataset in training_datasets if _is_immediately_available(dataset)]
@@ -413,7 +432,7 @@ def compute_validations(
             validations.append(
                 ValidationMessage(
                     field="scheduling",
-                    message="at least one dataset must be available from the start of training (start_epoch <= 1 and start_step <= 0)",
+                    message="at least one dataset must be available from the start of training (start_epoch <= 1 and start_step <= 1)",
                     level="error",
                     suggestion="Set one dataset to use 'Immediate' scheduling mode or set start_epoch=1 and start_step=0",
                 )
@@ -517,16 +536,8 @@ def _dataset_type(dataset: Dict[str, Any]) -> Optional[DatasetType]:
 
 def _is_immediately_available(dataset: Dict[str, Any]) -> bool:
     """Check if a dataset is available from the start of training."""
-    start_epoch = dataset.get("start_epoch")
-    start_step = dataset.get("start_step")
-
-    # Normalize start_epoch: not set or <= 1 means available from epoch 1
-    epoch_ok = start_epoch is None or (isinstance(start_epoch, (int, float)) and start_epoch <= 1)
-
-    # Normalize start_step: not set or <= 0 means available from step 0
-    step_ok = start_step is None or (isinstance(start_step, (int, float)) and start_step <= 0)
-
-    return epoch_ok and step_ok
+    active, _ = dataset_is_active(_normalise_identifier(dataset), dataset, epoch_hint=1, step_hint=0, update_state=False)
+    return active
 
 
 def _resolve_distiller_profile(distillation_method: Optional[str]) -> DistillerRequirementProfile:

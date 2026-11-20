@@ -13,6 +13,11 @@ from .base import BaseBackendConfig
 logger = logging.getLogger("ImageBackendConfig")
 
 
+def local_instance_data_dir(backend: dict) -> str:
+    root = str(backend.get("instance_data_dir") or "").strip()
+    return (root.rstrip("/") or "/") if root else ""
+
+
 @dataclass
 class ImageBackendConfig(BaseBackendConfig):
 
@@ -121,7 +126,10 @@ class ImageBackendConfig(BaseBackendConfig):
 
         config.disabled = backend_dict.get("disabled", backend_dict.get("disable", False))
 
-        config.instance_data_dir = backend_dict.get("instance_data_dir", backend_dict.get("aws_data_prefix", ""))
+        if config.backend_type == "local":
+            config.instance_data_dir = local_instance_data_dir(backend_dict)
+        else:
+            config.instance_data_dir = backend_dict.get("instance_data_dir", backend_dict.get("aws_data_prefix", ""))
         config.aws_data_prefix = backend_dict.get("aws_data_prefix", "")
 
         config.crop = backend_dict.get("crop", False)
@@ -131,6 +139,9 @@ class ImageBackendConfig(BaseBackendConfig):
 
         config.metadata_backend = backend_dict.get("metadata_backend")
         config.caption_strategy = backend_dict.get("caption_strategy")
+        for key in ("only_instance_prompt", "instance_prompt", "prepend_instance_prompt", "disable_multiline_split"):
+            if key in backend_dict:
+                config.config[key] = backend_dict[key]
 
         config.minimum_image_size = backend_dict.get("minimum_image_size", _get_arg("minimum_image_size"))
         config.maximum_image_size = backend_dict.get("maximum_image_size", _get_arg("maximum_image_size"))
@@ -188,7 +199,8 @@ class ImageBackendConfig(BaseBackendConfig):
             config.huggingface_auto_load = hf_block.get("auto_load", backend_dict.get("auto_load"))
 
         if config.backend_type == "webshart":
-            webshart_block = backend_dict.get("webshart", {}) or {}
+            validators.validate_webshart_sampling_policy(backend_dict.get("webshart"))
+            webshart_block = backend_dict.get("webshart") or {}
             config.webshart = webshart_block
             config.webshart_caption_key = webshart_block.get("caption_key")
             validators.validate_webshart_caption_key(config.webshart_caption_key)
@@ -323,8 +335,6 @@ class ImageBackendConfig(BaseBackendConfig):
         self.resolution_type = "area"
 
     def apply_defaults(self, args: Dict[str, Any]) -> None:
-        self._apply_common_defaults(args)
-
         if self.backend_type == "huggingface":
             if self.metadata_backend is None:
                 self.metadata_backend = "huggingface"
@@ -335,6 +345,8 @@ class ImageBackendConfig(BaseBackendConfig):
                 self.metadata_backend = "webshart"
             if self.caption_strategy is None:
                 self.caption_strategy = "webshart"
+
+        self._apply_common_defaults(args)
 
         if self.vae_cache_ondemand:
             self.config["vae_cache_ondemand"] = True
@@ -589,7 +601,7 @@ class ImageBackendConfig(BaseBackendConfig):
             if self.webshart_metadata is not None:
                 config["metadata"] = self.webshart_metadata
             webshart_config = config.setdefault("webshart", {})
-            for key in ("format", "manifest", "columns"):
+            for key in ("format", "manifest", "columns", "sampling_policy"):
                 if key in (self.webshart or {}):
                     webshart_config[key] = self.webshart[key]
             if self.webshart_cache_dir is not None:
@@ -613,5 +625,7 @@ class ImageBackendConfig(BaseBackendConfig):
 
         if self.video is not None:
             config["video"] = self.video
+        if self.parquet is not None:
+            config["parquet"] = self.parquet
 
         return result

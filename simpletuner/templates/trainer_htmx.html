@@ -1826,6 +1826,18 @@ function trainerComponent() {
                 }
             }
             if (dataset.type === 'webshart') {
+                dataset.webshart ||= {};
+                for (const key of ['cache_dir', 'shard_cache_gb', 'parallel_downloads']) {
+                    if (!(key in dataset.webshart) && dataset[key] !== undefined) {
+                        dataset.webshart[key] = dataset[key];
+                    }
+                    delete dataset[key];
+                }
+                for (const key of ['source', 'metadata']) {
+                    if (dataset[key] === undefined && dataset.webshart[key] !== undefined) {
+                        dataset[key] = dataset.webshart[key];
+                    }
+                }
                 if (dataset.caption_strategy !== 'webshart' && dataset.caption_strategy !== 'instanceprompt') {
                     dataset.caption_strategy = 'webshart';
                 }
@@ -2046,6 +2058,17 @@ function trainerComponent() {
                 }
                 if (value.truncation_mode && typeof value.truncation_mode === 'string') {
                     result.truncation_mode = value.truncation_mode;
+                }
+                for (const key of ['source_from_video', 'allow_zero_audio', 'auto_split', 'audio_only']) {
+                    if (value[key] !== undefined && value[key] !== null) result[key] = this.normalizeBoolean(value[key]);
+                }
+                for (const key of ['sample_rate', 'target_resolution']) {
+                    const amount = this._coerceInt(value[key]);
+                    if (Number.isFinite(amount) && amount > 0) result[key] = amount;
+                }
+                for (const key of ['sidecar_match', 'lyrics_extension', 'lyrics_suffix', 'lyrics_filename_format']) {
+                    const text = this._coerceString(value[key]);
+                    if (text) result[key] = text;
                 }
             }
             return result;
@@ -2516,36 +2539,6 @@ function trainerComponent() {
                 return Object.keys(cleaned).length ? cleaned : undefined;
             };
 
-            const sanitizeAudioOptions = (options) => {
-                if (!options || typeof options !== 'object') {
-                    return undefined;
-                }
-                const cleaned = {};
-                const minDuration = this._coerceFloat(options.min_duration_seconds);
-                const maxDuration = this._coerceFloat(options.max_duration_seconds);
-                const durationInterval = this._coerceFloat(options.duration_interval);
-                const channels = this._coerceInt(options.channels);
-                if (Number.isFinite(minDuration) && minDuration > 0) {
-                    cleaned.min_duration_seconds = minDuration;
-                }
-                if (Number.isFinite(maxDuration) && maxDuration > 0) {
-                    cleaned.max_duration_seconds = maxDuration;
-                }
-                if (Number.isFinite(durationInterval) && durationInterval > 0) {
-                    cleaned.duration_interval = durationInterval;
-                }
-                if (Number.isFinite(channels) && channels > 0) {
-                    cleaned.channels = channels;
-                }
-                if (options.bucket_strategy && typeof options.bucket_strategy === 'string' && options.bucket_strategy.trim()) {
-                    cleaned.bucket_strategy = options.bucket_strategy.trim();
-                }
-                if (options.truncation_mode && typeof options.truncation_mode === 'string' && options.truncation_mode.trim()) {
-                    cleaned.truncation_mode = options.truncation_mode.trim();
-                }
-                return Object.keys(cleaned).length ? cleaned : undefined;
-            };
-
             const sanitizeDataset = (dataset) => {
                 const datasetId = dataset?.id ? String(dataset.id) : 'dataset';
                 const cleaned = {};
@@ -2597,7 +2590,9 @@ function trainerComponent() {
                         cleaned.conditioning_data = [];
                     }
                 } else {
-                    delete cleaned.source_dataset_id;
+                    const sourceDatasetId = this._coerceString(dataset.source_dataset_id);
+                    if (sourceDatasetId) cleaned.source_dataset_id = sourceDatasetId;
+                    else delete cleaned.source_dataset_id;
                     delete cleaned.conditioning_type;
                     const links = Array.isArray(cleaned.conditioning_data) ? cleaned.conditioning_data : [];
                     cleaned.conditioning_data = links;
@@ -2625,11 +2620,13 @@ function trainerComponent() {
                     }
                 }
 
+                if (['audio', 'video'].includes(cleaned.dataset_type)) {
+                    const audioOptions = this.normalizeAudioOptions(dataset.audio);
+                    if (Object.keys(audioOptions).length) cleaned.audio = audioOptions;
+                    else delete cleaned.audio;
+                }
+
                 if (cleaned.dataset_type === 'audio') {
-                    const audioOptions = sanitizeAudioOptions(dataset.audio);
-                    if (audioOptions) {
-                        cleaned.audio = audioOptions;
-                    }
                     const dataTransforms = this.normalizeDataTransforms(dataset.data_transforms, datasetId, cleaned.dataset_type);
                     if (dataTransforms.length) {
                         cleaned.data_transforms = dataTransforms;
@@ -3085,12 +3082,31 @@ function trainerComponent() {
                     };
                     assignWebshart('source');
                     assignWebshart('metadata');
-                    const cacheDir = this._coerceString(dataset.cache_dir);
-                    const shardCacheGb = this._coerceFloat(dataset.shard_cache_gb);
-                    const parallelDownloads = this._coerceInt(dataset.parallel_downloads);
-                    const webshart = {};
+                    const options = dataset.webshart || {};
+                    const webshart = this.sanitizeValueForSave(options) || {};
+                    delete webshart.source;
+                    delete webshart.metadata;
+                    for (const key of ['cache_dir', 'metadata_cache_dir', 'shard_cache_dir', 'hf_token', 'subfolder']) {
+                        const value = this._coerceString(options[key] ?? dataset[key]);
+                        if (value) webshart[key] = value;
+                        else delete webshart[key];
+                    }
+                    for (const key of ['parallel_downloads', 'buffer_size', 'max_file_size']) {
+                        const value = this._coerceInt(options[key] ?? dataset[key]);
+                        if (Number.isFinite(value) && value > 0) webshart[key] = value;
+                        else delete webshart[key];
+                    }
+                    const shardCacheGb = this._coerceFloat(options.shard_cache_gb ?? dataset.shard_cache_gb);
+                    if (Number.isFinite(shardCacheGb) && shardCacheGb >= 0) webshart.shard_cache_gb = shardCacheGb;
+                    else delete webshart.shard_cache_gb;
                     const format = this._coerceString(dataset.webshart?.format);
                     if (format) webshart.format = format;
+                    else delete webshart.format;
+                    const samplingPolicy = this._coerceString(dataset.webshart?.sampling_policy);
+                    if (samplingPolicy) webshart.sampling_policy = samplingPolicy;
+                    else delete webshart.sampling_policy;
+                    delete webshart.manifest;
+                    delete webshart.columns;
                     if (format === 'parquet') {
                         const manifest = this._coerceString(dataset.webshart?.manifest);
                         if (manifest) webshart.manifest = manifest;
@@ -3109,15 +3125,9 @@ function trainerComponent() {
                     if (dataset.webshart?.caption_key !== undefined) {
                         webshart.caption_key = this.sanitizeValueForSave(dataset.webshart.caption_key);
                     }
-                    if (cacheDir) {
-                        webshart.cache_dir = cacheDir;
-                    }
-                    if (Number.isFinite(shardCacheGb)) {
-                        webshart.shard_cache_gb = shardCacheGb;
-                    }
-                    if (Number.isFinite(parallelDownloads)) {
-                        webshart.parallel_downloads = parallelDownloads;
-                    }
+                    delete cleaned.cache_dir;
+                    delete cleaned.shard_cache_gb;
+                    delete cleaned.parallel_downloads;
                     if (Object.keys(webshart).length > 0) {
                         cleaned.webshart = webshart;
                     } else {

@@ -56,7 +56,6 @@ class TestValidationEmbedCacheKeys(unittest.TestCase):
                             "simpletuner.helpers.training.validation.StateTracker.get_validation_sample_images",
                             return_value=None,
                         ),
-                        patch("simpletuner.helpers.caching.text_embeds.StateTracker.get_text_cache_files", return_value={}),
                     ):
                         prepare_validation_prompt_list(args, cache, model)
                         cache._encode_text_batch.side_effect = AssertionError("The encoder was unloaded")

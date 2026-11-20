@@ -31,7 +31,8 @@ class BatchDevicePrefetchTests(unittest.TestCase):
 
     @patch("simpletuner.helpers.data_backend.runtime.device_prefetch.torch.cuda.Stream")
     @patch("simpletuner.helpers.data_backend.runtime.device_prefetch.torch.cuda.device")
-    def test_payload_below_threshold_stays_on_cpu(self, cuda_device, stream_factory):
+    @patch("simpletuner.helpers.data_backend.runtime.device_prefetch.torch.cuda.current_stream")
+    def test_payload_below_threshold_stays_on_cpu(self, current_stream, cuda_device, stream_factory):
         cuda_device.return_value = MagicMock()
         prefetcher = CudaBatchPrefetcher(torch.device("cuda:0"), minimum_bytes=1024)
         batch = {"tensor": torch.zeros(4)}
@@ -84,6 +85,29 @@ class BatchDevicePrefetchTests(unittest.TestCase):
         current_stream.return_value.wait_event.assert_called_once_with(ready_event)
         record_stream.assert_called_once_with(device_batch, current_stream.return_value)
         self.assertEqual(prefetcher._pending_sources, [(ready_event, source_batch)])
+
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA stream required")
+    def test_collation_uses_a_separate_cuda_stream_without_host_staging(self):
+        from simpletuner.helpers.data_backend.runtime import batch_fetcher
+
+        device = torch.device("cuda", torch.cuda.current_device())
+        trainer_stream = torch.cuda.current_stream(device)
+        worker_streams = []
+
+        def retrieve(*args):
+            worker_streams.append(torch.cuda.current_stream(device))
+            return {"cuda": torch.arange(4, device=device), "cpu": torch.ones(4)}
+
+        with patch.object(batch_fetcher, "random_dataloader_iterator", retrieve):
+            fetcher = batch_fetcher.BatchFetcher(step=0, max_size=1, datasets={"dataset": {}}, device=device)
+            fetcher.start_fetching()
+            try:
+                result = fetcher.next_response(1)
+                self.assertNotEqual(worker_streams[0], trainer_stream)
+                self.assertEqual(result["cuda"].tolist(), [0, 1, 2, 3])
+                self.assertEqual(result["cpu"].device.type, "cpu")
+            finally:
+                fetcher.close()
 
     def test_prefetch_threshold_field_is_registered(self):
         from simpletuner.simpletuner_sdk.server.services.field_registry.registry import FieldRegistry

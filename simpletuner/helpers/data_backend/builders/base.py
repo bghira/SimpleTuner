@@ -3,14 +3,22 @@
 import logging
 import os
 from abc import ABC, abstractmethod
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict, Optional
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.config.base import BaseBackendConfig
-from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type, resolve_dataset_train_batch_size
+from simpletuner.helpers.data_backend.dataset_types import (
+    DatasetType,
+    ensure_dataset_type,
+    get_arg_value,
+    resolve_dataset_train_batch_size,
+)
 from simpletuner.helpers.data_backend.filters import resolve_filter_config
 
 # Import metadata backends at module load so tests can patch these names.
+from simpletuner.helpers.metadata.backends.aligned_conditioning import AlignedConditioningMetadata
 from simpletuner.helpers.metadata.backends.caption import CaptionMetadataBackend
 from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend as JsonMetadataBackend
 from simpletuner.helpers.metadata.backends.huggingface import HuggingfaceMetadataBackend
@@ -19,6 +27,133 @@ from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBacke
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger("BaseBackendBuilder")
+
+
+def create_metadata_provider(
+    dataset_id,
+    backend_dict,
+    data_backend,
+    accelerator,
+    args,
+    *,
+    instance_data_dir,
+    cache_root,
+    preparation_only=False,
+    bucket_report=None,
+    aligned_source=None,
+    dataset_config=None,
+    model=None,
+):
+    """Construct the resolved metadata provider for a trainer or standalone dataset job."""
+    metadata_backend_args = {}
+    metadata_backend_type = backend_dict.get("metadata_backend") or "discovery"
+    dataset_type = ensure_dataset_type(backend_dict.get("dataset_type"), default=DatasetType.IMAGE)
+    if metadata_backend_type == "filesystem":
+        logger.warning("metadata_backend='filesystem' is deprecated. Use metadata_backend='discovery'.")
+        metadata_backend_type = "discovery"
+    is_caption_dataset = dataset_type is DatasetType.CAPTION
+
+    if aligned_source is not None:
+        MetadataBackendCls = AlignedConditioningMetadata
+        metadata_backend_args["source"] = aligned_source
+        metadata_backend_args["generated"] = backend_dict.get("auto_generated", False)
+    elif metadata_backend_type in {"json", "discovery"}:
+        if is_caption_dataset:
+            MetadataBackendCls = CaptionMetadataBackend
+            metadata_backend_args["caption_ingest_strategy"] = "discovery"
+            caption_extensions = backend_dict.get("caption_file_extensions")
+            if caption_extensions:
+                metadata_backend_args["caption_extensions"] = caption_extensions
+        else:
+            MetadataBackendCls = JsonMetadataBackend
+
+    elif metadata_backend_type == "parquet":
+        caption_ingest_via_parquet = is_caption_dataset
+        MetadataBackendCls = CaptionMetadataBackend if caption_ingest_via_parquet else ParquetMetadataBackend
+        parquet_config = backend_dict.get("parquet")
+        if parquet_config:
+            metadata_backend_args["parquet_config"] = parquet_config
+            if caption_ingest_via_parquet:
+                metadata_backend_args["caption_ingest_strategy"] = "parquet"
+        else:
+            raise ValueError(
+                "Parquet metadata backend requires a 'parquet' field in the backend config containing required fields for configuration."
+            )
+    elif metadata_backend_type == "huggingface":
+        caption_ingest_via_hf = is_caption_dataset
+        MetadataBackendCls = CaptionMetadataBackend if caption_ingest_via_hf else HuggingfaceMetadataBackend
+
+        hf_config = backend_dict.get("huggingface", {})
+        metadata_backend_args["hf_config"] = hf_config
+
+        quality_filter = None
+        filter_config = resolve_filter_config(backend_dict)
+        if filter_config and "quality_thresholds" in filter_config:
+            quality_filter = filter_config["quality_thresholds"]
+
+        if caption_ingest_via_hf:
+            metadata_backend_args["caption_ingest_strategy"] = "huggingface"
+            metadata_backend_args["quality_filter"] = quality_filter
+        else:
+            metadata_backend_args["quality_filter"] = quality_filter
+            metadata_backend_args["dataset_type"] = dataset_type.value
+            metadata_backend_args["split_composite_images"] = backend_dict.get("split_composite_images", False)
+            metadata_backend_args["composite_image_column"] = backend_dict.get("composite_image_column", "image")
+    elif metadata_backend_type == "webshart":
+        if is_caption_dataset:
+            raise ValueError("Webshart metadata backend is not supported for caption-only datasets.")
+        MetadataBackendCls = WebshartMetadataBackend
+        metadata_backend_args["preparation_only"] = preparation_only
+        if (backend_dict.get("webshart") or {}).get("sampling_policy"):
+            model_family = get_arg_value(args, "model_family")
+            if model is None and model_family:
+                from simpletuner.helpers.models.registry import ModelRegistry
+
+                model = ModelRegistry.get(model_family)
+            metadata_backend_args["maximum_canvas_size"] = getattr(model, "MAXIMUM_CANVAS_SIZE", None)
+    else:
+        raise ValueError(f"Unknown metadata backend type: {metadata_backend_type}")
+
+    native_webshart = metadata_backend_type == "webshart" and (backend_dict.get("webshart") or {}).get("sampling_policy")
+    if not is_caption_dataset and not native_webshart and aligned_source is None:
+        data_backend.bind_source_inventory(get_arg_value(args, "output_dir"), bucket_report)
+
+    video_config = backend_dict.get("video", {})
+    train_batch_size = resolve_dataset_train_batch_size(backend_dict, args, dataset_type, dataset_id)
+    return MetadataBackendCls(
+        id=dataset_id,
+        instance_data_dir=instance_data_dir,
+        data_backend=data_backend,
+        accelerator=accelerator,
+        dataset_config=backend_dict if dataset_config is None else dataset_config,
+        runtime_args=SimpleNamespace(**args) if isinstance(args, dict) else args,
+        resolution=backend_dict.get("resolution", get_arg_value(args, "resolution")),
+        minimum_image_size=backend_dict.get("minimum_image_size", get_arg_value(args, "minimum_image_size")),
+        minimum_aspect_ratio=backend_dict.get("minimum_aspect_ratio", None),
+        maximum_aspect_ratio=backend_dict.get("maximum_aspect_ratio", None),
+        minimum_num_frames=video_config.get("min_frames", None),
+        maximum_num_frames=video_config.get("max_frames", None),
+        num_frames=video_config.get("num_frames", None),
+        resolution_type=backend_dict.get("resolution_type", get_arg_value(args, "resolution_type")),
+        batch_size=train_batch_size,
+        metadata_update_interval=backend_dict.get(
+            "metadata_update_interval", get_arg_value(args, "metadata_update_interval")
+        ),
+        cache_file=os.path.join(
+            cache_root,
+            "aspect_ratio_bucket_indices",
+        ),
+        metadata_file=os.path.join(
+            cache_root,
+            "aspect_ratio_bucket_metadata",
+        ),
+        delete_problematic_images=get_arg_value(args, "delete_problematic_images") or False,
+        delete_unwanted_images=backend_dict.get("delete_unwanted_images", get_arg_value(args, "delete_unwanted_images")),
+        cache_file_suffix=backend_dict.get("cache_file_suffix", dataset_id),
+        repeats=backend_dict.get("repeats", 0),
+        max_num_samples=backend_dict.get("max_num_samples"),
+        **metadata_backend_args,
+    )
 
 
 class BaseBackendBuilder(ABC):
@@ -53,105 +188,31 @@ class BaseBackendBuilder(ABC):
         data_backend: BaseDataBackend,
         args: Dict[str, Any],
         instance_data_dir: Optional[str] = None,
+        *,
+        preparation_only: bool = False,
     ) -> Any:
         backend_dict = config.to_dict()["config"]
-        metadata_backend_args = {}
-        metadata_backend_type = config.metadata_backend or backend_dict.get("metadata_backend", "discovery")
-        dataset_type = ensure_dataset_type(getattr(config, "dataset_type", backend_dict.get("dataset_type")))
-        is_caption_dataset = dataset_type is DatasetType.CAPTION
-
-        if metadata_backend_type in {"json", "discovery"}:
-            if is_caption_dataset:
-                MetadataBackendCls = CaptionMetadataBackend
-                metadata_backend_args["caption_ingest_strategy"] = "discovery"
-                caption_extensions = backend_dict.get("caption_file_extensions")
-                if caption_extensions:
-                    metadata_backend_args["caption_extensions"] = caption_extensions
-            else:
-                MetadataBackendCls = JsonMetadataBackend
-
-        elif metadata_backend_type == "parquet":
-            caption_ingest_via_parquet = is_caption_dataset
-            MetadataBackendCls = CaptionMetadataBackend if caption_ingest_via_parquet else ParquetMetadataBackend
-            parquet_config = backend_dict.get("parquet")
-            is_mock_backend = hasattr(MetadataBackendCls, "_mock_children")
-            if parquet_config:
-                metadata_backend_args["parquet_config"] = parquet_config
-                if caption_ingest_via_parquet:
-                    metadata_backend_args["caption_ingest_strategy"] = "parquet"
-            elif not is_mock_backend:
-                raise ValueError(
-                    "Parquet metadata backend requires a 'parquet' field in the backend config containing required fields for configuration."
-                )
-        elif metadata_backend_type == "huggingface":
-            caption_ingest_via_hf = is_caption_dataset
-            MetadataBackendCls = CaptionMetadataBackend if caption_ingest_via_hf else HuggingfaceMetadataBackend
-
-            hf_config = backend_dict.get("huggingface", {})
-            metadata_backend_args["hf_config"] = hf_config
-
-            quality_filter = None
-            filter_config = resolve_filter_config(backend_dict)
-            if filter_config and "quality_thresholds" in filter_config:
-                quality_filter = filter_config["quality_thresholds"]
-
-            if caption_ingest_via_hf:
-                metadata_backend_args["caption_ingest_strategy"] = "huggingface"
-                metadata_backend_args["quality_filter"] = quality_filter
-            else:
-                metadata_backend_args["quality_filter"] = quality_filter
-                metadata_backend_args["split_composite_images"] = backend_dict.get("split_composite_images", False)
-                metadata_backend_args["composite_image_column"] = backend_dict.get("composite_image_column", "image")
-        elif metadata_backend_type == "webshart":
-            if is_caption_dataset:
-                raise ValueError("Webshart metadata backend is not supported for caption-only datasets.")
-            MetadataBackendCls = WebshartMetadataBackend
-        else:
-            raise ValueError(f"Unknown metadata backend type: {metadata_backend_type}")
-
-        if metadata_backend_type != "parquet":
-            is_mock_backend = hasattr(MetadataBackendCls, "_mock_children")
-
         if instance_data_dir is None:
-            instance_data_dir = backend_dict.get(
-                "instance_data_dir", backend_dict.get("csv_cache_dir", backend_dict.get("aws_data_prefix", ""))
-            )
-
-        video_config = config.config.get("video", {})
-        train_batch_size = resolve_dataset_train_batch_size(backend_dict, args, dataset_type, config.id)
-
-        metadata_backend = MetadataBackendCls(
-            id=config.id,
+            if config.backend_type == "webshart":
+                instance_data_dir = config.webshart_cache_dir
+            elif config.backend_type == "csv":
+                instance_data_dir = backend_dict.get("csv_cache_dir")
+            else:
+                instance_data_dir = backend_dict.get("instance_data_dir", backend_dict.get("aws_data_prefix", ""))
+        return create_metadata_provider(
+            config.id,
+            backend_dict,
+            data_backend,
+            self.accelerator,
+            args,
             instance_data_dir=instance_data_dir,
-            data_backend=data_backend,
-            accelerator=self.accelerator,
-            resolution=config.resolution or args.get("resolution"),
-            minimum_image_size=backend_dict.get("minimum_image_size", args.get("minimum_image_size")),
-            minimum_aspect_ratio=backend_dict.get("minimum_aspect_ratio", None),
-            maximum_aspect_ratio=backend_dict.get("maximum_aspect_ratio", None),
-            minimum_num_frames=video_config.get("min_frames", None),
-            maximum_num_frames=video_config.get("max_frames", None),
-            num_frames=video_config.get("num_frames", None),
-            resolution_type=config.resolution_type or args.get("resolution_type"),
-            batch_size=train_batch_size,
-            metadata_update_interval=backend_dict.get("metadata_update_interval", args.get("metadata_update_interval")),
-            cache_file=os.path.join(
-                instance_data_dir,
-                "aspect_ratio_bucket_indices",
-            ),
-            metadata_file=os.path.join(
-                instance_data_dir,
-                "aspect_ratio_bucket_metadata",
-            ),
-            delete_problematic_images=args.get("delete_problematic_images", False),
-            delete_unwanted_images=backend_dict.get("delete_unwanted_images", args.get("delete_unwanted_images")),
-            cache_file_suffix=backend_dict.get("cache_file_suffix", config.id),
-            repeats=config.config.get("repeats", 0),
-            max_num_samples=backend_dict.get("max_num_samples"),
-            **metadata_backend_args,
+            cache_root=instance_data_dir or "",
+            preparation_only=preparation_only,
         )
 
-        return metadata_backend
+    def _default_cache_dir(self, config: BaseBackendConfig) -> Path:
+        root = get_arg_value(self.args, "cache_dir") or os.environ.get("SIMPLETUNER_CACHE_DIR") or "cache"
+        return Path(root).expanduser() / config.backend_type / config.id
 
     def _get_compression_setting(self, config: BaseBackendConfig, args: Optional[Any] = None) -> bool:
         if config.compress_cache is not None:
@@ -160,23 +221,5 @@ class BaseBackendBuilder(ABC):
         if config.config.get("compress_cache") is not None:
             return bool(config.config.get("compress_cache"))
 
-        candidate_args = []
-        if args is not None:
-            candidate_args.append(args)
-        if self.args is not None:
-            candidate_args.append(self.args)
-        tracker_args = StateTracker.get_args()
-        if tracker_args is not None:
-            candidate_args.append(tracker_args)
-
-        for source in candidate_args:
-            if source is None:
-                continue
-            if isinstance(source, dict):
-                if "compress_disk_cache" in source:
-                    return bool(source["compress_disk_cache"])
-            else:
-                if hasattr(source, "compress_disk_cache"):
-                    return bool(getattr(source, "compress_disk_cache"))
-
-        return False
+        default = get_arg_value(self.args, "compress_disk_cache", False)
+        return bool(get_arg_value(args, "compress_disk_cache", default))

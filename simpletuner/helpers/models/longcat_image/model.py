@@ -28,6 +28,7 @@ from simpletuner.helpers.models.longcat_image import pack_latents, prepare_pos_i
 from simpletuner.helpers.models.longcat_image.pipeline import LongCatImagePipeline
 from simpletuner.helpers.models.longcat_image.pipeline_edit import LongCatImageEditPipeline
 from simpletuner.helpers.models.longcat_image.transformer import LongCatImageTransformer2DModel
+from simpletuner.helpers.models.prompt_upsampling import load_prompt_images
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.models.tae.types import ImageTAESpec
 from simpletuner.helpers.training.multi_process import should_log
@@ -520,15 +521,9 @@ class LongCatImage(ImageModelFoundation):
         data_backend_id = context.get("data_backend_id")
         if not image_path or not data_backend_id:
             return None
-        from simpletuner.helpers.training.state_tracker import StateTracker
-
-        backend_entry = StateTracker.get_data_backend(data_backend_id)
-        if backend_entry is None:
-            return None
-        data_backend = backend_entry.get("data_backend")
-        if data_backend is None:
-            return None
-        image = data_backend.read_image(image_path)
+        image = load_prompt_images(
+            [image_path], [data_backend_id], dataset_bindings=context.get("dataset_bindings"), allow_missing=True
+        )[0]
         tensor = self._convert_image_to_tensor(image)
         if tensor is None:
             return None

@@ -35,8 +35,8 @@ class DistillationCacheBackendConfig(BaseBackendConfig):
                 compress_arg = getattr(args, "compress_disk_cache", None)
         if compress_arg is not None:
             config.compress_cache = bool(compress_arg)
-            config.config["compress_cache"] = config.compress_cache
 
+        config._apply_artifact_storage_settings(backend_dict)
         config.apply_defaults(args)
         return config
 
@@ -51,5 +51,5 @@ class DistillationCacheBackendConfig(BaseBackendConfig):
         return {
             "id": self.id,
             "dataset_type": DatasetType.DISTILLATION_CACHE.value,
-            "config": {"distillation_type": self.distillation_type},
+            "config": self.config.copy(),
         }

@@ -149,8 +149,10 @@ def _resolve_huggingface_url_column(dataset_config: Dict[str, Any], hf_block: Di
 
 def resolve_captioning_dataset_source(dataset_config: Dict[str, Any]) -> Dict[str, Any]:
     """Map a SimpleTuner dataset config to CaptionFlow's processor source config."""
+    if dataset_config.get("disabled") or dataset_config.get("disable"):
+        raise ValueError("The dataset is disabled.")
     dataset_type = str(dataset_config.get("dataset_type") or "image").lower()
-    if dataset_type in {"text_embeds", "image_embeds", "audio"}:
+    if dataset_type not in {"image", "video", "conditioning", "eval"}:
         raise ValueError(f"Dataset type '{dataset_type}' is not supported for CaptionFlow captioning")
 
     backend_type = str(dataset_config.get("type") or "local").lower()
@@ -174,6 +176,8 @@ def resolve_captioning_dataset_source(dataset_config: Dict[str, Any]) -> Dict[st
             "revision": dataset_config.get("revision") or hf_block.get("revision"),
         }
 
+    if backend_type != "local":
+        raise ValueError(f"CaptionFlow does not support the '{backend_type}' dataset provider.")
     dataset_path = resolve_captioning_dataset_path(dataset_config)
     return {
         "source_type": LOCAL_FILESYSTEM_SOURCE,

@@ -6,6 +6,7 @@ import logging
 import os
 import random
 import time
+from functools import partial
 from math import sqrt
 
 import numpy as np
@@ -17,7 +18,7 @@ from tqdm import tqdm
 
 from simpletuner.helpers.image_manipulation.batched_training_samples import BatchedTrainingSamples
 from simpletuner.helpers.image_manipulation.cropping import crop_handlers
-from simpletuner.helpers.multiaspect.image import MultiaspectImage, resize_helpers
+from simpletuner.helpers.multiaspect.image import ImageGeometry, MultiaspectImage, resize_helpers
 from simpletuner.helpers.multiaspect.video import resize_video_frames
 from simpletuner.helpers.training.multi_process import should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -38,15 +39,21 @@ class TrainingSample:
         image_path: str = None,
         conditioning_type: str = None,
         model=None,
+        *,
+        data_backend_config: dict | None = None,
+        geometry: ImageGeometry | None = None,
+        rng=None,
     ):
+        self.geometry = geometry
+        self.rng = rng
         # transforms normalize pixels for VAE
         self.model = model
         self.transforms = None
         self.caption = None
         self.batch_processor = BatchedTrainingSamples()
-        if model is None:
+        if model is None and geometry is None:
             self.model = StateTracker.get_model()
-        if self.model is not None:
+        if self.model is not None and (image is not None or geometry is None):
             self.transforms = self.model.get_transforms()
         self.image = image
         self.target_size = None
@@ -54,8 +61,12 @@ class TrainingSample:
         self.original_size = None
         self.conditioning_type = conditioning_type
         self.data_backend_id = data_backend_id
+        self.paired_source: tuple[str, str] | None = None
+        self.dataset_read_view = None
         self.image_metadata = (
-            image_metadata if image_metadata else StateTracker.get_metadata_by_filepath(image_path, data_backend_id)
+            image_metadata
+            if image_metadata or data_backend_config is not None
+            else StateTracker.get_metadata_by_filepath(image_path, data_backend_id)
         )
         if isinstance(image, np.ndarray):
             if len(image.shape) == 4:
@@ -67,22 +78,30 @@ class TrainingSample:
             elif len(image.shape) == 5:
                 raise ValueError(f"Received invalid shape: {image.shape}, expected 4D item instead")
 
-            self.original_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(self.original_size)
+            self.original_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
+                self.original_size, geometry=self.geometry
+            )
         elif hasattr(image, "size"):
             self.original_size = self.image.size
-            self.original_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(self.original_size)
+            self.original_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
+                self.original_size, geometry=self.geometry
+            )
         elif image_metadata is not None:
             self.original_size = image_metadata.get("original_size")
-            self.original_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(self.original_size)
+            self.original_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
+                self.original_size, geometry=self.geometry
+            )
         self.current_size = self.original_size
 
         if not self.original_size:
             raise Exception(f"Original size not found in metadata: {image_metadata}")
 
         # backend config
-        self.data_backend_config = StateTracker.get_data_backend_config(data_backend_id)
+        self.data_backend_config = (
+            StateTracker.get_data_backend_config(data_backend_id) if data_backend_config is None else data_backend_config
+        )
         self.crop_enabled = self.data_backend_config.get("crop", False)
-        self.crop_style = self.data_backend_config.get("crop_style", "random")
+        self.crop_style = self.data_backend_config.get("crop_style", "random") if self.crop_enabled else "center"
         self.crop_aspect = self.data_backend_config.get("crop_aspect", "square")
         self.crop_aspect_buckets = self.data_backend_config.get("crop_aspect_buckets", [])
         self.crop_coordinates = (0, 0)
@@ -90,6 +109,8 @@ class TrainingSample:
         if not crop_handler_cls:
             raise ValueError(f"Unknown crop style: {self.crop_style}")
         self.cropper = crop_handler_cls(image=self.image, image_metadata=image_metadata)
+        if rng is not None:
+            self.cropper.rng = rng
         self.resolution = self.data_backend_config.get("resolution")
         self.resolution_type = self.data_backend_config.get("resolution_type")
         self.target_size_calculator = resize_helpers.get(self.resolution_type)
@@ -98,6 +119,8 @@ class TrainingSample:
             "controlnet",
         ]:
             raise ValueError(f"Unknown resolution type: {self.resolution_type}")
+        if self.target_size_calculator is not None and geometry is not None:
+            self.target_size_calculator = partial(self.target_size_calculator, geometry=geometry)
         self._set_resolution()
         self.target_downsample_size = self.data_backend_config.get("target_downsample_size", None)
         self.maximum_image_size = self.data_backend_config.get("maximum_image_size", None)
@@ -139,9 +162,16 @@ class TrainingSample:
 
     @staticmethod
     def from_image_path(image_path: str, data_backend_id: str):
-        data_backend = StateTracker.get_data_backend(data_backend_id)
-        image = data_backend["data_backend"].read_image(image_path)
-        return TrainingSample(image, data_backend_id, image_path=image_path)
+        dataset = StateTracker.get_dataset(data_backend_id)
+        record = dataset.read_samples([image_path], fields=("image", "metadata"))[0]
+        image = record.pop("image")
+        return TrainingSample(
+            image,
+            data_backend_id,
+            image_path=image_path,
+            image_metadata=record,
+            data_backend_config=dataset.config,
+        )
 
     @staticmethod
     def _path_is_within(path: str, root: str) -> bool:
@@ -152,22 +182,24 @@ class TrainingSample:
         except ValueError:
             return False
 
-    def training_sample_path(self, training_dataset_id: str) -> str:
+    def training_sample_path(self, training_dataset_id: str, *, training_dataset=None, conditioning_dataset=None) -> str:
         """get primary training sample path for conditioning sample"""
-        training_backend = StateTracker.get_data_backend(training_dataset_id)
-        cond_backend = StateTracker.get_data_backend(self.data_backend_id)
-        if training_backend is None:
-            raise ValueError(f"No training dataset registered for backend “{training_dataset_id}”.")
-        training_data_dir = training_backend["config"]["instance_data_dir"]
+        if self.paired_source is not None and self.paired_source[0] == training_dataset_id:
+            return self.paired_source[1]
+        if training_dataset is None:
+            training_dataset = StateTracker.get_dataset(training_dataset_id)
+        training_data_dir = training_dataset.config["instance_data_dir"]
         if isinstance(self.image_metadata, dict) and self.image_metadata.get("training_sample_path"):
             training_sample_path = self.image_metadata["training_sample_path"]
-            if training_data_dir and not os.path.isabs(training_sample_path):
+            if training_data_dir and not os.path.isabs(training_sample_path) and "://" not in training_sample_path:
                 training_sample_path = os.path.join(training_data_dir, training_sample_path)
-            return training_backend["data_backend"].get_abs_path(training_sample_path)
+            return training_dataset.data_backend.get_abs_path(training_sample_path)
         if not self._image_path:
             raise ValueError("Cannot determine training sample path: no image path provided.")
 
-        cond_data_dir = cond_backend["config"]["instance_data_dir"]
+        if conditioning_dataset is None:
+            conditioning_dataset = StateTracker.get_dataset(self.data_backend_id)
+        cond_data_dir = conditioning_dataset.config["instance_data_dir"]
         if os.path.isabs(self._image_path):
             conditioning_root = os.path.abspath(cond_data_dir) if cond_data_dir else None
             if conditioning_root and self._path_is_within(self._image_path, conditioning_root):
@@ -181,7 +213,7 @@ class TrainingSample:
                 relative_path = os.path.relpath(relative_path, cond_data_dir)
             training_sample_path = os.path.join(training_data_dir, relative_path) if training_data_dir else relative_path
 
-        return training_backend["data_backend"].get_abs_path(training_sample_path)
+        return training_dataset.data_backend.get_abs_path(training_sample_path)
 
     def _validate_image_metadata(self) -> bool:
         """check if metadata has required keys to skip calculations
@@ -204,8 +236,15 @@ class TrainingSample:
             self.intermediary_size = self.image_metadata["intermediary_size"]
             self.crop_coordinates = self.image_metadata["crop_coordinates"]
             self.aspect_ratio = self.image_metadata["aspect_ratio"]
+            if self.image_metadata.get("prepared_geometry"):
+                self.original_size = tuple(self.original_size)
+                self.target_size = tuple(self.target_size)
+                self.intermediary_size = tuple(self.intermediary_size)
+                self.crop_coordinates = tuple(self.crop_coordinates)
 
-        self.original_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(self.original_size)
+        self.original_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
+            self.original_size, geometry=self.geometry
+        )
 
         if not self.valid_metadata and hasattr(self.image, "size") and isinstance(self.image, Image.Image):
             self.original_size = self.image.size
@@ -214,6 +253,10 @@ class TrainingSample:
 
     def set_caption(self, caption: str) -> None:
         self.caption = caption
+
+    def _round_size(self, value):
+        alignment = self.geometry.alignment if self.geometry is not None else None
+        return MultiaspectImage._round_to_nearest_multiple(value, alignment)
 
     def _set_resolution(self):
         if self.resolution_type == "pixel":
@@ -245,7 +288,7 @@ class TrainingSample:
             self.target_area = target_area
 
             # Store the pixel value, eg. 1024
-            self.pixel_resolution = int(MultiaspectImage._round_to_nearest_multiple(sqrt(self.target_area)))
+            self.pixel_resolution = int(self._round_size(sqrt(self.target_area)))
             # Store the megapixel value, eg. 1.0
             self.megapixel_resolution = self.resolution
         else:
@@ -300,6 +343,7 @@ class TrainingSample:
 
         # Handle 'random' crop_aspect mode by picking a random aspect ratio based on weights
         if self.crop_aspect == "random":
+            rng = random if self.rng is None else self.rng
             if len(self.crop_aspect_buckets) > 0 and type(self.crop_aspect_buckets[0]) is dict:
                 has_portrait_buckets = any(bucket["aspect"] < 1.0 for bucket in self.crop_aspect_buckets)
                 has_landscape_buckets = any(bucket["aspect"] > 1.0 for bucket in self.crop_aspect_buckets)
@@ -314,7 +358,7 @@ class TrainingSample:
                 if total_weight != 1.0:
                     raise ValueError("The weights of aspect buckets must add up to 1.")
 
-                selected_aspect = random.choices(aspects, weights)[0]
+                selected_aspect = rng.choices(aspects, weights)[0]
                 return selected_aspect
 
             elif len(self.crop_aspect_buckets) > 0 and type(self.crop_aspect_buckets[0]) is float:
@@ -326,7 +370,7 @@ class TrainingSample:
                             "[WARNING] Image dimensions do not fit into the configured aspect buckets. Using square crop."
                         )
                 else:
-                    selected_aspect = random.choice(available_aspects)
+                    selected_aspect = rng.choice(available_aspects)
                 return selected_aspect
 
             else:
@@ -374,19 +418,23 @@ class TrainingSample:
             - crop_coordinates (tuple)
             - aspect_ratio (float)
         """
-        self.save_debug_image(f"images/{time.time()}-0-original.png")
+        has_pixels = self.image is not None
+        if has_pixels:
+            self.save_debug_image(f"images/{time.time()}-0-original.png")
         self.crop()
-        self.save_debug_image(f"images/{time.time()}-1-cropped.png")
+        if has_pixels:
+            self.save_debug_image(f"images/{time.time()}-1-cropped.png")
         if not self.crop_enabled:
-            self.save_debug_image(f"images/{time.time()}-1b-nocrop-resize.png")
+            if has_pixels:
+                self.save_debug_image(f"images/{time.time()}-1b-nocrop-resize.png")
             self.resize()
-            self.save_debug_image(f"images/{time.time()}-2-final-output.png")
+            if has_pixels:
+                self.save_debug_image(f"images/{time.time()}-2-final-output.png")
 
         image = self.image
-        if return_tensor and self.transforms is not None:
+        if has_pixels and return_tensor and self.transforms is not None:
             # Return normalised tensor.
             image = self.transforms(image)
-        webhook_handler = StateTracker.get_webhook_handler()
 
         # For square crops, ensure aspect ratio is exactly 1.0
         final_aspect_ratio = self.aspect_ratio
@@ -402,7 +450,7 @@ class TrainingSample:
             target_size=self.target_size,
             intermediary_size=self.intermediary_size,
         )
-        if webhook_handler:
+        if has_pixels and (webhook_handler := StateTracker.get_webhook_handler()):
             # Send the debug message with the image using send() (following validation pattern)
             webhook_handler.send(
                 message=f"Debug info for prepared sample, {str(prepared_sample)}",
@@ -501,11 +549,13 @@ class TrainingSample:
         new_width = int(width * scale_factor)
         new_height = int(height * scale_factor)
         # Ensure the new dimensions are divisible by 8 or 64, depending on the model's requirements
-        new_width = MultiaspectImage._round_to_nearest_multiple(new_width)
-        new_height = MultiaspectImage._round_to_nearest_multiple(new_height)
+        new_width = self._round_size(new_width)
+        new_height = self._round_size(new_height)
         new_canvas_size = new_width * new_height
         if new_canvas_size > max_size:
-            new_canvas_details = MultiaspectImage.limit_canvas_size(width=new_width, height=new_height, max_size=max_size)
+            new_canvas_details = MultiaspectImage.limit_canvas_size(
+                width=new_width, height=new_height, max_size=max_size, geometry=self.geometry
+            )
             new_width, new_height, new_canvas_size = (
                 new_canvas_details["width"],
                 new_canvas_details["height"],
@@ -594,7 +644,7 @@ class TrainingSample:
                 - The intermediary size as (width, height).
                 - The aspect ratio of the target size. This will likely be different from the original aspect ratio.
         """
-        self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(self.original_size)
+        self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(self.original_size, geometry=self.geometry)
         is_square_crop = False  # Track if we want square output
 
         if self.crop_enabled:
@@ -634,7 +684,7 @@ class TrainingSample:
 
         # Only recalculate aspect ratio if it's not a square crop
         if not is_square_crop:
-            self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(self.target_size)
+            self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(self.target_size, geometry=self.geometry)
         else:
             self.aspect_ratio = 1.0
 
@@ -662,6 +712,20 @@ class TrainingSample:
             self.image = exif_transpose(self.image)
         return self
 
+    def _apply_prepared_crop(self):
+        top, left = self.crop_coordinates
+        width, height = self.target_size
+        right, bottom = left + width, top + height
+        if min(top, left) < 0 or right > self.current_size[0] or bottom > self.current_size[1]:
+            raise ValueError(f"Prepared crop for {self._image_path} exceeds decoded image dimensions.")
+        if isinstance(self.image, Image.Image):
+            self.image = self.image.crop((left, top, right, bottom))
+        else:
+            self.image = self.image[..., top:bottom, left:right, :]
+        self.current_size = (width, height)
+        self.crop_coordinates = (top, left)
+        return self
+
     def crop(self):
         """
         Crop the image using trainingsample batch operations when possible, or crop handler as fallback.
@@ -672,9 +736,15 @@ class TrainingSample:
         """
         if not self.crop_enabled:
             return self
-        self.calculate_target_size()
+        prepared = self.valid_metadata and self.image_metadata.get("prepared_geometry")
+        if not prepared:
+            self.calculate_target_size()
         self._downsample_before_crop()
-        self.save_debug_image(f"images/{time.time()}-0.5-downsampled.png")
+        if self.image is not None:
+            self.save_debug_image(f"images/{time.time()}-0.5-downsampled.png")
+
+        if prepared and self.image is not None and self.crop_style != "face":
+            return self._apply_prepared_crop()
 
         # Try to use trainingsample for efficient cropping when possible
         if self.image is not None and isinstance(self.image, Image.Image) and self.crop_style in ["center", "random"]:
@@ -787,6 +857,8 @@ class TrainingSample:
                         )  # shape (F, H, W, C)
                         self.current_size = (width, height)
                         logger.debug(f"Post resize: {self.current_size} / {self.image.shape}")
+                if self.image is not None and self.valid_metadata and self.image_metadata.get("prepared_geometry"):
+                    return self._apply_prepared_crop()
                 if self.image is not None and self.cropper:
                     self.cropper.set_image(self.image)
                 self.cropper.set_intermediary_size(self.intermediary_size[0], self.intermediary_size[1])
@@ -820,7 +892,9 @@ class TrainingSample:
                 # Only recalculate aspect ratio at final size or when cropping is disabled
                 # During intermediary resize (before crop), aspect_ratio must represent the target post-crop geometry
                 if size == self.target_size or not self.crop_enabled:
-                    self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(self.image.size)
+                    self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
+                        self.image.size, geometry=self.geometry
+                    )
             elif isinstance(self.image, np.ndarray):
                 # we have a video to resize - use trainingsample for videos
                 logger.debug(f"Resizing {self.image.shape} to {size}, ")
@@ -845,7 +919,7 @@ class TrainingSample:
                 # Only recalculate aspect ratio at final size or when cropping is disabled
                 # During intermediary resize (before crop), aspect_ratio must represent the target post-crop geometry
                 if size == self.target_size or not self.crop_enabled:
-                    self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(size)
+                    self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(size, geometry=self.geometry)
                 logger.debug(f"Now {self.image.shape} @ {self.aspect_ratio}")
         self.current_size = size
         return self
@@ -862,9 +936,7 @@ class TrainingSample:
 
     def cache_path(self):
         """get VAE cache path for image"""
-        vae_cache = StateTracker.get_data_backend(self.data_backend_id)["vaecache"]
-
-        return vae_cache.image_path_to_vae_path.get(self._image_path, None)
+        return StateTracker.get_dataset(self.data_backend_id).vae_cache.cache_path_for_image(self._image_path)
 
     def image_path(self, basename_only=False):
         """

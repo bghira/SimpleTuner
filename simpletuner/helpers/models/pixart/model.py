@@ -6,6 +6,7 @@ from typing import Any, Dict
 import torch
 from diffusers import AutoencoderKL
 from peft.utils import get_peft_model_state_dict
+from torch.nn.utils.rnn import pad_sequence
 from transformers import AutoTokenizer, T5EncoderModel
 
 from simpletuner.helpers.acceleration import (
@@ -189,6 +190,21 @@ class PixartSigma(ImageModelFoundation):
         return {
             "prompt_embeds": prompt_embeds,
             "attention_mask": prompt_attention_mask.squeeze(0),
+        }
+
+    def collate_prompt_embeds(self, text_encoder_output: list[dict[str, torch.Tensor]]) -> dict:
+        if not text_encoder_output:
+            return {}
+        embeddings = []
+        masks = []
+        for entry in text_encoder_output:
+            embedding = entry["prompt_embeds"]
+            embeddings.append(embedding.squeeze(0) if embedding.ndim == 3 else embedding)
+            mask = entry.get("attention_masks", entry.get("prompt_attention_mask", entry.get("attention_mask")))
+            masks.append(mask.reshape(-1))
+        return {
+            "prompt_embeds": pad_sequence(embeddings, batch_first=True),
+            "attention_masks": pad_sequence(masks, batch_first=True),
         }
 
     def convert_text_embed_for_pipeline(self, text_embedding: torch.Tensor) -> dict:

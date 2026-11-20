@@ -494,6 +494,8 @@ python scripts/generate_s2v_audio.py \
     --strip-audio
 ```
 
+脚本也会搜索子目录。默认情况下，音频根据视频的文件名（不含扩展名）匹配，并写入同一个目录。使用 `--sidecar-match relative_path` 可保留视频的目录结构，同时在音频数据集条目中设置 `audio.sidecar_match: relative_path`。例如，`speaker-a/clip.mp4` 对应 `speaker-a/clip.wav`。如果两个视频会写入同一个音频文件，脚本将在提取或移除音轨前停止。
+
 该脚本：
 - 以 16kHz 单声道 WAV 提取音频（Wav2Vec2 的原生采样率）
 - 自动匹配文件名（例如，`video.mp4` -> `video.wav`）

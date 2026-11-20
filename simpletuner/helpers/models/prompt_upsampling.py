@@ -4,6 +4,7 @@ import hashlib
 import json
 import math
 from abc import ABC, abstractmethod
+from collections import defaultdict
 from dataclasses import dataclass
 
 import torch
@@ -26,6 +27,22 @@ class PromptUpsampler(ABC):
         """Return one rewritten prompt for each image-generation request."""
 
 
+def load_prompt_images(paths, dataset_ids, *, dataset_bindings=None, allow_missing=False):
+    if len(paths) != len(dataset_ids):
+        raise ValueError("Reference image paths and backend IDs must have equal lengths.")
+    grouped = defaultdict(list)
+    for position, (path, dataset_id) in enumerate(zip(paths, dataset_ids, strict=True)):
+        grouped[dataset_id].append((position, path))
+
+    images = [None] * len(paths)
+    for dataset_id, requests in grouped.items():
+        dataset = StateTracker.get_dataset(dataset_id) if dataset_bindings is None else dataset_bindings[dataset_id]
+        selected = dataset.read_sample_images([path for _, path in requests], allow_missing=allow_missing)
+        for (position, _), image in zip(requests, selected, strict=True):
+            images[position] = image
+    return images
+
+
 def reference_images_from_context(context: dict) -> tuple[Image.Image, ...]:
     images = context.get("reference_images")
     if images is not None:
@@ -36,13 +53,8 @@ def reference_images_from_context(context: dict) -> tuple[Image.Image, ...]:
     if pixels is None:
         paths = context.get("image_paths")
         if paths:
-            backend_ids = context["data_backend_ids"]
-            if len(paths) != len(backend_ids):
-                raise ValueError("Reference image paths and backend IDs must have equal lengths.")
-            return tuple(
-                StateTracker.get_data_backend(backend_id)["data_backend"].read_image(path).convert("RGB")
-                for path, backend_id in zip(paths, backend_ids)
-            )
+            images = load_prompt_images(paths, context["data_backend_ids"], dataset_bindings=context.get("dataset_bindings"))
+            return tuple(image.convert("RGB") for image in images)
 
         return ()
     if torch.is_tensor(pixels):
@@ -159,10 +171,10 @@ class ImagePromptUpsamplingMixin:
             return original_image
         return super().validation_prompt_image_context(original_image, prepared_image)
 
-    def text_embed_cache_metadata_for_filepath(self, *, init_backend, image_path, **kwargs):
+    def text_embed_cache_metadata_for_preparation(self, *, read_metadata, image_path, **kwargs):
         if not self.prompt_upsampling_enabled():
             return {}
-        metadata = init_backend["metadata_backend"].get_metadata_by_filepath(image_path)
+        metadata = read_metadata(image_path)
         size = metadata.get("target_size")
         return {"width": int(size[0]), "height": int(size[1])} if size else {}
 

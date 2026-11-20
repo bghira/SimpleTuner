@@ -1,13 +1,17 @@
 import os
 import unittest
 from contextlib import contextmanager
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from threading import Event, Thread
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import torch
 
+from simpletuner.helpers.caching.artifact_listing import ArtifactListing
 from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
+from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.models.common import TextEmbedCacheKey
 from simpletuner.helpers.training.state_tracker import StateTracker
 
@@ -30,6 +34,9 @@ class _DummyModel:
 
 
 class _DummyDataBackend:
+    bulk_exists = BaseDataBackend.bulk_exists
+    read_cached_tensors = BaseDataBackend.read_cached_tensors
+
     def __init__(self, backend_id="backend"):
         self.id = backend_id
         self.created_paths = []
@@ -124,13 +131,127 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
                 yield {"prompt": prompt, "key": prompt}
 
         progress = []
-        with (
-            patch.object(StateTracker, "get_text_cache_files", side_effect=AssertionError("inventory lookup")),
-            patch.object(cache.data_backend, "list_files", side_effect=AssertionError("storage listing")),
-        ):
+        with patch.object(cache.data_backend, "list_files", side_effect=AssertionError("storage listing")):
             self.assertEqual(cache.precompute_embeddings(records(), batch_size=2, progress_callback=progress.append), 6)
         self.assertEqual(encoded, [["one"], ["two", "three"], ["four"]])
         self.assertEqual(progress[-1], 6)
+
+    def test_offline_index_reuses_listed_hits_and_probes_only_missing_keys(self):
+        cache = _make_cache(TextEmbedCacheKey.CAPTION)
+        cache.model.TEXT_ENCODER_CONFIGURATION = {"text_encoder": {}}
+        records = [{"prompt": prompt} for prompt in ("warm", "warm", "missing")]
+        warm, _, missing = [cache.hash_prompt_with_path(record) for record in records]
+        current = {warm}
+        cache.data_backend.iter_file_keys = MagicMock(side_effect=lambda *_: iter(sorted(current)))
+        cache.data_backend.exists = MagicMock(side_effect=lambda key: key in current)
+
+        def encode(records, **kwargs):
+            current.update(cache.hash_prompt_with_path(record) for record in records)
+
+        cache.compute_prompt_embeddings_with_model = MagicMock(side_effect=encode)
+        with TemporaryDirectory() as output_dir:
+            listing = ArtifactListing(
+                cache.data_backend, cache.cache_dir + "/", output_dir, SimpleNamespace(is_local_main_process=True)
+            )
+            cache.preparation_listing = listing
+            self.assertEqual(cache.precompute_embeddings(records, batch_size=3), 3)
+            self.assertEqual(current, {warm, missing})
+            cache.compute_prompt_embeddings_with_model.assert_called_once()
+            cache.data_backend.exists.assert_called_once_with(missing)
+            cache.data_backend.iter_file_keys.assert_called_once_with(["pt"], cache.cache_dir + "/")
+
+            cache.compute_prompt_embeddings_with_model.reset_mock()
+            cache.data_backend.exists.reset_mock()
+            self.assertEqual(cache.precompute_embeddings(records, batch_size=3), 3)
+            cache.data_backend.exists.assert_called_once_with(missing)
+            cache.compute_prompt_embeddings_with_model.assert_not_called()
+            cache.data_backend.iter_file_keys.assert_called_once()
+
+            cache.finish_preparation()
+            self.assertFalse(listing.path.exists())
+
+            current.remove(warm)
+            cache.preparation_listing = ArtifactListing(
+                cache.data_backend, cache.cache_dir + "/", output_dir, SimpleNamespace(is_local_main_process=True)
+            )
+            cache.data_backend.exists.reset_mock()
+            self.assertEqual(cache.precompute_embeddings(records, batch_size=3), 3)
+            cache.data_backend.exists.assert_called_once_with(warm)
+            cache.compute_prompt_embeddings_with_model.assert_called_once()
+            cache.close()
+
+    def test_encode_only_skips_existing_artifacts_and_batches_duplicate_prompts(self):
+        cache = _make_cache(TextEmbedCacheKey.CAPTION, text_cache_encode_only=True, text_encoder_batch_size=2)
+        self.assertTrue(cache.text_cache_ondemand)
+        self.assertIsNone(cache.batch_write_thread)
+        cache.data_backend.exists = cache.data_backend.torch_load = cache.data_backend.torch_save = MagicMock(
+            side_effect=AssertionError("encode-only mode accessed the artifact store")
+        )
+        cache.model.unpack_text_embeddings_from_cache = lambda value: value
+        cache.model.encode_text_batch = MagicMock(return_value={"value": torch.tensor([1, 2])})
+        with patch.object(cache.data_backend, "list_files", side_effect=AssertionError("cache inventory")):
+            result = cache.read_training_batch(["one", "two", "one"])
+        self.assertEqual([record["value"].item() for record in result], [1, 2, 1])
+        cache.model.encode_text_batch.assert_called_once()
+        self.assertEqual(cache.data_backend.created_paths, [])
+        cache.close()
+
+    def test_precomputed_batch_returns_cache_hits_and_surfaces_missing_entries(self):
+        cache = _make_cache(TextEmbedCacheKey.CAPTION)
+        cache.model.unpack_text_embeddings_from_cache = lambda value: value
+        cache.model.encode_text_batch = MagicMock(side_effect=AssertionError("precomputed cache encoded a prompt"))
+        cache.data_backend.exists = lambda key: key == cache.hash_prompt_with_path({"prompt": "cached"})
+        cache.data_backend.torch_load = MagicMock(return_value={"value": torch.tensor(7)})
+
+        result = cache.read_training_batch(["cached", "cached"])
+        self.assertEqual([entry["value"].item() for entry in result], [7, 7])
+        cache.data_backend.torch_load.assert_called_once()
+        with self.assertRaisesRegex(FileNotFoundError, "Missing precomputed text embedding"):
+            cache.read_training_batch(["missing"])
+        cache.model.encode_text_batch.assert_not_called()
+
+    def test_direct_prompt_batch_returns_cache_misses_on_the_same_device_as_hits(self):
+        cache = _make_cache(TextEmbedCacheKey.CAPTION, text_cache_ondemand=True)
+        cache.accelerator.device = torch.device("meta")
+        cache.model.TEXT_ENCODER_CONFIGURATION = {"text_encoder": {}}
+        cache.model.encode_text_batch = MagicMock(return_value={"prompt_embeds": torch.ones(1, 2)})
+        cache.model.unpack_text_embeddings_from_cache = lambda value: value
+        cache.model.collate_prompt_embeds = lambda rows: {"prompt_embeds": torch.cat([row["prompt_embeds"] for row in rows])}
+        cache.load_from_cache = MagicMock(side_effect=[{"prompt_embeds": torch.zeros(1, 2)}, FileNotFoundError()])
+        cache.save_to_cache = MagicMock()
+
+        mixed = cache.compute_embeddings_for_prompts(["hit", "miss"])
+
+        torch.testing.assert_close(mixed["prompt_embeds"], torch.tensor([[0.0, 0.0], [1.0, 1.0]]))
+        for encode_only, load_from_cache in ((False, False), (True, True)):
+            with self.subTest(encode_only=encode_only, load_from_cache=load_from_cache):
+                cache.text_cache_encode_only = encode_only
+                direct = cache.compute_embeddings_for_prompts(["encode"], load_from_cache=load_from_cache)
+                self.assertEqual(direct["prompt_embeds"].device, cache.accelerator.device)
+
+    def test_online_mixed_hits_batch_misses_preserve_context_duplicates_and_read_only(self):
+        cache = _make_cache(TextEmbedCacheKey.DATASET_AND_FILENAME, text_cache_disable=True, text_encoder_batch_size=2)
+        contexts = [{"image_path": f"{index}.jpg"} for index in range(3)]
+        records = [{"prompt": "caption", "key": str(index), "metadata": context} for index, context in enumerate(contexts)]
+        cached = cache.hash_prompt_with_path(records[1])
+        cache.data_backend.read_cached_tensors = MagicMock(
+            side_effect=lambda keys: ({"value": torch.tensor([99])} if key == cached else None for key in keys)
+        )
+        cache.data_backend.exists = MagicMock(side_effect=AssertionError("bypassed artifact provider batch read"))
+        cache.model.requires_text_embed_image_context = lambda: True
+        cache.model.pack_text_embeddings_for_cache = MagicMock(side_effect=lambda value: value)
+        cache.model.unpack_text_embeddings_from_cache = lambda value: value
+        cache.model.encode_text_batch = MagicMock(return_value={"value": torch.tensor([2, 0])})
+        cache._queue_packed = MagicMock(side_effect=AssertionError("writes disabled"))
+        with patch.object(cache.data_backend, "list_files", side_effect=AssertionError("inventory")):
+            result = cache.read_training_batch([records[2], records[1], records[0], records[2]])
+        self.assertEqual([r["value"].item() for r in result], [2, 99, 0, 2])
+        requested = next(iter(cache.data_backend.read_cached_tensors.call_args.args))
+        self.assertEqual(list(requested), [cache.hash_prompt_with_path(records[index]) for index in (2, 1, 0)])
+        cache.model.encode_text_batch.assert_called_once_with(
+            ["caption", "caption"], is_negative_prompt=False, prompt_contexts=[contexts[2], contexts[0]]
+        )
+        self.assertEqual(cache.model.pack_text_embeddings_for_cache.call_count, 2)
 
     def test_precompute_uses_model_batching_and_completes_writes(self):
         cache = _make_cache(TextEmbedCacheKey.CAPTION, text_encoder_batch_size=2)
@@ -139,7 +260,10 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
             TEXT_ENCODER_CONFIGURATION = {"text_encoder": {}}
 
             def encode_text_batch(self, prompts, **kwargs):
-                return {"prompt_embeds": torch.ones(len(prompts), 2, 3)}
+                return {
+                    "prompt_embeds": torch.ones(len(prompts), 2, 3),
+                    "attention_mask": torch.ones(len(prompts), 2).squeeze(0),
+                }
 
             def unpack_text_embeddings_from_cache(self, embeddings):
                 return embeddings
@@ -152,7 +276,15 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
         self.assertEqual(cache.precompute_embeddings(records, batch_size=2), 3)
         self.assertEqual(len(stored), 3)
         self.assertTrue(all(value["prompt_embeds"].shape == (1, 2, 3) for value in stored.values()))
+        cached = cache.hash_prompt_with_path({"prompt": "three"})
+        self.assertEqual(stored[cached]["attention_mask"].shape, (2,))
         cache.wait_for_pending_writes.assert_called()
+
+        cache.text_cache_ondemand = cache.text_cache_disable = True
+        cache.data_backend.read_cached_tensors = lambda keys: (stored.get(key) for key in keys)
+        online = cache.read_training_batch(["unknown", "three", "unknown"])
+        self.assertEqual([entry["attention_mask"].shape for entry in online], [(2,), (2,), (2,)])
+        self.assertTrue(torch.equal(online[0]["prompt_embeds"], online[1]["prompt_embeds"]))
 
     def test_precompute_cancellation_stops_source_consumption(self):
         cache = _make_cache(TextEmbedCacheKey.CAPTION)
@@ -184,9 +316,8 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
         cache.compute_prompt_embeddings_with_model = lambda records, **kwargs: calls.append(len(records))
         marker = Marker()
         reference = weakref.ref(marker)
-        with patch.object(StateTracker, "get_text_cache_files", return_value={}):
-            cache.compute_embeddings_for_prompts([{"prompt": "one", "metadata": {"marker": marker}}], return_concat=False)
-            cache.compute_embeddings_for_prompts([], return_concat=False)
+        cache.compute_embeddings_for_prompts([{"prompt": "one", "metadata": {"marker": marker}}], return_concat=False)
+        cache.compute_embeddings_for_prompts([], return_concat=False)
         del marker
         gc.collect()
         self.assertIsNone(reference())
@@ -354,6 +485,67 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
 
         self.assertEqual(first, second)
 
+    def test_filtered_embeddings_use_the_effective_caption_for_offline_and_online_access(self):
+        with TemporaryDirectory() as directory:
+            filter_file = Path(directory) / "filters.txt"
+            filter_file.write_text("s/blue/red\nmarker \n")
+            offline = _make_cache(TextEmbedCacheKey.CAPTION, caption_filter_list=str(filter_file))
+            filter_file.write_text("s/blue/green\nmarker \n")
+            online = _make_cache(TextEmbedCacheKey.CAPTION, caption_filter_list=str(filter_file), text_cache_disable=True)
+
+        plain = _make_cache(TextEmbedCacheKey.CAPTION)
+        prompt = {"prompt": "blue bird"}
+        duplicate = {"prompt": "marker red bird"}
+        legacy_name = plain.hash_prompt_with_path(prompt)
+        offline_name = offline.hash_prompt_with_path(prompt)
+        self.assertEqual(offline_name, offline.hash_prompt_with_path(duplicate))
+        self.assertNotEqual(offline_name, legacy_name)
+        self.assertNotEqual(offline_name, online.hash_prompt_with_path(prompt))
+        final_input_unchanged = {"prompt": "bird"}
+        self.assertNotEqual(
+            offline.hash_prompt_with_path(final_input_unchanged), plain.hash_prompt_with_path(final_input_unchanged)
+        )
+
+        stored = {legacy_name: {"value": torch.tensor(-1)}}
+        offline.model.TEXT_ENCODER_CONFIGURATION = {"text_encoder": {}}
+        offline.model.encode_text_batch = MagicMock(return_value={"value": torch.tensor(1)})
+        offline.model.unpack_text_embeddings_from_cache = lambda value: value
+        offline.data_backend.exists = lambda key: key in stored
+        offline.data_backend.torch_load = stored.__getitem__
+        offline.save_to_cache = lambda key, value: stored.update({key: value})
+
+        online.model.unpack_text_embeddings_from_cache = lambda value: value
+        online.model.encode_text_batch = MagicMock(return_value={"value": torch.tensor(2)})
+        online.data_backend.read_cached_tensors = lambda keys: (stored.get(key) for key in keys)
+
+        with patch.object(StateTracker, "get_data_backend_config", side_effect=AssertionError("looked up filter globally")):
+            self.assertEqual(offline.precompute_embeddings([prompt, duplicate]), 2)
+            self.assertEqual(offline.read_training_batch([prompt, duplicate])[1]["value"].item(), 1)
+            self.assertEqual(online.read_training_batch([prompt])[0]["value"].item(), 2)
+        self.assertIn(offline_name, stored)
+        offline.model.encode_text_batch.assert_called_once_with(["red bird"], is_negative_prompt=False, prompt_contexts=[{}])
+        online.model.encode_text_batch.assert_called_once_with(
+            ["green bird"], is_negative_prompt=False, prompt_contexts=[{}]
+        )
+
+    def test_filtered_path_keys_keep_context_and_special_prompt_identity(self):
+        filtered = _make_cache(TextEmbedCacheKey.DATASET_AND_FILENAME, caption_filter_list=["s/^/prefix "])
+        plain = _make_cache(TextEmbedCacheKey.DATASET_AND_FILENAME)
+        filtered.model.text_embed_cache_context_key = MagicMock(return_value="context")
+        record = {"prompt": "bird", "key": "dataset:sample.jpg", "metadata": {"width": 512}}
+        filename, prompt = filtered._embedding_input(record)
+        self.assertEqual(prompt, "prefix bird")
+        self.assertNotEqual(filename, filtered.hash_prompt_with_path({**record, "key": "dataset:other.jpg"}))
+        filtered.model.text_embed_cache_context_key.assert_any_call(record["metadata"], prompt="prefix bird")
+
+        plain.model.text_embed_cache_context_key = lambda metadata, prompt: "context"
+        dropout = {"prompt": "", "key": "__caption_dropout__"}
+        self.assertEqual(filtered.hash_prompt_with_path(dropout), plain.hash_prompt_with_path(dropout))
+        negative = {"prompt": "bird", "key": "__validation_negative__bird"}
+        self.assertEqual(
+            filtered._embedding_input(negative, is_negative_prompt=True), (plain.hash_prompt_with_path(negative), "bird")
+        )
+
     def test_path_keyed_empty_prompt_preserves_sentinel_hash(self):
         cache = _make_cache(TextEmbedCacheKey.DATASET_AND_FILENAME)
         record = {"prompt": "", "key": "__caption_dropout__"}
@@ -406,8 +598,7 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
             ["dataset-1:path/to/sample.png:0", "dataset-1:path/to/sample.png:1"],
         )
 
-    @patch("simpletuner.helpers.caching.text_embeds.StateTracker.get_text_cache_files", return_value={})
-    def test_compute_embeddings_caches_each_uncached_path_keyed_prompt(self, _mock_cache_files):
+    def test_compute_embeddings_caches_each_uncached_path_keyed_prompt(self):
         cache = _make_cache(TextEmbedCacheKey.DATASET_AND_FILENAME)
         saved = []
         cache.save_to_cache = lambda filename, embeddings: saved.append((filename, embeddings))
@@ -460,8 +651,7 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
         )
         self.assertEqual(len(saved), 2)
 
-    @patch("simpletuner.helpers.caching.text_embeds.StateTracker.get_text_cache_files", return_value={})
-    def test_compute_embeddings_does_not_resplit_rank_local_records(self, _mock_cache_files):
+    def test_compute_embeddings_does_not_resplit_rank_local_records(self):
         cache = _make_cache(TextEmbedCacheKey.CAPTION)
         cache.split_prompt_records_between_processes = MagicMock(return_value=[])
         cache.save_to_cache = MagicMock()
@@ -497,8 +687,7 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
         self.assertEqual(cache.model.encode_text_batch.call_count, 2)
         self.assertEqual(cache.save_to_cache.call_count, 2)
 
-    @patch("simpletuner.helpers.caching.text_embeds.StateTracker.get_text_cache_files", return_value={})
-    def test_compute_embeddings_waits_for_inflight_cache_write(self, _mock_cache_files):
+    def test_compute_embeddings_waits_for_inflight_cache_write(self):
         write_started = Event()
         release_write = Event()
         backend = _DummyDataBackend()
@@ -571,11 +760,38 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
             cache.process_write_batches = False
             cache.batch_write_thread.join(timeout=2)
 
+    def test_tensor_byte_budget_includes_inflight_storage_and_an_oversized_view(self):
+        cache = _make_cache(TextEmbedCacheKey.CAPTION, write_budget_bytes=64)
+        started, release = Event(), Event()
+
+        def save(data, path):
+            started.set()
+            release.wait(timeout=5)
+
+        cache.data_backend.torch_save = save
+        # One scalar still pins 128 bytes of tensor storage.
+        cache._queue_packed("one", {"value": torch.zeros(32)[:1]})
+        self.assertTrue(started.wait(timeout=2))
+        queued = Thread(target=cache._queue_packed, args=("two", {"value": torch.zeros(16)}))
+        try:
+            queued.start()
+            queued.join(timeout=0.1)
+            self.assertTrue(queued.is_alive())
+            self.assertEqual(cache.peak_write_bytes, 128)
+        finally:
+            release.set()
+            queued.join(timeout=2)
+            cache.close()
+        self.assertEqual(cache.pending_write_bytes, 0)
+        self.assertEqual(cache.peak_write_bytes, 128)
+        with self.assertRaisesRegex(RuntimeError, "closed"):
+            cache._queue_packed("late", {})
+
     def test_wait_for_pending_writes_reports_background_failure(self):
         cache = _make_cache(TextEmbedCacheKey.CAPTION)
         cache.process_write_batch = MagicMock(side_effect=OSError("disk write failed"))
         cache.process_write_batches = False
-        cache.write_queue.put(({}, "failed.pt"))
+        cache.write_queue.put(({}, "failed.pt", 0))
 
         with self.assertLogs("TextEmbeddingCache", level="ERROR"):
             cache.batch_write_embeddings()
@@ -584,8 +800,7 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
             cache.wait_for_pending_writes()
         self.assertIsInstance(context.exception.__cause__, OSError)
 
-    @patch("simpletuner.helpers.caching.text_embeds.StateTracker.get_text_cache_files", return_value={})
-    def test_validation_encode_marks_model_context(self, _mock_cache_files):
+    def test_validation_encode_marks_model_context(self):
         cache = _make_cache(TextEmbedCacheKey.CAPTION)
         cache.save_to_cache = MagicMock()
 

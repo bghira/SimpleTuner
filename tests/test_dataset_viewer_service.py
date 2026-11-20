@@ -1,11 +1,14 @@
 """Tests for DatasetViewerService cache file discovery and summary generation."""
 
 import base64
-import hashlib
 import io
 import json
+import os
+import shutil
+import subprocess
 import tempfile
 import unittest
+import wave
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from unittest.mock import MagicMock, patch
@@ -13,11 +16,515 @@ from unittest.mock import MagicMock, patch
 from PIL import Image
 
 from simpletuner.simpletuner_sdk.server.services.dataset_viewer_service import (
+    DatasetFileMutationUnavailable,
+    DatasetViewChanged,
     DatasetViewerService,
     _data_backend_cache,
     generate_thumbnail,
     generate_thumbnail_from_pil,
 )
+
+
+class TestWebshartMembershipPages(unittest.TestCase):
+    def test_native_caption_and_preview_are_read_with_prepared_source_pins(self):
+        from simpletuner.helpers.metadata.backends.webshart_geometry import snapshot_path, stage_geometry
+        from simpletuner.helpers.metadata.backends.webshart_membership import publish_indexed_membership
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = {
+                "id": "images",
+                "type": "webshart",
+                "caption_strategy": "webshart",
+                "webshart": {"source": "s3://example", "cache_dir": directory, "format": "parquet"},
+            }
+            metadata = root / "geometry.json"
+            ref = "webshart://0/0/data/0000.jpg"
+            with stage_geometry(metadata) as (writer, staging):
+                writer.pin_shard(0, "pinned-object")
+                writer.add("square", ref, {"original_size": [32, 32]}, shard=0)
+                writer.finish()
+                writer.db.commit()
+                revision = writer.digest.hexdigest()
+                staging.replace(snapshot_path(metadata, revision))
+            publication = root / "aspect_ratio_bucket_indices_source_0123456789abcdef_images.json"
+            publish_indexed_membership(
+                publication,
+                {
+                    "view_revision": revision,
+                    "source_revision": "catalogue",
+                    "source_pins": True,
+                    "geometry_name": metadata.name,
+                    "geometry_sha256": revision,
+                    "geometry_format": "sqlite-v1",
+                    "bucket_counts": {"square": 1},
+                    "config": config,
+                },
+            )
+
+            service = DatasetViewerService(project_root=root)
+            backend = MagicMock()
+            backend.dataset.fingerprint = "catalogue"
+            pins = []
+            backend.dataset.bind_source_revisions.side_effect = pins.append
+
+            def caption(path):
+                self.assertEqual(path, ref)
+                self.assertEqual(pins[-1](0), "pinned-object")
+                return ["first", "alternate"]
+
+            def image(paths):
+                self.assertEqual(paths, [ref])
+                self.assertEqual(pins[-1](0), "pinned-object")
+                return [ref], [Image.new("RGB", (32, 32), "red")]
+
+            backend.get_caption.side_effect = caption
+            backend.read_image_batch.side_effect = image
+            with patch.object(service, "_create_data_backend", return_value=backend):
+                entry = service.get_file_metadata(config, ref, view_revision=revision)
+                self.assertEqual(entry.caption, "first\nalternate")
+                self.assertIsNone(pins[-1])
+                self.assertIsNotNone(service.get_image_preview(config, ref, metadata=entry.model_dump()))
+                self.assertIsNone(service.get_image_preview(config, "webshart://0/1/data/other.jpg", view_revision=revision))
+                self.assertIsNone(pins[-1])
+                thumbnails = service.get_dataset_thumbnails(config, view_revision=revision)
+                self.assertIsNotNone(thumbnails[0].thumbnail)
+                self.assertIsNone(pins[-1])
+                self.assertTrue(service._get_thumbnail_cache_path(config, ref, revision).exists())
+                self.assertFalse(service._get_thumbnail_cache_path(config, ref).exists())
+                self.assertEqual(backend.read_image_batch.call_count, 2)
+                service.get_dataset_thumbnails(config, view_revision=revision)
+                self.assertEqual(backend.read_image_batch.call_count, 2)
+                backend.dataset.fingerprint = "new-catalogue"
+                with self.assertRaisesRegex(DatasetViewChanged, "catalogue changed"):
+                    service.get_file_metadata(config, ref, view_revision=revision)
+
+    def test_latest_matching_catalogue_is_selected_across_publications(self):
+        from simpletuner.helpers.metadata.backends.webshart_membership import write_membership
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = {
+                "id": "images",
+                "type": "webshart",
+                "webshart": {
+                    "source": "s3://example",
+                    "cache_dir": directory,
+                    "format": "parquet",
+                    "manifest": "capture.json",
+                },
+            }
+
+            def publish(fingerprint, ref, order, source_config):
+                path = root / f"aspect_ratio_bucket_indices_source_{fingerprint}_images.json"
+                write_membership(path, {"square": [ref]}, {"source_revision": fingerprint, "config": source_config})
+                os.utime(path, ns=(order, order))
+                return path
+
+            service = DatasetViewerService(project_root=root)
+            old = publish("z", "old.jpg", 1_000_000_000, config)
+            selected = service.get_dataset_summary(config).view_revision
+            publish("a", "new.jpg", 2_000_000_000, config)
+            other = {**config, "webshart": {**config["webshart"], "manifest": "other.json"}}
+            publish("later", "other.jpg", 3_000_000_000, other)
+
+            summary = service.get_dataset_summary(config)
+            self.assertEqual(summary.source_revision, "a")
+            self.assertEqual(service.get_dataset_files(config, view_revision=summary.view_revision).files, ["new.jpg"])
+            self.assertEqual(service.get_dataset_files(other).files, ["other.jpg"])
+            with self.assertRaises(DatasetViewChanged):
+                service.get_dataset_files(config, view_revision=selected)
+            self.assertTrue(old.is_file())
+
+    def test_incomplete_webshart_scan_is_isolated_from_other_dataset_summaries(self):
+        import asyncio
+
+        from simpletuner.helpers.metadata.backends.webshart_membership import write_membership
+        from simpletuner.simpletuner_sdk.server.routes import dataset_viewer
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = {
+                "id": "images",
+                "type": "webshart",
+                "webshart": {"source": "s3://example", "cache_dir": directory, "format": "parquet"},
+            }
+            local = {"id": "local", "type": "local", "instance_data_dir": directory}
+            (root / "aspect_ratio_bucket_indices_local.json").write_text(
+                json.dumps({"aspect_ratio_bucket_indices": {"square": ["local.jpg"]}})
+            )
+            path = root / "aspect_ratio_bucket_indices_source_123_images.json"
+            write_membership(path, {"square": ["partial.jpg"]}, {"config": config, "scan_in_progress": True})
+
+            service = DatasetViewerService(project_root=root)
+            with (
+                patch.object(dataset_viewer, "_load_plan", return_value=[config, local]),
+                patch.object(dataset_viewer, "_get_viewer_service", return_value=service),
+            ):
+                native, legacy = asyncio.run(dataset_viewer.get_viewer_summaries())
+            self.assertTrue(native.scan_incomplete)
+            self.assertIsNone(native.accepted_samples)
+            self.assertEqual(legacy.accepted_samples, 1)
+            self.assertEqual(service.get_dataset_files(config).files, [])
+            with self.assertRaises(DatasetViewChanged):
+                service.get_dataset_files(config, view_revision="previous")
+
+            write_membership(path, {"square": ["ready.jpg"]}, {"config": config})
+            ready = service.get_dataset_summary(config)
+            self.assertTrue(ready.has_cache)
+            self.assertFalse(ready.scan_incomplete)
+            self.assertEqual(service.get_dataset_files(config, view_revision=ready.view_revision).files, ["ready.jpg"])
+
+    def test_native_caption_health_uses_admission_provenance_without_reading_rows(self):
+        from simpletuner.helpers.metadata.backends.webshart_membership import write_membership
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = {
+                "id": "images",
+                "type": "webshart",
+                "caption_strategy": "webshart",
+                "only_instance_prompt": True,
+                "instance_prompt": "shared prompt",
+                "webshart": {"source": "s3://example", "cache_dir": directory, "format": "parquet"},
+            }
+            path = root / "aspect_ratio_bucket_indices_source_123_images.json"
+            properties = {"config": config}
+            service = DatasetViewerService(project_root=root)
+
+            with patch.object(service, "get_dataset_files", side_effect=AssertionError("caption inventory")):
+                write_membership(path, {"square": ["caption-missing.jpg"]}, properties)
+                old = service.get_caption_status(config)
+                self.assertIsNone(old.captioned_files)
+                self.assertIsNone(old.coverage_ratio)
+
+                properties["source_captions_required"] = False
+                write_membership(path, {"square": ["caption-missing.jpg"]}, properties)
+                status = service.get_caption_status(config)
+                self.assertEqual(status.total_files, 1)
+                self.assertIsNone(status.captioned_files)
+                self.assertIsNone(status.coverage_ratio)
+
+                properties["config"] = {**config, "only_instance_prompt": False}
+                properties["source_captions_required"] = True
+                write_membership(path, {"square": ["caption-present.jpg"]}, properties)
+                status = service.get_caption_status(properties["config"])
+                self.assertEqual(status.captioned_files, 1)
+                self.assertEqual(status.coverage_ratio, 1.0)
+
+    def test_published_pages_are_bounded_and_survive_replacement(self):
+        from simpletuner.helpers.metadata.backends.webshart_membership import MembershipPages, write_membership
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = {
+                "id": "images",
+                "type": "webshart",
+                "webshart": {
+                    "source": "s3://example",
+                    "cache_dir": directory,
+                    "format": "parquet",
+                    "manifest": "capture.json",
+                },
+            }
+            path = root / "aspect_ratio_bucket_indices_source_0123456789abcdef_images.json"
+            refs = [f'path/{i} "snow 雪"\n' for i in range(900)]
+            buckets = {"empty": [], "square": refs, "wide": ["repeat", "repeat", "last"]}
+            write_membership(path, buckets, {"config": config})
+            self.assertEqual(json.loads(path.read_text())["aspect_ratio_bucket_indices"], buckets)
+            service = DatasetViewerService(project_root=root)
+            with (
+                patch.object(service, "_load_cache", side_effect=AssertionError("full JSON read")),
+                path.open("rb") as source,
+            ):
+                old = MembershipPages.open(source)
+                for key, offset, limit, expected, total in [
+                    ("square", 255, 3, refs[255:258], 900),
+                    (None, 899, 8, [refs[-1], *buckets["wide"]], 903),
+                    ("wide", 1, 1, ["repeat"], 3),
+                    ("missing", 1, 8, [], 0),
+                    (None, 0, 0, [], 903),
+                    (None, 2000, 1, [], 903),
+                ]:
+                    page = service.get_dataset_files(config, bucket_key=key, offset=offset, limit=limit)
+                    self.assertEqual((page.files, page.total), (expected, total))
+                self.assertEqual(service.get_dataset_summary(config).total_files, 903)
+                with patch.object(service, "get_dataset_files", side_effect=AssertionError("caption inventory")):
+                    coverage = service.get_caption_status({**config, "caption_strategy": "filename"})
+                    self.assertEqual((coverage.captioned_files, coverage.coverage_ratio), (903, 1.0))
+                    coverage = service.get_caption_status({**config, "caption_strategy": "csv"})
+                    self.assertIsNone(coverage.coverage_ratio)
+                with patch.object(old.source, "readline", wraps=old.source.readline) as lines:
+                    self.assertEqual(old.read_page(None, 868, 3), (refs[868:871], 903))
+                    self.assertEqual(lines.call_count, 1)
+                self.assertEqual(list(old.partition(6, 7)), refs[774:] + buckets["wide"])
+                write_membership(path, {"square": ["new"]}, {"config": config})
+                self.assertEqual(old.read_page(None, 900, 3)[0], buckets["wide"])
+                with self.assertRaises(DatasetViewChanged):
+                    service.get_dataset_files(config, view_revision=old.header["view_revision"])
+                new_page = service.get_dataset_files(config)
+                self.assertEqual(new_page.files, ["new"])
+                self.assertEqual(service.get_dataset_files(config, view_revision=new_page.view_revision), new_page)
+                other = {**config, "webshart": {**config["webshart"], "manifest": "another.json"}}
+                self.assertFalse(service.get_dataset_summary(other).has_cache)
+
+    def test_conditioning_queries_page_native_views_and_apply_exclusions(self):
+        import sqlite3
+        from contextlib import closing
+
+        from simpletuner.helpers.metadata.backends.webshart_exclusions import Exclusions, _publish
+        from simpletuner.helpers.metadata.backends.webshart_geometry import snapshot_path, stage_geometry
+        from simpletuner.helpers.metadata.backends.webshart_membership import MembershipPages, publish_indexed_membership
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            service = DatasetViewerService(project_root=root)
+            configs = []
+            refs = [f"webshart://{i}/0/image.jpg" for i in range(5)]
+            for name, accepted in [("source", refs[:4]), ("conditioning", refs[1:])]:
+                config = {"id": name, "type": "webshart", "webshart": {"cache_dir": directory, "format": "parquet"}}
+                configs.append(config)
+                metadata = root / f"geometry-{name}.json"
+                publication = root / f"aspect_ratio_bucket_indices_source_test_{name}.json"
+                with stage_geometry(metadata, shards_per_partition=2) as (writer, staging):
+                    pruned = refs[0] if name == "conditioning" else refs[-1]
+                    for partition, start in enumerate(range(0, len(refs), 2)):
+                        with writer.stage_partition(partition) as (group, part):
+                            for shard, ref in enumerate(refs[start : start + 2], start):
+                                if ref in accepted or ref == pruned:
+                                    group.add(
+                                        "pruned" if ref == pruned else "wide", ref, {"original_size": [8, 16]}, shard=shard
+                                    )
+                        writer.adopt_partition(partition, part)
+                    writer.finish()
+                    digest = writer.digest.hexdigest()
+                    writer.db.commit()
+                    writer.publish(metadata)
+                    staging.replace(snapshot_path(metadata, digest))
+                publish_indexed_membership(
+                    publication,
+                    {
+                        "view_revision": digest,
+                        "bucket_counts": {"wide": len(accepted)},
+                        "config": config,
+                        "geometry_format": "sqlite-v1",
+                        "geometry_partition_shards": 2,
+                        "geometry_name": metadata.name,
+                        "geometry_sha256": digest,
+                    },
+                )
+            with publication.open("rb") as source, closing(sqlite3.connect("")) as db:
+                pages = MembershipPages.open(source)
+                ledger = Exclusions(db)
+                ledger.add(refs[2], "wide", "nsfw")
+                _publish(publication, pages.header["view_revision"], db)
+            self.assertEqual(service.get_dataset_summary(configs[1]).total_files, 3)
+            self.assertEqual(service.get_file_metadata(configs[1], refs[4]).original_size, [8, 16])
+            filtered_page = service.get_dataset_files(configs[1], bucket_key="wide", offset=1, limit=1)
+            self.assertEqual((filtered_page.files, filtered_page.total), ([refs[3]], 3))
+            with self.assertRaises(DatasetViewChanged):
+                service.get_file_metadata(configs[1], refs[4], view_revision=pages.header["view_revision"])
+            metadata = service.get_file_metadata(configs[1], refs[4], view_revision=filtered_page.view_revision)
+            self.assertEqual(metadata.view_revision, filtered_page.view_revision)
+            self.assertFalse(metadata.metadata_editable)
+            for action, args in (
+                (service.update_crop_coordinates, (configs[1], refs[4], [0, 0])),
+                (service.update_bbox_entities, (configs[1], refs[4], [])),
+                (service.rebuild_file_metadata, (configs[1], {}, refs[4])),
+                (service.delete_vae_cache_file, (configs[1], refs[4])),
+            ):
+                with self.subTest(action=action.__name__):
+                    with self.assertRaises(DatasetViewChanged):
+                        action(*args, view_revision=pages.header["view_revision"])
+                    with self.assertRaisesRegex(DatasetFileMutationUnavailable, "Rescan"):
+                        action(*args, view_revision=filtered_page.view_revision)
+            with patch.object(service, "get_dataset_files", side_effect=AssertionError("unbounded listing")):
+                report = service.get_conditioning_pairs(*configs, offset=1, limit=2)
+                self.assertEqual(report["pairs"], [{"source_path": refs[1], "conditioning_path": refs[1]}])
+                self.assertEqual((report["source_total"], report["total_pairs"]), (4, None))
+                self.assertEqual(report["conditioning_view_revision"], filtered_page.view_revision)
+                self.assertIsNotNone(report["source_view_revision"])
+                self.assertEqual(
+                    service.get_conditioning_pairs(
+                        *configs,
+                        offset=1,
+                        limit=2,
+                        source_view_revision=report["source_view_revision"],
+                        conditioning_view_revision=report["conditioning_view_revision"],
+                    ),
+                    report,
+                )
+                for key in ("source_view_revision", "conditioning_view_revision"):
+                    with self.subTest(key=key), self.assertRaises(DatasetViewChanged):
+                        service.get_conditioning_pairs(*configs, **{key: "replaced-view"})
+                orphans = service.get_orphaned_files(*configs)
+                self.assertEqual((orphans.source_orphans, orphans.conditioning_orphans), ([refs[0], refs[2]], [refs[4]]))
+                self.assertEqual(service.get_conditioning_pairs(configs[0], {"type": "local"})["scope"], "unavailable")
+                from PIL import Image
+
+                image = root / "image.png"
+                Image.new("RGB", (8, 8)).save(image)
+                local = {
+                    "id": "frames",
+                    "type": "local",
+                    "instance_data_dir": directory,
+                    "conditioning_config": {"type": "i2v_first_frame"},
+                }
+                linked = {**configs[0], "conditioning_data": ["frames"]}
+                match = service.get_conditioning_file_match(linked, [local], refs[1])
+                self.assertEqual(match["file_path"], str(image.resolve()))
+                self.assertIsNone(service.get_conditioning_file_match(linked, [local], refs[-1]))
+
+
+class TestPreviewSourceScope(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("ffmpeg"), "ffmpeg is required for media preview")
+    def test_remote_audio_preview_uses_provider_stream_and_renders_short_clips(self):
+        service = DatasetViewerService()
+        config = {"id": "audio", "type": "aws", "aws_data_prefix": "clips/"}
+        audio = io.BytesIO()
+        with wave.open(audio, "wb") as stream:
+            stream.setparams((1, 2, 8000, 0, "NONE", "not compressed"))
+            stream.writeframes(b"\x00\x00" * 80)
+        audio.seek(0)
+        backend = MagicMock()
+        backend.open_read_stream.return_value = audio
+        with patch.object(service, "_get_or_create_data_backend", return_value=backend):
+            self.assertIsNone(service.get_audio_preview(config, "other/clip.wav").waveform)
+            result = service.get_audio_preview(config, "clips/clip.wav")
+        backend.open_read_stream.assert_called_once_with("clips/clip.wav")
+        self.assertTrue(audio.closed)
+        self.assertEqual((result.sample_rate, result.channels, result.duration), (8000, 1, 0.01))
+        self.assertTrue(result.waveform.startswith("data:image/png;base64,"))
+
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "ffmpeg and ffprobe are required")
+    def test_remote_video_preview_extracts_frames_from_provider_bytes(self):
+        service = DatasetViewerService()
+        config = {"id": "video", "type": "aws", "aws_data_prefix": ["videos/"]}
+        with tempfile.TemporaryDirectory() as folder:
+            video = Path(folder) / "clip.mp4"
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=size=32x32:rate=4:duration=1",
+                    "-c:v",
+                    "mpeg4",
+                    str(video),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            with patch.object(service, "_get_or_create_data_backend") as open_backend:
+                open_backend.return_value.open_read_stream.return_value = io.BytesIO(video.read_bytes())
+                result = service.get_video_preview(config, "videos/clip.mp4", frame_count=2)
+        self.assertEqual((result.resolution, result.fps, result.duration), ([32, 32], 4.0, 1.0))
+        self.assertEqual(len(result.frames), 2)
+
+    def test_local_preview_resolves_dataset_entries_and_explicit_links(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            images = root / "images"
+            images.mkdir()
+            outside = root / "outside.jpg"
+            Image.new("RGB", (16, 16)).save(outside)
+            entry = images / "linked.jpg"
+            entry.symlink_to(outside)
+            service = DatasetViewerService(project_root=root)
+            config = {"id": "images", "instance_data_dir": str(images)}
+
+            self.assertIsNotNone(service.get_image_preview(config, "linked.jpg"))
+            self.assertIsNotNone(service.get_image_preview(config, str(entry)))
+            self.assertIsNone(service.get_image_preview(config, str(outside)))
+            self.assertIsNone(service.get_image_preview(config, "../outside.jpg"))
+
+    def test_s3_preview_stays_within_the_configured_prefixes(self):
+        service = DatasetViewerService()
+        config = {"type": "aws", "aws_data_prefix": ["images/", "extra/"]}
+        backend = MagicMock()
+        backend.read_image.return_value = Image.new("RGB", (16, 16))
+        with patch.object(service, "_get_or_create_data_backend", return_value=backend):
+            self.assertIsNone(service.get_image_preview(config, "outside/file.jpg"))
+            self.assertIsNotNone(service.get_image_preview(config, "extra/file.jpg"))
+        backend.read_image.assert_called_once_with("extra/file.jpg")
+
+
+class TestLegacyMembershipPages(unittest.TestCase):
+    def test_viewer_reads_legacy_page_without_loading_full_cache(self):
+        with tempfile.TemporaryDirectory() as directory:
+            service = DatasetViewerService(project_root=Path(directory))
+            publication = Path(directory) / "buckets.json"
+            publication.write_text(
+                json.dumps(
+                    {
+                        "aspect_ratio_bucket_indices": {"wide": ["a", "b", "c"], "square": ["d"]},
+                        "config": {"resolution": 0.5},
+                        "filtering_statistics": {"skipped": {"too_small": 2}},
+                    }
+                )
+            )
+            with (
+                patch.object(service, "_find_cache_file", return_value=publication),
+                patch.object(service, "_load_cache", side_effect=AssertionError("full cache read")),
+            ):
+                page = service.get_dataset_files({"id": "images"}, offset=2, limit=1)
+                square = service.get_dataset_files({"id": "images"}, bucket_key="square")
+                summary = service.get_dataset_summary({"id": "images"})
+            self.assertEqual((page.files, page.total), (["c"], 4))
+            self.assertEqual((square.files, square.total), (["d"], 1))
+            self.assertEqual(summary.total_files, 4)
+            self.assertEqual(summary.config, {"resolution": 0.5})
+            self.assertEqual(summary.filtering_statistics, {"skipped": {"too_small": 2}})
+
+
+class TestLatentFileInvalidation(unittest.TestCase):
+    def test_viewer_uses_training_keys_and_the_selected_artifact_store(self):
+        from simpletuner.helpers.caching.vae import VAECache
+        from simpletuner.helpers.data_backend.local import LocalDataBackend
+        from simpletuner.helpers.metadata.preparation import DatasetViewChangedError
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            service = DatasetViewerService(project_root=root)
+            source = root / "images"
+            latents = root / "latents"
+            sample = str(source / "nested" / "image.jpg")
+            metadata = root / "metadata.json"
+            metadata.write_text(json.dumps({sample: {"original_size": [32, 32]}}))
+            dataset = {
+                "id": "images",
+                "type": "local",
+                "instance_data_dir": str(source),
+                "cache_dir_vae": str(latents),
+                "image_embeds": "separate",
+            }
+            store = {"id": "separate", "dataset_type": "image_embeds", "type": "local"}
+            cache = VAECache.__new__(VAECache)
+            cache.image_data_backend = LocalDataBackend(None, "images")
+            cache.cache_data_backend = LocalDataBackend(None, "separate")
+            cache.cache_dir = str(latents)
+            cache.instance_data_dir = str(source)
+            cache.hash_filenames = True
+            artifact = Path(cache.cache_path_for_image(sample))
+            artifact.parent.mkdir(parents=True)
+            artifact.write_bytes(b"fixture")
+
+            with patch.object(service, "_find_cache_file", return_value=metadata):
+                current = service.get_file_metadata(dataset, sample)
+                with self.assertRaises(DatasetViewChangedError):
+                    service.delete_vae_cache_file(dataset, sample, dataset_plan=[store], metadata_revision="old")
+                remote = {**store, "type": "aws"}
+                self.assertFalse(service.delete_vae_cache_file(dataset, sample, dataset_plan=[remote])["deleted"])
+                self.assertFalse(service.delete_vae_cache_file(dataset, "missing.jpg", dataset_plan=[store])["deleted"])
+                self.assertTrue(artifact.exists())
+                result = service.delete_vae_cache_file(
+                    dataset, sample, dataset_plan=[store], metadata_revision=current.metadata_revision
+                )
+            self.assertEqual(result, {"deleted": True, "cache_path": str(artifact.resolve())})
+            self.assertFalse(artifact.exists())
 
 
 class TestFindCacheFile(unittest.TestCase):
@@ -354,6 +861,24 @@ class TestImagePreview(unittest.TestCase):
         self.assertIsNone(result["intermediary"])
         self.assertIsNone(result["cropped"])
 
+    def test_remote_detail_uses_source_pixels_after_thumbnail_is_cached(self):
+        config = {"id": "remote", "type": "aws"}
+        image = Image.new("RGB", (640, 384), "red")
+        image.paste("blue", (320, 0, 640, 384))
+        backend = MagicMock()
+        backend.read_image.return_value = image
+        metadata = {"intermediary_size": (640, 384), "crop_coordinates": (0, 320), "target_size": (320, 384)}
+        with patch.object(self.service, "_get_or_create_data_backend", return_value=backend):
+            self.service._read_remote_thumbnail(config, "photo.jpg", 128)
+            preview = self.service.get_image_preview(config, "photo.jpg", metadata=metadata)
+        self.assertEqual(backend.read_image.call_count, 2)
+        with Image.open(io.BytesIO(base64.b64decode(preview["original"].split(",", 1)[1]))) as original:
+            self.assertEqual(original.size, (640, 384))
+        with Image.open(io.BytesIO(base64.b64decode(preview["cropped"].split(",", 1)[1]))) as cropped:
+            self.assertEqual(cropped.size, (320, 384))
+            red, _, blue = cropped.getpixel((100, 100))
+            self.assertGreater(blue, red)
+
     def test_preview_with_crop_metadata(self):
         self._create_image(size=(2000, 1500))
         config = {"id": "test", "type": "local", "instance_data_dir": self.tmpdir}
@@ -555,6 +1080,45 @@ class TestUpdateCropCoordinates(unittest.TestCase):
         meta = self.service.get_file_metadata(self._config(), "photo.jpg")
         self.assertEqual(meta.crop_coordinates, [50, 30])
 
+    def test_edits_reject_stale_metadata_and_publish_the_new_revision(self):
+        from simpletuner.helpers.metadata.preparation import DatasetViewChangedError
+
+        config = self._config()
+        original = self.service.get_file_metadata(config, "photo.jpg")
+        edit = self.service.update_crop_coordinates(
+            config, "photo.jpg", [12, 34], metadata_revision=original.metadata_revision
+        )
+        current = self.service.get_file_metadata(config, "photo.jpg")
+        self.assertEqual(current.metadata_revision, edit.revision)
+        self.assertNotEqual(current.metadata_revision, original.metadata_revision)
+        with self.assertRaises(DatasetViewChangedError):
+            self.service.update_bbox_entities(config, "photo.jpg", [], metadata_revision=original.metadata_revision)
+        with self.assertRaises(TypeError):
+            self.service.update_bbox_entities(
+                config, "photo.jpg", [{"invalid": object()}], metadata_revision=current.metadata_revision
+            )
+        self.assertEqual(self.service.get_file_metadata(config, "photo.jpg"), current)
+        newer = self.service.update_crop_coordinates(config, "photo.jpg", [45, 67], metadata_revision=edit.revision)
+        self.assertEqual(self.service.get_file_metadata(config, "photo.jpg").metadata_revision, newer.revision)
+
+    def test_rebuild_uses_viewer_settings_without_changing_the_registered_dataset(self):
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        config = dict(self._config(), crop=True, crop_style="center", crop_aspect="square")
+        active = DatasetRuntime(config["id"], None, None, {"resolution": 1024})
+        with (
+            patch.object(StateTracker, "datasets", {active.id: active}),
+            patch.object(StateTracker, "set_args", side_effect=AssertionError("changed trainer args")),
+            patch.object(StateTracker, "set_data_backend_config", side_effect=AssertionError("changed trainer dataset")),
+        ):
+            updated = self.service.rebuild_file_metadata(
+                config, {"resolution": 64, "resolution_type": "pixel", "aspect_bucket_alignment": 8}, "photo.jpg"
+            )
+            self.assertEqual(updated.record["target_size"], [64, 64])
+            self.assertEqual(StateTracker.get_dataset(active.id).config["resolution"], 1024)
+        self.assertEqual(self.service.get_file_metadata(config, "photo.jpg").target_size, [64, 64])
+
     def test_update_missing_file_returns_false(self):
         ok = self.service.update_crop_coordinates(self._config(), "missing.jpg", [10, 10])
         self.assertFalse(ok)
@@ -631,7 +1195,7 @@ class TestUpdateBboxEntities(unittest.TestCase):
 
 
 class TestConditioningFileMatch(unittest.TestCase):
-    """Verify conditioning file matching by stem."""
+    """Verify conditioning file matching by provider identity."""
 
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
@@ -649,14 +1213,14 @@ class TestConditioningFileMatch(unittest.TestCase):
         self.cond_dir.mkdir(parents=True)
         # Create a matching conditioning image
         cond_img = Image.new("RGB", (64, 64), color="green")
-        cond_img.save(self.cond_dir / "photo123.png")
+        cond_img.save(self.cond_dir / "photo123.jpg")
 
         # Bucket cache for conditioning dataset
         cond_cache = self.cond_dir / "aspect_ratio_bucket_indices_cond-ds.json"
         cond_cache.write_text(
             json.dumps(
                 {
-                    "aspect_ratio_bucket_indices": {"1.0": ["photo123.png"]},
+                    "aspect_ratio_bucket_indices": {"1.0": ["photo123.jpg"]},
                 }
             )
         )
@@ -685,10 +1249,34 @@ class TestConditioningFileMatch(unittest.TestCase):
         self.assertEqual(result["conditioning_type"], "controlnet")
         self.assertIn("thumbnail", result)
 
-    def test_no_match_for_missing_stem(self):
+    def test_no_match_for_missing_path(self):
         all_datasets = [self._src_config(), self._cond_config()]
         result = self.service.get_conditioning_file_match(self._src_config(), all_datasets, "nonexistent.jpg")
         self.assertIsNone(result)
+
+    def test_nested_relative_paths_keep_same_name_pairs_and_orphans_distinct(self):
+        source, target = self._src_config(), self._cond_config()
+        for directory in (self.src_dir, self.cond_dir):
+            for prefix in ("first", "second"):
+                (directory / prefix).mkdir()
+                Image.new("RGB", (64, 64), color="red").save(directory / prefix / "same.png")
+        for directory, config, refs in (
+            (self.src_dir, source, ["first/same.png", "second/same.png", "source_only/same.png"]),
+            (self.cond_dir, target, ["first/same.png", "second/same.png", "target_only/same.png"]),
+        ):
+            (directory / f"aspect_ratio_bucket_indices_{config['id']}.json").write_text(
+                json.dumps({"aspect_ratio_bucket_indices": {"1.0": refs}})
+            )
+
+        page = self.service.get_conditioning_pairs(source, target, offset=1, limit=1)
+        self.assertEqual(page["total_pairs"], 2)
+        self.assertEqual(page["pairs"][0]["conditioning_path"], "second/same.png")
+        report = self.service.get_orphaned_files(source, target)
+        self.assertEqual(report.source_orphans, ["source_only/same.png"])
+        self.assertEqual(report.conditioning_orphans, ["target_only/same.png"])
+        match = self.service.get_conditioning_file_match(source, [target], "second/same.png")
+        self.assertEqual(Path(match["file_path"]), self.cond_dir / "second/same.png")
+        self.assertIsNone(self.service.get_conditioning_file_match(source, [target], "source_only/same.png"))
 
     def test_no_match_without_conditioning(self):
         config = {"id": "plain-ds", "type": "local", "instance_data_dir": str(self.src_dir)}
@@ -700,7 +1288,7 @@ class TestConditioningFileMatch(unittest.TestCase):
         gen_dir = Path(self.tmpdir) / "conditioning_data" / "auto-gen-canny"
         gen_dir.mkdir(parents=True)
         gen_img = Image.new("RGB", (64, 64), color="blue")
-        gen_img.save(gen_dir / "photo123.png")
+        gen_img.save(gen_dir / "photo123.jpg")
 
         src_config = {
             "id": "src-ds",
@@ -712,7 +1300,7 @@ class TestConditioningFileMatch(unittest.TestCase):
         }
         result = self.service.get_conditioning_file_match(src_config, [src_config], "photo123.jpg")
         self.assertIsNotNone(result)
-        self.assertEqual(result["conditioning_id"], "auto-gen-canny")
+        self.assertEqual(result["conditioning_id"], "src-ds_conditioning_canny")
         self.assertEqual(result["conditioning_type"], "canny")
 
     def test_match_via_derived_id_and_path(self):
@@ -721,19 +1309,20 @@ class TestConditioningFileMatch(unittest.TestCase):
         gen_dir = Path(self.tmpdir) / "conditioning_data" / "src-ds_conditioning_canny"
         gen_dir.mkdir(parents=True)
         gen_img = Image.new("RGB", (64, 64), color="blue")
-        gen_img.save(gen_dir / "photo123.png")
+        gen_img.save(gen_dir / "photo123.jpg")
 
         src_config = {
             "id": "src-ds",
             "type": "local",
             "instance_data_dir": str(self.src_dir),
-            # cache_dir_vae lets _derive_conditioning_dir find the cache root
-            "cache_dir_vae": str(Path(self.tmpdir) / "vae" / "model" / "src-ds"),
+            "cache_dir_vae": str(Path(self.tmpdir) / "independent-latent-store"),
             "conditioning": [
                 {"type": "canny", "conditioning_type": "controlnet"},
             ],
         }
-        result = self.service.get_conditioning_file_match(src_config, [src_config], "photo123.jpg")
+        result = self.service.get_conditioning_file_match(
+            src_config, [src_config], "photo123.jpg", global_config={"cache_dir": self.tmpdir}
+        )
         self.assertIsNotNone(result)
         self.assertEqual(result["conditioning_id"], "src-ds_conditioning_canny")
         self.assertEqual(result["conditioning_type"], "controlnet")
@@ -799,25 +1388,38 @@ class TestRemoteThumbnails(unittest.TestCase):
     def test_cached_thumbnail_served_from_disk(self):
         """Pre-cached thumbnails should be returned without creating a backend."""
         self._setup_hf_cache()
-        # Pre-populate the thumbnail cache
-        path_hash = hashlib.md5(b"0.jpg").hexdigest()
-        thumb_dir = Path(self.tmpdir) / "cache" / "viewer_thumbnails" / "hf-ds"
-        thumb_dir.mkdir(parents=True, exist_ok=True)
-        img = Image.new("RGB", (64, 64), (255, 0, 0))
-        img.save(thumb_dir / f"{path_hash}.jpg", format="JPEG")
+        config = {"id": "hf-ds", "type": "huggingface"}
+        path = self.service._get_thumbnail_cache_path(config, "0.jpg")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (64, 64), (255, 0, 0)).save(path, format="JPEG")
 
-        import os
-
-        original_cwd = os.getcwd()
-        os.chdir(self.tmpdir)
-        try:
-            config = {"id": "hf-ds", "type": "huggingface"}
+        with patch.object(self.service, "_get_or_create_data_backend", side_effect=AssertionError("opened reader")):
             result = self.service.get_dataset_thumbnails(config, bucket_key="1.0", limit=1)
-            self.assertEqual(len(result), 1)
-            self.assertIsNotNone(result[0].thumbnail)
-            self.assertIsNone(result[0].error)
-        finally:
-            os.chdir(original_cwd)
+        self.assertEqual(len(result), 1)
+        self.assertIsNotNone(result[0].thumbnail)
+        self.assertIsNone(result[0].error)
+
+    def test_reused_dataset_ids_do_not_share_readers_or_thumbnails_between_sources(self):
+        self._setup_hf_cache()
+        root = Path(self.tmpdir)
+        other_project = DatasetViewerService(project_root=root, plan_path=root / "second-plan.json")
+        config = {"id": "hf-ds", "type": "huggingface", "dataset_name": "repo-a"}
+        changed = {**config, "dataset_name": "repo-b"}
+        requests = [(self.service, config), (self.service, changed), (other_project, config)]
+        readers = []
+        for color in ("red", "blue", "green"):
+            reader = MagicMock()
+            reader.read_image.return_value = Image.new("RGB", (64, 64), color)
+            readers.append(reader)
+
+        with patch.object(DatasetViewerService, "_create_data_backend", side_effect=readers) as create:
+            pages = [service.get_dataset_thumbnails(source, limit=1) for service, source in requests]
+            self.assertEqual(create.call_count, 3)
+            self.assertEqual(len({page[0].thumbnail for page in pages}), 3)
+            for service, source in requests:
+                self.assertTrue(service._get_thumbnail_cache_path(source, "0.jpg").exists())
+                service.get_dataset_thumbnails(source, limit=1)
+            self.assertEqual(create.call_count, 3)
 
     @patch(
         "simpletuner.simpletuner_sdk.server.services.dataset_viewer_service"
@@ -844,8 +1446,7 @@ class TestRemoteThumbnails(unittest.TestCase):
             mock_backend.read_image.assert_called_once_with("0.jpg")
 
             # Verify thumbnail was cached to disk
-            path_hash = hashlib.md5(b"0.jpg").hexdigest()
-            cached = Path(self.tmpdir) / "cache" / "viewer_thumbnails" / "hf-ds" / f"{path_hash}.jpg"
+            cached = self.service._get_thumbnail_cache_path(config, "0.jpg")
             self.assertTrue(cached.is_file())
         finally:
             os.chdir(original_cwd)
@@ -906,20 +1507,23 @@ class TestClearVaeCache(unittest.TestCase):
         self.tmpdir = tempfile.mkdtemp()
 
     @patch("simpletuner.simpletuner_sdk.server.services.dataset_scan_service" ".DatasetScanService._resolve_scan_output_dir")
-    def test_clear_vae_cache_deletes_directory(self, mock_resolve):
+    def test_clear_vae_cache_preserves_unrelated_files(self, mock_resolve):
         from simpletuner.simpletuner_sdk.server.services.dataset_scan_service import DatasetScanService
 
         mock_resolve.return_value = self.tmpdir
         vae_dir = Path(self.tmpdir) / "cache" / "vae" / "test-ds"
         vae_dir.mkdir(parents=True, exist_ok=True)
-        (vae_dir / "latent_001.pt").write_bytes(b"fake")
-        (vae_dir / "latent_002.pt").write_bytes(b"fake")
+        latent = vae_dir / ("1" * 64 + ".pt")
+        latent.write_bytes(b"fake")
+        checkpoint = vae_dir / "checkpoint.pt"
+        checkpoint.write_bytes(b"keep")
 
         service = DatasetScanService()
         config = {"id": "test-ds", "cache_dir_vae": str(vae_dir)}
         result = service.clear_vae_cache(config, {})
         self.assertIsNotNone(result)
-        self.assertFalse(vae_dir.exists())
+        self.assertFalse(latent.exists())
+        self.assertTrue(checkpoint.is_file())
 
     @patch("simpletuner.simpletuner_sdk.server.services.dataset_scan_service" ".DatasetScanService._resolve_scan_output_dir")
     def test_clear_vae_cache_no_dir_returns_none(self, mock_resolve):
@@ -946,7 +1550,8 @@ class TestClearVaeCache(unittest.TestCase):
         mock_resolve.return_value = self.tmpdir
         vae_dir = Path(self.tmpdir) / "cache" / "vae" / "flux" / "my-ds"
         vae_dir.mkdir(parents=True, exist_ok=True)
-        (vae_dir / "latent.pt").write_bytes(b"fake")
+        latent = vae_dir / ("1" * 64 + ".pt")
+        latent.write_bytes(b"fake")
 
         service = DatasetScanService()
         config = {
@@ -956,7 +1561,7 @@ class TestClearVaeCache(unittest.TestCase):
         global_config = {"model_family": "flux"}
         result = service.clear_vae_cache(config, global_config)
         self.assertIsNotNone(result)
-        self.assertFalse(vae_dir.exists())
+        self.assertFalse(latent.exists())
 
 
 if __name__ == "__main__":

@@ -1,8 +1,8 @@
 import unittest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-import pandas as pd
-
+from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 from simpletuner.helpers.prompts import PromptHandler
 
 
@@ -15,9 +15,8 @@ class TestPromptHandler(unittest.TestCase):
         self.model_type = "sdxl"
         self.data_backend = MagicMock()
 
-    @patch("simpletuner.helpers.training.state_tracker.StateTracker.get_parquet_database")
-    @patch("simpletuner.helpers.training.state_tracker.StateTracker.get_data_backend")
-    def test_prepare_instance_prompt_from_parquet(self, mock_get_data_backend, mock_get_parquet_database):
+    @patch("simpletuner.helpers.training.state_tracker.StateTracker.get_dataset")
+    def test_prepare_instance_prompt_from_parquet(self, mock_get_dataset):
         # Setup
         image_path = "image_3.jpg"
         use_captions = True
@@ -25,35 +24,11 @@ class TestPromptHandler(unittest.TestCase):
         data_backend = MagicMock()
         instance_prompt = "Instance Prompt"
         sampler_backend_id = "sampler1"
-        filename_column = "filename"
-        caption_column = "caption"
         mock_metadata_backend = MagicMock()
+        mock_metadata_backend.parquet_config = {"identifier_includes_extension": False}
         mock_metadata_backend.caption_cache_entry = MagicMock()
         mock_metadata_backend.caption_cache_entry.return_value = "a giant arcade game type claw..."
-        mock_get_data_backend.return_value = {
-            "metadata_backend": mock_metadata_backend,
-        }
-
-        # Simulate the DataFrame structure and the expected row
-        fallback_caption_column = "tags"
-        mock_df = pd.DataFrame(
-            [
-                {
-                    filename_column: "image_3",
-                    caption_column: "a giant arcade game type claw...",
-                    fallback_caption_column: "tags for image_3",
-                }
-            ]
-        )
-
-        # Configure the mock to return the simulated DataFrame
-        mock_get_parquet_database.return_value = (
-            mock_df,
-            filename_column,
-            caption_column,
-            fallback_caption_column,
-            False,
-        )
+        mock_get_dataset.return_value = SimpleNamespace(metadata_backend=mock_metadata_backend)
 
         # Execute
         result_caption = PromptHandler.prepare_instance_prompt_from_parquet(
@@ -68,7 +43,7 @@ class TestPromptHandler(unittest.TestCase):
         # Verify
         expected_caption = f"{instance_prompt} a giant arcade game type claw..."
         self.assertEqual(result_caption, expected_caption)
-        mock_get_parquet_database.assert_called_once_with(sampler_backend_id)
+        mock_metadata_backend.caption_cache_entry.assert_called_once_with("image_3")
 
     def test_raises_value_error_on_missing_sampler_backend_id(self):
         with self.assertRaises(ValueError):
@@ -157,8 +132,6 @@ class TestPromptHandler(unittest.TestCase):
         self.assertEqual(result_caption, "a photo of a cat")
         self.assertEqual([result_caption], PromptHandler._normalize_caption_payload(result_caption))
 
-    @patch("simpletuner.helpers.prompts.StateTracker.get_image_files", return_value=["image.png"])
-    @patch("simpletuner.helpers.prompts.StateTracker.get_data_backend", return_value={})
     @patch("simpletuner.helpers.prompts.StateTracker.get_data_backend_config", return_value={})
     def test_textfile_training_captions_match_precache(self, *_):
         cases = (
@@ -181,16 +154,17 @@ class TestPromptHandler(unittest.TestCase):
                     disable_multiline_split=disable_split,
                 )
                 training = PromptHandler.magic_prompt(image_path="image.png", **kwargs)
-                precache, missing = PromptHandler.get_all_captions(instance_data_dir="images", **kwargs)
+                config = {k: v for k, v in kwargs.items() if k != "data_backend"}
+                dataset = DatasetRuntime("text", self.data_backend, None, config)
+                precache = [caption for caption, _ in dataset.iter_caption_records(["image.png"])]
                 self.assertEqual(training, expected)
                 self.assertEqual([training] if isinstance(training, str) else training, precache)
-                self.assertEqual(missing, [])
 
-    @patch("simpletuner.helpers.prompts.StateTracker.get_data_backend")
-    def test_webshart_caption_strategy_uses_metadata_caption_cache(self, mock_get_data_backend):
+    @patch("simpletuner.helpers.prompts.StateTracker.get_dataset")
+    def test_webshart_caption_strategy_uses_metadata_caption_cache(self, mock_get_dataset):
         metadata_backend = MagicMock()
         metadata_backend.caption_cache_entry.return_value = [" caption one ", "caption two"]
-        mock_get_data_backend.return_value = {"metadata_backend": metadata_backend}
+        mock_get_dataset.return_value = SimpleNamespace(metadata_backend=metadata_backend)
 
         handler = PromptHandler(
             args=self.args,
@@ -212,7 +186,7 @@ class TestPromptHandler(unittest.TestCase):
 
         self.assertEqual(result_caption, ["style caption one", "style caption two"])
         metadata_backend.caption_cache_entry.assert_called_once_with("webshart://0/1/sample.webp")
-        mock_get_data_backend.assert_called_once_with("webshart_backend")
+        mock_get_dataset.assert_called_once_with("webshart_backend")
 
     @patch("simpletuner.helpers.prompts.PromptHandler.prepare_instance_prompt_from_filename")
     def test_prepare_instance_prompt_from_filename_called(self, mock_prepare):

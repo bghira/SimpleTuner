@@ -23,6 +23,7 @@ from tqdm import tqdm
 
 from simpletuner.helpers.configuration.template_vars import build_modelspec_template_values, render_modelspec_comment
 from simpletuner.helpers.models.common import PipelineTypes, PredictionTypes
+from simpletuner.helpers.prompts import PromptHandler
 from simpletuner.helpers.training.ema import EMAModel
 from simpletuner.helpers.training.multi_process import _get_rank as get_rank
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -347,6 +348,7 @@ class SaveHookManager:
         self.ema_model = ema_model
         self.accelerator = accelerator
         self.use_deepspeed_optimizer = use_deepspeed_optimizer
+        self.dataset_export_metadata = {}
         if self.model.get_trained_component() is None:
             raise ValueError("No model was loaded?")
 
@@ -541,147 +543,63 @@ class SaveHookManager:
                 return cleaned
         return None
 
-    def _collect_trigger_words(self) -> list[str]:
-        """
-        Collect instance_prompt values from all data backends as trigger words.
-        """
-        trigger_words = []
-        seen = set()
-        for backend_id, backend in StateTracker.get_data_backends().items():
-            config = backend.get("config", {})
-            instance_prompt = config.get("instance_prompt")
-            if instance_prompt and instance_prompt not in seen:
-                trigger_words.append(instance_prompt)
-                seen.add(instance_prompt)
-        return trigger_words
+    def prepare_dataset_metadata(self, datasets):
+        """Prepare export metadata once from accepted views before training starts."""
+        trigger_words = dict.fromkeys(
+            prompt
+            for dataset in datasets.values()
+            for prompt in PromptHandler._normalize_caption_payload(dataset.config.get("instance_prompt"))
+        )
+        metadata = {"trained_words": ", ".join(trigger_words)} if trigger_words else {}
+        frequencies = self._compute_caption_tag_frequencies(datasets)
+        if frequencies:
+            metadata["ss_tag_frequency"] = json.dumps(frequencies)
+        self.dataset_export_metadata = metadata
 
-    def _build_tag_frequency_from_captions(self) -> dict[str, dict[str, int]]:
-        """
-        Infer trigger-word frequencies when captions can be collected for every dataset.
-        Only includes tags that appear in more than 50% of all captions.
-        Returns dict of dataset_id -> {tag: count}.
-
-        The dataset is fixed for the duration of a run, so the result is computed once
-        and memoized; recomputing per checkpoint can cost hours on remote-read backends.
-        """
-        cached = getattr(self, "_tag_frequency_cache", None)
-        if cached is not None:
-            return cached
-
+    @staticmethod
+    def _compute_caption_tag_frequencies(datasets) -> dict[str, dict[str, int]]:
+        """Count tags in more than half of the captions across compatible accepted views."""
         import re
+        from collections import Counter
 
-        from simpletuner.helpers.prompts import PromptHandler
-
-        backends = StateTracker.get_data_backends()
         if any(
-            backend.get("data_backend") is not None and backend.get("config", {}).get("caption_strategy") == "webshart"
-            for backend in backends.values()
+            dataset.uses_native_schedule
+            or dataset.requires_complete_preparation
+            or dataset.config.get("caption_strategy") == "webshart"
+            or (dataset.text_embed_cache is not None and dataset.text_embed_cache.text_cache_ondemand)
+            for dataset in datasets.values()
         ):
-            # Global tag frequencies require complete caption statistics from every dataset.
-            self._tag_frequency_cache = {}
             return {}
 
-        # First pass: collect all captions and count tag presence across all backends
-        all_captions = []
-        backend_captions = {}
-
-        for backend_id, backend in backends.items():
-            if backend.get("data_backend") is None:
-                continue
-
-            config = backend.get("config", {})
-            caption_strategy = config.get("caption_strategy")
-            if not caption_strategy:
-                continue
-            prepend_instance_prompt = config.get(
-                "prepend_instance_prompt", getattr(self.args, "prepend_instance_prompt", False)
-            )
-            instance_prompt = config.get("instance_prompt", getattr(self.args, "instance_prompt", None))
-            use_captions = True
-            if config.get("only_instance_prompt") or getattr(self.args, "only_instance_prompt", False):
-                use_captions = False
-            elif caption_strategy == "instanceprompt":
-                use_captions = False
-
+        caption_count = 0
+        caption_presence = Counter()
+        dataset_tags = {}
+        for dataset_id, dataset in datasets.items():
+            presence = Counter()
+            counts = Counter()
+            seen_captions = 0
             try:
-                captions, _ = PromptHandler.get_all_captions(
-                    data_backend=backend["data_backend"],
-                    instance_data_dir=backend.get("instance_data_dir", ""),
-                    prepend_instance_prompt=prepend_instance_prompt,
-                    instance_prompt=instance_prompt,
-                    use_captions=use_captions,
-                    caption_strategy=caption_strategy,
-                    return_image_paths=False,
-                    disable_multiline_split=config.get("disable_multiline_split", False),
-                )
-            except Exception as e:
-                logger.debug(f"Could not get captions for backend {backend_id}: {e}")
-                continue
+                for caption in dataset.iter_accepted_captions():
+                    if not caption or caption == "__caption_dropout__":
+                        continue
+                    tags = [tag.strip() for tag in re.split(r"[,\n]+", str(caption)) if tag.strip()]
+                    presence.update(set(tags))
+                    counts.update(tags)
+                    seen_captions += 1
+            except Exception as exc:
+                logger.debug("Could not count captions for dataset %s: %s", dataset_id, exc)
+                return {}
+            caption_count += seen_captions
+            caption_presence.update(presence)
+            dataset_tags[dataset_id] = counts
 
-            valid_captions = [c for c in captions if c and c != "__caption_dropout__"]
-            backend_captions[backend_id] = valid_captions
-            all_captions.extend(valid_captions)
-
-        if not all_captions:
-            self._tag_frequency_cache = {}
-            return {}
-
-        # Count how many captions each tag appears in (presence-based)
-        tag_caption_count = {}
-        for caption in all_captions:
-            tags = re.split(r"[,\n]+", str(caption))
-            seen_in_caption = set()
-            for tag in tags:
-                tag = tag.strip()
-                if tag and tag not in seen_in_caption:
-                    seen_in_caption.add(tag)
-                    tag_caption_count[tag] = tag_caption_count.get(tag, 0) + 1
-
-        # Filter to tags appearing in more than 50% of all captions
-        threshold = len(all_captions) / 2
-        frequent_tags = {tag for tag, count in tag_caption_count.items() if count > threshold}
-
-        if not frequent_tags:
-            self._tag_frequency_cache = {}
-            return {}
-
-        # Build per-backend frequency dict with only frequent tags
-        ss_tag_frequency = {}
-        for backend_id, captions in backend_captions.items():
-            tag_counts = {}
-            for caption in captions:
-                tags = re.split(r"[,\n]+", str(caption))
-                for tag in tags:
-                    tag = tag.strip()
-                    if tag and tag in frequent_tags:
-                        tag_counts[tag] = tag_counts.get(tag, 0) + 1
-
-            if tag_counts:
-                ss_tag_frequency[backend_id] = tag_counts
-
-        self._tag_frequency_cache = ss_tag_frequency
-        return ss_tag_frequency
-
-    def _build_trigger_words_metadata(self) -> dict[str, str]:
-        """
-        Build trigger words metadata in formats compatible with ComfyUI extensions.
-        Returns metadata dict with ss_tag_frequency (for ComfyUI-Lora-Auto-Trigger-Words)
-        and trained_words (instance_prompts as comma-separated list).
-        """
-        metadata = {}
-
-        # trained_words: simple comma-separated list of instance_prompts
-        trigger_words = self._collect_trigger_words()
-        if trigger_words:
-            metadata["trained_words"] = ", ".join(trigger_words)
-
-        # ss_tag_frequency: JSON dict of dataset -> tag -> count
-        # Built from actual caption content for full tag frequency data
-        ss_tag_frequency = self._build_tag_frequency_from_captions()
-        if ss_tag_frequency:
-            metadata["ss_tag_frequency"] = json.dumps(ss_tag_frequency)
-
-        return metadata
+        frequent = {tag for tag, count in caption_presence.items() if count * 2 > caption_count}
+        stats = {}
+        for dataset_id, tags in dataset_tags.items():
+            filtered = {tag: count for tag, count in tags.items() if tag in frequent}
+            if filtered:
+                stats[dataset_id] = filtered
+        return stats
 
     def _build_modelspec_metadata(self, checkpoint_dir: str | None = None) -> dict[str, str]:
         metadata = {
@@ -707,9 +625,7 @@ class SaveHookManager:
         if description:
             metadata["modelspec.description"] = str(description)
 
-        # Add trigger words metadata for ComfyUI compatibility
-        trigger_words_metadata = self._build_trigger_words_metadata()
-        metadata.update(trigger_words_metadata)
+        metadata.update(self.dataset_export_metadata)
 
         comment = getattr(self.args, "modelspec_comment", None)
         if comment:
@@ -1083,39 +999,30 @@ class SaveHookManager:
         weights,
         output_dir,
         *,
-        is_main_process: bool,
         distributed_type: DistributedType,
     ):
-        temporary_dir = None
-        save_dir = None
         modelspec_metadata = self._build_modelspec_metadata(checkpoint_dir=output_dir)
 
-        if is_main_process:
-            temporary_dir = output_dir.replace("checkpoint", "temporary")
-            os.makedirs(temporary_dir, exist_ok=True)
+        temporary_dir = output_dir.replace("checkpoint", "temporary")
+        os.makedirs(temporary_dir, exist_ok=True)
 
-            if self.args.use_ema:
-                ema_model_path = os.path.join(temporary_dir, self.ema_model_subdir, "ema_model.pt")
-                logger.info(f"Saving EMA model to {ema_model_path}")
-                try:
-                    self.ema_model.save_state_dict(ema_model_path)
-                except Exception as e:
-                    logger.error(f"Error saving EMA model: {e}")
-                logger.info("Saving EMA safetensors variant.")
-                self.ema_model.save_pretrained(
-                    os.path.join(temporary_dir, self.ema_model_subdir),
-                    max_shard_size="10GB",
-                )
+        if self.args.use_ema:
+            ema_model_path = os.path.join(temporary_dir, self.ema_model_subdir, "ema_model.pt")
+            logger.info(f"Saving EMA model to {ema_model_path}")
+            try:
+                self.ema_model.save_state_dict(ema_model_path)
+            except Exception as e:
+                logger.error(f"Error saving EMA model: {e}")
+            logger.info("Saving EMA safetensors variant.")
+            self.ema_model.save_pretrained(
+                os.path.join(temporary_dir, self.ema_model_subdir),
+                max_shard_size="10GB",
+            )
 
-            sub_dir = "controlnet" if self.args.controlnet else self.model.MODEL_SUBFOLDER
-            save_dir = os.path.join(temporary_dir, sub_dir)
-            os.makedirs(save_dir, exist_ok=True)
+        sub_dir = "controlnet" if self.args.controlnet else self.model.MODEL_SUBFOLDER
+        save_dir = os.path.join(temporary_dir, sub_dir)
+        os.makedirs(save_dir, exist_ok=True)
         for idx, model in enumerate(models):
-            if not is_main_process:
-                if weights and len(weights) > 0:
-                    weights.pop(0)
-                continue
-
             state_dict = self._resolve_model_state_dict(model, weights)
 
             # ComfyUI: Add v_pred and ztsnr keys to the state_dict if applicable
@@ -1145,12 +1052,6 @@ class SaveHookManager:
                     self._save_sdnq_model_state(unwrapped_model, temporary_dir, model_name=model_name)
             finally:
                 del state_dict
-
-        if self.accelerator is not None and distributed_type is not None and distributed_type != DistributedType.NO:
-            self.accelerator.wait_for_everyone()
-
-        if not is_main_process:
-            return
 
         for item in os.listdir(temporary_dir):
             s = os.path.join(temporary_dir, item)
@@ -1219,7 +1120,6 @@ class SaveHookManager:
                     models=models,
                     weights=weights,
                     output_dir=output_dir,
-                    is_main_process=is_main_process,
                     distributed_type=distributed_type,
                 )
 

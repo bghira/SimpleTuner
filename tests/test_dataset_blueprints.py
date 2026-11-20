@@ -1,5 +1,6 @@
 import unittest
 
+from simpletuner.helpers.data_backend.config import ImageBackendConfig
 from simpletuner.simpletuner_sdk.server.data.dataset_blueprints import find_blueprint, get_blueprint_lookup
 
 
@@ -42,6 +43,25 @@ class TestTrainBatchSizeBlueprints(unittest.TestCase):
 
         self.assertIsNotNone(blueprint)
         self.assertIn("train_batch_size", {field.id for field in blueprint.fields})
+
+
+class TestRemoteCacheBlueprints(unittest.TestCase):
+    def test_dataset_cache_field_reaches_the_backend_that_reads_it(self):
+        args = {"resolution": 1.0, "resolution_type": "area", "caption_strategy": "filename", "model_family": "flux"}
+        for backend_type, attribute in (("huggingface", "huggingface_cache_dir"), ("webshart", "webshart_cache_dir")):
+            with self.subTest(backend=backend_type):
+                blueprint = find_blueprint(backend_type, "image")
+                (field,) = [field for field in blueprint.fields if field.label == "dataset cache"]
+                backend = {"id": "remote", "type": backend_type, "dataset_type": "image"}
+                *parents, key = field.id.split(".")
+                target = backend
+                for parent in parents:
+                    target = target.setdefault(parent, {})
+                target[key] = "cache/remote"
+
+                config = ImageBackendConfig.from_dict(backend, args)
+
+                self.assertEqual(getattr(config, attribute), "cache/remote")
 
 
 class TestAudioDatasetBlueprints(unittest.TestCase):

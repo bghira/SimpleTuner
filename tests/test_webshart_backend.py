@@ -313,6 +313,10 @@ class TestWebshartMetadataCaptionFiltering(unittest.TestCase):
         backend = WebshartMetadataBackend.__new__(WebshartMetadataBackend)
         backend.id = "test-backend"
         backend.dataset_type = DatasetType.IMAGE
+        backend.native_policy = None
+        backend.removed_samples = set()
+        backend._runtime_args = SimpleNamespace(only_instance_prompt=False)
+        backend.bind_dataset_config({"caption_strategy": "webshart"})
         backend.max_num_samples = None
         backend.metadata_update_interval = 3600
         backend.aspect_ratio_bucket_indices = {}
@@ -323,14 +327,16 @@ class TestWebshartMetadataCaptionFiltering(unittest.TestCase):
         backend.reload_cache = Mock()
         backend.load_image_metadata = Mock()
         backend.save_cache = Mock()
-        backend.save_image_metadata = Mock()
         backend._sync_image_files_with_buckets = Mock()
-        backend.set_metadata_by_filepath = Mock()
+        backend.enqueue_prepared_metadata = Mock()
+        backend.flush_prepared_metadata = Mock()
         backend._all_shard_indices = Mock(return_value=[0])
         backend._entries_for_shard = Mock(return_value=entries)
         backend._sample_id_from_entry = Mock(side_effect=lambda shard_idx, entry: f"webshart://0/0/{entry['path']}")
         backend._metadata_for_entry = Mock(return_value={"original_size": (512, 512)})
-        backend._prepare_metadata = Mock(side_effect=lambda sample_path, sample_metadata: ("1.0", sample_metadata))
+        backend._prepare_metadata = Mock(
+            side_effect=lambda sample_path, sample_metadata, recipe=None: ("1.0", sample_metadata)
+        )
         return backend
 
     def _entries(self):
@@ -341,11 +347,7 @@ class TestWebshartMetadataCaptionFiltering(unittest.TestCase):
 
     def test_webshart_caption_strategy_skips_caption_less_samples(self):
         backend = self._build_backend(self._entries())
-        with patch(
-            "simpletuner.helpers.metadata.backends.webshart.StateTracker.get_data_backend_config",
-            return_value={"caption_strategy": "webshart"},
-        ):
-            backend.compute_aspect_ratio_bucket_indices()
+        backend.compute_aspect_ratio_bucket_indices()
 
         self.assertEqual(
             backend.aspect_ratio_bucket_indices,
@@ -353,6 +355,10 @@ class TestWebshartMetadataCaptionFiltering(unittest.TestCase):
         )
         self.assertEqual(backend.filtering_statistics["skipped"]["caption_missing"], 1)
         self.assertEqual(backend.filtering_statistics["total_processed"], 1)
+        backend.enqueue_prepared_metadata.assert_called_once_with(
+            {"webshart://0/0/captioned.webp": {"original_size": (512, 512)}}
+        )
+        backend.flush_prepared_metadata.assert_called_once_with()
 
     def test_webshart_caption_strategy_accepts_txt_sidecar_samples(self):
         backend = self._build_backend(self._entries())
@@ -362,11 +368,7 @@ class TestWebshartMetadataCaptionFiltering(unittest.TestCase):
                 "uncaptioned.txt": {"path": "uncaptioned.txt", "offset": 0, "length": 10},
             }
         )
-        with patch(
-            "simpletuner.helpers.metadata.backends.webshart.StateTracker.get_data_backend_config",
-            return_value={"caption_strategy": "webshart"},
-        ):
-            backend.compute_aspect_ratio_bucket_indices()
+        backend.compute_aspect_ratio_bucket_indices()
 
         self.assertEqual(
             backend.aspect_ratio_bucket_indices["1.0"],
@@ -380,22 +382,15 @@ class TestWebshartMetadataCaptionFiltering(unittest.TestCase):
         backend = self._build_backend(self._entries())
         backend.data_backend.caption_key = "short"
         backend.data_backend.get_caption.side_effect = [RuntimeError("source read failed"), "caption"]
-        with patch(
-            "simpletuner.helpers.metadata.backends.webshart.StateTracker.get_data_backend_config",
-            return_value={"caption_strategy": "webshart"},
-        ):
-            backend.compute_aspect_ratio_bucket_indices()
+        backend.compute_aspect_ratio_bucket_indices()
         self.assertEqual(backend.filtering_statistics["skipped"]["error"], 1)
         self.assertEqual(backend.filtering_statistics["total_processed"], 1)
         self.assertEqual(backend.aspect_ratio_bucket_indices, {"1.0": ["webshart://0/0/uncaptioned.webp"]})
 
     def test_other_caption_strategies_keep_caption_less_samples(self):
         backend = self._build_backend(self._entries())
-        with patch(
-            "simpletuner.helpers.metadata.backends.webshart.StateTracker.get_data_backend_config",
-            return_value={"caption_strategy": "filename"},
-        ):
-            backend.compute_aspect_ratio_bucket_indices()
+        backend.bind_dataset_config({"caption_strategy": "filename"})
+        backend.compute_aspect_ratio_bucket_indices()
 
         self.assertEqual(
             backend.aspect_ratio_bucket_indices["1.0"],
@@ -495,6 +490,9 @@ class TestWebshartConfig(unittest.TestCase):
 
 class TestWebshartCaptionKeyIntegration(unittest.TestCase):
     def setUp(self):
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        self.enterContext(patch.object(StateTracker, "get_args", return_value=SimpleNamespace(only_instance_prompt=False)))
         self.temp = TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
@@ -557,7 +555,7 @@ class TestWebshartCaptionKeyIntegration(unittest.TestCase):
         index = backend.dataset.list_samples_in_shard(0).index(filename)
         return backend.sample_id(0, index, filename)
 
-    def _metadata_backend(self, backend):
+    def _metadata_backend(self, backend, **kwargs):
         return WebshartMetadataBackend(
             id=backend.id,
             instance_data_dir=backend.cache_dir,
@@ -568,7 +566,81 @@ class TestWebshartCaptionKeyIntegration(unittest.TestCase):
             batch_size=1,
             resolution=512,
             resolution_type="pixel",
+            **kwargs,
         )
+
+    def test_membership_never_serializes_source_credentials(self):
+        source = self._backend("short")
+        metadata = self._metadata_backend(source)
+        config = {
+            "webshart": {"source": "s3://test", "hf_token": "test-value"},
+            "aws_session_token": "test-value",
+            "aws_access_key_id": "test-value",
+            "aws_secret_access_key": "test-value",
+        }
+        metadata.bind_dataset_config(config)
+        metadata.save_cache()
+        publication = json.loads(source.read(metadata.cache_file))
+        self.assertEqual(publication["config"], {"webshart": {"source": "s3://test"}})
+
+    def test_preparation_reads_published_membership_across_rank_split_and_replacement(self):
+        source = self._backend("short")
+        metadata = self._metadata_backend(source)
+        # Older scans predate the scan_in_progress marker.
+        source.write(metadata.cache_file, {"aspect_ratio_bucket_indices": {"1.0": ["c", "a"], "2.5": ["b"]}})
+        with patch.object(source, "read", side_effect=AssertionError("eager bucket read")):
+            reader = self._metadata_backend(source, preparation_only=True)
+            self.assertEqual(reader.aspect_ratio_bucket_indices, {})
+            reader.aspect_ratio_bucket_indices = {"1.0": ["c", "c"]}
+            reader.set_readonly()
+            with reader.open_preparation_view() as original:
+                source.write(metadata.cache_file, {"aspect_ratio_bucket_indices": {"1.5": ["new"]}})
+                self.assertEqual(list(original), ["c", "a", "b"])
+            with reader.open_preparation_view() as replacement:
+                self.assertEqual(list(replacement), ["new"])
+
+    def test_preparation_distinguishes_partial_scan_from_empty_completed_scan(self):
+        metadata = self._metadata_backend(self._backend("short"))
+        metadata.aspect_ratio_bucket_indices = {"1.0": ["partial"]}
+        metadata.save_cache(scan_in_progress=True)
+        with self.assertRaisesRegex(ValueError, "incomplete"), metadata.open_preparation_view():
+            self.fail("incomplete membership was opened")
+        metadata.aspect_ratio_bucket_indices = {}
+        metadata.save_cache()
+        with metadata.open_preparation_view() as refs:
+            self.assertEqual(list(refs), [])
+
+    def test_preparation_pins_geometry_for_point_lookup_and_reuses_index(self):
+        source = self._backend("short")
+        writer = self._metadata_backend(source)
+        writer.aspect_ratio_bucket_indices = {"1.0": ["a", "b"]}
+        writer.image_metadata = {
+            "b": {"target_size": [2, 3]},
+            "a": {"target_size": [4, 5], "bbox_entities": [{"label": "x"}]},
+        }
+        writer.save_image_metadata()
+        writer.save_cache()
+        with patch.object(source, "read", side_effect=AssertionError("whole metadata read")):
+            reader = self._metadata_backend(source, preparation_only=True)
+            with reader.open_preparation_view() as old:
+                self.assertEqual(list(old), ["a", "b"])
+                self.assertEqual(old.metadata.get_metadata_by_filepath("a")["bbox_entities"], [{"label": "x"}])
+                with patch(
+                    "simpletuner.helpers.metadata.backends.webshart_geometry._build_index", side_effect=AssertionError
+                ):
+                    with reader.open_preparation_view() as warm:
+                        self.assertEqual(warm.metadata.get_metadata_by_filepath("b")["target_size"], [2, 3])
+                writer.image_metadata = {"z": {"target_size": [9, 10]}}
+                writer.save_image_metadata()
+                with self.assertRaisesRegex(ValueError, "revisions differ"), reader.open_preparation_view():
+                    self.fail("opened mismatched geometry and membership")
+                writer.aspect_ratio_bucket_indices = {"1.0": ["z"]}
+                writer.save_cache()
+                with reader.open_preparation_view() as new:
+                    self.assertEqual(list(new), ["z"])
+                    self.assertEqual(new.metadata.get_metadata_by_filepath("z")["target_size"], [9, 10])
+                self.assertEqual(old.metadata.get_metadata_by_filepath("b")["target_size"], [2, 3])
+            self.assertEqual(reader.image_metadata, {})
 
     def test_selects_fields_and_named_captions_in_requested_order(self):
         for key, expected in [
@@ -697,14 +769,13 @@ class TestWebshartCaptionKeyIntegration(unittest.TestCase):
 
         with (
             patch.object(StateTracker, "get_data_backend_config", return_value={"caption_strategy": "webshart"}),
-            patch.object(StateTracker, "set_image_files"),
             patch.object(StateTracker, "set_data_backend_config"),
         ):
             main = self._metadata_backend(self._backend("short"))
             worker = self._metadata_backend(self._backend("short"))
             self.assertNotIn("caption_cache", vars(worker))
             with (
-                patch.object(main, "_prepare_metadata", side_effect=lambda path, data: (1.0, data)),
+                patch.object(main, "_prepare_metadata", side_effect=lambda path, data, recipe=None: (1.0, data)),
                 patch.object(main, "_enforce_min_bucket_size"),
             ):
                 main.compute_aspect_ratio_bucket_indices()
@@ -727,13 +798,12 @@ class TestWebshartCaptionKeyIntegration(unittest.TestCase):
 
         with (
             patch.object(StateTracker, "get_data_backend_config", return_value={"caption_strategy": "webshart"}),
-            patch.object(StateTracker, "set_image_files"),
             patch.object(StateTracker, "set_data_backend_config"),
         ):
             backend = self._backend("short")
             metadata = self._metadata_backend(backend)
             with (
-                patch.object(metadata, "_prepare_metadata", side_effect=lambda path, data: (1.0, data)),
+                patch.object(metadata, "_prepare_metadata", side_effect=lambda path, data, recipe=None: (1.0, data)),
                 patch.object(metadata, "_enforce_min_bucket_size"),
             ):
                 metadata.compute_aspect_ratio_bucket_indices()

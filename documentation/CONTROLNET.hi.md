@@ -99,13 +99,13 @@ dataloader कॉन्फ़िगरेशन सामान्य text‑to�
 
 ## Conditioning इमेज इनपुट बनाना
 
-SimpleTuner में ControlNet समर्थन जितना नया है, अभी प्रशिक्षण सेट बनाने के लिए हमारे पास केवल एक विकल्प है:
+रिपॉज़िटरी की स्थानीय कॉपी से Canny टूल चलाएँ और इनपुट, मूल इमेज के आउटपुट और कंडीशनिंग के आउटपुट की डायरेक्टरी दें। दोनों आउटपुट में सबडायरेक्टरी समेत सापेक्ष पथ बने रहते हैं, ताकि Local प्रोवाइडर इमेज के जोड़े मिला सके।
 
-- [create_canny_edge.py](/scripts/datasets/controlnet/create_canny_edge.py)
-  - Canny मॉडल प्रशिक्षण के लिए एक बेहद बुनियादी उदाहरण।
-  - आपको स्क्रिप्ट में `input_dir` और `output_dir` मान बदलने होंगे
-
-यह 100 से कम इमेज वाले छोटे डेटासेट के लिए लगभग 30 सेकंड लेगा।
+```bash
+python -m pip install opencv-python-headless
+python scripts/datasets/controlnet/create_canny_edge.py \
+  datasets/antelope datasets/antelope-data datasets/antelope-conditioning
+```
 
 ## ControlNet मॉडल ट्रेन करने के लिए कॉन्फ़िगरेशन बदलना
 

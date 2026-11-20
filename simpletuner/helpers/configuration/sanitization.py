@@ -32,6 +32,7 @@ SENSITIVE_CONFIG_KEYS = {
     "hf_token",
     "hub_token",
     "session_token",
+    "aws_session_token",
     "upload_token",
 }
 

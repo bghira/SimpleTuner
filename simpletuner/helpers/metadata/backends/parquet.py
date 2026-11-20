@@ -32,6 +32,42 @@ except ImportError:
     raise ImportError("Pandas is required for the ParquetMetadataBackend.")
 
 
+def check_column_values(column_data, column_name, parquet_path, fallback_caption_column=False):
+    non_null_values = column_data.dropna()
+    if non_null_values.empty:
+        raise ValueError(f"Parquet file {parquet_path} contains only null values in the '{column_name}' column.")
+
+    first_non_null = non_null_values.iloc[0]
+    if isinstance(first_non_null, (list, tuple, numpy.ndarray, pd.Series)):
+        if column_data.isnull().any() and not fallback_caption_column:
+            raise ValueError(f"Parquet file {parquet_path} contains null arrays in the '{column_name}' column.")
+
+        empty_arrays = non_null_values.apply(lambda x: len(x) == 0)
+        if empty_arrays.any() and not fallback_caption_column:
+            raise ValueError(f"Parquet file {parquet_path} contains empty arrays in the '{column_name}' column.")
+
+        null_elements_in_arrays = non_null_values.apply(lambda arr: any(pd.isnull(s) for s in arr))
+        if null_elements_in_arrays.any() and not fallback_caption_column:
+            raise ValueError(
+                f"Parquet file {parquet_path} contains null values within arrays in the '{column_name}' column."
+            )
+
+        empty_strings_in_arrays = non_null_values.apply(lambda arr: any(s == "" for s in arr))
+        if empty_strings_in_arrays.all() and not fallback_caption_column:
+            raise ValueError(
+                f"Parquet file {parquet_path} contains only empty strings within arrays in the '{column_name}' column."
+            )
+
+    elif isinstance(first_non_null, str):
+        if column_data.isnull().any() and not fallback_caption_column:
+            raise ValueError(f"Parquet file {parquet_path} contains null values in the '{column_name}' column.")
+
+        if (column_data == "").any() and not fallback_caption_column:
+            raise ValueError(f"Parquet file {parquet_path} contains empty strings in the '{column_name}' column.")
+    else:
+        raise TypeError(f"Unsupported data type in column '{column_name}'. Expected strings or arrays of strings.")
+
+
 class ParquetMetadataBackend(MetadataBackend):
     def __init__(
         self,
@@ -56,6 +92,8 @@ class ParquetMetadataBackend(MetadataBackend):
         maximum_num_frames: int = None,
         cache_file_suffix: str = None,
         repeats: int = 0,
+        dataset_config: dict | None = None,
+        runtime_args=None,
         max_num_samples: int = None,
     ):
         self.parquet_config = parquet_config
@@ -85,31 +123,22 @@ class ParquetMetadataBackend(MetadataBackend):
             maximum_num_frames=maximum_num_frames,
             minimum_num_frames=minimum_num_frames,
             num_frames=num_frames,
+            dataset_config=dataset_config,
+            runtime_args=runtime_args,
             cache_file_suffix=cache_file_suffix,
             repeats=repeats,
             max_num_samples=max_num_samples,
         )
         self.load_parquet_database()
+        if self.dataset_config.get("caption_strategy") == "parquet":
+            self.validate_caption_columns()
         self.caption_cache = self._extract_captions_to_fast_list()
-        self.missing_captions = self._locate_missing_caption_from_fast_list()
-        if self.missing_captions:
-            logger.warning(f"Missing captions for {len(self.missing_captions)} images: {self.missing_captions}")
-            self._remove_images_with_missing_captions()
-
-    def _remove_images_with_missing_captions(self):
-        # remove items with missing captions from buckets
-        for key in self.aspect_ratio_bucket_indices.keys():
-            len_before = len(self.aspect_ratio_bucket_indices[key])
-            self.aspect_ratio_bucket_indices[key] = [
-                path for path in self.aspect_ratio_bucket_indices[key] if path not in self.missing_captions
-            ]
-            len_after = len(self.aspect_ratio_bucket_indices[key])
-            if len_before != len_after:
-                logger.warning(
-                    f"Removed {len_before - len_after} items from aspect ratio bucket {key} due to missing captions."
-                )
-        self.save_cache(enforce_constraints=True)
-        self.missing_captions = []
+        if self.uses_caption_strategy("parquet"):
+            missing = self._locate_missing_caption_from_fast_list()
+            if missing:
+                logger.warning("Removing %d indexed samples with missing Parquet captions.", len(missing))
+                self.remove_images(missing)
+                self.save_cache(enforce_constraints=True)
 
     def load_parquet_database(self):
         if self.data_backend.exists(self.parquet_path):
@@ -122,39 +151,43 @@ class ParquetMetadataBackend(MetadataBackend):
                 raise e
 
             if self.is_json_lines or self.is_json_file:
-                self.parquet_database = pd.read_json(pq, lines=self.is_json_lines)
+                table = pd.read_json(pq, lines=self.is_json_lines)
             else:
-                self.parquet_database = pd.read_parquet(pq, engine="pyarrow")
+                table = pd.read_parquet(pq, engine="pyarrow")
 
-            self.parquet_database.set_index(self.parquet_config.get("filename_column"), inplace=True)
+            self.parquet_database = table.set_index(self.parquet_config.get("filename_column"))
         else:
             raise FileNotFoundError(f"Parquet could not be loaded from {self.parquet_path}: file does not exist.")
 
-    def _locate_missing_caption_from_fast_list(self):
-        missing_captions = []
-        identifier_includes_extension = self.parquet_config.get("identifier_includes_extension", False)
-        # currently we do not do path-based identifiers
-        identifier_includes_path = False
+    def validate_caption_columns(self):
+        table = self.parquet_database
+        check_column_values(pd.Series(table.index, copy=False), table.index.name, self.parquet_path)
+        column = self.parquet_config.get("caption_column")
+        columns = column if isinstance(column, list) else [column]
+        for name in columns:
+            if name not in table.columns:
+                raise ValueError(f"Parquet file {self.parquet_path} does not contain a column named '{name}'.")
+            check_column_values(table[name], name, self.parquet_path, self.parquet_config.get("fallback_caption_column"))
 
-        for key in self.aspect_ratio_bucket_indices.keys():
-            for filename in self.aspect_ratio_bucket_indices[key]:
-                # Chop extension if parquet expects no extension
-                if not identifier_includes_extension:
-                    filename = os.path.splitext(filename)[0]
-                if not identifier_includes_path:
-                    instance_data_dirs = self.instance_data_dir
-                    if not isinstance(instance_data_dirs, (list, tuple)):
-                        instance_data_dirs = [instance_data_dirs]
-                    for instance_data_dir in instance_data_dirs:
-                        instance_data_dir = str(instance_data_dir or "")
-                        if instance_data_dir and instance_data_dir in filename:
-                            filename = filename.replace(instance_data_dir, "")
-                            break
-                    if filename.startswith("/"):
-                        filename = filename[1:]
-                if filename not in self.caption_cache:
-                    missing_captions.append(filename)
-        return missing_captions
+    def _caption_key(self, path):
+        filename = str(path)
+        roots = self.instance_data_dir
+        for root in roots if isinstance(roots, (list, tuple)) else (roots,):
+            prefix = str(root or "").rstrip("/") + "/"
+            if root and filename.startswith(prefix):
+                filename = filename[len(prefix) :]
+                break
+        if not self.parquet_config.get("identifier_includes_extension", False):
+            filename = os.path.splitext(filename)[0]
+        return filename
+
+    def _locate_missing_caption_from_fast_list(self):
+        return [
+            path
+            for refs in self.aspect_ratio_bucket_indices.values()
+            for path in refs
+            if self._caption_key(path) not in self.caption_cache
+        ]
 
     def _extract_captions_to_fast_list(self):
         # parquet is columnar - dict lookups are faster than repeated column access
@@ -176,6 +209,15 @@ class ParquetMetadataBackend(MetadataBackend):
         identifier_includes_extension = self.parquet_config.get("identifier_includes_extension", False)
         captions = {}
 
+        def clean(caption):
+            if pd.api.types.is_scalar(caption) and pd.isna(caption):
+                return None
+            if isinstance(caption, (numpy.ndarray, pd.Series)):
+                return [str(item) for item in caption if not pd.isna(item)]
+            if isinstance(caption, bytes):
+                caption = caption.decode("utf-8")
+            return caption.strip() if isinstance(caption, str) else caption
+
         for index, row in self.parquet_database.iterrows():
             if filename_column in row:
                 file_id = str(row[filename_column])
@@ -187,31 +229,15 @@ class ParquetMetadataBackend(MetadataBackend):
 
             # Could be list or single str
             if isinstance(caption_column, list):
-                if len(caption_column) > 0:
-                    # Gather all columns in a list
-                    cvals = [row.get(c, "") for c in caption_column]
-                    cvals = [c for c in cvals if c]  # remove empties
-                    caption = cvals if cvals else None
-                else:
-                    caption = None
+                caption = [value for column in caption_column if (value := clean(row.get(column)))]
             else:
-                caption = row.get(caption_column, None)
-
-            if caption is None and fallback_caption_column:
-                caption = row.get(fallback_caption_column, None)
-
-            if caption is None and caption_field_preferences:
+                caption = clean(row.get(caption_column))
+            if not caption and fallback_caption_column:
+                caption = clean(row.get(fallback_caption_column))
+            if not caption:
                 for field in caption_field_preferences:
-                    if field in row and row.get(field):
-                        caption = row.get(field)
+                    if caption := clean(row.get(field)):
                         break
-
-            if isinstance(caption, (numpy.ndarray, pd.Series)):
-                caption = [str(item) for item in caption if item is not None]
-            elif isinstance(caption, bytes):
-                caption = caption.decode("utf-8")
-            elif isinstance(caption, str):
-                caption = caption.strip()
 
             if not caption:
                 continue
@@ -223,7 +249,8 @@ class ParquetMetadataBackend(MetadataBackend):
         return self.caption_cache.get(str(index), None)
 
     def _discover_new_files(self, for_metadata: bool = False, ignore_existing_cache: bool = False):
-        all_image_files = StateTracker.get_image_files(data_backend_id=self.data_backend.id)
+        inventory = self.data_backend.source_files
+        all_image_files = inventory.read()
         if all_image_files is None:
             extension_pool = audio_file_extensions if self.dataset_type is DatasetType.AUDIO else image_file_extensions
             all_image_files = self.data_backend.list_files(
@@ -233,7 +260,7 @@ class ParquetMetadataBackend(MetadataBackend):
             # Flatten nested lists
             if any(isinstance(i, list) for i in all_image_files):
                 all_image_files = [item for sublist in all_image_files for item in sublist]
-            all_image_files = StateTracker.set_image_files(all_image_files, data_backend_id=self.data_backend.id)
+            all_image_files = inventory.publish(all_image_files)
         else:
             # flatten if necessary
             if any(isinstance(i, list) for i in all_image_files):
@@ -290,7 +317,7 @@ class ParquetMetadataBackend(MetadataBackend):
             key: [str(path) for path in value] for key, value in self.aspect_ratio_bucket_indices.items()
         }
         cache_data = {
-            "config": StateTracker.get_data_backend_config(data_backend_id=self.data_backend.id),
+            "config": self.active_dataset_config,
             "aspect_ratio_bucket_indices": aspect_ratio_bucket_indices_str,
         }
         # Include filtering statistics if available
@@ -375,7 +402,7 @@ class ParquetMetadataBackend(MetadataBackend):
                 progress_callback(file_idx + 1, total_files)
 
             current_time = time.time()
-            if file not in existing_files_set:
+            if file not in existing_files_set and file not in self.removed_samples:
                 metadata_updates = {}
                 if self.should_abort:
                     return
@@ -393,13 +420,13 @@ class ParquetMetadataBackend(MetadataBackend):
                 continue
 
             # If we have metadata updates, store them
-            if metadata_updates and file in metadata_updates:
-                self.set_metadata_by_filepath(filepath=file, metadata=metadata_updates[file], update_json=False)
+            if metadata_updates:
+                self.enqueue_prepared_metadata(metadata_updates)
 
             # periodic save to avoid losing progress
             if (current_time - last_write_time) >= self.metadata_update_interval:
+                self.flush_prepared_metadata()
                 self.save_cache(enforce_constraints=False)
-                self.save_image_metadata()
                 last_write_time = current_time
 
         # Extend final results
@@ -408,7 +435,7 @@ class ParquetMetadataBackend(MetadataBackend):
 
         logger.info(f"Sample processing statistics: {statistics}")
         self.filtering_statistics = statistics
-        self.save_image_metadata()
+        self.flush_prepared_metadata()
         self.save_cache(enforce_constraints=True)
         if self.bucket_report:
             self.bucket_report.update_statistics(statistics)
@@ -473,6 +500,11 @@ class ParquetMetadataBackend(MetadataBackend):
             if database_row is None:
                 statistics.setdefault("skipped", {}).setdefault("metadata_missing", 0)
                 statistics["skipped"]["metadata_missing"] += 1
+                return aspect_ratio_bucket_indices
+
+            if self.uses_caption_strategy("parquet") and self._caption_key(image_path_str) not in self.caption_cache:
+                skipped = statistics.setdefault("skipped", {})
+                skipped["missing_caption"] = skipped.get("missing_caption", 0) + 1
                 return aspect_ratio_bucket_indices
 
             if self.dataset_type is DatasetType.AUDIO:
@@ -583,6 +615,7 @@ class ParquetMetadataBackend(MetadataBackend):
                 data_backend_id=self.id,
                 image_metadata={"original_size": image_metadata.get("original_size")},
                 image_path=image_path_str,
+                data_backend_config=self.active_dataset_config,
             )
             prepared_sample = training_sample.prepare()
 

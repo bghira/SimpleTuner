@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fcntl
 import io
 import json
 import logging
@@ -11,15 +12,16 @@ import pandas as pd
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
-from simpletuner.helpers.metadata.captions import CaptionRecord, normalize_caption_text
+from simpletuner.helpers.metadata.captions import CaptionRecord, caption_records_revision, normalize_caption_text
 from simpletuner.helpers.training.multi_process import should_log
-from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger("CaptionMetadataBackend")
 if should_log():
     logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 else:
     logger.setLevel("ERROR")
+
+EMPTY_CAPTION_REVISION = caption_records_revision(())
 
 
 class CaptionMetadataBackend(MetadataBackend):
@@ -44,10 +46,13 @@ class CaptionMetadataBackend(MetadataBackend):
         parquet_config: Optional[Dict[str, Any]] = None,
         hf_config: Optional[Dict[str, Any]] = None,
         quality_filter: Optional[Dict[str, Any]] = None,
+        dataset_config: dict | None = None,
+        runtime_args=None,
         **_: object,
     ):
         self.caption_records: Dict[str, CaptionRecord] = {}
         self._ordered_ids: List[str] = []
+        self._caption_revision = None
         self.caption_extensions = tuple(
             sorted({ext.lstrip(".").lower() for ext in (caption_extensions or self.DEFAULT_EXTENSIONS)})
         )
@@ -66,6 +71,8 @@ class CaptionMetadataBackend(MetadataBackend):
             resolution=1,
             resolution_type="pixel",
             metadata_update_interval=metadata_update_interval,
+            dataset_config=dataset_config,
+            runtime_args=runtime_args,
             cache_file_suffix=cache_file_suffix,
             repeats=repeats,
         )
@@ -92,7 +99,7 @@ class CaptionMetadataBackend(MetadataBackend):
                 logger.warning(f"(id={self.id}) Failed to load caption cache: {exc}")
                 self._ordered_ids = []
 
-        self.aspect_ratio_bucket_indices = {"captions": list(self._ordered_ids)}
+        self.aspect_ratio_bucket_indices = {"captions": self._ordered_ids}
 
     def save_cache(self, enforce_constraints: bool = False):
         del enforce_constraints  # Caption datasets do not use bucket constraints.
@@ -100,8 +107,8 @@ class CaptionMetadataBackend(MetadataBackend):
             logger.debug(f"(id={self.id}) Skipping caption cache write in read-only mode.")
             return
         payload = {
-            "config": StateTracker.get_data_backend_config(self.id),
-            "ordered_ids": list(self._ordered_ids),
+            "config": self.active_dataset_config,
+            "ordered_ids": self._ordered_ids,
         }
         try:
             self.data_backend.write(self.cache_file, json.dumps(payload))
@@ -112,6 +119,7 @@ class CaptionMetadataBackend(MetadataBackend):
         self.caption_records = {}
         self.image_metadata = {}
         self.image_metadata_loaded = False
+        self._caption_revision = EMPTY_CAPTION_REVISION
         try:
             if not self.data_backend.exists(self.metadata_file):
                 return
@@ -135,12 +143,14 @@ class CaptionMetadataBackend(MetadataBackend):
             self.image_metadata[record.metadata_id] = record.to_payload()
 
         self._ordered_ids = ordered_ids
-        self.aspect_ratio_bucket_indices = {"captions": list(self._ordered_ids)}
+        self.aspect_ratio_bucket_indices = {"captions": self._ordered_ids}
+        self._caption_revision = caption_records_revision(self.caption_records[mid] for mid in self._ordered_ids)
         self.image_metadata_loaded = True
 
     def save_image_metadata(self):
         serialized = [self.caption_records[mid].to_payload() for mid in self._ordered_ids]
         self.data_backend.write(self.metadata_file, json.dumps(serialized))
+        self._caption_revision = caption_records_revision(self.caption_records[mid] for mid in self._ordered_ids)
         self.image_metadata_loaded = True
 
     # ------------------------------------------------------------------
@@ -154,14 +164,42 @@ class CaptionMetadataBackend(MetadataBackend):
             and Path(filepath).suffix.lstrip(".").lower() in self.caption_extensions
         )
 
+    def discover_caption_files(self, inventory_file: Path) -> Dict[str, bool]:
+        try:
+            with inventory_file.open(encoding="utf-8") as handle:
+                fcntl.flock(handle, fcntl.LOCK_SH)
+                existing = json.load(handle)
+        except FileNotFoundError:
+            existing = None
+        except (OSError, ValueError) as exc:
+            logger.warning(f"(id={self.id}) Failed to load caption file inventory: {exc}")
+            existing = None
+
+        if existing:
+            paths = existing
+        elif self.instance_data_dir:
+            paths = self.data_backend.iter_file_keys(self.caption_extensions, self.instance_data_dir)
+        else:
+            logger.warning(f"(id={self.id}) Caption dataset has no instance_data_dir; skipping discovery.")
+            return {}
+
+        try:
+            inventory = {path: False for path in paths if self.is_caption_source(path)}
+        except FileNotFoundError:
+            logger.warning(f"(id={self.id}) Caption source was not found: {self.instance_data_dir}")
+            return {}
+        inventory_file.parent.mkdir(parents=True, exist_ok=True)
+        with inventory_file.open("a", encoding="utf-8") as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            handle.truncate(0)
+            json.dump(inventory, handle)
+        return inventory
+
     def ingest_from_file_cache(self, caption_files: Dict[str, bool]) -> int:
-        """Populate caption records from a cache built by StateTracker.set_caption_files."""
+        """Populate caption records from a discovered file inventory."""
         self.reset_records()
         if not caption_files:
             logger.warning(f"(id={self.id}) No caption files discovered.")
-            self.caption_records = {}
-            self._ordered_ids = []
-            self.image_metadata = {}
             self.save_image_metadata()
             self.save_cache()
             return 0
@@ -192,6 +230,7 @@ class CaptionMetadataBackend(MetadataBackend):
         self.caption_records = {}
         self.image_metadata = {}
         self._ordered_ids = []
+        self._caption_revision = EMPTY_CAPTION_REVISION
         self.aspect_ratio_bucket_indices = {"captions": []}
 
     def _store_record(
@@ -207,7 +246,7 @@ class CaptionMetadataBackend(MetadataBackend):
         self.caption_records[metadata_id] = record
         self.image_metadata[metadata_id] = record.to_payload()
         self._ordered_ids.append(metadata_id)
-        self.aspect_ratio_bucket_indices = {"captions": list(self._ordered_ids)}
+        self.aspect_ratio_bucket_indices["captions"].append(metadata_id)
 
     def _extract_captions_from_file(self, filepath: str) -> Iterator[str]:
         data = self.data_backend.read(filepath)
@@ -552,11 +591,19 @@ class CaptionMetadataBackend(MetadataBackend):
     # ------------------------------------------------------------------
     # Access helpers for datasets / samplers
     # ------------------------------------------------------------------
-    def iter_records(self) -> Iterable[CaptionRecord]:
+    def caption_revision(self) -> str:
+        if self._caption_revision is None:
+            self.load_image_metadata()
+        return self._caption_revision
+
+    def iter_records(self, *, worker=0, workers=1) -> Iterable[CaptionRecord]:
+        if workers < 1 or not 0 <= worker < workers:
+            raise ValueError("Preparation worker must be in the range [0, workers).")
         if not self.caption_records or not self._ordered_ids:
             self.load_image_metadata()
-        for metadata_id in self._ordered_ids:
-            record = self.caption_records.get(metadata_id)
+        total = len(self._ordered_ids)
+        for index in range(total * worker // workers, total * (worker + 1) // workers):
+            record = self.caption_records.get(self._ordered_ids[index])
             if record is not None:
                 yield record
 

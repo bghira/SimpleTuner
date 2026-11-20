@@ -1,8 +1,9 @@
 import logging
 import os
 
+from simpletuner.helpers.data_backend.base import conditioning_file_path
 from simpletuner.helpers.training.multi_process import should_log
-from simpletuner.helpers.training.state_tracker import StateTracker
+from simpletuner.helpers.utils.pathing import normalize_data_path
 
 logger = logging.getLogger(__name__)
 if should_log():
@@ -12,6 +13,14 @@ else:
 
 
 class DatasetDuplicator:
+    @staticmethod
+    def generated_conditioning_id(source_id, generator_type):
+        return f"{source_id}_conditioning_{generator_type}"
+
+    @staticmethod
+    def generated_conditioning_directory(cache_dir, dataset_id):
+        return os.path.join(cache_dir, "conditioning_data", dataset_id)
+
     @staticmethod
     def _translate_conditioning_path(path: str, source_dir: str, target_dir: str, conditioning_data_type: str | None) -> str:
         source_dir_abs = os.path.abspath(source_dir)
@@ -34,27 +43,27 @@ class DatasetDuplicator:
         return new_path
 
     @staticmethod
-    def copy_metadata(source_backend, target_backend):
+    def copy_metadata(source, target, *, generated=False, publish=True):
         """Copy metadata from source backend to target backend with path updates."""
-        source_meta = source_backend.get("metadata_backend", None)
-        target_meta = target_backend.get("metadata_backend", None)
+        source_meta = source.metadata_backend
+        target_meta = target.metadata_backend
 
         if source_meta is None or target_meta is None:
             raise ValueError(f"Both backends must have metadata_backend defined. Received {source_meta} \n\n {target_meta}")
 
-        logger.debug("Reloading target metadata cache...")
-        target_meta.reload_cache(set_config=False)
+        if target.id not in source.metadata_copies:
+            target_meta.reload_cache(set_config=False)
 
         # Get the instance directories for path translation
-        source_dir = source_backend.get("instance_data_dir", "")
-        target_dir = target_backend.get("instance_data_dir", "")
-        target_config = target_backend.get("config", {}) or {}
-        conditioning_config = target_config.get("conditioning_config") or target_backend.get("conditioning_config") or {}
+        source_dir = source.instance_data_dir
+        target_dir = target.instance_data_dir
+        target_config = target.config
+        conditioning_config = target_config.get("conditioning_config") or {}
         conditioning_data_type = conditioning_config.get("type")
 
         # Check if we need to update paths (for conditioning datasets)
-        source_data = source_backend.get("data_backend")
-        target_data = target_backend.get("data_backend")
+        source_data = source.data_backend
+        target_data = target.data_backend
         shared_sample_ids = (
             getattr(source_data, "type", None) == "webshart"
             and getattr(target_data, "type", None) == "webshart"
@@ -63,43 +72,33 @@ class DatasetDuplicator:
                 getattr(source_data, field) == getattr(target_data, field) for field in ("source", "metadata", "subfolder")
             )
         )
-        needs_path_update = source_dir != target_dir and target_backend.get("dataset_type") == "conditioning"
+        needs_path_update = source_dir != target_dir and target.config["dataset_type"] == "conditioning"
+
+        def translate(path):
+            if not needs_path_update or shared_sample_ids:
+                return path
+            if generated:
+                return conditioning_file_path(
+                    normalize_data_path(path, source_dir), os.path.abspath(target_dir), target_config
+                )
+            return DatasetDuplicator._translate_conditioning_path(path, source_dir, target_dir, conditioning_data_type)
+
+        target_meta.bind_preparation_source(source_meta, translate)
 
         if needs_path_update:
             logger.info(f"Copying metadata with path translation: '{source_dir}' -> '{target_dir}'")
 
-            # Copy and update bucket indices
-            target_meta.aspect_ratio_bucket_indices = {}
-            for bucket, paths in source_meta.aspect_ratio_bucket_indices.items():
-                updated_paths = []
-                for path in paths:
-                    new_path = (
-                        path
-                        if shared_sample_ids
-                        else DatasetDuplicator._translate_conditioning_path(
-                            path,
-                            source_dir,
-                            target_dir,
-                            conditioning_data_type,
-                        )
-                    )
-                    updated_paths.append(new_path)
-                target_meta.aspect_ratio_bucket_indices[bucket] = updated_paths
+            target_meta.aspect_ratio_bucket_indices = {
+                bucket: list(map(translate, paths)) for bucket, paths in source_meta.aspect_ratio_bucket_indices.items()
+            }
 
             # Copy other metadata
-            if hasattr(source_meta, "image_metadata") and source_meta.image_metadata:
-                target_meta.image_metadata = {}
+            if not source_meta.image_metadata and not source_meta.image_metadata_loaded:
+                source_meta.load_image_metadata()
+            target_meta.image_metadata = {}
+            if source_meta.image_metadata:
                 for path, metadata in source_meta.image_metadata.items():
-                    new_path = (
-                        path
-                        if shared_sample_ids
-                        else DatasetDuplicator._translate_conditioning_path(
-                            path,
-                            source_dir,
-                            target_dir,
-                            conditioning_data_type,
-                        )
-                    )
+                    new_path = translate(path)
                     copied_metadata = dict(metadata)
                     if conditioning_data_type == "i2v_first_frame":
                         copied_metadata["training_sample_path"] = path
@@ -108,6 +107,7 @@ class DatasetDuplicator:
                 logger.debug(f"Copied {len(target_meta.image_metadata)} image_metadata entries")
             else:
                 logger.debug("No image_metadata to copy from source")
+            target_meta.image_metadata_loaded = True
 
             # Copy any other attributes that need to be preserved
             for attr in ["metadata_update_interval", "cache_file_suffix"]:
@@ -119,8 +119,8 @@ class DatasetDuplicator:
             logger.info("Copying metadata without path translation")
             target_meta.set_metadata(metadata_backend=source_meta, update_json=False)
 
-        source_config = source_backend.get("config", {}) or {}
-        conditioning_type = target_config.get("conditioning_type") or target_backend.get("conditioning_type")
+        source_config = source.config
+        conditioning_type = target_config.get("conditioning_type") or target.conditioning_type
 
         propagated_fields = [
             "resolution",
@@ -140,10 +140,6 @@ class DatasetDuplicator:
                 if field in source_config:
                     target_config[field] = source_config[field]
 
-        target_backend["config"] = target_config
-        if target_backend.get("id"):
-            StateTracker.set_data_backend_config(target_backend["id"], target_config)
-
         if "repeats" in target_config:
             target_meta.repeats = int(target_config.get("repeats") or 0)
         if "resolution" in target_config and target_config["resolution"] is not None:
@@ -159,16 +155,14 @@ class DatasetDuplicator:
 
         target_meta.config = target_config
 
-        if conditioning_data_type == "i2v_first_frame" and hasattr(target_meta, "save_cache"):
+        if publish and conditioning_data_type == "i2v_first_frame" and hasattr(target_meta, "save_cache"):
             target_meta.save_cache()
 
         # Bucket indices may be rank-local here; do not overwrite the canonical target cache.
         target_meta.set_readonly()
-        if hasattr(target_meta, "save_image_metadata"):
+        if publish:
             target_meta.save_image_metadata()
-            logger.debug("Saved image_metadata to disk")
-        else:
-            logger.warning("target_meta does not have save_image_metadata method")
+        source.metadata_copies[target.id] = (target, generated)
 
         logger.info("Metadata copied successfully.")
         source_meta.print_debug_info()
@@ -232,16 +226,12 @@ class DatasetDuplicator:
             )
 
         # Set ID
-        target_cfg["id"] = f"{source_id}_conditioning_{conditioning_data_type}"
+        target_cfg["id"] = DatasetDuplicator.generated_conditioning_id(source_id, conditioning_data_type)
 
         # Set instance data directory
         target_dataset_path = cond_cfg.get("instance_data_dir", None)
         if target_dataset_path is None:
-            target_dataset_path = os.path.join(
-                global_cfg.cache_dir,
-                "conditioning_data",
-                target_cfg["id"],
-            )
+            target_dataset_path = DatasetDuplicator.generated_conditioning_directory(global_cfg.cache_dir, target_cfg["id"])
         target_cfg["instance_data_dir"] = target_dataset_path
 
         # Remove conditioning from target config

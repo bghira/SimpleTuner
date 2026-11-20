@@ -599,7 +599,10 @@ wandb_module.log = lambda *_, **__: None
 wandb_module.config = {}
 sys.modules.setdefault("wandb", wandb_module)
 
+from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
+from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend
+from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBackend
 from simpletuner.helpers.models.common import PredictionTypes
 from simpletuner.helpers.training.attention_backend import AttentionBackendMode
 from simpletuner.helpers.training.trainer import DistributedType, Trainer
@@ -613,6 +616,58 @@ except ImportError:
 
 
 class TestTrainer(unittest.TestCase):
+    def test_abort_signals_bindings_on_registered_datasets(self):
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+
+        trainer = object.__new__(Trainer)
+        trainer.bf = Mock()
+        dataset = DatasetRuntime("references", None, SimpleNamespace(should_abort=False), {"dataset_type": "conditioning"})
+        dataset.vae_cache = SimpleNamespace(should_abort=False)
+        dataset.text_embed_cache = SimpleNamespace(should_abort=False)
+        with patch.object(StateTracker, "datasets", {dataset.id: dataset}):
+            trainer.abort()
+        trainer.bf.stop_fetching.assert_called_once()
+        self.assertTrue(trainer.should_abort)
+        self.assertTrue(dataset.metadata_backend.should_abort)
+        self.assertTrue(dataset.vae_cache.should_abort)
+        self.assertTrue(dataset.text_embed_cache.should_abort)
+
+    def test_main_rank_eval_forward_uses_the_local_ddp_module_and_restores_training_binding(self):
+        class FakeDDP:
+            module = object()
+
+        for success in (True, False):
+            with self.subTest(success=success):
+                wrapped = FakeDDP()
+                trainer = object.__new__(Trainer)
+                trainer.accelerator = SimpleNamespace(is_main_process=True)
+                trainer.model = SimpleNamespace(
+                    get_trained_component=Mock(return_value=wrapped),
+                    set_prepared_model=Mock(),
+                    loss=Mock(),
+                )
+                trainer._get_noise_schedule = Mock()
+
+                def evaluate(**kwargs):
+                    trainer.model.set_prepared_model.assert_called_once_with(wrapped.module)
+                    if not success:
+                        raise ValueError("evaluation interrupted")
+                    return {"loss": 1}
+
+                trainer.evaluation = SimpleNamespace(execute_eval=evaluate)
+                with patch.object(torch.nn.parallel, "DistributedDataParallel", FakeDDP):
+                    if success:
+                        self.assertEqual(trainer._execute_eval_loss(), {"loss": 1})
+                    else:
+                        with self.assertRaisesRegex(ValueError, "evaluation interrupted"):
+                            trainer._execute_eval_loss()
+                self.assertEqual(trainer.model.set_prepared_model.call_args_list, [call(wrapped.module), call(wrapped)])
+
+    def setUp(self):
+        registry = patch.object(StateTracker, "datasets", {})
+        registry.start()
+        self.addCleanup(registry.stop)
+
     def test_final_export_materializes_schedulefree_eval_weights_on_every_rank(self):
         from simpletuner.helpers.training import save_hooks
         from simpletuner.helpers.training.optimizers.adamw_schedulefree import AdamWScheduleFreeKahan
@@ -1011,6 +1066,25 @@ class TestTrainer(unittest.TestCase):
             self.assertTrue(trainer._any_rank_reached_epoch_end(False))
 
         mock_all_reduce.assert_called_once()
+
+    def test_fetch_error_is_shared_with_ranks_that_have_a_batch(self):
+        trainer = object.__new__(Trainer)
+        trainer.accelerator = SimpleNamespace(num_processes=2, device=torch.device("cpu"))
+
+        def mark_remote_fetch_error(tensor, op=None):
+            tensor.fill_(2)
+
+        with (
+            patch.object(trainer, "_distributed_collectives_ready", return_value=True),
+            patch("simpletuner.helpers.training.trainer.torch.distributed.all_reduce") as reduce,
+        ):
+            error = OSError("shard read failed")
+            with self.assertRaises(OSError) as raised:
+                trainer._any_rank_reached_epoch_end(True, batch_error=error)
+            self.assertIs(raised.exception, error)
+            reduce.side_effect = mark_remote_fetch_error
+            with self.assertRaisesRegex(RuntimeError, "Another training rank failed while fetching its batch"):
+                trainer._any_rank_reached_epoch_end(False)
 
     def test_fsdp2_full_export_failure_guard_raises_when_peer_rank_failed(self):
         trainer = object.__new__(Trainer)
@@ -1780,7 +1854,7 @@ class TestTrainer(unittest.TestCase):
         trainer.init_optimizer = Mock(side_effect=lambda: events.append("optimizer"))
         trainer.init_lr_scheduler = Mock(side_effect=lambda: events.append("lr_scheduler") or object())
         trainer.init_hooks = Mock(
-            side_effect=lambda: (
+            side_effect=lambda **_: (
                 events.append("hooks"),
                 setattr(trainer, "model_hooks", SimpleNamespace(ema_model=None)),
             )
@@ -2270,7 +2344,7 @@ class TestTrainer(unittest.TestCase):
         )
         trainer.extra_lr_scheduler_kwargs = {}
         with patch(
-            "simpletuner.helpers.training.state_tracker.StateTracker.get_data_backends",
+            "simpletuner.helpers.training.trainer.StateTracker.get_datasets",
             return_value={},
         ):
             trainer._epoch_rollover(2)
@@ -2286,39 +2360,12 @@ class TestTrainer(unittest.TestCase):
 
         for name, overrode_max_train_steps, allow_oversubscription, expected in cases:
             with self.subTest(name=name):
-                trainer = object.__new__(Trainer)
-                trainer.state = {"first_epoch": 1, "current_epoch": 1}
-                trainer.accelerator = MagicMock(is_main_process=True)
-                trainer.extra_lr_scheduler_kwargs = {}
-                trainer.get_steps_per_epoch_for_epoch = MagicMock(return_value=100)
-                trainer.config = SimpleNamespace(
-                    num_train_epochs=5,
-                    aspect_bucket_disable_rebuild=False,
-                    lr_scheduler="constant",
-                    num_update_steps_per_epoch=100,
-                    gradient_accumulation_steps=3,
-                    overrode_max_train_steps=overrode_max_train_steps,
-                    allow_dataset_oversubscription=allow_oversubscription,
-                )
-                metadata_backend = MagicMock(read_only=True)
-                metadata_backend.aspect_ratio_bucket_indices = {"1.0": ["image-0.jpg"]}
-                backends = {"train": {"metadata_backend": metadata_backend}}
-                backend_config = {
-                    "crop": True,
-                    "crop_aspect": "random",
-                }
+                trainer, metadata_backend, _, backends = self._rollover_fixture({"1.0": ["image-0.jpg"]})
+                trainer.config.gradient_accumulation_steps = 3
+                trainer.config.overrode_max_train_steps = overrode_max_train_steps
+                trainer.config.allow_dataset_oversubscription = allow_oversubscription
 
-                with (
-                    patch("simpletuner.helpers.training.trainer.StateTracker.set_epoch"),
-                    patch(
-                        "simpletuner.helpers.training.trainer.StateTracker.get_data_backends",
-                        return_value=backends,
-                    ),
-                    patch(
-                        "simpletuner.helpers.training.trainer.StateTracker.get_data_backend_config",
-                        return_value=backend_config,
-                    ),
-                ):
+                with self._rollover_patches(backends):
                     trainer._epoch_rollover(2)
 
                 metadata_backend.split_buckets_between_processes.assert_called_once_with(
@@ -2326,7 +2373,32 @@ class TestTrainer(unittest.TestCase):
                     apply_padding=expected,
                 )
 
-    def _rollover_fixture(self, bucket_contents, usable_batches):
+    def test_epoch_rollover_counts_refreshed_buckets_and_leaves_preview_datasets_alone(self):
+        trainer, metadata, _, datasets = self._rollover_fixture({"1.0": [f"image-{i}.jpg" for i in range(32)]})
+        training = datasets["train"]
+        training.training_dataloader = MagicMock()
+        training.training_dataloader.__len__.side_effect = lambda: len(metadata)
+        preview = datasets["preview"] = Mock(training_dataloader=object())
+        unbound = datasets["unbound"] = Mock(training_dataloader=None)
+        trainer.config.eval_dataset_id = "preview"
+        trainer.state["global_step"] = 8
+        trainer.get_steps_per_epoch_for_epoch = Trainer.get_steps_per_epoch_for_epoch.__get__(trainer)
+
+        def split_buckets(**_):
+            metadata.aspect_ratio_bucket_indices = {"1.0": [f"image-{i}.jpg" for i in range(24)]}
+
+        metadata.split_buckets_between_processes.side_effect = split_buckets
+        with self._rollover_patches(datasets):
+            trainer._refresh_training_batch_schedule(trainer._training_datasets())
+            self.assertEqual(trainer.get_steps_per_epoch_for_epoch(2), 8)
+            trainer._epoch_rollover(2)
+            self.assertEqual(trainer.get_steps_per_epoch_for_epoch(2), 6)
+            self.assertEqual(set(trainer._training_datasets()), {"train"})
+        self.assertEqual(trainer.config.num_update_steps_per_epoch, 6)
+        preview.prepare_epoch.assert_not_called()
+        unbound.prepare_epoch.assert_not_called()
+
+    def _rollover_fixture(self, bucket_contents, provider=DiscoveryMetadataBackend):
         trainer = object.__new__(Trainer)
         trainer.state = {"first_epoch": 1, "current_epoch": 1}
         trainer.accelerator = MagicMock(is_main_process=True)
@@ -2341,11 +2413,23 @@ class TestTrainer(unittest.TestCase):
             overrode_max_train_steps=False,
             allow_dataset_oversubscription=False,
         )
-        metadata_backend = MagicMock(read_only=True, batch_size=4)
+        metadata_backend = provider.__new__(provider)
+        metadata_backend.id = "train"
+        metadata_backend.accelerator = trainer.accelerator
+        metadata_backend.read_only = True
+        metadata_backend.batch_size = 4
+        metadata_backend.repeats = 0
         metadata_backend.aspect_ratio_bucket_indices = bucket_contents
-        metadata_backend.__len__.return_value = usable_batches
+        metadata_backend.compute_aspect_ratio_bucket_indices = Mock()
+        metadata_backend.reload_cache = Mock()
+        metadata_backend.split_buckets_between_processes = Mock()
         vaecache = MagicMock()
-        backends = {"train": {"metadata_backend": metadata_backend, "vaecache": vaecache}}
+        dataset = DatasetRuntime(
+            "train", None, metadata_backend, {"crop": True, "crop_aspect": "random", "vae_cache_clear_each_epoch": True}
+        )
+        dataset.vae_cache = vaecache
+        dataset.training_dataloader = MagicMock()
+        backends = {"train": dataset}
         return trainer, metadata_backend, vaecache, backends
 
     @contextmanager
@@ -2353,20 +2437,54 @@ class TestTrainer(unittest.TestCase):
         with (
             patch("simpletuner.helpers.training.trainer.StateTracker.set_epoch"),
             patch(
-                "simpletuner.helpers.training.trainer.StateTracker.get_data_backends",
+                "simpletuner.helpers.training.trainer.StateTracker.get_datasets",
                 return_value=backends,
-            ),
-            patch(
-                "simpletuner.helpers.training.trainer.StateTracker.get_data_backend_config",
-                return_value={"crop": True, "crop_aspect": "random"},
             ),
         ):
             yield
 
+    def test_rollover_clears_exhausted_datasets_only_when_starting_a_new_epoch(self):
+        trainer, _, _, backends = self._rollover_fixture({"1.0": ["sample.jpg"]})
+        self.addCleanup(StateTracker.clear_exhausted_buckets)
+        StateTracker.set_exhausted_backends(["train"])
+        with self._rollover_patches(backends):
+            trainer._epoch_rollover(1)
+            self.assertEqual(StateTracker.exhausted_backends, ["train"])
+            trainer._epoch_rollover(2)
+        self.assertEqual(StateTracker.exhausted_backends, [])
+
+    def test_epoch_rollover_keeps_native_geometry_and_rebuilds_only_requested_artifacts(self):
+        trainer, metadata, vae_cache, backends = self._rollover_fixture({}, provider=WebshartMetadataBackend)
+        metadata.native_policy = "shard_local"
+        trainer.accelerator.process_index = 2
+        trainer.accelerator.num_processes = 8
+        dataset = backends["train"]
+        dataset.config["vae_cache_clear_each_epoch"] = False
+        vae_cache.vae_cache_ondemand = False
+        with self._rollover_patches(backends):
+            trainer._epoch_rollover(2)
+            vae_cache.expire_epoch_latents.assert_not_called()
+            dataset.config["vae_cache_clear_each_epoch"] = True
+            trainer._epoch_rollover(3)
+
+        metadata.compute_aspect_ratio_bucket_indices.assert_not_called()
+        metadata.reload_cache.assert_not_called()
+        metadata.split_buckets_between_processes.assert_not_called()
+        vae_cache.expire_epoch_latents.assert_called_once_with()
+        vae_cache.prepare_dataset.assert_called_once_with(dataset, worker=2, workers=8)
+
+    def test_epoch_rollover_reuses_legacy_random_aspect_crops_when_clearing_is_disabled(self):
+        trainer, metadata, cache, backends = self._rollover_fixture({"1.0": ["image.jpg"]})
+        backends["train"].config["vae_cache_clear_each_epoch"] = False
+        with self._rollover_patches(backends):
+            trainer._epoch_rollover(2)
+        metadata.compute_aspect_ratio_bucket_indices.assert_not_called()
+        metadata.reload_cache.assert_not_called()
+        metadata.split_buckets_between_processes.assert_not_called()
+        cache.rebuild_cache.assert_not_called()
+
     def test_epoch_rollover_rejects_a_rank_the_resplit_left_empty(self):
-        trainer, metadata_backend, vaecache, backends = self._rollover_fixture(
-            bucket_contents={"1.0": [], "1.5": []}, usable_batches=0
-        )
+        trainer, metadata_backend, vaecache, backends = self._rollover_fixture({"1.0": [], "1.5": []})
 
         with self._rollover_patches(backends):
             with self.assertRaises(ValueError) as context:
@@ -2378,13 +2496,58 @@ class TestTrainer(unittest.TestCase):
         metadata_backend.split_buckets_between_processes.assert_called_once()
         vaecache.rebuild_cache.assert_not_called()
 
+    def test_epoch_rollover_stops_after_a_peer_geometry_failure(self):
+        for phase in ("rebuild", "reload", "partition"):
+            with self.subTest(phase=phase):
+                trainer, metadata, cache, backends = self._rollover_fixture({"1.0": ["image.jpg"]})
+                trainer.accelerator.is_main_process = False
+                trainer.accelerator.process_index = 1
+                phase_index = ("rebuild", "reload", "partition").index(phase)
+                failure = ["rank 0: OSError: geometry unavailable"]
+
+                with (
+                    self._rollover_patches(backends),
+                    patch(
+                        "simpletuner.helpers.training.multi_process.gather_across_processes",
+                        side_effect=[[]] * phase_index + [failure],
+                    ),
+                    self.assertRaisesRegex(RuntimeError, f"{phase} failed on rank 0: OSError: geometry unavailable"),
+                ):
+                    trainer._epoch_rollover(2)
+
+                metadata.compute_aspect_ratio_bucket_indices.assert_not_called()
+                self.assertEqual(metadata.reload_cache.call_count, int(phase_index >= 1))
+                self.assertEqual(metadata.split_buckets_between_processes.call_count, int(phase_index >= 2))
+                cache.rebuild_cache.assert_not_called()
+
+    def test_epoch_rollover_vae_only_leaves_legacy_geometry_alone(self):
+        trainer, metadata, cache, backends = self._rollover_fixture({"1.0": ["image.jpg"]})
+        backends["train"].config.update(crop_aspect="square", crop_style="center", vae_cache_clear_each_epoch=True)
+        with self._rollover_patches(backends):
+            trainer._epoch_rollover(2)
+        cache.rebuild_cache.assert_called_once_with()
+        metadata.compute_aspect_ratio_bucket_indices.assert_not_called()
+        metadata.reload_cache.assert_not_called()
+        metadata.split_buckets_between_processes.assert_not_called()
+
+    def test_epoch_rollover_rebuilds_legacy_fixed_shape_random_crops_when_opted_in(self):
+        trainer, metadata, cache, backends = self._rollover_fixture({"1.0": ["image.jpg"]})
+        config = backends["train"].config
+        config.update(crop_aspect="square", crop_style="random", vae_cache_clear_each_epoch=False)
+        with self._rollover_patches(backends):
+            trainer._epoch_rollover(2)
+            metadata.compute_aspect_ratio_bucket_indices.assert_not_called()
+            config["vae_cache_clear_each_epoch"] = True
+            trainer._epoch_rollover(3)
+        metadata.compute_aspect_ratio_bucket_indices.assert_called_once_with(ignore_existing_cache=True)
+        cache.rebuild_cache.assert_called_once_with()
+
     def test_epoch_rollover_keeps_a_rank_that_cannot_fill_a_batch(self):
         # One sample against batch_size=4, so the startup guard's len() would read 0 here.
         # This guard asks only whether the shard is empty, and this rank keeps training on
         # recycled samples exactly as it does today.
-        trainer, metadata_backend, vaecache, backends = self._rollover_fixture(
-            bucket_contents={"1.0": ["image-0.jpg"]}, usable_batches=0
-        )
+        trainer, metadata_backend, vaecache, backends = self._rollover_fixture({"1.0": ["image-0.jpg"]})
+        self.assertEqual(len(metadata_backend), 0)
 
         with self._rollover_patches(backends):
             trainer._epoch_rollover(2)
@@ -2415,11 +2578,8 @@ class TestTrainer(unittest.TestCase):
         trainer._epoch_rollover(1)
         self.assertEqual(trainer.state["current_epoch"], 1)
 
-    @patch("simpletuner.helpers.training.trainer.StateTracker.get_dataset_schedule", return_value=None)
-    @patch("simpletuner.helpers.training.trainer.StateTracker.get_data_backends")
-    def test_recalculate_training_steps_forces_strict_epoch_limit_for_epoch_runs(
-        self, mock_get_data_backends, mock_get_dataset_schedule
-    ):
+    @patch("simpletuner.helpers.training.trainer.StateTracker.get_datasets")
+    def test_recalculate_training_steps_forces_strict_epoch_limit_for_epoch_runs(self, mock_get_datasets):
         trainer = object.__new__(Trainer)
         trainer.distiller = None
         trainer.lr_scheduler = None
@@ -2433,11 +2593,10 @@ class TestTrainer(unittest.TestCase):
             strict_epoch_limit=False,
             train_batch_size=1,
         )
-        mock_get_data_backends.return_value = {
-            "train": {
-                "config": {},
-                "metadata_backend": [object()] * 10,
-            }
+        mock_get_datasets.return_value = {
+            "train": SimpleNamespace(
+                config={"dataset_type": "image"}, training_dataloader=object(), training_batch_count=lambda: 10
+            )
         }
 
         trainer._recalculate_training_steps()
@@ -2445,6 +2604,81 @@ class TestTrainer(unittest.TestCase):
         self.assertTrue(trainer.config.strict_epoch_limit)
         self.assertEqual(2, trainer.config.num_update_steps_per_epoch)
         self.assertEqual(4, trainer.config.max_train_steps)
+
+    @patch("simpletuner.helpers.training.trainer.StateTracker.get_datasets")
+    def test_recalculate_training_steps_uses_rank_local_caption_batches(self, mock_get_datasets):
+        from simpletuner.helpers.data_backend.caption_sampler import CaptionSampler
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+
+        trainer = object.__new__(Trainer)
+        trainer.distiller = SimpleNamespace(consumes_caption_batches=lambda: True)
+        trainer.lr_scheduler = None
+        trainer.accelerator = SimpleNamespace(num_processes=2, process_index=0)
+        trainer.config = SimpleNamespace(
+            gradient_accumulation_steps=1,
+            max_train_steps=0,
+            num_train_epochs=2,
+            strict_epoch_limit=True,
+            train_batch_size=2,
+        )
+        rows = list(range(12))
+        metadata = MagicMock(list_metadata_ids=lambda: rows)
+        metadata.__len__.return_value = len(rows)
+        caption = DatasetRuntime("captions", None, metadata, {"dataset_type": "caption"})
+        sampler = CaptionSampler("captions", metadata, trainer.accelerator, batch_size=2, shuffle=False)
+        caption.training_dataloader = torch.utils.data.DataLoader(rows, sampler=sampler, batch_size=1)
+        mock_get_datasets.return_value = {"captions": caption}
+
+        trainer._recalculate_training_steps()
+
+        self.assertEqual(trainer.config.total_num_batches, 3)
+        self.assertEqual(trainer.config.num_update_steps_per_epoch, 3)
+        self.assertEqual(trainer.config.max_train_steps, 6)
+        metadata.__len__.assert_called_once()
+
+    @patch("simpletuner.helpers.training.trainer.StateTracker.get_datasets")
+    def test_recalculate_training_steps_respects_inclusive_epoch_windows(self, mock_get_datasets):
+        trainer = object.__new__(Trainer)
+        trainer.distiller = trainer.lr_scheduler = None
+        trainer.accelerator = SimpleNamespace(num_processes=1)
+        trainer.config = SimpleNamespace(
+            gradient_accumulation_steps=2,
+            max_train_steps=100,
+            num_train_epochs=3,
+            train_batch_size=2,
+            eval_dataset_id="evaluation",
+        )
+
+        def dataset(batches, **window):
+            return SimpleNamespace(
+                config={"dataset_type": "image", **window},
+                training_dataloader=object(),
+                training_batch_count=lambda: batches,
+            )
+
+        mock_get_datasets.return_value = {
+            "baseline": dataset(4),
+            "first": dataset(6, end_epoch=1),
+            "second": dataset(3, start_epoch=2, end_epoch=2),
+            "impossible": dataset(40, start_step=4, end_step=3),
+            "evaluation": dataset(50),
+        }
+        trainer._recalculate_training_steps()
+        self.assertEqual(trainer.config.epoch_batches_schedule, {1: 10, 2: -3, 3: -3})
+        self.assertEqual([trainer.get_steps_per_epoch_for_epoch(epoch) for epoch in (1, 2, 3)], [5, 4, 2])
+
+        mock_get_datasets.return_value = {
+            "initial": dataset(6, end_step=2),
+            "bridge": dataset(4, start_step=3, end_epoch=2),
+            "later": dataset(40, start_step=5, end_step=6),
+            "gap": dataset(40, start_step=10),
+        }
+        trainer._recalculate_training_steps()
+        self.assertEqual(trainer.get_steps_per_epoch_for_epoch(1, first_step=1), 6)
+        self.assertEqual(trainer.get_steps_per_epoch_for_epoch(2, first_step=3), 4)
+        self.assertEqual(trainer.get_steps_per_epoch_for_epoch(2, first_step=5), 4)
+        self.assertEqual(trainer.get_steps_per_epoch_for_epoch(3, first_step=1), 2)
+        self.assertEqual(trainer.get_steps_per_epoch_for_epoch(3, first_step=7), 1)
 
     @patch("simpletuner.helpers.training.trainer.Trainer._misc_init", return_value=Mock())
     @patch(
@@ -2536,7 +2770,7 @@ class TestTrainer(unittest.TestCase):
         lr_scheduler.state_dict.return_value = {"base_lrs": [0.1], "_last_lr": [0.1]}
 
         with patch(
-            "simpletuner.helpers.training.state_tracker.StateTracker.get_data_backends",
+            "simpletuner.helpers.training.trainer.StateTracker.get_datasets",
             return_value={},
         ):
             with patch(
@@ -2781,7 +3015,7 @@ class TestTrainer(unittest.TestCase):
         lr_scheduler.state_dict.return_value = {"base_lrs": [0.1], "_last_lr": [0.1]}
 
         with patch(
-            "simpletuner.helpers.training.state_tracker.StateTracker.get_data_backends",
+            "simpletuner.helpers.training.state_tracker.StateTracker.get_datasets",
             return_value={},
         ):
             with patch(
@@ -2834,7 +3068,7 @@ class TestTrainer(unittest.TestCase):
             lr_scheduler = Mock()
             lr_scheduler.state_dict.return_value = {"base_lrs": [0.1], "_last_lr": [0.1]}
 
-            with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_data_backends", return_value={}):
+            with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_datasets", return_value={}):
                 with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_global_step", return_value=100):
                     with patch("simpletuner.helpers.training.state_tracker.StateTracker.set_global_resume_step"):
                         with patch(
@@ -2889,7 +3123,7 @@ class TestTrainer(unittest.TestCase):
             lr_scheduler = Mock()
             lr_scheduler.state_dict.return_value = {"base_lrs": [0.1], "_last_lr": [0.1]}
 
-            with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_data_backends", return_value={}):
+            with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_datasets", return_value={}):
                 with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_global_step", return_value=100):
                     with patch("simpletuner.helpers.training.state_tracker.StateTracker.set_global_resume_step"):
                         with patch(
@@ -3341,7 +3575,7 @@ class TestTrainer(unittest.TestCase):
                 wait_for_everyone=Mock(),
             )
 
-            with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_data_backends", return_value={}):
+            with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_datasets", return_value={}):
                 save_path = trainer.checkpoint_state_save(tmpdir)
 
             self.assertEqual(save_path, str(checkpoint_dir))
@@ -3405,7 +3639,7 @@ class TestTrainer(unittest.TestCase):
                         )
 
                         with patch(
-                            "simpletuner.helpers.training.state_tracker.StateTracker.get_data_backends",
+                            "simpletuner.helpers.training.state_tracker.StateTracker.get_datasets",
                             return_value={},
                         ):
                             save_path = trainer.checkpoint_state_save(tmpdir)
@@ -3460,7 +3694,7 @@ class TestTrainer(unittest.TestCase):
         trainer.job_id = "test-job"
 
         # Mock StateTracker methods
-        with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_data_backends", return_value={}):
+        with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_datasets", return_value={}):
             with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_global_step", return_value=0):
                 with patch("simpletuner.helpers.training.state_tracker.StateTracker.set_global_resume_step"):
                     with patch(
@@ -3527,7 +3761,7 @@ class TestTrainer(unittest.TestCase):
         trainer.job_id = "test-job"
 
         # Mock StateTracker methods
-        with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_data_backends", return_value={}):
+        with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_datasets", return_value={}):
             with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_global_step", return_value=0):
                 with patch("simpletuner.helpers.training.state_tracker.StateTracker.set_global_resume_step"):
                     with patch(
@@ -3573,12 +3807,14 @@ class TestTrainer(unittest.TestCase):
         trainer.job_id = "test-job"
         trainer.model_hooks = SimpleNamespace(training_state_path="training_state-rank1.json")
         sampler = Mock()
+        dataset = DatasetRuntime("foo", None, None, {})
+        dataset.sampler = sampler
         lr_scheduler = Mock()
         lr_scheduler.state_dict.return_value = {"base_lrs": [0.1], "_last_lr": [0.1]}
 
         with patch(
-            "simpletuner.helpers.training.trainer.StateTracker.get_data_backends",
-            return_value={"foo": {"sampler": sampler}},
+            "simpletuner.helpers.training.trainer.StateTracker.get_datasets",
+            return_value={"foo": dataset},
         ):
             with patch("simpletuner.helpers.training.trainer.StateTracker.get_global_step", return_value=10):
                 with patch("simpletuner.helpers.training.trainer.StateTracker.set_global_resume_step"):
@@ -3766,11 +4002,8 @@ class TestTrainer(unittest.TestCase):
                 return {"latents": torch.zeros(1, 4, 4, 4), "timesteps": torch.zeros(1)}
             return False
 
-        mock_state_tracker.get_data_backends = Mock(
-            return_value={
-                "backend1": {"train_dataloader": [{"latents": torch.zeros(1, 4, 4, 4), "timesteps": torch.zeros(1)}]}
-            }
-        )
+        dataset = Mock(training_dataloader=[{}], uses_native_schedule=False)
+        mock_state_tracker.get_datasets = Mock(return_value={"backend1": dataset})
         mock_state_tracker.backend_status = Mock(return_value=False)
 
         with patch("simpletuner.helpers.training.trainer.random_dataloader_iterator", mock_iterator):
@@ -3873,7 +4106,8 @@ class TestTrainer(unittest.TestCase):
             patch("simpletuner.helpers.training.trainer.training_logger") as mock_training_logger,
             patch("simpletuner.helpers.training.trainer.random_dataloader_iterator", return_value=batch),
         ):
-            mock_state_tracker.get_data_backends = Mock(return_value={"backend1": {"train_dataloader": [batch]}})
+            dataset = Mock(training_dataloader=[batch], uses_native_schedule=False)
+            mock_state_tracker.get_datasets = Mock(return_value={"backend1": dataset})
             mock_state_tracker.backend_status = Mock(return_value=False)
             mock_training_logger.debug.side_effect = stop_at_optimizer_step
             with self.assertRaises(StopAfterClipping):
@@ -3963,7 +4197,7 @@ class TestTrainer(unittest.TestCase):
         trainer.model_hooks = Mock()
         trainer.model_hooks.validate_fsdp2_pipeline_export.side_effect = StopAfterRegistration
         with patch("simpletuner.helpers.training.trainer.StateTracker") as mock_state_tracker:
-            mock_state_tracker.get_data_backends.return_value = {"backend1": {"train_dataloader": Mock()}}
+            mock_state_tracker.get_datasets.return_value = {"backend1": SimpleNamespace(training_dataloader=Mock())}
             with self.assertRaises(StopAfterRegistration):
                 trainer.init_prepare_models(lr_scheduler=None)
 
@@ -4016,7 +4250,7 @@ class TestTrainer(unittest.TestCase):
                 trainer._recalculate_training_steps = Mock()
                 trainer.job_id = None
                 with patch("simpletuner.helpers.training.trainer.StateTracker") as tracker:
-                    tracker.get_data_backends.return_value = {"images": {"train_dataloader": Mock()}}
+                    tracker.get_datasets.return_value = {"images": SimpleNamespace(training_dataloader=Mock())}
                     if stage == "training":
                         trainer.init_prepare_models(lr_scheduler=None)
                     else:

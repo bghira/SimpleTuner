@@ -73,7 +73,7 @@
 - `num_inference_steps`（默认 `40`）、`guidance_scale`（默认 `1.0`）、`seed`（默认 `0`）：推理设置。Qwen Image 将引导映射至 `true_cfg_scale`；大于一时使用空负面提示词，验证引导设置不会覆盖此值。
 - `output_dir`（可选）：默认 `cache_dir/generated-captions/<id>`。输出按配置指纹存储，重启时复用。指纹包含描述、推理设置、解析后的 Hub 修订版本及本地权重文件大小和修改时间。生成期间不要修改模型文件。描述、模型或推理设置变化会创建独立缓存，批量大小变化不会。
 
-生成时禁用适配器并使用基础模型，仅释放为预处理加载的变换器，不修改原始描述。生成需要单进程准备运行；多进程运行中的 `data_generator` 会在读取描述前被拒绝。分布式训练时，请将生成目录配置为普通 `image` 数据集，每个分辨率一个数据集，设置 `caption_strategy: "textfile"`、`crop: false`、`resolution_type: "pixel"`，并将 `resolution` 设为该桶的短边像素数。未使用生成器的描述数据集必须设置 `dataloader_prefetch=false`，以保存检查点中的采样器位置。修改描述列表、分辨率或数据集拓扑需要开始新的训练；复用生成缓存并不意味着此类检查点恢复兼容。
+生成时禁用适配器并使用基础模型，仅释放为预处理加载的变换器，不修改原始描述。生成需要单进程准备运行；多进程运行中的 `data_generator` 会在读取描述前被拒绝。分布式训练时，请将生成目录配置为普通 `image` 数据集，每个分辨率一个数据集，设置 `caption_strategy: "textfile"`、`crop: false`、`resolution_type: "pixel"`，并将 `resolution` 设为该桶的短边像素数。当所有训练数据集都在检查点中记录已消费批次的位置时，描述数据集可以使用 `dataloader_prefetch: true`。这包括描述数据集、Webshart 原生调度，以及保存已消费批次位置的传统图像、视频和音频采样器。修改描述列表、分辨率或数据集拓扑需要开始新的训练；复用生成缓存并不意味着此类检查点恢复兼容。
 
 本地描述发现要求生成输出目录位于源 `instance_data_dir` 之外；目录重叠会在扫描前被拒绝。
 
@@ -132,6 +132,14 @@
 - **取值:** `true` | `false`
 - **说明:** 跳过完整的文本嵌入预计算。已有条目会从该缓存读取；缺失的嵌入会在训练或验证时编码并写入缓存。
 - **注记:** 分配到该 `text_embeds` 后端的所有图像或视频数据集都会继承此行为。如需为部分源数据集使用不同的缓存行为，请创建另一个 `text_embeds` 后端，并通过源数据集的 `text_embeds` 字段进行分配。
+
+### `text_cache_encode_only`
+
+在 `text_embeds` 后端启用此布尔选项可逐训练批次在线编码文本。编码器跳过嵌入文件的读写，包括已有条目。默认值为 `false`。预计算时请使用单独的可写 Local 或 AWS 文本嵌入后端。
+
+### `text_cache_use_listing`
+
+在 AWS `text_embeds` 后端中，将 `text_cache_use_listing` 设置为 `true`，可在离线预处理之前为缓存前缀下的现有对象建立索引。这适用于缓存已基本填满的情况。列表会流式写入运行输出目录中的临时 SQLite 文件。共享输出目录的工作进程会复用同一存储的索引。列表中未出现的键会直接查询对象。请保留此前缀下的现有对象，直到预处理完成。默认值为 `false`。
 
 ### `text_cache_disable`
 
@@ -218,6 +226,7 @@ LTX-2 使用原生纯音频分支；MiniMax-H3 在打包序列中为每个 laten
 |------|------|--------|------|
 | `audio.auto_split` | bool | true | 从视频文件自动生成音频数据集。当存在 `audio` 部分时默认为 true。对于要求 S2V 的模型，即使没有 `audio` 部分也默认为 true。 |
 | `audio.source_from_video` | bool | false | （自动设置）表示音频从视频中提取 |
+| `audio.sidecar_match` | `stem` / `relative_path` | `stem` | 在音频根目录中按视频文件名匹配，或按相对于视频根目录的路径匹配。适用于独立的音频伴随文件。 |
 | `audio.allow_zero_audio` | bool | false | 为没有音频流的视频生成全零音频 |
 | `audio.audio_only` | bool | false | 兼容性 override；纯音频数据集配置会为 LTX-2 和 MiniMax-H3 自动启用此模式 |
 | `audio.target_resolution` | int | null | 旧版 override；自动伪视频流使用模型系列的最小 token 几何 |
@@ -835,6 +844,8 @@ effective_batch_size = 数据集 train_batch_size × num_gpus × gradient_accumu
 - **警告:** 此操作不可恢复，请谨慎使用。
 - **默认值:** 回退到训练器的 `--delete_problematic_images` 参数（默认：`false`）。
 
+使用 Webshart 原生视图时，VAE 预处理会将无法读取的样本记录为已准备视图中的排除项。源对象仍保留在 R2 中。
+
 ### `delete_nsfw_images`
 
 - **取值:** `true` | `false`
@@ -921,8 +932,10 @@ SimpleTuner 处理数据集时会追踪被过滤掉的文件数量及原因。�
 
 ### `vae_cache_clear_each_epoch`
 
-- 启用后，在每个数据集重复周期结束时，所有 VAE 缓存对象都会从文件系统中删除。对大型数据集而言这可能开销较高，但配合 `crop_style=random` 和/或 `crop_aspect=random` 使用时建议启用，以确保从每张图像中采样到完整的裁剪范围。
-- 实际上，在使用随机分桶或随机裁剪时该选项**默认启用**。
+- 启用此选项后，从第二个训练轮次开始，每轮开始时都会重建 VAE 缓存。同时设置 `crop: true` 和 `crop_style: random` 时，可变数据集也会重新选择随机裁剪区域。
+- 禁用此选项时，即使配置了随机裁剪，训练也会在各轮之间复用相同的裁剪和缓存的潜变量。在两种模式下，数据集重复采样都会复用同一轮缓存的潜变量。
+- 对于使用 Webshart 原生采样、目标形状固定且没有配对条件输入的 Parquet 图像数据集，提供程序会复用已准备好的视图，在读取行时选择新的裁剪偏移量，并按需编码对应的 VAE 潜变量。进入下一轮时，会从本次运行的缓存中删除上一轮的潜变量。
+- 当可变源数据集重新裁剪时，复制其元数据的条件数据集会继承新的裁剪坐标，并更新对应的缓存潜变量。
 
 ### `vae_cache_ondemand`
 
@@ -1063,6 +1076,8 @@ Grounding 流水线支持为每个实体添加边界框和遮罩标注，用于�
 ### `caption_filter_list`
 
 - **仅适用于文本嵌入数据集。** 可以是 JSON 列表、txt 文件路径或 JSON 文档路径。过滤字符串可以是要从所有字幕中移除的普通词，也可以是正则表达式。另外还支持 sed 风格的 `s/search/replace/` 语法，用于在字幕中**替换**字符串而非删除。
+
+文本嵌入缓存打开时会读取过滤文件。过滤后的缓存键根据发送给编码器的文本生成。升级后，请重新生成启用了描述词过滤器的缓存。如果停用旧版本生成的缓存所用的过滤器，也请重新生成该缓存。
 
 #### 过滤列表示例
 
@@ -1390,7 +1405,13 @@ SimpleTuner 现在支持直接从 Hugging Face Hub 加载数据集，无需完�
 
 字幕查询使用 Webshart 的分片元数据缓存，而不是 SimpleTuner 中覆盖整个数据集的字幕映射。旧版 SimpleTuner 字幕 JSON 文件保留在磁盘上，但不再读取。使用 Webshart 原生字幕的训练运行不会在检查点元数据中包含推断的触发词统计信息。
 
-准备 VAE 缓存时，Webshart 会先处理同一分片中的所有宽高比分桶组，再处理下一个分片。当整分片缓存无法容纳整个数据集时，这可以减少分片的重复下载。已缓存的样本以及分配给其他 rank 的样本会在分组前排除；训练采样器的顺序保持不变。
+使用原生采样策略时，VAE 预处理按形状兼容的有限批次读取已接受视图，并独立于训练顺序划分工作。旧版 VAE 缓存维护流程会按分片对待处理任务分组。
+
+对于原生 Parquet，预处理成员索引记录已接受的样本引用、计数和固定的源版本。支持的裁剪策略所生成的可复用图像几何信息位于 `webshart.cache_dir` 下的 Webshart 分片变换缓存中。图像字节从数据源或独立的整分片缓存读取。强制重新扫描成功后会发布新的预处理版本。替换内容会使对应分片的排除记录失效。源目录指纹变化时请重新打开数据集。
+
+SimpleTuner 默认关闭 Webshart 变换缓存的自动淘汰。`.webshart-transforms` 目录仅存储几何信息。强制重新扫描成功后会创建新一代缓存，因此多次扫描可能在磁盘上留下旧缓存。对于支持按训练轮次重新裁剪的数据集，提供程序会复用已准备的形状，并在读取样本时计算新的裁剪位置。
+
+在绑定的文本嵌入条目上设置 `text_cache_encode_only: true`，即可在训练时编码当前批次，无需访问嵌入文件。要预计算，请使用独立的可写本地或 AWS 文本嵌入存储，并将图像数据集的 `text_embeds` 字段指向该存储。
 
 字幕可以是字符串、原生 JSON 对象或两者混合的列表。对象在元数据和字幕缓存中保持完整，
 仅在准备文本编码器输入时转换为一条 JSON 文本提示词。对象字段不会被拆分为多个字幕变体。
@@ -1420,14 +1441,19 @@ Webshart 数据集通过 `webshart` 包加载 WebDataset 风格的 tar shards。
 - `metadata` 可选，可指向包含 captions 的独立 metadata location。对于 `webshart/conceptual-captions-12m-webdataset-metadata` 这样的 Hugging Face metadata repo，传 repo id 即可；Webshart 会跟随 source shard 的 `data/` 等子目录布局。
 - `metadata_backend` 必须为 `webshart`；`caption_strategy` 应为 `webshart` 或 `instanceprompt`。
 - `webshart.cache_dir` 存储 SimpleTuner metadata 与 Webshart caches。`shard_cache_gb` 和 `parallel_downloads` 会传给 Webshart 的 shard cache；将 `shard_cache_gb` 设为 `0` 可禁用整 shard cache，并保留基于索引的 range reads。
+- 为远程 Parquet 启用整分片缓存时，每个后端在两次读取之间保留一个已缓存分片的读取器。除 `shard_cache_gb` 外，还需为并发下载和仍被读取器锁定的分片预留磁盘空间。Webshart 先将下载内容写入临时文件，再清理旧分片。
+- 将 `webshart.sampling_policy` 设为 `global`，可在每个准备好的宽高比分桶内打乱样本顺序。设为 `shard_local` 时，批次优先从存储位置相近的样本组成，从而减少 DataComp 等远程数据集的分片缓存换入换出。省略此字段可保留现有采样器。
+- 对于尚无索引的 Parquet 图像数据集，使用 `shard_local`、固定的 `max_train_steps`、`data_backend_sampling=uniform` 以及按需文本和潜变量编码时，训练会在访问每个小分片组时准备图像几何信息。文本编码仅对已调度的批次执行。每个分片组末尾不足一个全局批次的样本将被丢弃。已有索引、全局打乱、自动加权和离线缓存准备均使用已建立索引的样本集合。
+- 使用 Webshart 原生采样策略时，`scan_for_errors` 会按有界批次检查已准备视图中的 VAE 缓存条目。设置 `vae_cache_scan_behaviour: recreate` 可从制品存储中删除已读取且数值或空间尺寸无效的潜变量。已准备视图不可变。
+- 采用索引的预处理会将已接受样本的索引写入磁盘。请为几何信息和索引预留空间。原生 VAE 和条件图像缓存键包含源内容、预处理几何信息和编码器设置。更换模型权重或从旧采样器切换时可能需要重新生成这些图像缓存。文本嵌入键仍沿用原有格式。
 - `webshart.caption_key` 可用于选择字幕字段：单个键使用 `"long_caption"`，多个键使用 `["long_caption", "short_caption"]`，按列表顺序收集。键按字面名称匹配，依次检查样本的 JSON 元数据、索引元数据及两者 `captions` 字典中的命名条目；采用第一个包含该键的位置。字符串和列表值作为字幕候选，不会拼接成一个提示词。缺失或空值会被忽略；使用 `caption_strategy: "webshart"` 时，没有选中字幕的样本将被跳过，即使它有默认字幕或 `.txt` 伴随文件。省略此选项将保留默认查找方式。如果索引未包含 JSON 内容，则读取 JSON 伴随文件。字幕和分桶缓存按配置的键分别保存。在 WebUI 的 Webshart 设置中，每行输入一个键。 JSON 边车读取使用配置的 Webshart 分片缓存；字幕查询不会解码或实例化图像数据。
 - `webshart_optimize_captions`（另一拼写 `webshart_optimise_captions`；在 `webshart` 块内也接受 `optimize_captions`/`optimise_captions`）会在启动时探测 caption 布局，当 captions 位于 `.txt`/`.json` sidecar tar 成员中而不是 metadata 索引中时，将它们一次性合并进本地 Webshart metadata cache。若不启用，sidecar caption 数据集（例如 `laion/conceptual-captions-12m-webdataset`）在每次枚举 captions 时——启动、checkpoint、生成 model card——都要为每个样本付出一次 range read。metadata 中已内嵌 captions 的数据集会自动跳过合并。
 
 #### S3 上的 Parquet 图像字节
 
-设置 `webshart.format: "parquet"` 可读取本地、Hub 或 S3 兼容存储中 Parquet 分片内的图像字节。S3 地址为 `s3://bucket` 或 `s3://bucket/prefix`；可选的 `webshart.manifest` 是相对于数据源的捕获描述文件路径。需要 webshart 0.8.0 或更高版本，以支持原生 S3 和捕获清单。
+设置 `webshart.format: "parquet"` 可读取本地、Hub 或 S3 兼容存储中 Parquet 分片内的图像字节。S3 地址为 `s3://bucket` 或 `s3://bucket/prefix`；可选的 `webshart.manifest` 是相对于数据源的捕获描述文件路径。SimpleTuner 需要 Webshart 0.9.1 或更高版本。
 
-`webshart.columns` 将 `image`、`captions`、`width`、`height` 映射到源列名；省略时使用这些默认名称。图像列可以是二进制数据或包含 `bytes` 的结构体。`url_status != "ok"` 或 `stored_bytes` 为空的捕获行会被排除，物理行号保持不变。缺少尺寸的行不参与分桶。不会请求原始 URL；成功捕获仍可能包含损坏图像，批量读取会跳过解码失败的图像。
+`webshart.columns` 将 `image`、`captions`、`width`、`height` 映射到源列名；省略时使用这些默认名称。图像列可以是二进制数据或包含 `bytes` 的结构体。`url_status != "ok"` 或 `stored_bytes` 为空的捕获行会被排除，物理行号保持不变。缺少尺寸的行不参与分桶。不会请求原始 URL；成功捕获仍可能包含损坏图像，按需进行 VAE 编码时，训练会停止并指出无法读取的样本。在使用原生索引进行 VAE 预处理时，启用 `delete_problematic_images` 可从已准备的视图中排除无法读取的样本。
 
 使用现有顶层设置 `aws_region_name`、`aws_endpoint_url`、`aws_access_key_id`、`aws_secret_access_key`、`aws_session_token`、`aws_max_pool_connections`。端点不含桶名，并发 S3 请求默认为 32。省略密钥可使用 AWS 环境变量、Web 身份或容器/实例角色。此原生传输不读取共享配置文件。工作进程表示不包含凭据；需要时在子进程环境中导出 AWS 凭据。
 

@@ -1,0 +1,75 @@
+[
+    {
+        "id": "capture-128",
+        "type": "webshart",
+        "source": "s3://your-capture-bucket",
+        "metadata_backend": "webshart",
+        "caption_strategy": "webshart",
+        "webshart": {
+            "format": "parquet",
+            "manifest": "dataset.json",
+            "sampling_policy": "shard_local",
+            "cache_dir": "cache/webshart/capture",
+            "metadata_cache_dir": "cache/webshart/capture/metadata",
+            "shard_cache_dir": "cache/webshart/capture/shards",
+            "shard_cache_gb": 20
+        },
+        "crop": false,
+        "resolution": 128,
+        "resolution_type": "pixel",
+        "start_step": 1,
+        "text_embeds": "online-text",
+        "end_step": 500
+    },
+    {
+        "id": "capture-256",
+        "type": "webshart",
+        "source": "s3://your-capture-bucket",
+        "metadata_backend": "webshart",
+        "caption_strategy": "webshart",
+        "webshart": {
+            "format": "parquet",
+            "manifest": "dataset.json",
+            "sampling_policy": "shard_local",
+            "cache_dir": "cache/webshart/capture",
+            "metadata_cache_dir": "cache/webshart/capture/metadata",
+            "shard_cache_dir": "cache/webshart/capture/shards",
+            "shard_cache_gb": 20
+        },
+        "crop": false,
+        "resolution": 256,
+        "resolution_type": "pixel",
+        "start_step": 501,
+        "text_embeds": "online-text",
+        "end_step": 1000
+    },
+    {
+        "id": "capture-512",
+        "type": "webshart",
+        "source": "s3://your-capture-bucket",
+        "metadata_backend": "webshart",
+        "caption_strategy": "webshart",
+        "webshart": {
+            "format": "parquet",
+            "manifest": "dataset.json",
+            "sampling_policy": "shard_local",
+            "cache_dir": "cache/webshart/capture",
+            "metadata_cache_dir": "cache/webshart/capture/metadata",
+            "shard_cache_dir": "cache/webshart/capture/shards",
+            "shard_cache_gb": 20
+        },
+        "crop": false,
+        "resolution": 512,
+        "resolution_type": "pixel",
+        "start_step": 1001,
+        "text_embeds": "online-text"
+    },
+    {
+        "id": "online-text",
+        "type": "local",
+        "dataset_type": "text_embeds",
+        "default": true,
+        "cache_dir": "cache/text/pixart",
+        "text_cache_encode_only": true
+    }
+]

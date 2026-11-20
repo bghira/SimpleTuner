@@ -2,19 +2,43 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
+import torch
 from PIL import Image
+from torch.utils.data import DataLoader
 
+from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime, DatasetValidationSample
+from simpletuner.helpers.data_backend.local import LocalDataBackend
+from simpletuner.helpers.metadata.preparation import DatasetReadView
+from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
+from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.validation import (
+    Evaluation,
     _validation_input_is_configured,
     _validation_reference_prompt_metadata,
+    iter_eval_batches,
+    reset_eval_datasets,
+    retrieve_eval_images,
     retrieve_validation_edit_images,
     retrieve_validation_images,
+    retrieve_validation_s2v_samples,
 )
 
 
 class EvalDatasetSelectionTests(unittest.TestCase):
+    def setUp(self):
+        registry = patch.object(StateTracker, "datasets", {})
+        registry.start()
+        self.addCleanup(registry.stop)
+
+    def _register(self, id, *, sampler=None, root=None, config=None):
+        metadata = SimpleNamespace(instance_data_dir=root, epoch_provider=None, requires_complete_preparation=False)
+        dataset = DatasetRuntime(id, None, metadata, config or {})
+        dataset.sampler = sampler
+        StateTracker.register_dataset(dataset)
+        return dataset
+
     def _build_base_model_mock(self):
         model = MagicMock()
         model.requires_validation_edit_captions.return_value = False
@@ -33,15 +57,119 @@ class EvalDatasetSelectionTests(unittest.TestCase):
             num_eval_images=4,
         )
 
+    def test_evaluation_uses_the_registered_runtime_through_collation(self):
+        sampler = MagicMock()
+        sampler.__iter__.return_value = iter([0])
+        sampler.__len__.return_value = 1
+        dataset = self._register("held-out", sampler=sampler, config={"dataset_type": "eval"})
+        dataset.training_dataset = [{"loaded": True}]
+        collate = MagicMock(return_value={"prepared": True})
+        dataset.training_dataloader = DataLoader(dataset.training_dataset, sampler=sampler, collate_fn=collate)
+        self._register("training")
+        result = retrieve_eval_images("held-out")
+        self.assertEqual(result, {"prepared": True})
+        collate.assert_called_once_with([{"loaded": True}])
+        self.assertEqual(Evaluation.total_eval_batches(None), 1)
+        reset_eval_datasets()
+        sampler.reset_evaluation.assert_called_once_with()
+
+    def test_empty_or_exhausted_evaluation_pass_ends_without_restarting_a_dataset(self):
+        with self.assertRaises(MultiDatasetExhausted):
+            retrieve_eval_images()
+
+        class OneBatch:
+            def __iter__(self):
+                yield {"batch": 1}
+                raise MultiDatasetExhausted()
+
+        exhausted = self._register("exhausted", config={"dataset_type": "eval"})
+        exhausted.training_dataloader = OneBatch()
+        other = self._register("other", config={"dataset_type": "eval"})
+        other.training_dataloader = [{"batch": 2}]
+        self.assertEqual(list(iter_eval_batches()), [{"batch": 1}, {"batch": 2}])
+
+    def test_preview_selects_an_explicit_held_out_id_exactly(self):
+        model = self._build_base_model_mock()
+        selected = MagicMock()
+        selected.retrieve_validation_set.return_value = [("sample", "prompt", "sample.jpg", None)]
+        self._register("eval", sampler=MagicMock())
+        self._register("eval-full", sampler=selected, config={"dataset_type": "eval"})
+
+        with (
+            patch.object(StateTracker, "get_model", return_value=model),
+            patch.object(StateTracker, "get_args", return_value=self._build_args(eval_dataset_id="eval-full")),
+        ):
+            (prompt,) = retrieve_validation_images()
+
+        self.assertEqual(prompt.shortname, "sample")
+        selected.retrieve_validation_set.assert_called_once_with(batch_size=4)
+        StateTracker.get_dataset("eval").sampler.retrieve_validation_set.assert_not_called()
+
+    def test_s2v_validation_resolves_audio_from_the_registered_binding(self):
+        model = self._build_base_model_mock()
+        model.requires_s2v_validation_inputs.return_value = True
+        args = self._build_args(eval_dataset_id="video")
+        sampler = MagicMock()
+        image = Image.new("RGB", (8, 8))
+        sampler.retrieve_validation_set.return_value = [("clip", "prompt", "/videos/nested/clip.mp4", image)]
+        with TemporaryDirectory() as tmpdir:
+            audio_file = Path(tmpdir) / "clip.flac"
+            audio_file.touch()
+            video = self._register("video", sampler=sampler, config={"dataset_type": "video"})
+            audio = self._register("audio", config={"dataset_type": "audio", "instance_data_dir": tmpdir})
+            audio.data_backend = LocalDataBackend(None, audio.id)
+            video.audio_datasets = (audio,)
+
+            with (
+                patch.object(StateTracker, "get_model", return_value=model),
+                patch.object(StateTracker, "get_args", return_value=args),
+            ):
+                result = retrieve_validation_s2v_samples()
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].conditioning, {"image": image, "audio_path": str(audio_file), "audio_dataset": audio})
+
+    def test_s2v_validation_reads_remote_embedded_audio_through_the_bound_provider(self):
+        from simpletuner.helpers.models.wan_s2v.model import WanS2V
+
+        video_ref = "videos/nested/clip.mp4"
+        image = Image.new("RGB", (8, 8))
+        video_sampler = MagicMock()
+        video_sampler.retrieve_validation_set.return_value = [("clip", "prompt", video_ref, image)]
+        video = self._register("video", sampler=video_sampler, config={"dataset_type": "video"})
+        audio = self._register(
+            "audio", config={"dataset_type": "audio", "instance_data_dir": "videos", "audio": {"source_from_video": True}}
+        )
+        audio.metadata_backend = MagicMock()
+        waveform = torch.arange(8, dtype=torch.float32).reshape(1, -1)
+        audio.data_backend = MagicMock(type="aws")
+        audio.data_backend.read_embedded_audio.return_value = (waveform, WanS2V.AUDIO_SAMPLE_RATE)
+        video.audio_datasets = (audio,)
+        model = self._build_base_model_mock()
+        model.requires_s2v_validation_inputs.return_value = True
+        with (
+            patch.object(StateTracker, "get_model", return_value=model),
+            patch.object(StateTracker, "get_args", return_value=self._build_args(eval_dataset_id="video")),
+            patch(
+                "simpletuner.helpers.models.wan_s2v.model.torchaudio.load", side_effect=AssertionError("local audio read")
+            ),
+        ):
+            (prompt,) = retrieve_validation_s2v_samples()
+            kwargs = WanS2V.update_pipeline_call_kwargs(WanS2V.__new__(WanS2V), {"_s2v_conditioning": prompt.conditioning})
+
+        audio.metadata_backend.get_metadata_by_filepath.assert_called_once_with(video_ref)
+        audio.data_backend.read_embedded_audio.assert_called_once_with(video_ref, sample_rate=16000, channels=1)
+        torch.testing.assert_close(kwargs["audio"], waveform.squeeze(0))
+        self.assertIs(kwargs["image"], image)
+
     def test_missing_eval_dataset_raises_for_standard_validation(self):
         model = self._build_base_model_mock()
         args = self._build_args(eval_dataset_id="missing-dataset")
-        available_backends = {"existing": {"id": "existing"}}
+        self._register("existing")
 
         with (
             patch("simpletuner.helpers.training.validation.StateTracker.get_model", return_value=model),
             patch("simpletuner.helpers.training.validation.StateTracker.get_args", return_value=args),
-            patch("simpletuner.helpers.training.validation.StateTracker.get_data_backends", return_value=available_backends),
         ):
             with self.assertRaisesRegex(ValueError, "missing-dataset"):
                 retrieve_validation_images()
@@ -50,12 +178,11 @@ class EvalDatasetSelectionTests(unittest.TestCase):
         model = self._build_base_model_mock()
         model.requires_validation_edit_captions.return_value = True
         args = self._build_args(eval_dataset_id="unknown-edit")
-        available_backends = {"present": {"id": "present"}}
+        self._register("present")
 
         with (
             patch("simpletuner.helpers.training.validation.StateTracker.get_model", return_value=model),
             patch("simpletuner.helpers.training.validation.StateTracker.get_args", return_value=args),
-            patch("simpletuner.helpers.training.validation.StateTracker.get_data_backends", return_value=available_backends),
         ):
             with self.assertRaisesRegex(ValueError, "unknown-edit"):
                 retrieve_validation_edit_images()
@@ -70,30 +197,40 @@ class EvalDatasetSelectionTests(unittest.TestCase):
         sampler.metadata_backend.instance_data_dir = str(dataset_root)
         sampler.retrieve_validation_set.return_value = [("clip", "prompt", sample_path, None)]
         conditioning_sample = MagicMock()
-        conditioning_sampler = MagicMock()
-        conditioning_sampler.get_conditioning_sample.return_value = conditioning_sample
-        image_backends = {
-            "source": {
-                "id": "source",
-                "config": {},
-                "sampler": sampler,
-            }
-        }
+        source = self._register("source", sampler=sampler, root=str(dataset_root))
+        target = self._register("conditioning")
+        target.read_conditioning_sample = MagicMock(return_value=conditioning_sample)
+        source.conditioning_datasets = (target,)
 
         with (
             patch("simpletuner.helpers.training.validation.StateTracker.get_model", return_value=model),
             patch("simpletuner.helpers.training.validation.StateTracker.get_args", return_value=args),
-            patch("simpletuner.helpers.training.validation.StateTracker.get_data_backends", return_value=image_backends),
-            patch(
-                "simpletuner.helpers.training.validation.StateTracker.get_conditioning_datasets",
-                return_value=[{"sampler": conditioning_sampler}],
-            ),
-            patch("simpletuner.helpers.training.validation.StateTracker.get_metadata_by_filepath", return_value={}),
         ):
             result = retrieve_validation_edit_images()
 
         self.assertEqual(len(result), 1)
-        conditioning_sampler.get_conditioning_sample.assert_called_once_with("clip.mp4")
+        target.read_conditioning_sample.assert_called_once_with(
+            "clip.mp4", source=source, source_ref=sample_path, source_view=None, model=model, rng=ANY
+        )
+
+        target.read_conditioning_sample.reset_mock()
+        native_ref = "webshart://3/152/shard.parquet/000000000152.jpg"
+        view = DatasetReadView("cursor-view")
+        sampler.retrieve_validation_set.return_value = [
+            DatasetValidationSample("unrelated-name", "prompt", native_ref, None, source.id, view)
+        ]
+        with (
+            patch.object(StateTracker, "get_model", return_value=model),
+            patch.object(StateTracker, "get_args", return_value=args),
+        ):
+            result = retrieve_validation_edit_images()
+        (prompt,) = result
+        self.assertEqual(prompt.image_path, native_ref)
+        self.assertEqual(prompt.data_backend_id, source.id)
+        self.assertIs(prompt.dataset_read_view, view)
+        target.read_conditioning_sample.assert_called_once_with(
+            native_ref, source=source, source_ref=native_ref, source_view=view, model=model, rng=ANY
+        )
 
     def test_i2v_with_validation_using_datasets_uses_image_backend(self):
         """
@@ -116,23 +253,11 @@ class EvalDatasetSelectionTests(unittest.TestCase):
             ("shortname1", "prompt1", "/path/to/image1.jpg", None),
         ]
 
-        image_backends = {
-            "my-image-dataset": {
-                "id": "my-image-dataset",
-                "dataset_type": "image",
-                "config": {},
-                "sampler": mock_sampler,
-            }
-        }
+        self._register("my-image-dataset", sampler=mock_sampler)
 
         with (
             patch("simpletuner.helpers.training.validation.StateTracker.get_model", return_value=model),
             patch("simpletuner.helpers.training.validation.StateTracker.get_args", return_value=args),
-            patch("simpletuner.helpers.training.validation.StateTracker.get_data_backends", return_value=image_backends),
-            patch(
-                "simpletuner.helpers.training.validation.StateTracker.get_data_backend",
-                side_effect=lambda k: image_backends.get(k, {}),
-            ),
             patch("simpletuner.helpers.training.validation._normalise_validation_sample", side_effect=lambda x, **_: x),
         ):
             result = retrieve_validation_images()
@@ -155,13 +280,11 @@ class EvalDatasetSelectionTests(unittest.TestCase):
             validation_using_datasets=False,
         )
 
-        image_backends = {"present": {"id": "present"}}
+        self._register("present")
 
         with (
             patch("simpletuner.helpers.training.validation.StateTracker.get_model", return_value=model),
             patch("simpletuner.helpers.training.validation.StateTracker.get_args", return_value=args),
-            patch("simpletuner.helpers.training.validation.StateTracker.get_data_backends", return_value=image_backends),
-            patch("simpletuner.helpers.training.validation.StateTracker.get_conditioning_datasets", return_value=None),
         ):
             # Should return empty because no conditioning datasets are linked
             result = retrieve_validation_images()
@@ -206,7 +329,7 @@ class EvalDatasetSelectionTests(unittest.TestCase):
             with (
                 patch("simpletuner.helpers.training.validation.StateTracker.get_model", return_value=model),
                 patch("simpletuner.helpers.training.validation.StateTracker.get_args", return_value=args),
-                patch("simpletuner.helpers.training.validation.StateTracker.get_data_backends") as mock_get_backends,
+                patch("simpletuner.helpers.training.validation.StateTracker.get_datasets") as mock_get_datasets,
             ):
                 result = retrieve_validation_images()
 
@@ -216,7 +339,7 @@ class EvalDatasetSelectionTests(unittest.TestCase):
             self.assertEqual(validation_prompt.prompt, "move the camera forward")
             self.assertEqual(validation_prompt.image_path, str(image_path))
             self.assertEqual(validation_prompt.conditioning.size, (32, 24))
-            mock_get_backends.assert_not_called()
+            mock_get_datasets.assert_not_called()
 
     def test_empty_validation_input_json_list_is_unset(self):
         self.assertFalse(_validation_input_is_configured(SimpleNamespace(validation_input="[]")))
@@ -237,23 +360,11 @@ class EvalDatasetSelectionTests(unittest.TestCase):
         mock_sampler.retrieve_validation_set.return_value = [
             ("shortname1", "prompt1", "/path/to/image1.jpg", Image.new("RGB", (16, 16))),
         ]
-        image_backends = {
-            "my-image-dataset": {
-                "id": "my-image-dataset",
-                "dataset_type": "image",
-                "config": {},
-                "sampler": mock_sampler,
-            }
-        }
+        self._register("my-image-dataset", sampler=mock_sampler)
 
         with (
             patch("simpletuner.helpers.training.validation.StateTracker.get_model", return_value=model),
             patch("simpletuner.helpers.training.validation.StateTracker.get_args", return_value=args),
-            patch("simpletuner.helpers.training.validation.StateTracker.get_data_backends", return_value=image_backends),
-            patch(
-                "simpletuner.helpers.training.validation.StateTracker.get_data_backend",
-                side_effect=lambda k: image_backends.get(k, {}),
-            ),
         ):
             result = retrieve_validation_images()
 

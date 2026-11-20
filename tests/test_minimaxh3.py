@@ -907,33 +907,77 @@ class MiniMaxH3Tests(unittest.TestCase):
             "dataset:11.mp4:__caption_dropout__",
         )
 
-    def test_text_embed_metadata_maps_first_frame_conditioning_to_png(self):
-        model = MiniMaxH3.__new__(MiniMaxH3)
-        conditioning_datasets = [
-            {
-                "id": "video_conditioning",
-                "config": {
-                    "instance_data_dir": "/cache/conditioning",
-                    "conditioning_config": {"type": "i2v_first_frame"},
-                },
-            }
-        ]
-        with patch(
-            "simpletuner.helpers.models.minimaxh3.model.StateTracker.get_conditioning_datasets",
-            return_value=conditioning_datasets,
-        ):
-            metadata = model.text_embed_cache_metadata_for_filepath(
-                init_backend={},
-                image_path="11.mp4",
-                prompt="caption",
-                data_backend_id="video_backend",
-                dataset_relative_path="nested/11.mp4",
-            )
+    def test_text_preparation_keeps_each_first_frame_reference_in_its_own_request(self):
+        from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime, TextRequestBuilder, text_embed_request
+        from simpletuner.helpers.data_backend.local import LocalDataBackend
+        from simpletuner.helpers.metadata.backends.base import MetadataBackend
 
-        self.assertEqual(metadata["image_paths"], ["/cache/conditioning/nested/11.png"])
-        self.assertEqual(metadata["data_backend_ids"], ["video_conditioning"])
-        self.assertEqual(metadata["image_path"], "/cache/conditioning/nested/11.png")
-        self.assertEqual(metadata["data_backend_id"], "video_conditioning")
+        model = MiniMaxH3.__new__(MiniMaxH3)
+        model.config = SimpleNamespace()
+        targets = [
+            DatasetRuntime(
+                name,
+                None,
+                MetadataBackend.__new__(MetadataBackend),
+                {"instance_data_dir": f"/cache/{name}", "conditioning_config": {"type": "i2v_first_frame"}},
+            )
+            for name in ("first", "second")
+        ]
+        for target in targets:
+            target.resolve_caption = Mock(return_value="caption")
+        source = DatasetRuntime("video_backend", None, SimpleNamespace(instance_data_dir="/source"), {})
+        builder = TextRequestBuilder(
+            model,
+            source,
+            args=SimpleNamespace(conditioning_multidataset_sampling="random", caption_dropout_probability=0.1),
+            conditioning_datasets=targets,
+        )
+        read_metadata = Mock(side_effect=AssertionError("unexpected geometry read"))
+        requests = list(builder.records([("caption", "/source/nested/11.mp4")], read_metadata=read_metadata))
+
+        self.assertEqual([request["prompt"] for request in requests], ["caption", "", "caption", ""])
+        self.assertEqual(
+            [request["metadata"]["data_backend_ids"] for request in requests],
+            [["first"], ["first"], ["second"], ["second"]],
+        )
+        self.assertFalse(model.requires_text_embed_conditioning_pixels())
+
+        with tempfile.TemporaryDirectory() as cache_dir:
+            cache = TextEmbeddingCache(
+                "text",
+                LocalDataBackend(None, "text"),
+                [],
+                [],
+                None,
+                model=model,
+                model_type="minimax_h3",
+                cache_dir=cache_dir,
+                text_cache_disable=True,
+            )
+            self.addCleanup(cache.close)
+            offline_keys = {cache.hash_prompt(request) for request in requests}
+            self.assertEqual(len(offline_keys), 4)
+            online_record = text_embed_request(
+                model,
+                model.text_embed_cache_key(),
+                "caption",
+                requests[0]["metadata"],
+                "video_backend",
+                "/source/nested/11.mp4",
+                "nested/11.mp4",
+            )
+            self.assertEqual(cache.hash_prompt(online_record), cache.hash_prompt(requests[0]))
+            self.assertNotIn(cache.hash_prompt({**online_record, "prompt": "alternative caption"}), offline_keys)
+            reference = Image.new("RGB", (32, 48), "white")
+            with patch.object(targets[0], "read_sample_images", return_value=[reference]) as read_images:
+                with patch(
+                    "simpletuner.helpers.models.prompt_upsampling.StateTracker.get_dataset",
+                    side_effect=AssertionError("unexpected dataset registry lookup"),
+                ):
+                    image = model._extract_prompt_image_from_context(online_record["metadata"])
+                read_images.assert_called_once_with(["/cache/first/nested/11.png"], allow_missing=False)
+                self.assertEqual(image.size, reference.size)
 
     def test_encode_prompts_passes_image_context_to_h3_conditioner(self):
         model = MiniMaxH3.__new__(MiniMaxH3)

@@ -218,10 +218,10 @@ class MOSSImage(ImageModelFoundation):
     def get_prompt_upsampler_model_id(self):
         return self.config.moss_image_prompt_upsampler_model_id
 
-    def text_embed_cache_metadata_for_filepath(self, *, init_backend, image_path, **kwargs):
-        metadata = super().text_embed_cache_metadata_for_filepath(init_backend=init_backend, image_path=image_path, **kwargs)
+    def text_embed_cache_metadata_for_preparation(self, *, image_path, data_backend_id, **kwargs):
+        metadata = super().text_embed_cache_metadata_for_preparation(image_path=image_path, **kwargs)
         if self.prompt_upsampling_enabled() and not self._is_edit_flavour():
-            metadata.update(image_paths=[str(image_path)], data_backend_ids=[init_backend["id"]])
+            metadata.update(image_paths=[str(image_path)], data_backend_ids=[data_backend_id])
         return metadata
 
     def text_embed_cache_metadata_for_sample(self, *, example, **kwargs):

@@ -319,36 +319,6 @@
                 <div class="form-text small">Pass the metadata repo id; Webshart follows shard subfolders like data/.</div>
             </div>
         </div>
-        <div class="row g-2 mt-2">
-            <div class="col-md-4">
-                <label class="form-label small">Cache Directory <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#webshart-datasets') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
-                <textarea rows="1"
-                          class="form-control form-control-sm resizable-path"
-                          x-model="editingDataset.cache_dir"
-                          @input="touchConnectionField(editingDataset)"
-                          placeholder="cache/webshart/my-dataset"></textarea>
-            </div>
-            <div class="col-md-4">
-                <label class="form-label small">Shard Cache GB</label>
-                <input type="number"
-                       class="form-control form-control-sm"
-                       min="0"
-                       step="1"
-                       x-model.number.lazy="editingDataset.shard_cache_gb"
-                       @input="touchConnectionField(editingDataset)"
-                       placeholder="25">
-            </div>
-            <div class="col-md-4">
-                <label class="form-label small">Parallel Downloads</label>
-                <input type="number"
-                       class="form-control form-control-sm"
-                       min="1"
-                       step="1"
-                       x-model.number.lazy="editingDataset.parallel_downloads"
-                       @input="touchConnectionField(editingDataset)"
-                       placeholder="4">
-            </div>
-        </div>
     </div>
 
     <!-- VAE Cache Directory (for non-local backends) -->
@@ -409,7 +379,28 @@
                 </div>
                 <div class="form-text small text-muted ps-4">Skip full text-cache pre-computation and encode cache misses during use.</div>
             </div>
+            <div class="col-md-6" x-show="editingDataset.dataset_type === 'text_embeds' && editingDataset.type === 'aws'">
+                <div class="form-check mt-2">
+                    <input class="form-check-input"
+                           type="checkbox"
+                           :id="'text-cache-listing-' + editingDataset.id"
+                           x-model="editingDataset.text_cache_use_listing"
+                           @change="markAsUnsaved()">
+                    <label class="form-check-label small" :for="'text-cache-listing-' + editingDataset.id">
+                        Index existing S3 embeddings before preparation
+                        <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#text_cache_use_listing') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a>
+                    </label>
+                </div>
+            </div>
             <div class="col-md-6" x-show="editingDataset.dataset_type === 'text_embeds'">
+                <div class="form-check mt-2">
+                    <input class="form-check-input"
+                           type="checkbox"
+                           :id="'text-cache-encode-only-storage-' + editingDataset.id"
+                           x-model="editingDataset.text_cache_encode_only"
+                           @change="markAsUnsaved()">
+                    <label class="form-check-label small" :for="'text-cache-encode-only-storage-' + editingDataset.id">Encode every training batch online</label>
+                </div>
                 <div class="form-check mt-2">
                     <input class="form-check-input"
                            type="checkbox"

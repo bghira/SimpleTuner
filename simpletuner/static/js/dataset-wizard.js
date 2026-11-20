@@ -119,6 +119,7 @@
                 cache_dir: '{output_dir}/cache/text/{model_family}',
                 type: 'local',
                 text_cache_ondemand: false,
+                text_cache_encode_only: false,
                 text_cache_disable: false
             },
             vaeCacheDataset: {
@@ -1175,6 +1176,8 @@
                 clone.default = clone.default === undefined ? true : Boolean(clone.default);
                 clone.text_cache_ondemand = clone.text_cache_ondemand === true || clone.text_cache_ondemand === 'true';
                 clone.text_cache_disable = clone.text_cache_disable === true || clone.text_cache_disable === 'true';
+                clone.text_cache_encode_only = clone.text_cache_encode_only === true || clone.text_cache_encode_only === 'true';
+                if (!clone.text_cache_encode_only) delete clone.text_cache_encode_only;
                 if (!clone.text_cache_ondemand) {
                     delete clone.text_cache_ondemand;
                 }

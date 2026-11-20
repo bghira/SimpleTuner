@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
 from queue import Queue
 from types import SimpleNamespace
@@ -14,6 +15,7 @@ from PIL import Image
 
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.data_backend.filters import build_dataset_filter
+from simpletuner.helpers.data_backend.source_inventory import SourceFileInventory
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend
 from simpletuner.helpers.metadata.backends.huggingface import HuggingfaceMetadataBackend
@@ -66,6 +68,50 @@ class TestMetadataBackend(unittest.TestCase):
             "1.5": ["image3"],
         }
         self.assertEqual(len(self.metadata_backend), 3)
+
+    def test_prepared_metadata_batch_updates_existing_dict_and_persists_on_flush(self):
+        self.data_backend.write.reset_mock()
+        self.data_backend.get_abs_path = lambda path: path
+        self.metadata_backend.enqueue_prepared_metadata({"one.jpg": {"target_size": [64, 32]}})
+        self.metadata_backend.enqueue_prepared_metadata(
+            {"one.jpg": {"target_size": [128, 64]}, "two.jpg": {"target_size": [64, 64]}}
+        )
+        self.data_backend.write.assert_not_called()
+        self.metadata_backend.flush_prepared_metadata()
+        filename, content = self.data_backend.write.call_args.args
+        self.assertEqual(filename, self.metadata_backend.metadata_file)
+        self.assertEqual(json.loads(content), self.metadata_backend.image_metadata)
+        records = list(self.metadata_backend.get_metadata_batch(["two.jpg", "missing.jpg", "one.jpg", "two.jpg"]))
+        self.assertEqual(records, [{"target_size": [64, 64]}, None, {"target_size": [128, 64]}, {"target_size": [64, 64]}])
+
+    def test_scan_for_metadata_records_new_files(self):
+        """A metadata-only scan stores what its workers produce."""
+        new_files = [f"image_{index}.png" for index in range(20)]
+
+        def process(file, buckets, metadata_updates=None, **kwargs):
+            metadata_updates[str(file)] = {"original_size": (512, 256)}
+            return buckets
+
+        StateTracker.set_args(MagicMock(enable_multiprocessing=False))
+        self.metadata_backend.image_metadata = {}
+        with (
+            patch.object(self.metadata_backend, "load_image_metadata"),
+            patch.object(self.metadata_backend, "_discover_new_files", return_value=new_files),
+            patch.object(self.metadata_backend, "_process_for_bucket", side_effect=process),
+            patch.object(self.metadata_backend, "save_image_metadata") as save_image_metadata,
+            patch.object(self.metadata_backend, "save_cache"),
+        ):
+            self.metadata_backend.scan_for_metadata()
+
+        self.assertEqual(sorted(self.metadata_backend.image_metadata), sorted(new_files))
+        save_image_metadata.assert_called_once()
+
+    def test_validation_uses_current_membership_between_requests(self):
+        self.metadata_backend.aspect_ratio_bucket_indices = {"1": ["a", "b", "c"]}
+        cursor = self.metadata_backend.open_validation()
+        self.assertEqual(cursor.next_refs(1), ["a"])
+        self.metadata_backend.remove_images(["b"])
+        self.assertEqual(cursor.next_refs(3), ["c", "a"])
 
     def test_probe_image_dimensions_applies_exif_orientation(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -138,50 +184,23 @@ class TestMetadataBackend(unittest.TestCase):
         self.data_backend.read.assert_called_once_with("image.png")
 
     def test_discover_new_files(self):
-        # Assuming that StateTracker.get_image_files returns known files
-        # and list_files should return both known and potentially new files
-        with (
-            patch(
-                "simpletuner.helpers.training.state_tracker.StateTracker.get_image_files",
-                return_value=["image1.jpg", "image2.png", "image3.jpg", "image4.png"],
-            ),
-            patch(
-                "simpletuner.helpers.training.state_tracker.StateTracker.set_image_files",
-                return_value=None,
-            ),
-            patch.object(
-                self.data_backend,
-                "list_files",
-                return_value=["image1.jpg", "image2.png", "image3.jpg", "image4.png"],
-            ),
-        ):
-
-            self.metadata_backend.aspect_ratio_bucket_indices = {"1.0": ["image1.jpg", "image2.png"]}
-            new_files = self.metadata_backend._discover_new_files(for_metadata=False)
-            # Assuming the method's logic excludes files known (["image1.jpg", "image2.png"])
-            # The expectation is that only ["image3.jpg", "image4.png"] are returned as new
-            self.assertEqual(sorted(new_files), sorted(["image3.jpg", "image4.png"]))
+        self.data_backend.source_files.publish([("", [], ["image1.jpg", "image2.png", "image3.jpg", "image4.png"])])
+        self.metadata_backend.aspect_ratio_bucket_indices = {"1.0": ["image1.jpg", "image2.png"]}
+        self.assertEqual(sorted(self.metadata_backend._discover_new_files()), ["image3.jpg", "image4.png"])
+        self.data_backend.list_files.assert_not_called()
 
     def test_discover_new_files_applies_path_filter(self):
         self.metadata_backend.dataset_filter = build_dataset_filter(
             {"filter_func": {"path": {"include": ["keep"], "exclude": ["blocked"]}}}
         )
-        with (
-            patch(
-                "simpletuner.helpers.training.state_tracker.StateTracker.get_image_files",
-                return_value=["keep/image1.jpg", "drop/image2.png", "keep/blocked.png", "keep/image3.jpg"],
-            ),
-            patch.object(
-                self.data_backend,
-                "list_files",
-                return_value=["keep/image1.jpg", "drop/image2.png", "keep/blocked.png", "keep/image3.jpg"],
-            ),
-        ):
-            self.metadata_backend.aspect_ratio_bucket_indices = {}
+        paths = ["keep/image1.jpg", "drop/image2.png", "keep/blocked.png", "keep/image3.jpg"]
+        self.data_backend.list_files.return_value = [("", [], paths)]
+        self.metadata_backend.aspect_ratio_bucket_indices = {}
 
-            new_files = self.metadata_backend._discover_new_files(for_metadata=False)
+        new_files = self.metadata_backend._discover_new_files(for_metadata=False)
 
-        self.assertEqual(sorted(new_files), sorted(["keep/image1.jpg", "keep/image3.jpg"]))
+        self.assertEqual(sorted(new_files), ["keep/image1.jpg", "keep/image3.jpg"])
+        self.assertEqual(list(self.data_backend.source_files.read()), paths)
 
     def test_load_cache_valid(self):
         valid_cache_data = {
@@ -213,6 +232,8 @@ class TestMetadataBackend(unittest.TestCase):
                 backend.id = "cache-keys"
                 backend.cache_file = "buckets.json"
                 backend.data_backend = self.data_backend
+                backend.image_metadata = {}
+                backend.metadata_semaphor = nullcontext()
                 backend.load_image_metadata = Mock()
                 backend._sync_image_files_with_buckets = Mock()
                 with patch.object(
@@ -447,6 +468,7 @@ class TestPruneSmallBucketsEvalDataset(unittest.TestCase):
             mock_args.disable_bucket_pruning = False
             mock_get_args.return_value = mock_args
 
+            mock_backend.runtime_args = StateTracker.get_args()
             MetadataBackend._prune_small_buckets(mock_backend, "1.0")
 
         self.assertIn("1.0", mock_backend.aspect_ratio_bucket_indices)
@@ -467,6 +489,7 @@ class TestPruneSmallBucketsEvalDataset(unittest.TestCase):
             mock_args.disable_bucket_pruning = False
             mock_get_args.return_value = mock_args
 
+            mock_backend.runtime_args = StateTracker.get_args()
             MetadataBackend._prune_small_buckets(mock_backend, "1.0")
 
         self.assertNotIn("1.0", mock_backend.aspect_ratio_bucket_indices)
@@ -486,6 +509,7 @@ class TestPruneSmallBucketsEvalDataset(unittest.TestCase):
             mock_args.disable_bucket_pruning = False
             mock_get_args.return_value = mock_args
 
+            mock_backend.runtime_args = StateTracker.get_args()
             MetadataBackend._prune_small_buckets(mock_backend, "1.0")
 
         self.assertNotIn("1.0", mock_backend.aspect_ratio_bucket_indices)
@@ -505,6 +529,7 @@ class TestPruneSmallBucketsEvalDataset(unittest.TestCase):
             mock_args.disable_bucket_pruning = False
             mock_get_args.return_value = mock_args
 
+            mock_backend.runtime_args = StateTracker.get_args()
             MetadataBackend._prune_small_buckets(mock_backend, "1.0")
 
         self.assertIn("1.0", mock_backend.aspect_ratio_bucket_indices)
@@ -542,6 +567,8 @@ class TestSplitBucketsEvalDataset(unittest.TestCase):
             mock_get_args.return_value = mock_args
 
             # Should NOT raise ValueError
+            mock_backend.runtime_args = StateTracker.get_args()
+            mock_backend.active_dataset_config = StateTracker.get_data_backend_config(mock_backend.id)
             MetadataBackend.split_buckets_between_processes(mock_backend, gradient_accumulation_steps=4, apply_padding=False)
 
         # Bucket should still exist after splitting
@@ -575,6 +602,8 @@ class TestSplitBucketsEvalDataset(unittest.TestCase):
 
             # Should raise ValueError for training dataset
             with self.assertRaises(ValueError) as context:
+                mock_backend.runtime_args = StateTracker.get_args()
+                mock_backend.active_dataset_config = StateTracker.get_data_backend_config(mock_backend.id)
                 MetadataBackend.split_buckets_between_processes(
                     mock_backend, gradient_accumulation_steps=1, apply_padding=False
                 )
@@ -611,6 +640,8 @@ class TestSplitBucketsEvalDataset(unittest.TestCase):
 
             # With grad_accum=8, training would need 16 samples (2*1*8)
             # But eval should still work with 1 sample
+            mock_backend.runtime_args = StateTracker.get_args()
+            mock_backend.active_dataset_config = StateTracker.get_data_backend_config(mock_backend.id)
             MetadataBackend.split_buckets_between_processes(mock_backend, gradient_accumulation_steps=8, apply_padding=False)
 
         self.assertIn("1.0", mock_backend.aspect_ratio_bucket_indices)
@@ -656,6 +687,8 @@ class TestDistributedBucketPadding(unittest.TestCase):
                 return_value=(8, rank, cp_size),
             ),
         ):
+            backend.runtime_args = StateTracker.get_args()
+            backend.active_dataset_config = StateTracker.get_data_backend_config(backend.id)
             MetadataBackend.split_buckets_between_processes(
                 backend,
                 gradient_accumulation_steps=1,
@@ -711,6 +744,8 @@ class TestDistributedBucketPadding(unittest.TestCase):
                     return_value=(8, rank, 1),
                 ),
             ):
+                backend.runtime_args = StateTracker.get_args()
+                backend.active_dataset_config = StateTracker.get_data_backend_config(backend.id)
                 MetadataBackend.split_buckets_between_processes(backend)
             shards.append(backend.aspect_ratio_bucket_indices["1.0"])
 
@@ -876,6 +911,8 @@ class TestEmptyBucketRepeatValidation(unittest.TestCase):
                 return_value=(num_processes, dp_rank, 1),
             ),
         ):
+            backend.runtime_args = StateTracker.get_args()
+            backend.active_dataset_config = StateTracker.get_data_backend_config(backend.id)
             MetadataBackend.split_buckets_between_processes(
                 backend,
                 gradient_accumulation_steps=1,
@@ -1069,20 +1106,33 @@ class TestFilteringStatistics(unittest.TestCase):
         self.assertIsNone(self.metadata_backend.filtering_statistics)
 
 
-class TestStateTrackerDiskCache(unittest.TestCase):
-    def test_set_image_files_creates_missing_output_dir(self):
+class TestSourceFileInventory(unittest.TestCase):
+    def test_source_inventory_persists_legacy_files_and_isolates_other_bindings(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            output_dir = Path(temp_dir) / "output" / "scan"
-            StateTracker.set_args(SimpleNamespace(output_dir=str(output_dir)))
-            StateTracker.all_image_files = {}
+            root = Path(temp_dir)
+            path = root / "output" / "scan" / "all_image_files_subject-1024.json"
+            report = Mock()
+            inventory = SourceFileInventory(path, report)
+            other = SourceFileInventory(root / "other" / path.name)
+            reader = SourceFileInventory(path)
+            self.assertIsNone(reader.read())
+            self.assertIsNone(other.read())
 
-            result = StateTracker.set_image_files(
-                [("subdir", [], ["image_a.png", "image_b.png"])],
-                data_backend_id="subject-1024",
+            result = inventory.publish(
+                [("one", [], ["image_a.png", "image_b.png"]), ("two", [], ["image_a.png", "image_c.png"])]
             )
 
-            self.assertEqual(result, {"image_a.png": False, "image_b.png": False})
-            self.assertTrue((output_dir / "all_image_files_subject-1024.json").exists())
+            self.assertEqual(list(result), ["image_a.png", "image_b.png", "image_c.png"])
+            self.assertEqual(result, json.loads(path.read_text()))
+            self.assertEqual(reader.read(), result)
+            self.assertIsNone(other.read())
+            report.record_stage.assert_called_once_with("file_discovery", sample_count=3, directories=2)
+
+    def test_empty_inventory_roundtrips_as_present(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "all_image_files_test.json"
+            SourceFileInventory(path).publish([])
+            self.assertEqual(SourceFileInventory(path).read(), {})
 
 
 if __name__ == "__main__":

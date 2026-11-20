@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 from PIL import Image
 
+from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 from simpletuner.helpers.image_manipulation.batched_training_samples import BatchedTrainingSamples
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.metadata.utils.duplicator import DatasetDuplicator
@@ -20,7 +21,6 @@ class TestTrainingSample(unittest.TestCase):
             name: StateTracker.__dict__[name]
             for name in (
                 "get_args",
-                "get_data_backend",
                 "get_data_backend_config",
                 "get_resolution_by_aspect",
                 "set_resolution_by_aspect",
@@ -78,8 +78,6 @@ class TestTrainingSample(unittest.TestCase):
             "crop_coordinates": (8, 0),
             "aspect_ratio": 0.8,
         }
-        backend = MagicMock()
-        backend.get_metadata_by_filepath.side_effect = lambda _: dict(metadata)
         for crop_style in ("center", "random"):
             self.default_config["crop_style"] = crop_style
             for count in (1, 2):
@@ -87,11 +85,11 @@ class TestTrainingSample(unittest.TestCase):
                     with self.subTest(crop_style=crop_style, count=count, as_array=as_array):
                         grouped = {
                             "0.8": [
-                                (f"{i}.png", pixels.copy() if as_array else Image.fromarray(pixels), "0.8")
+                                (f"{i}.png", pixels.copy() if as_array else Image.fromarray(pixels), metadata)
                                 for i in range(count)
                             ]
                         }
-                        results = BatchedTrainingSamples().process_aspect_grouped_images(grouped, backend)
+                        results = BatchedTrainingSamples().process_aspect_grouped_images(grouped)
                         self.assertEqual(len(results), count)
                         for filepath, array, result_metadata in results:
                             # Fix the random offset so both paths select the same crop.
@@ -107,10 +105,54 @@ class TestTrainingSample(unittest.TestCase):
                             self.assertEqual(actual.aspect_ratio, expected.aspect_ratio)
                             self.assertEqual(result_metadata, metadata)
 
+    def test_prepared_crop_uses_published_offsets_after_json_roundtrip(self):
+        pixels = np.random.default_rng(13).integers(0, 256, (96, 128, 3), dtype=np.uint8)
+        metadata = {
+            "original_size": [128, 96],
+            "intermediary_size": [128, 96],
+            "target_size": [64, 64],
+            "crop_coordinates": [11, 27],
+            "aspect_ratio": 1.0,
+            "prepared_geometry": True,
+        }
+        self.default_config.update(crop=True, crop_style="random")
+        for image in (Image.fromarray(pixels), np.stack([pixels, pixels])):
+            with self.subTest(payload=type(image)):
+                sample = TrainingSample(image, self.data_backend_id, dict(metadata), image_path="sample.png")
+                with patch.object(sample.cropper, "crop", side_effect=AssertionError("selected a new crop")):
+                    prepared = sample.prepare()
+                expected = np.asarray(image)[..., 11:75, 27:91, :]
+                np.testing.assert_array_equal(np.asarray(prepared.image), expected)
+                self.assertEqual(prepared.crop_coordinates, (11, 27))
+
     def test_image_initialization(self):
         """Test that the image is correctly initialized and converted."""
         sample = TrainingSample(self.image, self.data_backend_id, self.image_metadata)
         self.assertEqual(sample.original_size, (1024, 768))
+
+    def test_resize_reuses_the_prepared_alignment_crop_with_cropping_disabled(self):
+        pixels = np.arange(128 * 96 * 3, dtype=np.uint8).reshape(96, 128, 3)
+        metadata = {
+            "original_size": [128, 96],
+            "intermediary_size": [128, 96],
+            "target_size": [64, 64],
+            "crop_coordinates": [11, 27],
+            "aspect_ratio": 1.0,
+            "prepared_geometry": True,
+        }
+        self.default_config.update(crop=False, crop_style=None)
+        sample = TrainingSample(Image.fromarray(pixels), self.data_backend_id, metadata, image_path="sample.png")
+        with patch.object(sample.cropper, "crop", side_effect=AssertionError("selected a new crop")):
+            prepared = sample.prepare()
+        np.testing.assert_array_equal(np.asarray(prepared.image), pixels[11:75, 27:91, :])
+        self.assertEqual(prepared.crop_coordinates, (11, 27))
+
+    def _bind_pair(self, source, source_root, conditioning_root):
+        datasets = {
+            "source": DatasetRuntime("source", source, None, {"instance_data_dir": source_root}),
+            "conditioning": DatasetRuntime("conditioning", None, None, {"instance_data_dir": conditioning_root}),
+        }
+        self.enterContext(patch.object(StateTracker, "datasets", datasets))
 
     def test_training_sample_path_preserves_relative_source_key_for_empty_source_root(self):
         class SourceBackend:
@@ -120,20 +162,7 @@ class TestTrainingSample(unittest.TestCase):
         source_backend_id = "source"
         conditioning_backend_id = "conditioning"
         conditioning_root = "/tmp/simpletuner-conditioning"
-        original_get_data_backend = StateTracker.get_data_backend
-        StateTracker.get_data_backend = MagicMock(
-            side_effect=lambda backend_id: {
-                source_backend_id: {
-                    "config": {"instance_data_dir": ""},
-                    "data_backend": SourceBackend(),
-                },
-                conditioning_backend_id: {
-                    "config": {"instance_data_dir": conditioning_root},
-                    "data_backend": MagicMock(),
-                },
-            }[backend_id]
-        )
-        self.addCleanup(setattr, StateTracker, "get_data_backend", original_get_data_backend)
+        self._bind_pair(SourceBackend(), "", conditioning_root)
 
         sample = TrainingSample(
             self.image,
@@ -151,20 +180,7 @@ class TestTrainingSample(unittest.TestCase):
 
         source_backend_id = "source"
         conditioning_backend_id = "conditioning"
-        original_get_data_backend = StateTracker.get_data_backend
-        StateTracker.get_data_backend = MagicMock(
-            side_effect=lambda backend_id: {
-                source_backend_id: {
-                    "config": {"instance_data_dir": ""},
-                    "data_backend": SourceBackend(),
-                },
-                conditioning_backend_id: {
-                    "config": {"instance_data_dir": "/tmp/simpletuner-conditioning"},
-                    "data_backend": MagicMock(),
-                },
-            }[backend_id]
-        )
-        self.addCleanup(setattr, StateTracker, "get_data_backend", original_get_data_backend)
+        self._bind_pair(SourceBackend(), "", "/tmp/simpletuner-conditioning")
 
         sample = TrainingSample(
             self.image,
@@ -185,20 +201,7 @@ class TestTrainingSample(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             source_root = os.path.join(tmpdir, "source")
             conditioning_root = os.path.join(tmpdir, "conditioning")
-            original_get_data_backend = StateTracker.get_data_backend
-            StateTracker.get_data_backend = MagicMock(
-                side_effect=lambda backend_id: {
-                    source_backend_id: {
-                        "config": {"instance_data_dir": source_root},
-                        "data_backend": SourceBackend(),
-                    },
-                    conditioning_backend_id: {
-                        "config": {"instance_data_dir": conditioning_root},
-                        "data_backend": MagicMock(),
-                    },
-                }[backend_id]
-            )
-            self.addCleanup(setattr, StateTracker, "get_data_backend", original_get_data_backend)
+            self._bind_pair(SourceBackend(), source_root, conditioning_root)
 
             sample = TrainingSample(
                 self.image,
@@ -219,20 +222,7 @@ class TestTrainingSample(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             source_root = os.path.join(tmpdir, "source")
             conditioning_root = os.path.join(tmpdir, "conditioning")
-            original_get_data_backend = StateTracker.get_data_backend
-            StateTracker.get_data_backend = MagicMock(
-                side_effect=lambda backend_id: {
-                    source_backend_id: {
-                        "config": {"instance_data_dir": source_root},
-                        "data_backend": SourceBackend(),
-                    },
-                    conditioning_backend_id: {
-                        "config": {"instance_data_dir": conditioning_root},
-                        "data_backend": MagicMock(),
-                    },
-                }[backend_id]
-            )
-            self.addCleanup(setattr, StateTracker, "get_data_backend", original_get_data_backend)
+            self._bind_pair(SourceBackend(), source_root, conditioning_root)
 
             sample = TrainingSample(
                 self.image,
@@ -250,18 +240,7 @@ class TestTrainingSample(unittest.TestCase):
             source_root = os.path.join(tmpdir, "source")
             conditioning_root = os.path.join(tmpdir, "conditioning")
             sibling_path = os.path.join(tmpdir, "conditioning-other", "17.png")
-            StateTracker.get_data_backend = MagicMock(
-                side_effect=lambda backend_id: {
-                    source_backend_id: {
-                        "config": {"instance_data_dir": source_root},
-                        "data_backend": MagicMock(get_abs_path=lambda path: os.path.abspath(path)),
-                    },
-                    conditioning_backend_id: {
-                        "config": {"instance_data_dir": conditioning_root},
-                        "data_backend": MagicMock(),
-                    },
-                }[backend_id]
-            )
+            self._bind_pair(MagicMock(get_abs_path=os.path.abspath), source_root, conditioning_root)
 
             sample = TrainingSample(
                 self.image,
@@ -277,18 +256,7 @@ class TestTrainingSample(unittest.TestCase):
         conditioning_backend_id = "conditioning"
         with tempfile.TemporaryDirectory() as tmpdir:
             source_root = os.path.join(tmpdir, "source")
-            StateTracker.get_data_backend = MagicMock(
-                side_effect=lambda backend_id: {
-                    source_backend_id: {
-                        "config": {"instance_data_dir": source_root},
-                        "data_backend": MagicMock(get_abs_path=lambda path: os.path.abspath(path)),
-                    },
-                    conditioning_backend_id: {
-                        "config": {"instance_data_dir": "conditioning"},
-                        "data_backend": MagicMock(),
-                    },
-                }[backend_id]
-            )
+            self._bind_pair(MagicMock(get_abs_path=os.path.abspath), source_root, "conditioning")
 
             sample = TrainingSample(
                 self.image,
@@ -303,7 +271,11 @@ class TestTrainingSample(unittest.TestCase):
             )
 
     def test_i2v_first_frame_metadata_copy_targets_png_and_preserves_pairing_path(self):
+        from simpletuner.helpers.metadata.backends.base import MetadataBackend
+
         class FakeMetadata:
+            bind_preparation_source = MetadataBackend.bind_preparation_source
+
             def __init__(self):
                 self.aspect_ratio_bucket_indices = {"1.0": ["25.mp4"]}
                 self.image_metadata = {"25.mp4": {"original_size": (480, 270), "aspect_ratio": 1.83}}
@@ -330,26 +302,21 @@ class TestTrainingSample(unittest.TestCase):
         target_meta.aspect_ratio_bucket_indices = {}
         target_meta.image_metadata = {}
         with tempfile.TemporaryDirectory() as tmpdir:
-            source_backend = {
-                "id": "source",
-                "dataset_type": "video",
-                "instance_data_dir": "",
-                "metadata_backend": source_meta,
-                "config": {"resolution": 480, "resolution_type": "pixel_area"},
-            }
-            target_backend = {
-                "id": "conditioning",
-                "dataset_type": "conditioning",
-                "instance_data_dir": tmpdir,
-                "metadata_backend": target_meta,
-                "conditioning_type": "reference_strict",
-                "config": {
+            source_meta.instance_data_dir = ""
+            target_meta.instance_data_dir = tmpdir
+            source = DatasetRuntime("source", None, source_meta, {"resolution": 480, "resolution_type": "pixel_area"})
+            target = DatasetRuntime(
+                "conditioning",
+                None,
+                target_meta,
+                {
+                    "dataset_type": "conditioning",
                     "conditioning_type": "reference_strict",
                     "conditioning_config": {"type": "i2v_first_frame"},
                 },
-            }
-            with patch.object(StateTracker, "set_data_backend_config"):
-                DatasetDuplicator.copy_metadata(source_backend, target_backend)
+            )
+            with patch.object(StateTracker, "set_data_backend_config", side_effect=AssertionError("global dataset write")):
+                DatasetDuplicator.copy_metadata(source, target)
 
             expected_path = os.path.join(tmpdir, "25.png")
             self.assertEqual(target_meta.aspect_ratio_bucket_indices["1.0"], [expected_path])

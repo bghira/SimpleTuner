@@ -9,14 +9,39 @@ import json
 import logging
 import os
 import subprocess
+import tempfile
+from collections import OrderedDict
+from contextlib import ExitStack, closing, contextmanager
+from glob import escape
+from itertools import chain, islice
 from pathlib import Path
+from threading import Lock
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
+import ijson
 import numpy as np
 import trainingsample as tsr
 from PIL import Image
 from pydantic import BaseModel, Field
+
+from simpletuner.helpers.metadata.backends.webshart_exclusions import read_exclusion_page
+from simpletuner.helpers.metadata.backends.webshart_geometry import (
+    _read_index,
+    accepted_ref_lookup,
+    geometry_lookup,
+    prepared_geometry_path,
+    read_snapshot,
+)
+from simpletuner.helpers.metadata.backends.webshart_membership import IncompleteWebshartMembership, MembershipPages
+from simpletuner.helpers.metadata.preparation import (
+    DatasetViewChangedError,
+    LegacyMetadataPublication,
+    bucket_groups_from_events,
+    read_bucket_groups,
+    read_bucket_page,
+)
+from simpletuner.helpers.utils.pathing import normalize_data_path
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +62,12 @@ class DatasetSummary(BaseModel):
 
     dataset_id: str
     has_cache: bool = False
+    scan_incomplete: bool = False
+    accepted_samples: Optional[int] = None
+    physical_rows: Optional[int] = None
+    source_captions_required: Optional[bool] = None
+    source_revision: Optional[str] = None
+    view_revision: Optional[str] = None
     total_files: int = 0
     bucket_count: int = 0
     buckets: List[BucketSummary] = Field(default_factory=list)
@@ -52,6 +83,14 @@ class DatasetSummary(BaseModel):
     auto_generated: bool = False
 
 
+class DatasetViewChanged(DatasetViewChangedError):
+    """The indexed dataset was replaced between page requests."""
+
+
+class DatasetFileMutationUnavailable(ValueError):
+    """The prepared provider does not support direct file edits."""
+
+
 class DatasetFilePage(BaseModel):
     """Paginated file listing from a dataset."""
 
@@ -60,6 +99,7 @@ class DatasetFilePage(BaseModel):
     limit: int
     offset: int
     bucket_key: Optional[str] = None
+    view_revision: Optional[str] = None
 
 
 class ViewerThumbnailInfo(BaseModel):
@@ -83,6 +123,9 @@ class FileMetadata(BaseModel):
     crop_coordinates: Optional[List[int]] = None
     bucket_key: Optional[str] = None
     caption: Optional[str] = None
+    view_revision: Optional[str] = None
+    metadata_editable: bool = True
+    metadata_revision: Optional[str] = None
     bbox_entities: Optional[List[Dict[str, Any]]] = None
     extra: Dict[str, Any] = Field(default_factory=dict)
 
@@ -95,9 +138,9 @@ class CaptionValidationResult(BaseModel):
 
     dataset_id: str
     strategy: str
-    coverage_ratio: float = 0.0
+    coverage_ratio: Optional[float] = 0.0
     total_files: int = 0
-    captioned_files: int = 0
+    captioned_files: Optional[int] = 0
     uncaptioned_files: List[str] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)
 
@@ -120,6 +163,7 @@ class FilteredFilesReport(BaseModel):
 
     dataset_id: str
     total_filtered: int = 0
+    scope: str = "size_and_aspect"
     by_reason: Dict[str, int] = Field(default_factory=dict)
     files: List[FilteredFileEntry] = Field(default_factory=list)
 
@@ -164,6 +208,9 @@ class OrphanReport(BaseModel):
     conditioning_id: str
     source_orphans: List[str] = Field(default_factory=list)
     conditioning_orphans: List[str] = Field(default_factory=list)
+    scope: str = "catalogue"
+    offset: int = 0
+    limit: int = 500
 
 
 # Stage 6: Audio/Video preview models
@@ -202,6 +249,8 @@ def _pil_to_thumbnail(img: Image.Image, max_size: int = 256) -> str:
             img = img.convert("RGB")
     elif img.mode != "RGB":
         img = img.convert("RGB")
+    elif max(img.size) > max_size:
+        img = img.copy()
 
     img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
 
@@ -286,10 +335,18 @@ def _array_to_thumbnail(array: np.ndarray, max_size: int = 256) -> str:
     return f"data:image/jpeg;base64,{base64.b64encode(buffer.read()).decode('utf-8')}"
 
 
-# Module-level cache for data backends used by on-demand thumbnail generation.
-# Keyed by dataset ID. Backends are expensive to create (HuggingFace loads the
-# full dataset on first access) but subsequent uses are fast.
-_data_backend_cache: Dict[str, Any] = {}
+_data_backend_cache = OrderedDict()
+_data_backend_cache_lock = Lock()
+_DATA_BACKEND_CACHE_LIMIT = 8
+
+
+def _webshart_source_config(config):
+    native = config.get("webshart") or {}
+    return (
+        *(config.get(key, native.get(key)) for key in ("source", "subfolder", "metadata")),
+        *(native.get(key) for key in ("manifest", "caption_key", "columns")),
+        config.get("aws_endpoint_url"),
+    )
 
 
 class DatasetViewerService:
@@ -299,8 +356,13 @@ class DatasetViewerService:
     DEFAULT_THUMBNAIL_SIZE = 256
     MAX_THUMBNAIL_SIZE = 512
 
-    def __init__(self, project_root: Optional[Path] = None):
-        self.project_root = project_root or Path.cwd()
+    def __init__(self, project_root: Optional[Path] = None, *, plan_path: Optional[Path] = None):
+        self.project_root = (project_root or Path.cwd()).resolve()
+        self.plan_path = plan_path.resolve() if plan_path is not None else self.project_root
+
+    def _source_cache_key(self, dataset_config):
+        source = json.dumps([str(self.plan_path), dataset_config], sort_keys=True, separators=(",", ":"), default=os.fspath)
+        return hashlib.sha256(source.encode()).hexdigest()
 
     def _find_cache_file(self, dataset_config: Dict[str, Any], file_type: str = "indices") -> Optional[Path]:
         """Locate an aspect ratio bucket cache file for a dataset.
@@ -314,7 +376,36 @@ class DatasetViewerService:
         if not dataset_id:
             return None
 
-        filename = f"aspect_ratio_bucket_{file_type}_{dataset_id}.json"
+        if dataset_config.get("type") == "webshart":
+            native = dataset_config.get("webshart") or {}
+            suffix = dataset_config.get("cache_file_suffix", dataset_id)
+            cache_dir = native.get("cache_dir") or dataset_config.get("cache_dir")
+            root = Path(cache_dir) if cache_dir else self.project_root / "cache" / "webshart" / dataset_id
+            stem = f"aspect_ratio_bucket_{file_type}"
+            if root.is_dir() and native.get("format", "tar") == "parquet":
+                candidates = root.glob(f"{stem}_source_*_{escape(suffix)}.json")
+                matches, incomplete = [], []
+                configured_source = _webshart_source_config(dataset_config)
+                for candidate in candidates:
+                    indices = candidate.with_name(candidate.name.replace(stem, "aspect_ratio_bucket_indices", 1))
+                    try:
+                        with indices.open("rb") as source:
+                            modified = os.fstat(source.fileno()).st_mtime_ns
+                            try:
+                                index = MembershipPages.open(source)
+                            except IncompleteWebshartMembership as scan:
+                                if configured_source == _webshart_source_config(scan.header.get("config") or {}):
+                                    incomplete.append((modified, candidate))
+                            else:
+                                if index and configured_source == _webshart_source_config(index.header.get("config") or {}):
+                                    matches.append((modified, candidate))
+                    except (OSError, json.JSONDecodeError, KeyError) as error:
+                        logger.debug("Cannot open Webshart publication for %s: %s", dataset_id, error)
+                available = matches or incomplete
+                return max(available)[1] if available else None
+            if cache_dir:
+                instance_data_dir = str(root)
+        filename = f"aspect_ratio_bucket_{file_type}_{dataset_config.get('cache_file_suffix', dataset_id)}.json"
 
         # Search paths in order of likelihood
         search_dirs: list[Path] = []
@@ -490,19 +581,25 @@ class DatasetViewerService:
             return DatasetSummary(dataset_id=dataset_id, has_cache=False, **cond_fields)
 
         try:
-            data = self._load_cache(cache_path)
-        except (json.JSONDecodeError, OSError) as e:
+            data, counts = self.read_membership_summary(cache_path)
+        except IncompleteWebshartMembership:
+            return DatasetSummary(dataset_id=dataset_id, scan_incomplete=True, **cond_fields)
+        except (ijson.JSONError, ValueError, OSError) as e:
             logger.warning("Failed to read cache for %s: %s", dataset_id, e)
             return DatasetSummary(dataset_id=dataset_id, has_cache=False, **cond_fields)
 
-        bucket_indices = data.get("aspect_ratio_bucket_indices", {})
-        buckets = [BucketSummary(key=key, file_count=len(files)) for key, files in bucket_indices.items()]
+        buckets = [BucketSummary(key=key, file_count=count) for key, count in counts.items()]
         total_files = sum(b.file_count for b in buckets)
 
         return DatasetSummary(
             dataset_id=dataset_id,
             has_cache=True,
             total_files=total_files,
+            accepted_samples=total_files,
+            physical_rows=data.get("physical_rows"),
+            source_captions_required=data.get("source_captions_required"),
+            source_revision=data.get("source_revision"),
+            view_revision=data.get("view_revision"),
             bucket_count=len(buckets),
             buckets=sorted(buckets, key=lambda b: b.file_count, reverse=True),
             filtering_statistics=data.get("filtering_statistics"),
@@ -511,55 +608,128 @@ class DatasetViewerService:
             **cond_fields,
         )
 
+    @classmethod
+    def read_membership_summary(cls, path: Path):
+        """Read an indexed summary or count a legacy publication without loading its references."""
+        with path.open("rb") as source:
+            index = MembershipPages.open(source)
+            if index is not None:
+                return index.header, index.counts
+            header, counts = cls._read_legacy_bucket_summary(source)
+            if header.get("scan_in_progress"):
+                raise IncompleteWebshartMembership(header)
+            return header, counts
+
+    @staticmethod
+    def _read_legacy_bucket_summary(source):
+        fields = {
+            "config",
+            "filtering_statistics",
+            "physical_rows",
+            "scan_in_progress",
+            "source_captions_required",
+            "source_revision",
+            "view_revision",
+        }
+        header, counts = {}, {}
+        events = iter(ijson.parse(source, use_float=True))
+        for prefix, event, value in events:
+            if prefix == "aspect_ratio_bucket_indices" and event == "start_map":
+                counts = {key: sum(1 for _ in refs) for key, refs in bucket_groups_from_events(events)}
+            elif prefix in fields:
+                header[prefix] = next(ijson.items(chain(((prefix, event, value),), events), prefix))
+        return header, counts
+
     def get_dataset_files(
         self,
         dataset_config: Dict[str, Any],
         bucket_key: Optional[str] = None,
         limit: int = 50,
         offset: int = 0,
+        view_revision: Optional[str] = None,
     ) -> DatasetFilePage:
         """Return a paginated file listing from the bucket cache."""
         cache_path = self._find_cache_file(dataset_config, "indices")
         if cache_path is None:
+            if view_revision is not None:
+                raise DatasetViewChanged("The prepared dataset is no longer available.")
             return DatasetFilePage(files=[], total=0, limit=limit, offset=offset)
 
         try:
-            data = self._load_cache(cache_path)
-        except (json.JSONDecodeError, OSError):
+            with cache_path.open("rb") as source:
+                index = MembershipPages.open(source)
+                revision = index.header["view_revision"] if index is not None else None
+                if view_revision is not None and revision != view_revision:
+                    raise DatasetViewChanged("The prepared dataset changed. Reopen its bucket to browse the current view.")
+                if index is None:
+                    files, total = read_bucket_page(read_bucket_groups(source), bucket_key, offset, limit)
+                else:
+                    files, total = index.read_page(bucket_key, offset, limit)
+        except IncompleteWebshartMembership:
+            if view_revision is not None:
+                raise DatasetViewChanged("The prepared dataset is no longer available.") from None
             return DatasetFilePage(files=[], total=0, limit=limit, offset=offset)
-
-        bucket_indices = data.get("aspect_ratio_bucket_indices", {})
-
-        if bucket_key is not None:
-            files = bucket_indices.get(bucket_key, [])
-        else:
-            files = []
-            for bucket_files in bucket_indices.values():
-                files.extend(bucket_files)
-
-        total = len(files)
-        page = files[offset : offset + limit]
+        except DatasetViewChanged:
+            raise
+        except (ijson.JSONError, ValueError, OSError):
+            return DatasetFilePage(files=[], total=0, limit=limit, offset=offset)
 
         return DatasetFilePage(
-            files=page,
-            total=total,
-            limit=limit,
-            offset=offset,
-            bucket_key=bucket_key,
+            files=files, total=total, limit=limit, offset=offset, bucket_key=bucket_key, view_revision=revision
         )
 
-    def get_file_metadata(self, dataset_config: Dict[str, Any], file_path: str) -> Optional[FileMetadata]:
+    @contextmanager
+    def _webshart_view(self, dataset_config, view_revision):
+        indices = self._find_cache_file(dataset_config, "indices") if dataset_config.get("type") == "webshart" else None
+        with ExitStack() as stack:
+            index = None
+            if indices is not None:
+                source = stack.enter_context(indices.open("rb"))
+                try:
+                    index = MembershipPages.open(source)
+                except IncompleteWebshartMembership:
+                    indices = None
+            current_revision = index.header["view_revision"] if index is not None else None
+            if view_revision is not None and current_revision != view_revision:
+                raise DatasetViewChanged("The prepared dataset changed. Reopen its bucket to inspect the current view.")
+            yield indices, index
+
+    def get_file_metadata(
+        self, dataset_config: Dict[str, Any], file_path: str, *, view_revision: Optional[str] = None
+    ) -> Optional[FileMetadata]:
         """Read per-file metadata from the metadata cache."""
-        cache_path = self._find_cache_file(dataset_config, "metadata")
-        if cache_path is None:
-            return None
+        metadata_revision = None
+        with self._webshart_view(dataset_config, view_revision) as (indices, index):
+            current_revision = index.header["view_revision"] if index is not None else None
+            editable = not self._uses_indexed_geometry(dataset_config, index)
+            if index is not None and index.header.get("geometry_format") == "sqlite-v1":
+                if index.header.get("source_pins"):
+                    with accepted_ref_lookup(indices, index) as contains:
+                        if not contains(file_path):
+                            return None
+                name = index.header["geometry_name"]
+                if Path(name).name != name:
+                    raise ValueError("Invalid Webshart geometry filename.")
+                with closing(read_snapshot(indices.parent / name, index.header["geometry_sha256"])) as db:
+                    lookup = geometry_lookup(indices, index.header, db)
+                    if settings := index.header.get("transform_cache_recipe"):
+                        from simpletuner.helpers.metadata.backends.webshart_transforms import WebshartTransforms
 
-        try:
-            data = self._load_cache(cache_path)
-        except (json.JSONDecodeError, OSError):
-            return None
-
-        meta = data.get(file_path)
+                        with (
+                            self._open_view_data_backend(dataset_config, current_revision) as source,
+                            closing(WebshartTransforms(source, settings, lookup.shard_revision)) as transforms,
+                        ):
+                            meta = transforms.read_batch([file_path])[0]
+                    else:
+                        meta = lookup.get_metadata_by_filepath(file_path)
+            else:
+                cache_path = self._find_cache_file(dataset_config, "metadata")
+                if cache_path is None:
+                    return None
+                try:
+                    meta, metadata_revision = LegacyMetadataPublication(cache_path).read(file_path)
+                except (json.JSONDecodeError, OSError):
+                    return None
         if meta is None:
             return None
 
@@ -584,139 +754,105 @@ class DatasetViewerService:
             crop_coordinates=meta.get("crop_coordinates"),
             bucket_key=meta.get("bucket_key"),
             bbox_entities=meta.get("bbox_entities"),
+            view_revision=current_revision,
+            metadata_editable=editable,
+            metadata_revision=metadata_revision,
             extra=extra,
         )
-        result.caption = self._get_file_caption(dataset_config, file_path)
+        result.caption = self._get_file_caption(dataset_config, file_path, view_revision=current_revision)
         return result
+
+    @staticmethod
+    def _uses_indexed_geometry(config, index):
+        return config.get("type") == "webshart" and bool(
+            (config.get("webshart") or {}).get("sampling_policy")
+            or (index is not None and index.header.get("geometry_format") == "sqlite-v1")
+        )
+
+    def _require_editable_file(self, dataset_config, view_revision):
+        with self._webshart_view(dataset_config, view_revision) as (_, index):
+            if self._uses_indexed_geometry(dataset_config, index):
+                raise DatasetFileMutationUnavailable(
+                    "This dataset uses a prepared view. Rescan it to recompute metadata or clear its artifacts."
+                )
+
+    def _edit_file_metadata(self, config, path, update, *, view_revision, metadata_revision):
+        self._require_editable_file(config, view_revision)
+        cache_path = self._find_cache_file(config, "metadata")
+        if cache_path is None:
+            return None
+        try:
+            return LegacyMetadataPublication(cache_path).edit(path, update, expected_revision=metadata_revision)
+        except (json.JSONDecodeError, FileNotFoundError):
+            return None
 
     def update_crop_coordinates(
         self,
         dataset_config: Dict[str, Any],
         file_path: str,
         crop_coordinates: List[int],
-    ) -> bool:
-        """Update crop_coordinates for a file in the metadata cache.
-
-        Returns True if the update succeeded.
-        """
-        cache_path = self._find_cache_file(dataset_config, "metadata")
-        if cache_path is None:
-            return False
-
-        try:
-            data = self._load_cache(cache_path)
-        except (json.JSONDecodeError, OSError):
-            return False
-
-        if file_path not in data:
-            return False
-
-        data[file_path]["crop_coordinates"] = crop_coordinates
-        with open(cache_path, "w") as f:
-            json.dump(data, f)
-        return True
+        *,
+        view_revision: Optional[str] = None,
+        metadata_revision: Optional[str] = None,
+    ):
+        return self._edit_file_metadata(
+            dataset_config,
+            file_path,
+            lambda record: dict(record, crop_coordinates=crop_coordinates),
+            view_revision=view_revision,
+            metadata_revision=metadata_revision,
+        )
 
     def update_bbox_entities(
         self,
         dataset_config: Dict[str, Any],
         file_path: str,
         bbox_entities: Optional[List[Dict[str, Any]]],
-    ) -> bool:
-        """Update bbox_entities for a file in the metadata cache.
+        *,
+        view_revision: Optional[str] = None,
+        metadata_revision: Optional[str] = None,
+    ):
+        def update(record):
+            if bbox_entities:
+                record["bbox_entities"] = bbox_entities
+            else:
+                record.pop("bbox_entities", None)
+            return record
 
-        Returns True if the update succeeded.
-        """
-        cache_path = self._find_cache_file(dataset_config, "metadata")
-        if cache_path is None:
-            return False
-
-        try:
-            data = self._load_cache(cache_path)
-        except (json.JSONDecodeError, OSError):
-            return False
-
-        if file_path not in data:
-            return False
-
-        if bbox_entities:
-            data[file_path]["bbox_entities"] = bbox_entities
-        else:
-            data[file_path].pop("bbox_entities", None)
-
-        with open(cache_path, "w") as f:
-            json.dump(data, f)
-        return True
+        return self._edit_file_metadata(
+            dataset_config,
+            file_path,
+            update,
+            view_revision=view_revision,
+            metadata_revision=metadata_revision,
+        )
 
     def rebuild_file_metadata(
         self,
         dataset_config: Dict[str, Any],
         global_config: Dict[str, Any],
         file_path: str,
-    ) -> Optional[Dict[str, Any]]:
-        """Recalculate metadata for a single file using TrainingSample.
-
-        Sets up a minimal StateTracker context (like the scan service) and
-        runs TrainingSample.prepare(image=None) to recompute target_size,
-        intermediary_size, crop_coordinates, and aspect_ratio purely from
-        original_size and the current dataset configuration.
-
-        Returns the updated metadata dict on success, None on failure.
-        """
+        *,
+        view_revision: Optional[str] = None,
+        metadata_revision: Optional[str] = None,
+    ):
+        """Recalculate per-file geometry using the resolved dataset settings."""
         from simpletuner.helpers.data_backend.config import create_backend_config
         from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
-        from simpletuner.helpers.training.state_tracker import StateTracker
-        from simpletuner.simpletuner_sdk.server.services.dataset_scan_service import _ScanArgsNamespace
-
-        # Load existing metadata
-        cache_path = self._find_cache_file(dataset_config, "metadata")
-        if cache_path is None:
-            return None
-        try:
-            all_metadata = self._load_cache(cache_path)
-        except (json.JSONDecodeError, OSError):
-            return None
-        if file_path not in all_metadata:
-            return None
-
-        existing = all_metadata[file_path]
-        original_size = existing.get("original_size")
-        if not original_size:
-            return None
-
-        # Build minimal args from config (mirrors scan service)
-        args_overrides = {}
-        for key in (
-            "resolution",
-            "resolution_type",
-            "minimum_image_size",
-            "maximum_image_size",
-            "target_downsample_size",
-            "caption_strategy",
-            "model_type",
-            "model_family",
-        ):
-            if key in dataset_config:
-                args_overrides[key] = dataset_config[key]
-            elif key in global_config:
-                args_overrides[key] = global_config[key]
-
-        scan_args = _ScanArgsNamespace(args_overrides)
+        from simpletuner.helpers.multiaspect.image import ImageGeometry, MultiaspectImage
         from simpletuner.simpletuner_sdk.server.services.dataset_scan_service import DatasetScanService
 
-        scan_args.output_dir = DatasetScanService._resolve_scan_output_dir(scan_args.output_dir)
-
-        # Apply pixel_area conversion
-        dataset_config = DatasetScanService._convert_pixel_area(dataset_config, scan_args)
-
-        original_args = StateTracker.get_args()
-        StateTracker.set_args(scan_args)
-        config_id = None
-
-        try:
-            args_dict = {k: getattr(scan_args, k, None) for k in vars(scan_args)}
-            config = create_backend_config(dataset_config, args_dict)
-            config_id = config.id
-            StateTracker.set_data_backend_config(config.id, config.to_dict()["config"])
+        def rebuild(existing):
+            original_size = existing.get("original_size")
+            if not original_size:
+                return None
+            scan_args = DatasetScanService._build_scan_args(dataset_config, global_config)
+            resolved = DatasetScanService._convert_pixel_area(dataset_config, scan_args)
+            config = create_backend_config(resolved, vars(scan_args))
+            geometry = ImageGeometry(
+                MultiaspectImage._get_alignment(args=scan_args),
+                MultiaspectImage._get_rounding(2, args=scan_args),
+            )
 
             # Build image_metadata with only original_size (forces recalculation)
             rebuild_meta = {"original_size": tuple(original_size)}
@@ -730,7 +866,8 @@ class DatasetViewerService:
                 data_backend_id=config.id,
                 image_metadata=rebuild_meta,
                 image_path=file_path,
-                model=None,
+                data_backend_config=config.to_dict()["config"],
+                geometry=geometry,
             )
             prepared = sample.prepare()
 
@@ -740,62 +877,78 @@ class DatasetViewerService:
             existing["crop_coordinates"] = list(prepared.crop_coordinates)
             existing["aspect_ratio"] = prepared.aspect_ratio
 
-            with open(cache_path, "w") as f:
-                json.dump(all_metadata, f)
-
             return existing
 
-        except Exception as e:
-            logger.warning("Failed to rebuild metadata for %s: %s", file_path, e)
-            return None
-        finally:
-            StateTracker.set_args(original_args)
-            if config_id is not None:
-                StateTracker.data_backends.pop(config_id, None)
+        return self._edit_file_metadata(
+            dataset_config,
+            file_path,
+            rebuild,
+            view_revision=view_revision,
+            metadata_revision=metadata_revision,
+        )
 
     def delete_vae_cache_file(
         self,
         dataset_config: Dict[str, Any],
         file_path: str,
+        *,
+        view_revision: Optional[str] = None,
+        metadata_revision: Optional[str] = None,
+        global_config=None,
+        dataset_plan=None,
     ) -> Dict[str, Any]:
-        """Delete the VAE cache .pt file for a single image/video.
+        """Delete a file-backed latent using the dataset's configured artifact store."""
+        from simpletuner.helpers.caching.vae import legacy_vae_cache_filename
+        from simpletuner.helpers.data_backend.factory import default_vae_cache_dir
 
-        Returns a dict with 'deleted' (bool) and 'cache_path' (str or None).
-        """
-        cache_dir_vae = dataset_config.get("cache_dir_vae", "")
-        if not cache_dir_vae:
-            return {"deleted": False, "cache_path": None, "error": "No cache_dir_vae configured"}
+        from .cache_job_service import CacheJobService, resolve_image_artifact_entry
 
-        instance_data_dir = dataset_config.get("instance_data_dir", "")
-
-        # Replicate VAECache.generate_vae_cache_filename logic (hash_filenames=True always)
-        base_filename = os.path.splitext(os.path.basename(file_path))[0]
-        hashed = hashlib.sha256(base_filename.encode()).hexdigest()
-        cache_filename = hashed + ".pt"
-
-        # Compute subfolder (relative path within instance_data_dir)
-        subfolders = ""
-        if instance_data_dir:
-            subfolders = os.path.dirname(file_path).replace(instance_data_dir, "")
-            subfolders = subfolders.lstrip(os.sep)
-
-        if subfolders:
-            cache_path = os.path.join(cache_dir_vae, subfolders, cache_filename)
-        else:
-            cache_path = os.path.join(cache_dir_vae, cache_filename)
-
-        cache_path = os.path.abspath(cache_path)
-
-        if not os.path.isfile(cache_path):
-            return {"deleted": False, "cache_path": cache_path, "error": "File not found"}
-
+        self._require_editable_file(dataset_config, view_revision)
         try:
-            os.remove(cache_path)
-            return {"deleted": True, "cache_path": cache_path}
-        except OSError as e:
-            return {"deleted": False, "cache_path": cache_path, "error": str(e)}
+            store = resolve_image_artifact_entry(dataset_config, dataset_plan, "image_embeds") or dataset_config
+        except ValueError as exc:
+            raise DatasetFileMutationUnavailable(str(exc)) from exc
+        if store.get("type", "local") != "local" or dataset_config.get("type") == "webshart":
+            return {
+                "deleted": False,
+                "cache_path": None,
+                "error": "Per-file deletion requires a file-backed Local latent store.",
+            }
 
-    def _get_file_caption(self, dataset_config: Dict[str, Any], file_path: str) -> Optional[str]:
+        metadata = self._find_cache_file(dataset_config, "metadata")
+        if metadata is None:
+            return {"deleted": False, "cache_path": None, "error": "Metadata entry not found"}
+        try:
+            record, revision = LegacyMetadataPublication(metadata).read(file_path)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {"deleted": False, "cache_path": None, "error": "Metadata entry not found"}
+        if metadata_revision is not None and revision != metadata_revision:
+            raise DatasetViewChangedError("The metadata changed. Reopen the file before deleting its latent.")
+        if record is None:
+            return {"deleted": False, "cache_path": None, "error": "Metadata entry not found"}
+
+        global_config = global_config or {}
+        args = CacheJobService._build_args(global_config)
+        directory = dataset_config.get("cache_dir_vae") or default_vae_cache_dir(
+            args, dataset_config["id"], dataset_config.get("dataset_type", "image")
+        )
+        directory = Path(CacheJobService._resolve_cache_dir(directory, global_config, dataset_config)).resolve()
+        source_root = dataset_config.get("instance_data_dir") or dataset_config.get("csv_cache_dir")
+        key, _ = legacy_vae_cache_filename(file_path, source_root, str(directory))
+        artifact = Path(key)
+        if not artifact.resolve().is_relative_to(directory):
+            raise DatasetFileMutationUnavailable("The latent path is outside its configured cache directory.")
+        try:
+            artifact.unlink()
+        except FileNotFoundError:
+            return {"deleted": False, "cache_path": str(artifact), "error": "File not found"}
+        except OSError as exc:
+            return {"deleted": False, "cache_path": str(artifact), "error": str(exc)}
+        return {"deleted": True, "cache_path": str(artifact)}
+
+    def _get_file_caption(
+        self, dataset_config: Dict[str, Any], file_path: str, *, view_revision: Optional[str] = None
+    ) -> Optional[str]:
         """Resolve the caption for a file based on the dataset's caption strategy."""
         strategy = dataset_config.get("caption_strategy", "filename")
         instance_prompt = dataset_config.get("instance_prompt", "")
@@ -808,6 +961,20 @@ class DatasetViewerService:
 
         if strategy == "textfile":
             return self._read_textfile_caption(dataset_config, file_path)
+
+        if strategy == "webshart":
+            from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+            from simpletuner.helpers.prompts import CaptionNotFoundError, PromptHandler
+
+            with self._open_view_data_backend(dataset_config, view_revision) as pinned:
+                backend = pinned if pinned is not None else self._get_or_create_data_backend(dataset_config)
+                settings = {**dataset_config, **DatasetRuntime.caption_config(dataset_config)}
+                dataset = DatasetRuntime(dataset_config["id"], backend, None, settings)
+                try:
+                    caption = dataset.resolve_caption(file_path, caption_lookup=backend.get_caption)
+                except CaptionNotFoundError:
+                    return None
+                return "\n".join(PromptHandler._normalize_caption_payload(caption)) or None
 
         # For parquet/huggingface/csv, try the textfile sidecar as a best-effort fallback
         caption = self._read_textfile_caption(dataset_config, file_path)
@@ -843,26 +1010,23 @@ class DatasetViewerService:
             return None
 
     def _resolve_image_path(self, dataset_config: Dict[str, Any], file_path: str) -> Optional[Path]:
-        """Resolve a relative file path from the cache to an absolute path."""
+        """Resolve a file entry inside the configured local dataset tree."""
         instance_data_dir = dataset_config.get("instance_data_dir", "")
         if not instance_data_dir:
             return None
 
-        candidate = Path(instance_data_dir) / file_path
-        if candidate.is_file():
-            return candidate
-
-        # The file_path might already be absolute
-        abs_candidate = Path(file_path)
-        if abs_candidate.is_file():
-            return abs_candidate
-
+        root = Path(os.path.abspath(os.path.expanduser(instance_data_dir)))
+        for candidate in (root / file_path, Path(file_path)):
+            candidate = Path(os.path.abspath(candidate))
+            if candidate.is_relative_to(root) and candidate.is_file():
+                return candidate
         return None
 
-    def _get_thumbnail_cache_path(self, dataset_id: str, file_path: str) -> Path:
-        """Get the local cache path for a thumbnail."""
-        path_hash = hashlib.md5(file_path.encode()).hexdigest()
-        cache_dir = self.project_root / self.THUMBNAIL_CACHE_DIR / dataset_id
+    def _get_thumbnail_cache_path(self, dataset_config, file_path: str, view_revision: Optional[str] = None) -> Path:
+        """Get the local cache path for a reference scoped to its source and view."""
+        cache_key = json.dumps([view_revision, file_path])
+        path_hash = hashlib.sha256(cache_key.encode()).hexdigest()
+        cache_dir = self.project_root / self.THUMBNAIL_CACHE_DIR / self._source_cache_key(dataset_config)
         return cache_dir / f"{path_hash}.jpg"
 
     @staticmethod
@@ -896,10 +1060,22 @@ class DatasetViewerService:
 
     def _get_or_create_data_backend(self, dataset_config: Dict[str, Any]):
         """Create or retrieve a cached data backend for on-demand image reading."""
-        dataset_id = dataset_config.get("id", "")
-        if dataset_id in _data_backend_cache:
-            return _data_backend_cache[dataset_id]
+        key = self._source_cache_key(dataset_config)
+        with _data_backend_cache_lock:
+            if key in _data_backend_cache:
+                _data_backend_cache.move_to_end(key)
+                return _data_backend_cache[key]
 
+        data_backend = self._create_data_backend(dataset_config)
+        with _data_backend_cache_lock:
+            backend = _data_backend_cache.setdefault(key, data_backend)
+            _data_backend_cache.move_to_end(key)
+            if len(_data_backend_cache) > _DATA_BACKEND_CACHE_LIMIT:
+                _data_backend_cache.popitem(last=False)
+        return backend
+
+    @staticmethod
+    def _create_data_backend(dataset_config):
         from simpletuner.helpers.data_backend.builders import create_backend_builder
         from simpletuner.helpers.data_backend.config import create_backend_config
         from simpletuner.simpletuner_sdk.server.services.dataset_scan_service import _ScanAcceleratorStub, _ScanArgsNamespace
@@ -911,10 +1087,33 @@ class DatasetViewerService:
         config = create_backend_config(dataset_config, args_dict)
 
         builder = create_backend_builder(config.backend_type, accelerator, scan_args)
-        data_backend = builder.build(config)
+        return builder.build(config)
 
-        _data_backend_cache[dataset_id] = data_backend
-        return data_backend
+    @contextmanager
+    def _open_view_data_backend(self, dataset_config, view_revision):
+        if view_revision is None:
+            yield None
+            return
+        with self._webshart_view(dataset_config, view_revision) as (indices, index):
+            if not index.header.get("source_pins"):
+                yield None
+                return
+            with self._bind_view_data_backend(dataset_config, indices, index) as backend:
+                yield backend
+
+    @contextmanager
+    def _bind_view_data_backend(self, dataset_config, indices, index):
+        backend = self._create_data_backend(dataset_config)
+        if backend.dataset.fingerprint != index.header["source_revision"]:
+            raise DatasetViewChanged("The source catalogue changed. Prepare the dataset again to browse the new source.")
+        geometry_path = prepared_geometry_path(indices, index.header)
+        with closing(_read_index(geometry_path)) as db:
+            lookup = geometry_lookup(indices, index.header, db)
+            backend.dataset.bind_source_revisions(lookup.shard_revision)
+            try:
+                yield backend
+            finally:
+                backend.dataset.bind_source_revisions(None)
 
     def _read_remote_thumbnail(
         self,
@@ -924,7 +1123,7 @@ class DatasetViewerService:
     ) -> Optional[str]:
         """Read an image from a remote backend, generate and cache a thumbnail."""
         dataset_id = dataset_config.get("id", "")
-        cache_path = self._get_thumbnail_cache_path(dataset_id, file_path)
+        cache_path = self._get_thumbnail_cache_path(dataset_config, file_path)
 
         try:
             data_backend = self._get_or_create_data_backend(dataset_config)
@@ -953,7 +1152,9 @@ class DatasetViewerService:
 
         return generate_thumbnail_from_pil(pil_image, max_size)
 
-    def _load_pil_image(self, dataset_config: Dict[str, Any], file_path: str) -> Optional[Image.Image]:
+    def _load_pil_image(
+        self, dataset_config: Dict[str, Any], file_path: str, *, view_revision: Optional[str] = None
+    ) -> Optional[Image.Image]:
         """Load the full PIL Image for a file, local or remote.
 
         For video files, extracts the first frame via trainingsample's VideoCapture.
@@ -976,23 +1177,35 @@ class DatasetViewerService:
                 logger.warning("Failed to open %s: %s", resolved, e)
                 return None
 
-        # Remote: try thumbnail disk cache first for speed, then fetch full image
-        dataset_id = dataset_config.get("id", "")
-        cached_path = self._get_thumbnail_cache_path(dataset_id, file_path)
-        if cached_path.is_file():
+        if backend_type == "aws":
+            from simpletuner.helpers.data_backend.aws import normalise_s3_prefixes
+
+            prefixes = normalise_s3_prefixes(dataset_config.get("aws_data_prefix"))
+            if not file_path.startswith(tuple(prefixes)):
+                return None
+
+        if backend_type == "webshart":
             try:
-                with Image.open(cached_path) as img:
-                    return img.copy()
-            except Exception:
-                pass
+                with self._indexed_read_view(dataset_config, view_revision) as indexed:
+                    if indexed is not None:
+                        pages, contains, publication = indexed
+                        if not contains(file_path):
+                            return None
+                        if pages.header.get("source_pins"):
+                            with self._bind_view_data_backend(dataset_config, publication, pages) as pinned:
+                                _, images = pinned.read_image_batch([file_path])
+                                return self._ensure_pil_image(images[0]) if images else None
+            except DatasetViewChanged:
+                raise
+            except (ValueError, OSError) as exc:
+                logger.warning("Failed to load the pinned image %s: %s", file_path, exc)
+                return None
 
         try:
             data_backend = self._get_or_create_data_backend(dataset_config)
-            image_data = data_backend.read_image(file_path)
-            pil_image = self._ensure_pil_image(image_data)
-            if pil_image is not None:
-                self._save_thumbnail_to_cache(cached_path, pil_image)
-            return pil_image
+            return self._ensure_pil_image(data_backend.read_image(file_path))
+        except DatasetViewChanged:
+            raise
         except Exception as e:
             logger.warning("Failed to load remote image %s: %s", file_path, e)
             return None
@@ -1003,6 +1216,8 @@ class DatasetViewerService:
         file_path: str,
         metadata: Optional[Dict[str, Any]] = None,
         max_size: int = 1024,
+        *,
+        view_revision: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Get preview images for the detail modal.
 
@@ -1015,7 +1230,9 @@ class DatasetViewerService:
         Uses the trainingsample Rust library for resize (matching the training
         pipeline) and numpy slicing for the crop (matching cropping.py).
         """
-        img = self._load_pil_image(dataset_config, file_path)
+        if view_revision is None and metadata is not None:
+            view_revision = metadata.get("view_revision")
+        img = self._load_pil_image(dataset_config, file_path, view_revision=view_revision)
         if img is None:
             return None
 
@@ -1069,14 +1286,21 @@ class DatasetViewerService:
         max_size: int = DEFAULT_THUMBNAIL_SIZE,
         limit: int = 24,
         offset: int = 0,
+        view_revision: Optional[str] = None,
     ) -> List[ViewerThumbnailInfo]:
         """Generate thumbnails for files in a dataset bucket."""
         max_size = min(max(max_size, 64), self.MAX_THUMBNAIL_SIZE)
-        dataset_id = dataset_config.get("id", "")
         backend_type = dataset_config.get("type", "local")
 
         # Get files from cache
-        file_page = self.get_dataset_files(dataset_config, bucket_key=bucket_key, limit=limit, offset=offset)
+        file_page = self.get_dataset_files(
+            dataset_config, bucket_key=bucket_key, limit=limit, offset=offset, view_revision=view_revision
+        )
+
+        if file_page.view_revision and file_page.files:
+            with self._open_view_data_backend(dataset_config, file_page.view_revision) as pinned:
+                if pinned is not None:
+                    return self._prepared_thumbnails(dataset_config, pinned, file_page, max_size)
 
         thumbnails: List[ViewerThumbnailInfo] = []
         for file_path in file_page.files:
@@ -1105,7 +1329,7 @@ class DatasetViewerService:
             else:
                 # For remote backends (aws, huggingface), check local cache first,
                 # then fetch on-demand from the data backend
-                cached_path = self._get_thumbnail_cache_path(dataset_id, file_path)
+                cached_path = self._get_thumbnail_cache_path(dataset_config, file_path)
                 if cached_path.is_file():
                     thumb_data = generate_thumbnail(cached_path, max_size)
                 else:
@@ -1122,12 +1346,71 @@ class DatasetViewerService:
 
         return thumbnails
 
+    def _prepared_thumbnails(self, dataset_config, backend, page, max_size):
+        cached = {ref: self._get_thumbnail_cache_path(dataset_config, ref, page.view_revision) for ref in page.files}
+        missing = [ref for ref, path in cached.items() if not path.is_file()]
+        loaded = {}
+        if missing:
+            refs, images = backend.read_image_batch(missing)
+            loaded.update(zip(refs, images, strict=True))
+        thumbnails = []
+        for ref in page.files:
+            path = cached[ref]
+            image = self._ensure_pil_image(loaded.get(ref))
+            if image is not None:
+                self._save_thumbnail_to_cache(path, image, self.MAX_THUMBNAIL_SIZE)
+                thumbnail = generate_thumbnail_from_pil(image, max_size)
+            else:
+                thumbnail = generate_thumbnail(path, max_size) if path.is_file() else None
+            thumbnails.append(
+                ViewerThumbnailInfo(
+                    path=ref,
+                    filename=self._get_display_name(dataset_config, ref),
+                    thumbnail=thumbnail,
+                    error=None if thumbnail else "Failed to load remote image",
+                )
+            )
+        return thumbnails
+
     # --- Stage 3: Caption Validation ---
 
     def get_caption_status(self, dataset_config: Dict[str, Any]) -> CaptionValidationResult:
         """Validate caption coverage for a dataset based on its caption strategy."""
         dataset_id = dataset_config.get("id", "")
         strategy = dataset_config.get("caption_strategy", "textfile")
+
+        if dataset_config.get("type") == "webshart":
+            summary = self.get_dataset_summary(dataset_config)
+            if summary.scan_incomplete:
+                return CaptionValidationResult(
+                    dataset_id=dataset_id,
+                    strategy=strategy,
+                    captioned_files=None,
+                    coverage_ratio=None,
+                    warnings=["Caption coverage is unavailable until the scan completes."],
+                )
+            if summary.view_revision is not None:
+                total = summary.accepted_samples
+                if strategy == "filename" or (strategy == "webshart" and summary.source_captions_required is True):
+                    captioned = total
+                elif strategy == "instanceprompt":
+                    captioned = total if dataset_config.get("instance_prompt") else 0
+                else:
+                    return CaptionValidationResult(
+                        dataset_id=dataset_id,
+                        strategy=strategy,
+                        total_files=total,
+                        captioned_files=None,
+                        coverage_ratio=None,
+                        warnings=["Caption coverage for this strategy has not been computed."],
+                    )
+                return CaptionValidationResult(
+                    dataset_id=dataset_id,
+                    strategy=strategy,
+                    total_files=total,
+                    captioned_files=captioned,
+                    coverage_ratio=captioned / total if total else 0.0,
+                )
 
         # Get all files from bucket cache
         file_page = self.get_dataset_files(dataset_config, limit=1_000_000, offset=0)
@@ -1333,6 +1616,21 @@ class DatasetViewerService:
         """Re-apply filter rules from config to identify which files were excluded."""
         dataset_id = dataset_config.get("id", "")
 
+        if dataset_config.get("type") == "webshart":
+            publication = self._find_cache_file(dataset_config, "indices")
+            if publication is not None:
+                with publication.open("rb") as source:
+                    index = MembershipPages.open(source)
+                if index is not None and index.header.get("geometry_format") == "sqlite-v1":
+                    counts, rows = read_exclusion_page(publication, index.header, reason, limit, offset)
+                    return FilteredFilesReport(
+                        dataset_id=dataset_id,
+                        total_filtered=sum(counts.values()),
+                        by_reason=counts,
+                        files=[FilteredFileEntry(path=ref, reason=why) for ref, why in rows],
+                        scope="recorded_exclusions",
+                    )
+
         # Load metadata cache
         cache_path = self._find_cache_file(dataset_config, "metadata")
         if cache_path is None:
@@ -1462,39 +1760,73 @@ class DatasetViewerService:
 
         return DatasetGraph(nodes=nodes, edges=edges)
 
+    @contextmanager
+    def _indexed_read_view(self, config, revision=None):
+        with self._webshart_view(config, revision) as (publication, pages):
+            if pages is not None and pages.header.get("geometry_format") == "sqlite-v1":
+                with accepted_ref_lookup(publication, pages) as contains:
+                    yield pages, contains, publication
+                return
+            yield None
+
+    def _bind_conditioning_matcher(self, stack, config, target, source_revision):
+        pages, contains, publication = target
+        if config.get("webshart", {}).get("format") == "parquet" and pages.header.get("source_revision") != source_revision:
+            backend = (
+                stack.enter_context(self._bind_view_data_backend(config, publication, pages))
+                if pages.header.get("source_pins")
+                else self._get_or_create_data_backend(config)
+            )
+            return lambda ref: backend.conditioning_ref(ref, admits=contains)
+        return lambda ref: ref if contains(ref) else None
+
     def get_conditioning_pairs(
         self,
         source_config: Dict[str, Any],
         conditioning_config: Dict[str, Any],
         limit: int = 12,
         offset: int = 0,
+        *,
+        source_view_revision: Optional[str] = None,
+        conditioning_view_revision: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Match files by basename between source and conditioning datasets."""
-        source_files = self.get_dataset_files(source_config, limit=1_000_000).files
-        cond_files = self.get_dataset_files(conditioning_config, limit=1_000_000).files
-
-        source_by_name = {Path(f).stem: f for f in source_files}
-        cond_by_name = {Path(f).stem: f for f in cond_files}
-
-        pairs = []
-        for name, source_path in source_by_name.items():
-            if name in cond_by_name:
-                pairs.append(
-                    ConditioningPair(
-                        source_path=source_path,
-                        conditioning_path=cond_by_name[name],
-                    )
+        with ExitStack() as stack:
+            source, target = [
+                stack.enter_context(self._indexed_read_view(config, revision))
+                for config, revision in (
+                    (source_config, source_view_revision),
+                    (conditioning_config, conditioning_view_revision),
                 )
-
-        total = len(pairs)
-        page = pairs[offset : offset + limit]
-
-        source_orphans = [f for name, f in source_by_name.items() if name not in cond_by_name]
-        cond_orphans = [f for name, f in cond_by_name.items() if name not in source_by_name]
+            ]
+            if source or target:
+                can_pair = source is not None and target is not None
+                pairs = []
+                if can_pair:
+                    match = self._bind_conditioning_matcher(
+                        stack, conditioning_config, target, source[0].header.get("source_revision")
+                    )
+                    for ref in source[0].iter_refs(None, offset, limit):
+                        if (matched := match(ref)) is not None:
+                            pairs.append({"source_path": ref, "conditioning_path": matched})
+                return {
+                    "pairs": pairs,
+                    "scope": "source_page" if can_pair else "unavailable",
+                    "source_total": source[0].count() if can_pair else None,
+                    "total_pairs": None,
+                    "source_orphan_count": None,
+                    "conditioning_orphan_count": None,
+                    "limit": limit,
+                    "offset": offset,
+                    "source_view_revision": source[0].header["view_revision"] if source else None,
+                    "conditioning_view_revision": target[0].header["view_revision"] if target else None,
+                }
+        pairs, source_orphans, cond_orphans = self._legacy_conditioning_relationship(source_config, conditioning_config)
+        page = islice(pairs.items(), offset, offset + limit)
 
         return {
-            "pairs": [p.model_dump() for p in page],
-            "total_pairs": total,
+            "pairs": [ConditioningPair(source_path=ref, conditioning_path=match).model_dump() for ref, match in page],
+            "total_pairs": len(pairs),
             "source_orphan_count": len(source_orphans),
             "conditioning_orphan_count": len(cond_orphans),
             "limit": limit,
@@ -1505,33 +1837,110 @@ class DatasetViewerService:
         self,
         source_config: Dict[str, Any],
         conditioning_config: Dict[str, Any],
+        limit: int = 500,
+        offset: int = 0,
     ) -> OrphanReport:
         """Find files without matching counterparts between source/conditioning datasets."""
-        source_files = self.get_dataset_files(source_config, limit=1_000_000).files
-        cond_files = self.get_dataset_files(conditioning_config, limit=1_000_000).files
-
-        source_by_name = {Path(f).stem: f for f in source_files}
-        cond_by_name = {Path(f).stem: f for f in cond_files}
-
+        with ExitStack() as stack:
+            source, target = [
+                stack.enter_context(self._indexed_read_view(config)) for config in (source_config, conditioning_config)
+            ]
+            if source or target:
+                result = OrphanReport(
+                    source_id=source_config["id"],
+                    conditioning_id=conditioning_config["id"],
+                    limit=limit,
+                    offset=offset,
+                    scope="unavailable",
+                )
+                if source and target:
+                    result.scope = "sample_pages"
+                    match_target = self._bind_conditioning_matcher(
+                        stack, conditioning_config, target, source[0].header.get("source_revision")
+                    )
+                    match_source = self._bind_conditioning_matcher(
+                        stack, source_config, source, target[0].header.get("source_revision")
+                    )
+                    result.source_orphans = [
+                        ref for ref in source[0].iter_refs(None, offset, limit) if match_target(ref) is None
+                    ]
+                    result.conditioning_orphans = [
+                        ref for ref in target[0].iter_refs(None, offset, limit) if match_source(ref) is None
+                    ]
+                return result
+        _, source_orphans, cond_orphans = self._legacy_conditioning_relationship(source_config, conditioning_config)
         return OrphanReport(
+            offset=offset,
+            limit=limit,
             source_id=source_config.get("id", ""),
             conditioning_id=conditioning_config.get("id", ""),
-            source_orphans=[f for name, f in source_by_name.items() if name not in cond_by_name][:500],
-            conditioning_orphans=[f for name, f in cond_by_name.items() if name not in source_by_name][:500],
+            source_orphans=source_orphans[offset : offset + limit],
+            conditioning_orphans=cond_orphans[offset : offset + limit],
         )
+
+    def _iter_legacy_membership_refs(self, config):
+        cache = self._find_cache_file(config, "indices")
+        if cache is None:
+            return
+        try:
+            with cache.open("rb") as stream:
+                for _, refs in read_bucket_groups(stream):
+                    yield from refs
+        except (ijson.JSONError, ValueError, OSError):
+            return
+
+    @staticmethod
+    def _legacy_pairing_key(config, ref):
+        root = config.get("instance_data_dir") or config.get("aws_data_prefix")
+        return normalize_data_path(ref, root)
+
+    def _legacy_conditioning_key(self, source, target, ref):
+        from simpletuner.helpers.data_backend.base import conditioning_file_path
+
+        return conditioning_file_path(self._legacy_pairing_key(source, ref), None, target)
+
+    def _legacy_conditioning_relationship(self, source, target):
+        target_refs = {self._legacy_pairing_key(target, ref): ref for ref in self._iter_legacy_membership_refs(target)}
+        pairs = {}
+        missing = []
+        matched = set()
+        for ref in self._iter_legacy_membership_refs(source):
+            key = self._legacy_conditioning_key(source, target, ref)
+            if key in target_refs:
+                pairs[ref] = target_refs[key]
+                matched.add(key)
+            else:
+                missing.append(ref)
+        return pairs, missing, [ref for key, ref in target_refs.items() if key not in matched]
 
     def get_conditioning_file_match(
         self,
         source_config: Dict[str, Any],
         all_datasets: List[Dict[str, Any]],
         source_file_path: str,
+        *,
+        view_revision: Optional[str] = None,
+        global_config=None,
     ) -> Optional[Dict[str, Any]]:
-        """Find the conditioning image matching a source file by stem.
+        """Find the conditioning image matched by the configured providers.
 
         Checks linked conditioning datasets in the plan and also attempts
         to discover auto-generated conditioning images on disk.
         """
-        source_stem = Path(source_file_path).stem
+        from simpletuner.helpers.data_backend.base import conditioning_file_path
+        from simpletuner.helpers.data_backend.webshart import WebshartDataBackend
+        from simpletuner.helpers.metadata.utils.duplicator import DatasetDuplicator
+
+        from .dataset_scan_service import DatasetScanService
+
+        native_ref = source_config.get("type") == "webshart" and WebshartDataBackend.is_sample_id(source_file_path)
+        source_revision = None
+        with self._indexed_read_view(source_config, view_revision) as source:
+            if source is not None:
+                if not source[1](source_file_path):
+                    return None
+                source_revision = source[0].header.get("source_revision")
+        pairing_key = self._legacy_pairing_key(source_config, source_file_path)
 
         # 1. Check conditioning_data references (datasets in the plan)
         cond_ids = source_config.get("conditioning_data") or []
@@ -1542,14 +1951,49 @@ class DatasetViewerService:
             cond_config = next((d for d in all_datasets if d.get("id") == cond_id), None)
             if cond_config is None:
                 continue
-            match = self._find_conditioning_file_by_stem(cond_config, source_stem)
-            if match:
-                thumbnail = generate_thumbnail(match["path"])
+            with ExitStack() as stack:
+                target = stack.enter_context(self._indexed_read_view(cond_config))
+                if target is not None:
+                    match = self._bind_conditioning_matcher(stack, cond_config, target, source_revision)
+                    if (matched := match(pairing_key)) is None:
+                        continue
+                    revision = target[0].header["view_revision"]
+                    image = self._load_pil_image(cond_config, matched, view_revision=revision)
+                    return {
+                        "conditioning_id": cond_id,
+                        "conditioning_type": cond_config.get("conditioning_type"),
+                        "file_path": matched,
+                        "thumbnail": generate_thumbnail_from_pil(image, self.DEFAULT_THUMBNAIL_SIZE) if image else None,
+                        "view_revision": revision,
+                    }
+            if native_ref:
+                root = cond_config.get("instance_data_dir")
+                if cond_config.get("type", "local") != "local" or not root:
+                    continue
+                path = Path(conditioning_file_path(source_file_path, root, cond_config)).resolve()
+                if not path.is_relative_to(Path(root).resolve()) or not path.is_file():
+                    continue
+                matched = str(path)
+            else:
+                key = self._legacy_conditioning_key(source_config, cond_config, source_file_path)
+                matched = next(
+                    (
+                        ref
+                        for ref in self._iter_legacy_membership_refs(cond_config)
+                        if self._legacy_pairing_key(cond_config, ref) == key
+                    ),
+                    None,
+                )
+            if matched is not None:
+                image = self._load_pil_image(cond_config, matched)
+                local = (
+                    self._resolve_image_path(cond_config, matched) if cond_config.get("type", "local") == "local" else None
+                )
                 return {
                     "conditioning_id": cond_id,
                     "conditioning_type": cond_config.get("conditioning_type"),
-                    "file_path": str(match["path"]),
-                    "thumbnail": thumbnail,
+                    "file_path": str(local) if local is not None else matched,
+                    "thumbnail": generate_thumbnail_from_pil(image, self.DEFAULT_THUMBNAIL_SIZE) if image else None,
                 }
 
         # 2. Try auto-generated conditioning from 'conditioning' generators
@@ -1561,18 +2005,21 @@ class DatasetViewerService:
         for gen in generators:
             gen_type = gen.get("type", "")
             # Derive the ID the same way the duplicator does at runtime
-            gen_id = gen.get("id") or f"{source_id}_conditioning_{gen_type}"
+            gen_id = DatasetDuplicator.generated_conditioning_id(source_id, gen_type)
             # Skip if already checked via conditioning_data
             if gen_id in cond_ids:
                 continue
 
             # Try to find the conditioning images on disk
             instance_dir = gen.get("instance_data_dir")
-            if not instance_dir:
-                instance_dir = self._derive_conditioning_dir(source_config, gen_id)
+            if not instance_dir and global_config is not None:
+                cache_root = DatasetScanService.conditioning_cache_root(global_config, source_config)
+                instance_dir = DatasetDuplicator.generated_conditioning_directory(cache_root, gen_id)
 
             if instance_dir and Path(instance_dir).is_dir():
-                match = self._scan_directory_for_stem(instance_dir, source_stem)
+                generated = {"instance_data_dir": instance_dir, "conditioning_config": gen}
+                ref = conditioning_file_path(pairing_key, instance_dir, generated)
+                match = self._resolve_image_path(generated, ref)
                 if match:
                     thumbnail = generate_thumbnail(str(match))
                     return {
@@ -1588,43 +2035,6 @@ class DatasetViewerService:
                 result["conditioning_id"] = gen_id
                 return result
 
-        return None
-
-    def _find_conditioning_file_by_stem(self, cond_config: Dict[str, Any], stem: str) -> Optional[Dict[str, Any]]:
-        """Look up a file matching *stem* in a conditioning dataset's cache."""
-        files = self.get_dataset_files(cond_config, limit=1_000_000).files
-        for f in files:
-            if Path(f).stem == stem:
-                resolved = self._resolve_image_path(cond_config, f)
-                if resolved:
-                    return {"path": resolved}
-        return None
-
-    @staticmethod
-    def _derive_conditioning_dir(source_config: Dict[str, Any], gen_id: str) -> Optional[str]:
-        """Best-effort derivation of where auto-generated conditioning images live."""
-        # Try cache_dir_vae parent as an approximation of cache_root
-        cache_dir_vae = source_config.get("cache_dir_vae", "")
-        if cache_dir_vae:
-            # cache_dir_vae is typically {cache_root}/vae/{model_family}/{id}
-            # We need {cache_root}/conditioning_data/{gen_id}
-            parts = Path(cache_dir_vae).parts
-            try:
-                vae_idx = parts.index("vae")
-                cache_root = str(Path(*parts[:vae_idx]))
-                return os.path.join(cache_root, "conditioning_data", gen_id)
-            except (ValueError, TypeError):
-                pass
-        return None
-
-    @staticmethod
-    def _scan_directory_for_stem(directory: str, stem: str) -> Optional[Path]:
-        """Find the first image file in *directory* whose stem matches."""
-        dir_path = Path(directory)
-        for ext in (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff"):
-            candidate = dir_path / (stem + ext)
-            if candidate.is_file():
-                return candidate
         return None
 
     def _generate_conditioning_preview(
@@ -1694,9 +2104,74 @@ class DatasetViewerService:
 
     # --- Stage 6: Audio/Video Preview ---
 
-    def get_video_preview(self, dataset_config: Dict[str, Any], file_path: str, frame_count: int = 4) -> VideoPreview:
-        """Extract evenly-spaced frames from a video file using ffmpeg."""
-        resolved = self._resolve_image_path(dataset_config, file_path)
+    @contextmanager
+    def _open_media_preview_path(self, dataset_config, file_path, view_revision):
+        backend_type = dataset_config.get("type", "local")
+        if backend_type == "local":
+            yield self._resolve_image_path(dataset_config, file_path)
+            return
+
+        suffix = Path(file_path).suffix.lower()
+        from simpletuner.helpers.training import audio_file_extensions
+
+        if suffix not in _VIDEO_EXTENSIONS and suffix.lstrip(".") not in audio_file_extensions:
+            yield None
+            return
+
+        with ExitStack() as stack:
+            path = None
+            try:
+                max_bytes = 64 * 1024 * 1024
+                if backend_type == "aws":
+                    from simpletuner.helpers.data_backend.aws import normalise_s3_prefixes
+
+                    prefixes = normalise_s3_prefixes(dataset_config.get("aws_data_prefix"))
+                    if file_path.startswith(tuple(prefixes)):
+                        backend = self._get_or_create_data_backend(dataset_config)
+                        stream = stack.enter_context(backend.open_read_stream(file_path))
+                        data = stream.read(max_bytes + 1)
+                    else:
+                        data = None
+                elif backend_type == "webshart":
+                    from simpletuner.helpers.data_backend.webshart import WebshartDataBackend
+
+                    data = None
+                    if WebshartDataBackend.is_sample_id(file_path):
+                        indexed = stack.enter_context(self._indexed_read_view(dataset_config, view_revision))
+                        if indexed is None:
+                            data = self._get_or_create_data_backend(dataset_config).read(file_path)
+                        else:
+                            pages, contains, publication = indexed
+                            if contains(file_path):
+                                backend = (
+                                    stack.enter_context(self._bind_view_data_backend(dataset_config, publication, pages))
+                                    if pages.header.get("source_pins")
+                                    else self._get_or_create_data_backend(dataset_config)
+                                )
+                                data = backend.read(file_path)
+                elif backend_type == "huggingface":
+                    data = self._get_or_create_data_backend(dataset_config).read(file_path)
+                else:
+                    data = None
+
+                if data and len(data) <= max_bytes:
+                    directory = stack.enter_context(tempfile.TemporaryDirectory())
+                    path = Path(directory) / f"preview{suffix}"
+                    path.write_bytes(data)
+            except DatasetViewChanged:
+                raise
+            except (ValueError, OSError) as exc:
+                logger.warning("Failed to read media for dataset %s: %s", dataset_config.get("id"), exc)
+            yield path
+
+    def get_video_preview(
+        self, dataset_config: Dict[str, Any], file_path: str, frame_count: int = 4, *, view_revision: Optional[str] = None
+    ) -> VideoPreview:
+        """Extract evenly-spaced frames from the selected source sample."""
+        with self._open_media_preview_path(dataset_config, file_path, view_revision) as path:
+            return self._video_preview_from_path(file_path, path, frame_count)
+
+    def _video_preview_from_path(self, file_path, resolved, frame_count):
         if resolved is None:
             return VideoPreview(path=file_path)
 
@@ -1737,6 +2212,8 @@ class DatasetViewerService:
                         str(resolved),
                         "-vframes",
                         "1",
+                        "-vf",
+                        "scale=640:640:force_original_aspect_ratio=decrease",
                         "-f",
                         "image2pipe",
                         "-vcodec",
@@ -1764,9 +2241,14 @@ class DatasetViewerService:
             resolution=resolution,
         )
 
-    def get_audio_preview(self, dataset_config: Dict[str, Any], file_path: str) -> AudioPreview:
-        """Generate a waveform PNG for an audio file."""
-        resolved = self._resolve_image_path(dataset_config, file_path)
+    def get_audio_preview(
+        self, dataset_config: Dict[str, Any], file_path: str, *, view_revision: Optional[str] = None
+    ) -> AudioPreview:
+        """Generate a waveform PNG from the selected source sample."""
+        with self._open_media_preview_path(dataset_config, file_path, view_revision) as path:
+            return self._audio_preview_from_path(file_path, path)
+
+    def _audio_preview_from_path(self, file_path, resolved):
         if resolved is None:
             return AudioPreview(path=file_path)
 
@@ -1776,30 +2258,11 @@ class DatasetViewerService:
         waveform = None
 
         try:
-            import numpy as np
+            from simpletuner.helpers.audio import load_audio
 
-            # Try torchaudio first, fall back to soundfile
-            audio_data = None
-            sr = None
-
-            try:
-                import torchaudio
-
-                waveform_tensor, sr = torchaudio.load(str(resolved))
-                audio_data = waveform_tensor.numpy()
-                channels = audio_data.shape[0]
-            except (ImportError, Exception):
-                try:
-                    import soundfile as sf
-
-                    data, sr = sf.read(str(resolved))
-                    if data.ndim == 1:
-                        audio_data = data.reshape(1, -1)
-                    else:
-                        audio_data = data.T
-                    channels = audio_data.shape[0]
-                except ImportError:
-                    pass
+            waveform_tensor, sr = load_audio(str(resolved))
+            audio_data = waveform_tensor.numpy()
+            channels = audio_data.shape[0]
 
             if audio_data is not None and sr:
                 sample_rate = sr
@@ -1809,7 +2272,9 @@ class DatasetViewerService:
                 mono = audio_data.mean(axis=0) if channels > 1 else audio_data[0]
 
                 # Downsample for visualization
-                target_width = 800
+                target_width = min(800, len(mono))
+                if not target_width:
+                    return AudioPreview(path=file_path, duration=duration, sample_rate=sample_rate, channels=channels)
                 chunk_size = max(1, len(mono) // target_width)
                 chunks = mono[: chunk_size * target_width].reshape(-1, chunk_size)
                 envelope_max = chunks.max(axis=1)

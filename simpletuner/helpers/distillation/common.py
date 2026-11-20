@@ -42,6 +42,7 @@ class DistillationBase:
                            If None, assumes the teacher model will be used with adapters toggled
             config: Configuration dictionary for distillation-specific parameters
         """
+        self.artifact_cycle = None
         self.teacher_model = teacher_model
         self.student_model = student_model or teacher_model  # Use teacher if student not provided
 
@@ -89,6 +90,9 @@ class DistillationBase:
     def get_required_distillation_cache_type(self) -> Optional[str]:
         """Return the cache type identifier this distiller expects, if any."""
         return None
+
+    def bind_artifact_cycle(self, cycle):
+        self.artifact_cycle = cycle
 
     def get_ode_generator_provider(self):
         """

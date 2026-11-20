@@ -6,6 +6,8 @@ import json
 import os
 import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import Mock
 
 import torch
 
@@ -368,15 +370,6 @@ class TestGroundingCollateBuildBatch(unittest.TestCase):
 
         return _MockCache()
 
-    def _patch_state_tracker(self):
-        """Register a fake data backend so _get_entity_embed doesn't crash."""
-        from unittest.mock import patch
-
-        return patch(
-            "simpletuner.helpers.training.state_tracker.StateTracker.get_data_backend",
-            return_value={"instance_data_dir": "/fake"},
-        )
-
     def test_build_batch_reads_bbox_entities_from_top_level(self):
         """bbox_entities should be read from the top-level example dict,
         not from a nested 'image_metadata' key."""
@@ -391,12 +384,11 @@ class TestGroundingCollateBuildBatch(unittest.TestCase):
             }
         ]
         cache = self._make_mock_text_embed_cache()
-        with self._patch_state_tracker():
-            result = collate.build_batch(
-                examples=examples,
-                data_backend_id="test",
-                text_embed_cache=cache,
-            )
+        result = collate.build_batch(
+            examples=examples,
+            dataset_root="/fake",
+            text_embed_cache=cache,
+        )
         self.assertIsNotNone(result, "build_batch should return a GroundingBatch, not None")
         self.assertEqual(result.boxes.shape, (1, 2, 4))
         self.assertAlmostEqual(result.validity_mask[0, 0].item(), 1.0)
@@ -418,8 +410,7 @@ class TestGroundingCollateBuildBatch(unittest.TestCase):
                 "bbox_entities": [{"label": "cat", "bbox": [0.1, 0.1, 0.5, 0.5]}],
             }
         ]
-        with self._patch_state_tracker():
-            collate.build_batch(examples, "test", _SpyCache())
+        collate.build_batch(examples, "/fake", _SpyCache())
 
         self.assertEqual(captured_prompts, ["cat"])
 
@@ -433,12 +424,11 @@ class TestGroundingCollateBuildBatch(unittest.TestCase):
             }
         ]
         cache = self._make_mock_text_embed_cache()
-        with self._patch_state_tracker():
-            result = collate.build_batch(
-                examples=examples,
-                data_backend_id="test",
-                text_embed_cache=cache,
-            )
+        result = collate.build_batch(
+            examples=examples,
+            dataset_root="/fake",
+            text_embed_cache=cache,
+        )
         self.assertIsNone(result)
 
 
@@ -520,6 +510,46 @@ class TestBuildInlineGroundingBatch(unittest.TestCase):
             vae_scale_factor=8,
         )
         self.assertIsNone(batch)
+
+    def test_validation_reads_bound_geometry_and_resolves_relative_entity_key(self):
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+        from simpletuner.helpers.metadata.preparation import DatasetReadView
+        from simpletuner.helpers.training.validation import _build_validation_grounding_batch
+
+        entity = {"label": "cat", "bbox": [0.1, 0.1, 0.9, 0.9]}
+        with tempfile.TemporaryDirectory() as root:
+            for sidecar in (True, False):
+                with self.subTest(sidecar=sidecar):
+                    ref = str(Path(root) / ("local.jpg" if sidecar else "inline.jpg"))
+                    record = {"target_size": (48, 32)}
+                    if sidecar:
+                        Path(ref).with_suffix(".bbox").write_text(json.dumps([entity]), encoding="utf-8")
+                    else:
+                        record["bbox_entities"] = [entity]
+                    backend = Mock(
+                        instance_data_dir=root,
+                        epoch_provider=None,
+                        requires_complete_preparation=True,
+                        view_revision="published",
+                    )
+                    backend.get_view_metadata.return_value = [record]
+                    dataset = DatasetRuntime("grounded", None, backend, {})
+                    cache = Mock()
+                    cache.compute_prompt_embeddings_with_model.return_value = {"prompt_embeds": torch.ones(1, 1, 8)}
+                    batch = _build_validation_grounding_batch(
+                        embed_cache=cache,
+                        max_entities=1,
+                        vae_scale_factor=8,
+                        image_path=ref,
+                        dataset=dataset,
+                        view=DatasetReadView("cursor-view"),
+                    )
+                    backend.get_view_metadata.assert_called_once_with([ref], DatasetReadView("cursor-view"))
+                    cache.compute_prompt_embeddings_with_model.assert_called_once_with(
+                        prompt_records=[{"prompt": "cat", "key": f"{Path(ref).name}__bbox_0", "metadata": {}}]
+                    )
+                    self.assertEqual(batch.spatial_masks.shape, (1, 1, 4, 6))
+                    self.assertTrue(torch.equal(batch.text_masks, batch.validity_mask))
 
 
 if __name__ == "__main__":

@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import logging
+import multiprocessing
 import os
 import threading
 import time
 import uuid
-from contextlib import contextmanager
+from contextlib import ExitStack, closing, contextmanager
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, Dict, Iterator, List, Optional
+
+from .dataset_worker import dataset_worker
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +31,7 @@ class CacheJobStatus(str, Enum):
     PENDING = "pending"
     LOADING_MODEL = "loading_model"
     RUNNING = "running"
+    CANCELLING = "cancelling"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -45,6 +49,7 @@ class CacheJob:
     error: Optional[str] = None
     started_at: Optional[float] = None
     finished_at: Optional[float] = None
+    plan_scope: Optional[str] = None
 
 
 class _CacheAcceleratorStub:
@@ -159,6 +164,35 @@ class _CacheArgsNamespace:
         return val if val is not None else default
 
 
+def _execute_cache_process(connection, cancelled, job, config, global_config, dataset_plan):
+    def send(data, event_type):
+        connection.send(data)
+
+    with connection:
+        service = CacheJobService(broadcast_fn=send)
+        service._cancel_event = cancelled
+        service._run_cache_job(job, config, global_config, dataset_plan)
+
+
+def resolve_image_artifact_entry(dataset, plan, role):
+    store_id = dataset.get(role)
+    if store_id is None:
+        return None
+    entry = next(
+        (
+            item
+            for item in plan or ()
+            if item.get("id") == store_id
+            and item.get("dataset_type") == role
+            and not (item.get("disabled") or item.get("disable"))
+        ),
+        None,
+    )
+    if entry is None:
+        raise ValueError(f"Could not find {role} backend {store_id!r} in the standalone cache plan.")
+    return entry
+
+
 class CacheJobService:
     """Manages background cache operations with SSE progress broadcasting."""
 
@@ -168,13 +202,15 @@ class CacheJobService:
 
     def __init__(self, broadcast_fn: Optional[Callable] = None):
         self._broadcast_fn = broadcast_fn
+        self._cancel_event = None
 
     def _broadcast(self, event_type: str, data: Dict[str, Any]):
         if self._broadcast_fn:
             self._broadcast_fn(data=data, event_type=event_type)
 
-    @staticmethod
+    @classmethod
     def get_capabilities(
+        cls,
         model_family: str,
         dataset_configs: List[Dict[str, Any]],
         global_config: Dict[str, Any],
@@ -204,7 +240,77 @@ class CacheJobService:
             "text_embeds": has_text_embeds,
             "vae": has_vae,
             "conditioning_types": conditioning_types,
+            "datasets": cls._dataset_cache_capabilities(dataset_configs, global_config, has_text_embeds),
         }
+
+    @staticmethod
+    def _dataset_cache_capabilities(plan, global_config, has_text_embeds):
+        if not plan:
+            return {}
+        from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
+        from simpletuner.helpers.data_backend.factory import _as_bool, init_backend_config, select_text_embed_backend
+
+        args = _CacheArgsNamespace(global_config)
+        entries = {}
+        stores, default_id = {}, None
+        store_error = None
+        try:
+            if has_text_embeds:
+                stores, default_id = CacheJobService._text_embed_plan(plan, args)
+        except ValueError as exc:
+            store_error = str(exc)
+        for dataset in plan:
+            dataset_id = dataset.get("id")
+            if not dataset_id or dataset.get("disabled") or dataset.get("disable"):
+                continue
+            try:
+                role = ensure_dataset_type(dataset.get("dataset_type"), default=DatasetType.IMAGE)
+            except ValueError:
+                continue
+            if role not in {
+                DatasetType.IMAGE,
+                DatasetType.VIDEO,
+                DatasetType.AUDIO,
+                DatasetType.EVAL,
+                DatasetType.CONDITIONING,
+                DatasetType.CAPTION,
+            }:
+                continue
+            text = {"prepare": False}
+            if has_text_embeds:
+                try:
+                    if store_error:
+                        raise ValueError(store_error)
+                    store = select_text_embed_backend(dataset, stores, default_id)
+                    settings = init_backend_config(store, args, None)["config"]
+                    mode, reason = "precomputed", None
+                    if settings.get("text_cache_encode_only"):
+                        mode, reason = "encode_only", "Encode-only training does not use stored text embeddings."
+                    elif settings["text_cache_disable"]:
+                        mode, reason = "read_existing", "Training can read existing text embeddings with writes disabled."
+                    elif settings["text_cache_ondemand"]:
+                        mode, reason = (
+                            "on_demand",
+                            "Training encodes and stores misses. You can also prepare embeddings now.",
+                        )
+                    text.update(
+                        prepare=not settings["text_cache_disable"],
+                        mode=mode,
+                        reason=reason,
+                        store_id=store["id"],
+                        uses_s3_listing=store.get("type") == "aws" and settings.get("text_cache_use_listing", False),
+                    )
+                except ValueError as exc:
+                    text["reason"] = str(exc)
+            disabled = _as_bool(args.vae_cache_disable) or _as_bool(dataset.get("vae_cache_disable"))
+            entries[dataset_id] = {
+                "text_embeds": text,
+                "vae": {
+                    "prepare": not disabled and role is not DatasetType.CAPTION,
+                    "reason": "VAE cache writes are disabled." if disabled else None,
+                },
+            }
+        return entries
 
     @staticmethod
     def _check_training_running() -> bool:
@@ -242,6 +348,9 @@ class CacheJobService:
         cache_type: str,
         dataset_config: Dict[str, Any],
         global_config: Dict[str, Any],
+        dataset_plan=None,
+        *,
+        plan_scope=None,
     ) -> str:
         """Start a background cache job for a single dataset. Returns job_id."""
         from .dataset_scan_service import get_scan_service
@@ -257,47 +366,105 @@ class CacheJobService:
                 CacheJobStatus.PENDING,
                 CacheJobStatus.LOADING_MODEL,
                 CacheJobStatus.RUNNING,
+                CacheJobStatus.CANCELLING,
             ):
                 raise RuntimeError("A cache job is already in progress.")
+            if self._thread is not None and self._thread.is_alive():
+                raise RuntimeError("The previous cache worker is still shutting down.")
 
             job_id = str(uuid.uuid4())[:8]
-            job = CacheJob(job_id=job_id, dataset_id=dataset_id, cache_type=cache_type)
+            job = CacheJob(job_id=job_id, dataset_id=dataset_id, cache_type=cache_type, plan_scope=plan_scope)
             self._active_job = job
 
-        self._thread = threading.Thread(
-            target=self._run_cache_job,
-            args=(job, dataset_config, global_config),
-            daemon=True,
-        )
-        self._thread.start()
+            context = multiprocessing.get_context("spawn")
+            self._cancel_event = context.Event()
+            self._thread = threading.Thread(
+                target=self._monitor_worker,
+                args=(context, self._cancel_event, job, dataset_config, global_config, dataset_plan),
+                daemon=True,
+            )
+            self._thread.start()
         return job_id
 
-    def get_active_status(self) -> Optional[Dict[str, Any]]:
+    def _monitor_worker(self, context, cancelled, job, dataset_config, global_config, dataset_plan):
+        try:
+            with dataset_worker(
+                context, _execute_cache_process, cancelled, job, dataset_config, global_config, dataset_plan
+            ) as messages:
+                for data in messages:
+                    with self._lock:
+                        if job.status == CacheJobStatus.CANCELLING:
+                            continue
+                        job.status = CacheJobStatus(data["status"])
+                        job.started_at = data.get("started_at")
+                        job.finished_at = data.get("finished_at")
+                        job.stage, job.current, job.total, job.error = (
+                            data["stage"],
+                            data["current"],
+                            data["total"],
+                            data["error"],
+                        )
+                        self._broadcast("dataset_cache", self._job_to_dict(job))
+                if job.status not in (
+                    CacheJobStatus.COMPLETED,
+                    CacheJobStatus.FAILED,
+                    CacheJobStatus.CANCELLED,
+                    CacheJobStatus.CANCELLING,
+                ):
+                    raise RuntimeError("Cache worker exited before reporting completion.")
+        except Exception as exc:
+            logger.exception("Cache worker failed for %s", job.dataset_id)
+            with self._lock:
+                if job.status != CacheJobStatus.CANCELLING:
+                    job.status, job.error = CacheJobStatus.FAILED, str(exc)
+                    self._broadcast("dataset_cache", self._job_to_dict(job))
+        finally:
+            with self._lock:
+                job.finished_at = time.time()
+                if job.status == CacheJobStatus.CANCELLING:
+                    job.status = CacheJobStatus.CANCELLED
+                    job.stage = "Cancelled"
+                    self._broadcast("dataset_cache", self._job_to_dict(job))
+
+    def get_active_status(self, *, plan_scope=None) -> Optional[Dict[str, Any]]:
         job = self._active_job
-        if job and job.status in (
-            CacheJobStatus.PENDING,
-            CacheJobStatus.LOADING_MODEL,
-            CacheJobStatus.RUNNING,
+        if job and plan_scope is not None and job.plan_scope != plan_scope:
+            return None
+        if job and (
+            job.status
+            in (CacheJobStatus.PENDING, CacheJobStatus.LOADING_MODEL, CacheJobStatus.RUNNING, CacheJobStatus.CANCELLING)
+            or (self._thread is not None and self._thread.is_alive())
         ):
             return self._job_to_dict(job)
         return None
 
-    def get_job_status(self, job_id: str) -> Optional[Dict[str, Any]]:
+    def get_job_status(self, job_id: str, *, plan_scope=None) -> Optional[Dict[str, Any]]:
         job = self._active_job
-        if job and job.job_id == job_id:
+        if job and job.job_id == job_id and (plan_scope is None or job.plan_scope == plan_scope):
             return self._job_to_dict(job)
         return None
 
-    def cancel(self) -> bool:
+    def cancel(self, *, job_id=None, plan_scope=None) -> bool:
         with self._lock:
-            if self._active_job and self._active_job.status in (
+            job = self._active_job
+            if job is None or (job_id is not None and job.job_id != job_id):
+                return False
+            if plan_scope is not None and job.plan_scope != plan_scope:
+                return False
+            if job.status in (
                 CacheJobStatus.PENDING,
                 CacheJobStatus.LOADING_MODEL,
                 CacheJobStatus.RUNNING,
             ):
-                self._active_job.status = CacheJobStatus.CANCELLED
-                self._active_job.finished_at = time.time()
-                self._broadcast("dataset_cache", self._job_to_dict(self._active_job))
+                if self._cancel_event is not None:
+                    self._cancel_event.set()
+                if self._thread is not None and self._thread.is_alive():
+                    job.status = CacheJobStatus.CANCELLING
+                    job.stage = "Cancelling"
+                else:
+                    job.status = CacheJobStatus.CANCELLED
+                    job.finished_at = time.time()
+                self._broadcast("dataset_cache", self._job_to_dict(job))
                 return True
         return False
 
@@ -312,25 +479,30 @@ class CacheJobService:
             "current": job.current,
             "total": job.total,
             "error": job.error,
+            "started_at": job.started_at,
+            "finished_at": job.finished_at,
         }
 
     # ------------------------------------------------------------------
     # Background thread entry points
     # ------------------------------------------------------------------
 
-    def _run_cache_job(self, job: CacheJob, dataset_config: Dict[str, Any], global_config: Dict[str, Any]):
+    def _run_cache_job(
+        self, job: CacheJob, dataset_config: Dict[str, Any], global_config: Dict[str, Any], dataset_plan=None
+    ):
         job.status = CacheJobStatus.LOADING_MODEL
         job.started_at = time.time()
         job.stage = "Loading model components"
         self._broadcast("dataset_cache", self._job_to_dict(job))
 
         try:
+            self._check_cancelled(job)
             if job.cache_type == CacheType.TEXT_EMBEDS.value:
-                self._execute_text_embed_cache(job, dataset_config, global_config)
+                self._execute_text_embed_cache(job, dataset_config, global_config, dataset_plan)
             elif job.cache_type == CacheType.VAE.value:
-                self._execute_vae_cache(job, dataset_config, global_config)
+                self._execute_vae_cache(job, dataset_config, global_config, dataset_plan)
             elif job.cache_type == CacheType.CONDITIONING.value:
-                self._execute_conditioning_cache(job, dataset_config, global_config)
+                self._execute_conditioning_cache(job, dataset_config, global_config, dataset_plan)
             else:
                 raise ValueError(f"Unknown cache type: {job.cache_type}")
 
@@ -354,6 +526,8 @@ class CacheJobService:
             self._broadcast("dataset_cache", self._job_to_dict(job))
 
     def _check_cancelled(self, job: CacheJob):
+        if self._cancel_event is not None and self._cancel_event.is_set():
+            job.status = CacheJobStatus.CANCELLED
         if job.status == CacheJobStatus.CANCELLED:
             raise RuntimeError("Cache job cancelled by user")
 
@@ -380,6 +554,8 @@ class CacheJobService:
         template: str,
         global_config: Dict[str, Any],
         dataset_config: Dict[str, Any],
+        *,
+        absolute=True,
     ) -> Optional[str]:
         if not template:
             return None
@@ -400,95 +576,31 @@ class CacheJobService:
                 "id": dataset_config.get("id", ""),
             },
         )
-        return os.path.abspath(resolved) if resolved else None
+        return (os.path.abspath(resolved) if absolute else resolved) if resolved else None
 
-    def _create_data_backend_and_metadata(
-        self,
-        dataset_config: Dict[str, Any],
-        args: _CacheArgsNamespace,
-        accelerator: _CacheAcceleratorStub,
-    ):
-        """Create data backend and metadata backend for a single dataset.
-
-        Returns ``(config, data_backend, metadata_backend, config_id)``
-        where *config_id* must be cleaned up from StateTracker after use.
-        """
-        from simpletuner.helpers.data_backend.builders import create_backend_builder
-        from simpletuner.helpers.data_backend.config import create_backend_config
-        from simpletuner.helpers.training.state_tracker import StateTracker
+    def _create_dataset_runtime(self, dataset_config, args, accelerator, *, preparation_only=False):
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 
         from .dataset_scan_service import DatasetScanService
 
-        dataset_config = DatasetScanService._convert_pixel_area(dataset_config, args)
-
-        args_dict = {}
-        for k in vars(args):
-            if not k.startswith("_"):
-                args_dict[k] = getattr(args, k, None)
-
-        config = create_backend_config(dataset_config, args_dict)
-        StateTracker.set_data_backend_config(config.id, config.to_dict()["config"])
-
-        builder = create_backend_builder(config.backend_type, accelerator, args)
-        data_backend = builder.build(config)
-        metadata_backend = builder.create_metadata_backend(config, data_backend, args_dict)
-
-        return config, data_backend, metadata_backend, config.id
+        config = DatasetScanService._convert_pixel_area(dataset_config, args)
+        return DatasetRuntime.from_config(config, args, accelerator, preparation_only=preparation_only)
 
     @staticmethod
-    def _collect_image_files_from_metadata(metadata_backend) -> List[str]:
-        """Read image file paths from the existing bucket cache."""
-        try:
-            bucket_data = metadata_backend.read_cache()
-            if not bucket_data:
-                return []
-            files = []
-            for file_list in bucket_data.values():
-                if isinstance(file_list, list):
-                    files.extend(file_list)
-            return files
-        except Exception:
-            return []
+    def _iter_prompt_records(model, runtime, *, batch_size=1, args=None, conditioning_datasets=None):
+        from simpletuner.helpers.data_backend.dataset_runtime import TextRequestBuilder
 
-    @staticmethod
-    def _iter_prompt_records(
-        model,
-        dataset_config: Dict[str, Any],
-        data_backend,
-        metadata_backend,
-    ) -> Iterator[Dict[str, Any]]:
-        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
-
-        if metadata_backend.read_only:
-            raise ValueError("Standalone text preparation requires unsplit dataset metadata.")
-        config = dict(dataset_config)
-        config["use_captions"] = not config.get("only_instance_prompt", False) and (
-            config.get("caption_strategy", "filename") != "instanceprompt"
-        )
-        runtime = DatasetRuntime(config["id"], data_backend, metadata_backend, config)
-        buckets = metadata_backend.read_cache()
-        if not any(buckets.values()):
-            raise ValueError("No accepted samples in dataset metadata; scan the dataset before preparing text embeddings.")
-        sample_refs = (sample_ref for bucket in buckets.values() for sample_ref in bucket)
-        init_backend = {
-            "id": runtime.id,
-            "config": runtime.config,
-            "instance_data_dir": config.get("instance_data_dir"),
-            "data_backend": data_backend,
-            "metadata_backend": metadata_backend,
-            "dataset_runtime": runtime,
-        }
-        yield from runtime.iter_text_embed_records(
+        yield from runtime.iter_preparation_text_records(
             model,
-            sample_refs,
-            init_backend=init_backend,
+            batch_size=batch_size,
+            builder=TextRequestBuilder(model, runtime, args=args, conditioning_datasets=conditioning_datasets),
             on_missing_caption=lambda ref: logger.warning("Could not find caption for sample %s", ref),
         )
 
     def _load_model(self, global_config: Dict[str, Any], args, accelerator):
         from simpletuner.helpers.models.registry import ModelRegistry
 
-        model_family = global_config.get("model_family")
+        model_family = args.model_family
         if not model_family:
             raise ValueError("No model_family in active config")
 
@@ -522,7 +634,44 @@ class CacheJobService:
     # Cache execution per type
     # ------------------------------------------------------------------
 
-    def _execute_vae_cache(self, job: CacheJob, dataset_config: Dict[str, Any], global_config: Dict[str, Any]):
+    def _prepare_image_artifacts(self, job, runtime, binding, cache):
+        setattr(runtime, binding, cache)
+        job.status = CacheJobStatus.RUNNING
+        job.stage = "Preparing latents" if binding == "vae_cache" else "Preparing conditioning embeddings"
+        last_update = 0.0
+
+        def progress(current, total):
+            nonlocal last_update
+            self._check_cancelled(job)
+            job.current, job.total = current, total
+            now = time.monotonic()
+            if now - last_update >= 1 or current == total:
+                self._broadcast("dataset_cache", self._job_to_dict(job))
+                last_update = now
+
+        processed = cache.prepare_dataset(runtime, progress_callback=progress)
+        if processed == 0:
+            raise ValueError("No accepted samples found. Run a metadata scan before preparing this cache.")
+
+    @staticmethod
+    def _image_artifact_store(dataset, plan, args, accelerator, source, role):
+        from simpletuner.helpers.data_backend.builders import create_backend_builder
+        from simpletuner.helpers.data_backend.config import create_backend_config
+
+        entry = resolve_image_artifact_entry(dataset, plan, role)
+        if entry is None:
+            return source, {}
+        config = create_backend_config(entry, vars(args))
+        config.validate(vars(args))
+        if config.backend_type not in {"local", "aws"}:
+            raise ValueError(f"Standalone {role} preparation requires a persistent Local or AWS store.")
+        store = create_backend_builder(config.backend_type, accelerator, args).build(config)
+        return store, entry
+
+    def _execute_vae_cache(
+        self, job: CacheJob, dataset_config: Dict[str, Any], global_config: Dict[str, Any], dataset_plan=None
+    ):
+        from simpletuner.helpers.data_backend.factory import default_vae_cache_dir, init_backend_config
         from simpletuner.helpers.training.state_tracker import StateTracker
 
         args = self._build_args(global_config)
@@ -531,12 +680,15 @@ class CacheJobService:
         original_accelerator = StateTracker.get_accelerator()
         StateTracker.set_args(args)
         StateTracker.set_accelerator(accelerator)
-        config_id = None
+        scope = ExitStack()
         model = None
         vae_cache = None
 
         try:
             self._check_cancelled(job)
+            settings = init_backend_config(dataset_config, args, accelerator)["config"]
+            if settings["vae_cache_disable"]:
+                raise ValueError("The selected dataset has VAE cache writes disabled.")
 
             job.stage = "Loading VAE"
             self._broadcast("dataset_cache", self._job_to_dict(job))
@@ -550,92 +702,112 @@ class CacheJobService:
             job.stage = "Setting up data backend"
             self._broadcast("dataset_cache", self._job_to_dict(job))
 
-            config, data_backend, metadata_backend, config_id = self._create_data_backend_and_metadata(
-                dataset_config, args, accelerator
+            runtime = self._create_dataset_runtime(dataset_config, args, accelerator)
+            scope.callback(runtime.close)
+
+            dataset_type = runtime.config["dataset_type"]
+            dataset_vae = model.get_vae_for_dataset_type(dataset_type)
+            if dataset_vae is not None:
+                vae = dataset_vae
+            audio = runtime.config.get("audio") or {}
+            source_id = runtime.config.get("source_dataset_id") or audio.get("source_dataset_id")
+            needs_source = dataset_type == "conditioning" or audio.get("source_from_video")
+            if source_id and needs_source:
+                source_config = next(
+                    (
+                        item
+                        for item in dataset_plan or ()
+                        if item.get("id") == source_id and not (item.get("disabled") or item.get("disable"))
+                    ),
+                    None,
+                )
+                if source_config is None:
+                    raise ValueError(f"Dataset {runtime.id} requires an enabled geometry source {source_id}.")
+                runtime.source_dataset = self._create_dataset_runtime(
+                    source_config, args, accelerator, preparation_only=True
+                )
+                scope.callback(runtime.source_dataset.close)
+
+            cache_store, _ = self._image_artifact_store(
+                dataset_config, dataset_plan, args, accelerator, runtime.data_backend, "image_embeds"
             )
-
-            image_files = self._collect_image_files_from_metadata(metadata_backend)
-            if not image_files:
-                raise ValueError("No image files found in metadata cache. Run a metadata scan first.")
-
             cache_dir_vae = self._resolve_cache_dir(
-                dataset_config.get("cache_dir_vae") or self._resolve_global_key(global_config, "cache_dir_vae"),
+                dataset_config.get("cache_dir_vae") or default_vae_cache_dir(args, runtime.id, dataset_type),
                 global_config,
                 dataset_config,
+                absolute=cache_store.type != "aws",
             )
-            if not cache_dir_vae:
-                raise ValueError("No VAE cache directory configured for this dataset")
-            os.makedirs(cache_dir_vae, exist_ok=True)
-
             from simpletuner.helpers.caching.vae import VAECache
 
-            dataset_type = str(dataset_config.get("dataset_type", "image")).lower()
-
             vae_cache = VAECache(
-                id=dataset_config["id"],
+                id=runtime.id,
                 dataset_type=dataset_type,
                 model=model,
                 vae=vae,
                 accelerator=accelerator,
-                metadata_backend=metadata_backend,
-                image_data_backend=data_backend,
-                cache_data_backend=data_backend,
-                instance_data_dir=dataset_config.get("instance_data_dir", ""),
+                metadata_backend=runtime.metadata_backend,
+                image_data_backend=runtime.data_backend,
+                cache_data_backend=cache_store,
+                instance_data_dir=runtime.config["instance_data_dir"],
                 cache_dir=cache_dir_vae,
-                vae_batch_size=int(global_config.get("vae_batch_size", 4) or 4),
-                write_batch_size=int(global_config.get("write_batch_size", 64) or 64),
-                read_batch_size=int(global_config.get("read_batch_size", 25) or 25),
-                process_queue_size=int(global_config.get("process_queue_size", 16) or 16),
+                vae_batch_size=dataset_config.get("vae_batch_size", args.vae_batch_size),
+                write_batch_size=dataset_config.get("write_batch_size", args.write_batch_size),
+                read_batch_size=dataset_config.get("read_batch_size", args.read_batch_size),
+                process_queue_size=dataset_config.get("image_processing_batch_size", args.image_processing_batch_size or 16),
                 hash_filenames=True,
+                cache_inventory_dir=args.output_dir,
+                dataset_config=runtime.config,
+                dataset=runtime,
             )
 
             self._check_cancelled(job)
 
-            job.stage = "Discovering files"
-            self._broadcast("dataset_cache", self._job_to_dict(job))
-
-            vae_cache.discover_all_files()
-            vae_cache.build_vae_cache_filename_map(all_image_files=image_files)
-            unprocessed = vae_cache.discover_unprocessed_files()
-
-            if not unprocessed:
-                logger.info("All %d files already cached for %s", len(image_files), job.dataset_id)
-                job.stage = "All files already cached"
-                return
-
-            job.stage = "Initialising VAE"
-            self._broadcast("dataset_cache", self._job_to_dict(job))
-            vae_cache.init_vae()
-
-            self._check_cancelled(job)
-
-            job.status = CacheJobStatus.RUNNING
-            job.stage = "Processing VAE cache"
-            job.total = len(unprocessed)
-            self._broadcast("dataset_cache", self._job_to_dict(job))
-
-            _last_broadcast = [0.0]
-
-            def _vae_progress(current, total):
-                self._check_cancelled(job)
-                job.current = current
-                job.total = total
-                now = time.time()
-                if now - _last_broadcast[0] >= 1.0 or current >= total:
-                    _last_broadcast[0] = now
-                    self._broadcast("dataset_cache", self._job_to_dict(job))
-
-            vae_cache.process_buckets(progress_callback=_vae_progress)
+            self._prepare_image_artifacts(job, runtime, "vae_cache", vae_cache)
 
         finally:
             StateTracker.set_args(original_args)
             StateTracker.set_accelerator(original_accelerator)
-            if config_id is not None:
-                StateTracker.data_backends.pop(config_id, None)
+            scope.close()
             del vae_cache, model
             self._cleanup_gpu()
 
-    def _execute_text_embed_cache(self, job: CacheJob, dataset_config: Dict[str, Any], global_config: Dict[str, Any]):
+    @staticmethod
+    def _text_embed_plan(plan, args):
+        from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
+        from simpletuner.helpers.data_backend.factory import ensure_text_embed_backends_present
+
+        entries = ensure_text_embed_backends_present(args, [dict(entry) for entry in plan])
+        stores = {
+            entry["id"]: entry
+            for entry in entries
+            if ensure_dataset_type(entry.get("dataset_type"), default=DatasetType.IMAGE) is DatasetType.TEXT_EMBEDS
+            and not (entry.get("disable") or entry.get("disabled"))
+        }
+        return stores, next(entry["id"] for entry in stores.values() if entry.get("default"))
+
+    def _text_embed_store(self, dataset, plan, global_config, args, accelerator):
+        from simpletuner.helpers.data_backend.factory import (
+            build_text_embed_store,
+            init_backend_config,
+            select_text_embed_backend,
+        )
+
+        stores, default_id = self._text_embed_plan(plan or [dataset], args)
+        config = select_text_embed_backend(dataset, stores, default_id)
+        settings = init_backend_config(config, args, accelerator)["config"]
+        if settings["text_cache_disable"]:
+            raise ValueError("The selected text embedding store has writes disabled.")
+        store, directory = build_text_embed_store(config, args, accelerator)
+        if store.type == "local":
+            directory = self._resolve_cache_dir(directory, global_config, config)
+        if directory is None:
+            raise ValueError("No text embed cache directory configured for this dataset")
+        return config, store, directory
+
+    def _execute_text_embed_cache(
+        self, job: CacheJob, dataset_config: Dict[str, Any], global_config: Dict[str, Any], dataset_plan=None
+    ):
+        from simpletuner.helpers.data_backend.factory import build_text_preparation_listing
         from simpletuner.helpers.training.state_tracker import StateTracker
 
         args = self._build_args(global_config)
@@ -644,12 +816,15 @@ class CacheJobService:
         original_accelerator = StateTracker.get_accelerator()
         StateTracker.set_args(args)
         StateTracker.set_accelerator(accelerator)
-        config_id = None
+        scope = ExitStack()
         model = None
         text_cache = None
 
         try:
             self._check_cancelled(job)
+            store_config, store, cache_dir_text = self._text_embed_store(
+                dataset_config, dataset_plan, global_config, args, accelerator
+            )
 
             job.stage = "Loading text encoders"
             self._broadcast("dataset_cache", self._job_to_dict(job))
@@ -663,43 +838,54 @@ class CacheJobService:
             job.stage = "Setting up data backend"
             self._broadcast("dataset_cache", self._job_to_dict(job))
 
-            config, data_backend, metadata_backend, config_id = self._create_data_backend_and_metadata(
-                dataset_config, args, accelerator
-            )
-
-            cache_dir_text = self._resolve_cache_dir(
-                dataset_config.get("cache_dir_text") or self._resolve_global_key(global_config, "cache_dir_text", "cache"),
-                global_config,
-                dataset_config,
-            )
-            if not cache_dir_text:
-                raise ValueError("No text embed cache directory configured for this dataset")
-            os.makedirs(cache_dir_text, exist_ok=True)
+            source_runtime = self._create_dataset_runtime(dataset_config, args, accelerator, preparation_only=True)
+            scope.callback(source_runtime.close)
 
             from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
 
             text_cache = TextEmbeddingCache(
-                id=dataset_config["id"],
-                data_backend=data_backend,
+                id=store_config["id"],
+                data_backend=store,
                 text_encoders=model.text_encoders,
                 tokenizers=model.tokenizers,
                 accelerator=accelerator,
                 cache_dir=cache_dir_text,
-                model_type=global_config.get("model_family", ""),
-                write_batch_size=int(global_config.get("write_batch_size", 64) or 64),
-                text_encoder_batch_size=int(
-                    dataset_config.get("text_encoder_batch_size", global_config.get("text_encoder_batch_size", 1)) or 1
-                ),
+                model_type=args.model_family,
+                write_batch_size=int(store_config.get("write_batch_size", args.write_batch_size) or 64),
+                text_encoder_batch_size=int(store_config.get("text_encoder_batch_size", args.text_encoder_batch_size) or 1),
                 model=model,
+                caption_filter_list=store_config.get("caption_filter_list"),
+                preparation_listing=build_text_preparation_listing(store_config, store, cache_dir_text, args, accelerator),
             )
 
+            scope.enter_context(closing(text_cache))
             self._check_cancelled(job)
 
-            # Gather captions from the dataset
             job.stage = "Collecting captions"
             self._broadcast("dataset_cache", self._job_to_dict(job))
 
-            prompt_records = self._iter_prompt_records(model, dataset_config, data_backend, metadata_backend)
+            batch_size = max(text_cache.read_batch_size, text_cache.text_encoder_batch_size)
+            source_runtime.text_embed_cache = text_cache
+            conditioning = None
+            ids = dataset_config.get("conditioning_data")
+            from simpletuner.helpers.data_backend.dataset_runtime import TextRequestBuilder
+
+            if TextRequestBuilder.needs_conditioning_datasets(model, ids, args):
+                conditioning = []
+                available = {
+                    item["id"]: item for item in dataset_plan or () if not (item.get("disabled") or item.get("disable"))
+                }
+                for ref_id in [ids] if isinstance(ids, str) else ids:
+                    if ref_id not in available:
+                        raise ValueError(f"Missing conditioning dataset {ref_id!r} in the standalone cache plan.")
+                    ref_config = available[ref_id]
+                    runtime = self._create_dataset_runtime(ref_config, args, accelerator, preparation_only=True)
+                    scope.callback(runtime.close)
+                    conditioning.append(runtime)
+                source_runtime.conditioning_datasets = tuple(conditioning)
+            prompt_records = self._iter_prompt_records(
+                model, source_runtime, batch_size=batch_size, args=args, conditioning_datasets=conditioning
+            )
 
             # Move text encoders to device
             from simpletuner.helpers.data_backend.factory import move_text_encoders
@@ -726,7 +912,7 @@ class CacheJobService:
             text_cache.encode_dropout_caption()
             job.total = text_cache.precompute_embeddings(
                 prompt_records,
-                batch_size=max(text_cache.read_batch_size, text_cache.text_encoder_batch_size),
+                batch_size=batch_size,
                 progress_callback=_text_progress,
             )
             if not job.total:
@@ -734,14 +920,19 @@ class CacheJobService:
             self._broadcast("dataset_cache", self._job_to_dict(job))
 
         finally:
-            StateTracker.set_args(original_args)
-            StateTracker.set_accelerator(original_accelerator)
-            if config_id is not None:
-                StateTracker.data_backends.pop(config_id, None)
-            del text_cache, model
-            self._cleanup_gpu()
+            try:
+                scope.close()
+            finally:
+                StateTracker.set_args(original_args)
+                StateTracker.set_accelerator(original_accelerator)
+                del text_cache, model
+                self._cleanup_gpu()
 
-    def _execute_conditioning_cache(self, job: CacheJob, dataset_config: Dict[str, Any], global_config: Dict[str, Any]):
+    def _execute_conditioning_cache(
+        self, job: CacheJob, dataset_config: Dict[str, Any], global_config: Dict[str, Any], dataset_plan=None
+    ):
+        from simpletuner.helpers.data_backend.config.relationships import resolve_dataset_relationships
+        from simpletuner.helpers.data_backend.factory import configure_model_data_signals
         from simpletuner.helpers.training.state_tracker import StateTracker
 
         args = self._build_args(global_config)
@@ -750,9 +941,7 @@ class CacheJobService:
         original_accelerator = StateTracker.get_accelerator()
         StateTracker.set_args(args)
         StateTracker.set_accelerator(accelerator)
-        config_id = None
         model = None
-        embed_cache = None
 
         try:
             self._check_cancelled(job)
@@ -761,6 +950,8 @@ class CacheJobService:
             self._broadcast("dataset_cache", self._job_to_dict(job))
 
             model = self._load_model(global_config, args, accelerator)
+            plan = dataset_plan or [dataset_config]
+            configure_model_data_signals(model, plan)
 
             if not model.requires_conditioning_image_embeds():
                 raise ValueError(
@@ -773,77 +964,68 @@ class CacheJobService:
             job.stage = "Setting up data backend"
             self._broadcast("dataset_cache", self._job_to_dict(job))
 
-            config, data_backend, metadata_backend, config_id = self._create_data_backend_and_metadata(
-                dataset_config, args, accelerator
-            )
+            datasets = [dataset_config]
+            if dataset_config.get("conditioning_data") and model.conditioning_image_embeds_use_reference_dataset():
+                conditioning, _ = resolve_dataset_relationships(plan)
+                target_ids = conditioning.get(dataset_config["id"], ())
+                if target_ids:
+                    by_id = {entry["id"]: entry for entry in plan}
+                    datasets = [by_id[target_id] for target_id in dict.fromkeys(target_ids)]
 
-            image_files = self._collect_image_files_from_metadata(metadata_backend)
-            if not image_files:
-                raise ValueError("No image files found in metadata cache. Run a metadata scan first.")
-
-            cache_dir = self._resolve_cache_dir(
-                dataset_config.get("cache_dir_conditioning_image_embeds")
-                or self._resolve_global_key(global_config, "cache_dir_conditioning_image_embeds"),
-                global_config,
-                dataset_config,
-            )
-            if not cache_dir:
-                raise ValueError("No conditioning cache directory configured")
-            os.makedirs(cache_dir, exist_ok=True)
-
-            from simpletuner.helpers.caching.image_embed import ImageEmbedCache
-
-            dataset_type = str(dataset_config.get("dataset_type", "conditioning")).lower()
-
-            embed_cache = ImageEmbedCache(
-                id=dataset_config["id"],
-                dataset_type=dataset_type,
-                model=model,
-                accelerator=accelerator,
-                metadata_backend=metadata_backend,
-                image_data_backend=data_backend,
-                cache_data_backend=data_backend,
-                instance_data_dir=dataset_config.get("instance_data_dir", ""),
-                cache_dir=cache_dir,
-                write_batch_size=int(global_config.get("write_batch_size", 64) or 64),
-                read_batch_size=int(global_config.get("read_batch_size", 25) or 25),
-                embed_batch_size=int(global_config.get("embed_batch_size", 4) or 4),
-                hash_filenames=True,
-            )
-
-            self._check_cancelled(job)
-
-            job.status = CacheJobStatus.RUNNING
-            job.stage = "Computing conditioning embeddings"
-            self._broadcast("dataset_cache", self._job_to_dict(job))
-
-            embed_cache.discover_all_files()
-            embed_cache.build_embed_filename_map(all_image_files=image_files)
-            pending = embed_cache.discover_unprocessed_files()
-            if pending:
-                job.total = len(pending)
-                self._broadcast("dataset_cache", self._job_to_dict(job))
-
-                _last_broadcast = [0.0]
-
-                def _cond_progress(current, total):
-                    self._check_cancelled(job)
-                    job.current = current
-                    job.total = total
-                    now = time.time()
-                    if now - _last_broadcast[0] >= 1.0 or current >= total:
-                        _last_broadcast[0] = now
-                        self._broadcast("dataset_cache", self._job_to_dict(job))
-
-                embed_cache.process_files(pending, progress_callback=_cond_progress)
+            for dataset in datasets:
+                self._check_cancelled(job)
+                with closing(self._create_dataset_runtime(dataset, args, accelerator)) as runtime:
+                    self._prepare_conditioning_embeddings(
+                        job, runtime, dataset, plan, global_config, args, accelerator, model
+                    )
 
         finally:
             StateTracker.set_args(original_args)
             StateTracker.set_accelerator(original_accelerator)
-            if config_id is not None:
-                StateTracker.data_backends.pop(config_id, None)
-            del embed_cache, model
+            del model
             self._cleanup_gpu()
+
+    def _prepare_conditioning_embeddings(self, job, runtime, dataset, dataset_plan, global_config, args, accelerator, model):
+        cache_store, store_config = self._image_artifact_store(
+            dataset, dataset_plan, args, accelerator, runtime.data_backend, "conditioning_image_embeds"
+        )
+        store_directory = store_config.get("cache_dir")
+        if store_directory == dataset.get("cache_dir_vae"):
+            store_directory = None
+        cache_dir = self._resolve_cache_dir(
+            dataset.get("cache_dir_conditioning_image_embeds")
+            or store_directory
+            or self._resolve_global_key(global_config, "cache_dir_conditioning_image_embeds"),
+            global_config,
+            dataset,
+            absolute=cache_store.type != "aws",
+        )
+        if not cache_dir:
+            raise ValueError("No conditioning cache directory configured")
+
+        from simpletuner.helpers.caching.image_embed import ImageEmbedCache
+
+        embed_cache = ImageEmbedCache(
+            id=runtime.id,
+            dataset_type=runtime.config["dataset_type"],
+            model=model,
+            accelerator=accelerator,
+            metadata_backend=runtime.metadata_backend,
+            image_data_backend=runtime.data_backend,
+            cache_data_backend=cache_store,
+            instance_data_dir=runtime.config["instance_data_dir"],
+            cache_dir=cache_dir,
+            write_batch_size=dataset.get("write_batch_size", args.write_batch_size),
+            read_batch_size=dataset.get("read_batch_size", args.read_batch_size),
+            embed_batch_size=dataset.get(
+                "conditioning_image_embed_batch_size", args.conditioning_image_embed_batch_size or args.vae_batch_size
+            ),
+            hash_filenames=True,
+        )
+
+        self._check_cancelled(job)
+
+        self._prepare_image_artifacts(job, runtime, "conditioning_image_embed_cache", embed_cache)
 
 
 # Module-level singleton

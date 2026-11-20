@@ -27,28 +27,70 @@ def _concurrent_writer(directory, barrier, iterations, errors):
 
 
 class SaveHookManagerTests(unittest.TestCase):
+
     def test_native_caption_run_does_not_scan_or_infer_partial_global_tag_statistics(self):
         manager = object.__new__(SaveHookManager)
-        native = {"data_backend": object(), "config": {"caption_strategy": "webshart"}}
-        local = {"data_backend": object(), "config": {"caption_strategy": "textfile"}}
-        with (
-            patch.object(StateTracker, "get_data_backends", return_value={"local": local, "native": native}),
-            patch("simpletuner.helpers.prompts.PromptHandler.get_all_captions", side_effect=AssertionError("caption scan")),
-        ):
-            self.assertEqual(manager._build_tag_frequency_from_captions(), {})
-        self.assertEqual(manager._tag_frequency_cache, {})
+        native = SimpleNamespace(config={"caption_strategy": "webshart"}, uses_native_schedule=True)
+        local = SimpleNamespace(
+            config={"caption_strategy": "textfile"},
+            uses_native_schedule=False,
+            requires_complete_preparation=False,
+            text_embed_cache=None,
+        )
+        local.iter_accepted_captions = Mock(side_effect=AssertionError("caption scan"))
+        manager.prepare_dataset_metadata({"local": local, "native": native})
+        local.iter_accepted_captions.assert_not_called()
+        self.assertEqual(manager.dataset_export_metadata, {})
+
+    def test_online_caption_encoding_avoids_export_scan_on_legacy_providers(self):
+        manager = object.__new__(SaveHookManager)
+        local = SimpleNamespace(
+            config={"caption_strategy": "textfile", "instance_prompt": "style"},
+            uses_native_schedule=False,
+            requires_complete_preparation=False,
+            text_embed_cache=SimpleNamespace(text_cache_ondemand=True),
+            iter_accepted_captions=Mock(side_effect=AssertionError("caption scan")),
+        )
+        manager.prepare_dataset_metadata({"local": local})
+        local.iter_accepted_captions.assert_not_called()
+        self.assertEqual(manager.dataset_export_metadata, {"trained_words": "style"})
 
     def test_local_caption_tag_statistics_are_preserved(self):
         manager = object.__new__(SaveHookManager)
+        local = SimpleNamespace(
+            config={"caption_strategy": "textfile"},
+            uses_native_schedule=False,
+            requires_complete_preparation=False,
+            text_embed_cache=None,
+            iter_accepted_captions=Mock(return_value=iter(["style, cat, style", "style, dog"])),
+        )
+        manager.prepare_dataset_metadata({"local": local})
         manager.args = SimpleNamespace()
-        local = {"data_backend": object(), "config": {"caption_strategy": "textfile"}}
-        with (
-            patch.object(StateTracker, "get_data_backends", return_value={"local": local}),
-            patch(
-                "simpletuner.helpers.prompts.PromptHandler.get_all_captions", return_value=(["style, cat", "style, dog"], [])
-            ),
-        ):
-            self.assertEqual(manager._build_tag_frequency_from_captions(), {"local": {"style": 2}})
+        manager.model = SimpleNamespace()
+        with patch.object(StateTracker, "get_datasets", side_effect=AssertionError("checkpoint dataset lookup")):
+            for _ in range(2):
+                result = manager._build_modelspec_metadata()
+                self.assertEqual(json.loads(result["ss_tag_frequency"]), {"local": {"style": 3}})
+        local.iter_accepted_captions.assert_called_once_with()
+
+    def test_caption_statistics_omit_partial_counts_and_keep_prompt_alternatives(self):
+        manager = object.__new__(SaveHookManager)
+        local = SimpleNamespace(
+            config={"caption_strategy": "instanceprompt", "instance_prompt": ["style", "portrait"]},
+            uses_native_schedule=False,
+            requires_complete_preparation=False,
+            text_embed_cache=None,
+            iter_accepted_captions=lambda: iter(["style, cat", "style, dog"]),
+        )
+        remote = SimpleNamespace(
+            config={"caption_strategy": "instanceprompt", "instance_prompt": "style"},
+            uses_native_schedule=False,
+            requires_complete_preparation=False,
+            text_embed_cache=None,
+            iter_accepted_captions=Mock(side_effect=OSError("caption source unavailable")),
+        )
+        manager.prepare_dataset_metadata({"local": local, "remote": remote})
+        self.assertEqual(manager.dataset_export_metadata, {"trained_words": "style, portrait"})
 
     def _run_save_model_hook(self, is_local_main_process):
         output_dir = "/tmp/checkpoint"
@@ -111,6 +153,36 @@ class SaveHookManagerTests(unittest.TestCase):
             with self.subTest(is_local_main_process=is_local_main_process):
                 save_state, _ = self._run_save_model_hook(is_local_main_process)
                 self.assertEqual(save_state.call_count, 1)
+
+    def test_full_model_save_hook_has_no_main_rank_only_barrier(self):
+        manager = object.__new__(SaveHookManager)
+        manager.accelerator = SimpleNamespace(
+            distributed_type=DistributedType.MULTI_GPU,
+            is_main_process=True,
+            is_local_main_process=True,
+            wait_for_everyone=Mock(side_effect=AssertionError("main rank entered a collective")),
+        )
+        manager.args = SimpleNamespace(model_type="full", use_ema=False, controlnet=False)
+        manager.model = SimpleNamespace(MODEL_SUBFOLDER="unet")
+        manager.training_state_path = "training_state.json"
+        manager._offload_models_during_save = Mock(return_value=nullcontext())
+        manager._save_ema_state = Mock()
+        manager._is_fsdp2 = Mock(return_value=False)
+        manager._is_sdnq_model = Mock(return_value=False)
+        manager._build_modelspec_metadata = Mock(return_value={})
+        manager._resolve_model_state_dict = Mock(return_value={})
+        model = Mock()
+        model.save_pretrained.side_effect = lambda output, **kwargs: (Path(output) / "weights.safetensors").touch()
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch("simpletuner.helpers.training.save_hooks.StateTracker"),
+            patch("simpletuner.helpers.training.save_hooks.unwrap_model", return_value=model),
+            patch("simpletuner.helpers.training.save_hooks.merge_safetensors_files"),
+        ):
+            output = Path(directory) / "checkpoint-2"
+            output.mkdir()
+            manager.save_model_hook([model], [{}], str(output))
+            self.assertTrue((output / "unet" / "weights.safetensors").is_file())
 
     def _adapter_hook_manager(self, output_dir, is_main_process=True):
         lycoris_config_path = Path(output_dir) / "source_lycoris.json"

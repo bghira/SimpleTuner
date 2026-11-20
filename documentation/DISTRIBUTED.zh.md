@@ -33,13 +33,13 @@ sudo nano /etc/exports
 在文件末尾添加以下行（将 `slave_ip` 替换为从节点的实际 IP）：
 
 ```
-/home/ubuntu/simpletuner/output slave_ip(rw,sync,no_subtree_check)
+~/simpletuner/output slave_ip(rw,sync,no_subtree_check)
 ```
 
 *若允许多个从节点或整个子网，可使用：*
 
 ```
-/home/ubuntu/simpletuner/output subnet_ip/24(rw,sync,no_subtree_check)
+~/simpletuner/output subnet_ip/24(rw,sync,no_subtree_check)
 ```
 
 **3. 导出共享目录**
@@ -76,7 +76,7 @@ sudo apt install nfs-common
 确保目录存在（按你的设置通常已存在）：
 
 ```bash
-sudo mkdir -p /home/ubuntu/simpletuner/output
+sudo mkdir -p ~/simpletuner/output
 ```
 
 *注记:* 如果目录已有数据请先备份，因为挂载后原内容会被隐藏。
@@ -86,13 +86,13 @@ sudo mkdir -p /home/ubuntu/simpletuner/output
 将 master 的共享目录挂载到 slave 的本地目录（将 `master_ip` 替换为 master 的 IP）：
 
 ```bash
-sudo mount master_ip:/home/ubuntu/simpletuner/output /home/ubuntu/simpletuner/output
+sudo mount master_ip:~/simpletuner/output ~/simpletuner/output
 ```
 
 **4. 验证挂载**
 
 ```bash
-mount | grep /home/ubuntu/simpletuner/output
+mount | grep ~/simpletuner/output
 ```
 
 **5. 测试写入权限**
@@ -100,10 +100,10 @@ mount | grep /home/ubuntu/simpletuner/output
 创建测试文件以确认写权限：
 
 ```bash
-touch /home/ubuntu/simpletuner/output/test_file_from_slave.txt
+touch ~/simpletuner/output/test_file_from_slave.txt
 ```
 
-然后在 master 上检查 `/home/ubuntu/simpletuner/output` 是否出现该文件。
+然后在 master 上检查 `~/simpletuner/output` 是否出现该文件。
 
 **6. 设置开机自动挂载**
 
@@ -116,7 +116,7 @@ sudo nano /etc/fstab
 在末尾添加以下行：
 
 ```
-master_ip:/home/ubuntu/simpletuner/output /home/ubuntu/simpletuner/output nfs defaults 0 0
+master_ip:~/simpletuner/output ~/simpletuner/output nfs defaults 0 0
 ```
 
 ---
@@ -168,6 +168,12 @@ effective_batch_size = train_batch_size × num_gpus × gradient_accumulation_ste
 4. **启用自动超订** - 使用 `--allow_dataset_oversubscription` 自动调整 repeats
 
 `--allow_dataset_oversubscription`（见 [OPTIONS.md](OPTIONS.md#--allow_dataset_oversubscription)）会自动计算并应用所需的最小 repeats，非常适合原型验证或小数据集实验。
+
+纯音频训练也按数据并行进程划分每个时长桶。同一副本中的上下文并行进程共享分到的样本。若 VAE 准备阶段从训练索引中移除了样本，各进程会在采样前重新划分已保存的样本集合。
+
+对于已建立索引且采用原生采样的 Webshart Parquet 采集数据集，每个进程打开预处理成员视图并按批读取样本引用。支持的图像裁剪几何信息按分片缓存在磁盘上。请将该缓存放在相应进程都可访问的存储上，并保持源对象和清单固定。从检查点恢复时请保持数据集规则、随机种子、采样策略、进程数、批大小和梯度累积设置一致。预取会缓冲批次，检查点记录训练已消耗的批次。
+
+对符合 `shard_local` 条件且尚未建立索引的 Parquet 图像数据集，所有数据并行进程都访问同一窗口，每个窗口最多包含四个相邻分片。每个进程读取全局批次中分配给自己的部分。窗口结束时，各宽高比桶中不足一个梯度累积周期的剩余样本会被丢弃。恢复训练时会重新打开保存的窗口，从上次实际消耗的批次之后继续读取。
 
 ### 图像扫描/发现过慢
 
@@ -222,7 +228,7 @@ effective_batch_size = train_batch_size × num_gpus × gradient_accumulation_ste
 
 ## 通过 🤗 Accelerate 配置
 
-使用 `accelerate config`（`/home/user/.cache/huggingface/accelerate/default_config.yaml`）部署 SimpleTuner 时，这些设置会优先于 `config/config.env`。
+使用 `accelerate config`（`~/.cache/huggingface/accelerate/default_config.yaml`）部署 SimpleTuner 时，这些设置会优先于 `config/config.env`。
 
 一个不包含 DeepSpeed 的 Accelerate default_config 示例：
 

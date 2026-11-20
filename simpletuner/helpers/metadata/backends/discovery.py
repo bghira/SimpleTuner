@@ -58,6 +58,8 @@ class DiscoveryMetadataBackend(MetadataBackend):
         maximum_num_frames: int = None,
         cache_file_suffix: str = None,
         repeats: int = 0,
+        dataset_config: dict | None = None,
+        runtime_args=None,
         max_num_samples: int = None,
     ):
         super().__init__(
@@ -79,6 +81,8 @@ class DiscoveryMetadataBackend(MetadataBackend):
             maximum_num_frames=maximum_num_frames,
             minimum_num_frames=minimum_num_frames,
             num_frames=num_frames,
+            dataset_config=dataset_config,
+            runtime_args=runtime_args,
             cache_file_suffix=cache_file_suffix,
             repeats=repeats,
             max_num_samples=max_num_samples,
@@ -265,7 +269,8 @@ class DiscoveryMetadataBackend(MetadataBackend):
         Returns:
             list: A list of new files.
         """
-        all_image_files = StateTracker.get_image_files(data_backend_id=self.data_backend.id)
+        inventory = self.data_backend.source_files
+        all_image_files = inventory.read()
         if all_image_files is None:
             logger.debug("No image file cache available, retrieving fresh")
             if self.dataset_type is DatasetType.AUDIO:
@@ -280,7 +285,7 @@ class DiscoveryMetadataBackend(MetadataBackend):
                 instance_data_dir=self.instance_data_dir,
                 file_extensions=extension_pool,
             )
-            all_image_files = StateTracker.set_image_files(all_image_files, data_backend_id=self.data_backend.id)
+            all_image_files = inventory.publish(all_image_files)
         else:
             logger.debug("Using cached image file list")
 
@@ -354,7 +359,7 @@ class DiscoveryMetadataBackend(MetadataBackend):
         }
         # Encode the cache as JSON.
         cache_data = {
-            "config": StateTracker.get_data_backend_config(data_backend_id=self.data_backend.id),
+            "config": self.active_dataset_config,
             "aspect_ratio_bucket_indices": aspect_ratio_bucket_indices_str,
         }
         # Include filtering statistics if available
@@ -544,6 +549,7 @@ class DiscoveryMetadataBackend(MetadataBackend):
                 image_metadata=image_metadata,
                 image_path=image_path_str,
                 model=StateTracker.get_model(),
+                data_backend_config=self.active_dataset_config,
             )
             prepared_sample = training_sample.prepare()
             cur_image_metadata = {
@@ -599,39 +605,32 @@ class DiscoveryMetadataBackend(MetadataBackend):
     ):
         if statistics is None:
             statistics = {}
+        source_from_video = self.audio_config.get("source_from_video", False)
+        video_source = self.source_dataset if source_from_video else None
         try:
-            # Check if audio is sourced from video files
-            source_from_video = self.audio_config.get("source_from_video", False)
             is_local_backend = getattr(self.data_backend, "type", None) == "local"
-
-            # For local backends with non-video audio files, we can skip reading the payload
-            # and pass the path directly to load_audio (enables ffmpeg fallback)
             file_ext = os.path.splitext(image_path_str)[1].lower().lstrip(".")
-            is_video_file = file_ext in video_file_extensions
+            video_meta = {}
+            if source_from_video and file_ext in video_file_extensions:
+                from simpletuner.helpers.audio.load import NoAudioStreamError, generate_zero_audio
 
-            # Only read payload if needed (non-local backend or source_from_video)
-            audio_payload = None
-            if not is_local_backend or (source_from_video and is_video_file):
-                audio_payload = self.data_backend.read(image_path_str)
-                if audio_payload is None:
-                    logger.debug(f"Audio sample {image_path_str} was not found on the backend. Skipping.")
-                    statistics.setdefault("skipped", {}).setdefault("not_found", 0)
-                    statistics["skipped"]["not_found"] += 1
-                    return aspect_ratio_bucket_indices
-            allow_zero_audio = self.audio_config.get("allow_zero_audio", False)
-
-            if source_from_video and is_video_file:
-                # Extract audio from video file
-                from simpletuner.helpers.audio import generate_zero_audio, load_audio_from_video
-
+                provider = video_source.data_backend if video_source else self.data_backend
+                if video_source:
+                    (video_meta,) = video_source.read_samples([image_path_str], view=video_source.published_read_view())
                 target_sr = self.audio_config.get("sample_rate", 16000)
                 target_channels = self.audio_config.get("channels", 1)
                 try:
-                    waveform, sample_rate = load_audio_from_video(audio_payload, target_sr, target_channels)
-                except ValueError:
-                    # Video has no audio stream
-                    if allow_zero_audio:
-                        video_duration = self._get_video_duration(image_path_str, audio_payload)
+                    waveform, sample_rate = provider.read_embedded_audio(
+                        image_path_str, sample_rate=target_sr, channels=target_channels
+                    )
+                except NoAudioStreamError:
+                    if self.audio_config.get("allow_zero_audio", False):
+                        video_duration = video_meta.get("video_duration")
+                        if not video_duration and video_meta.get("num_frames"):
+                            video_duration = video_meta["num_frames"] / (video_meta.get("fps") or 24)
+                        if not video_duration:
+                            payload = provider.read(image_path_str) if provider.type != "local" else None
+                            video_duration = self._get_video_duration(image_path_str, payload)
                         if video_duration and video_duration > 0:
                             waveform, sample_rate = generate_zero_audio(video_duration, target_sr, target_channels)
                             logger.debug(f"Generated zero audio ({video_duration:.2f}s) for {image_path_str}")
@@ -653,6 +652,9 @@ class DiscoveryMetadataBackend(MetadataBackend):
                 if is_local_backend:
                     waveform, sample_rate = load_audio(image_path_str)
                 else:
+                    audio_payload = self.data_backend.read(image_path_str)
+                    if audio_payload is None:
+                        raise FileNotFoundError(image_path_str)
                     buffer = BytesIO(audio_payload) if not isinstance(audio_payload, BytesIO) else audio_payload
                     buffer.seek(0)
                     waveform, sample_rate = load_audio(buffer)
@@ -676,17 +678,12 @@ class DiscoveryMetadataBackend(MetadataBackend):
             # For source_from_video, compute target duration based on video num_frames/framerate
             # to match what _align_audio_waveform_to_video will do during VAE caching
             bucket_duration = duration_seconds
-            if source_from_video:
-                source_dataset_id = self.dataset_config.get("source_dataset_id") or self.audio_config.get(
-                    "source_dataset_id"
-                )
-                if source_dataset_id:
-                    source_config = StateTracker.get_data_backend_config(data_backend_id=source_dataset_id) or {}
-                    video_config = source_config.get("video") or {}
-                    target_num_frames = video_config.get("num_frames")
-                    fps = getattr(StateTracker.get_args(), "framerate", None)
-                    if target_num_frames and fps:
-                        bucket_duration = float(target_num_frames) / float(fps)
+            if video_source:
+                video_config = video_source.config.get("video") or {}
+                target_num_frames = video_config.get("num_frames") or video_meta.get("num_frames")
+                fps = getattr(self.runtime_args, "framerate", None)
+                if target_num_frames and fps:
+                    bucket_duration = float(target_num_frames) / float(fps)
 
             audio_metadata = self._build_audio_metadata_entry(
                 sample_path=image_path_str,
@@ -720,11 +717,14 @@ class DiscoveryMetadataBackend(MetadataBackend):
 
             if metadata_updates is not None:
                 metadata_updates[image_path_str] = audio_metadata
+        except FileNotFoundError:
+            skipped = statistics.setdefault("skipped", {})
+            skipped["not_found"] = skipped.get("not_found", 0) + 1
         except Exception as exc:
             logger.error(f"Error processing audio sample {image_path_str}: {exc}", exc_info=True)
             skipped = statistics.setdefault("skipped", {})
             skipped["processing_error"] = skipped.get("processing_error", 0) + 1
-            if delete_problematic_images:
+            if delete_problematic_images and video_source is None:
                 logger.error(f"Deleting audio sample {image_path_str}.")
                 self._queue_or_delete_filtered_file(
                     filepath=image_path_str,
@@ -750,26 +750,12 @@ class DiscoveryMetadataBackend(MetadataBackend):
         import tempfile
         from pathlib import Path
 
-        # Try to get from existing video metadata if this is a linked dataset
-        source_dataset_id = self.dataset_config.get("source_dataset_id")
-        if source_dataset_id:
-            video_meta = StateTracker.get_metadata_by_filepath(video_path, source_dataset_id)
-            if video_meta:
-                # Check for video_duration or compute from num_frames/fps if available
-                if "video_duration" in video_meta:
-                    return video_meta["video_duration"]
-                if "num_frames" in video_meta:
-                    # Assume 24fps if not specified for duration estimate
-                    fps = video_meta.get("fps", 24)
-                    return video_meta["num_frames"] / fps
-
-        # Fallback: probe video file with ffprobe
         cleanup_temp = False
         probe_path = video_path
         try:
             if video_bytes:
                 with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
-                    tmp.write(video_bytes)
+                    tmp.write(video_bytes.getvalue() if isinstance(video_bytes, BytesIO) else video_bytes)
                     probe_path = tmp.name
                 cleanup_temp = True
 

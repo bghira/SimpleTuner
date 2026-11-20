@@ -180,7 +180,13 @@ class TestLocalBackendBuilder(unittest.TestCase):
         mock_parquet_backend.return_value = mock_parquet_instance
 
         config = ImageBackendConfig.from_dict(
-            {"id": "test_local", "type": "local", "metadata_backend": "parquet", "instance_data_dir": "/tmp/images"},
+            {
+                "id": "test_local",
+                "type": "local",
+                "metadata_backend": "parquet",
+                "instance_data_dir": "/tmp/images",
+                "parquet": {"path": "metadata.parquet", "filename_column": "id", "caption_column": "description"},
+            },
             self.args,
         )
 
@@ -466,8 +472,8 @@ class TestCsvBackendBuilder(unittest.TestCase):
         call_kwargs = mock_csv_backend_class.call_args[1]
 
         self.assertEqual(call_kwargs["id"], "test_csv")
-        self.assertEqual(call_kwargs["csv_file"], "/tmp/data.csv")
-        self.assertEqual(call_kwargs["csv_cache_dir"], "/tmp/csv_cache")
+        self.assertEqual(call_kwargs["csv_file"], Path("/tmp/data.csv"))
+        self.assertEqual(call_kwargs["image_cache_loc"], "/tmp/csv_cache")
         self.assertEqual(call_kwargs["url_column"], "url")
         self.assertEqual(call_kwargs["caption_column"], "caption")
         self.assertEqual(call_kwargs["accelerator"], self.accelerator)
@@ -491,7 +497,6 @@ class TestCsvBackendBuilder(unittest.TestCase):
                 "csv_caption_column": "caption",
                 "csv_url_column": "url",
                 "csv_hash_filenames": True,
-                "csv_shorten_filenames": False,
             },
             self.args,
         )
@@ -500,7 +505,6 @@ class TestCsvBackendBuilder(unittest.TestCase):
 
         call_kwargs = mock_csv_backend_class.call_args[1]
         self.assertTrue(call_kwargs["hash_filenames"])
-        self.assertFalse(call_kwargs["shorten_filenames"])
 
     def test_validate_csv_config_success(self):
         """Test CSV config validation with valid configuration"""
@@ -593,7 +597,7 @@ class TestHuggingfaceBackendBuilder(unittest.TestCase):
         mock_hf_backend_class.assert_called_once()
         call_kwargs = mock_hf_backend_class.call_args[1]
 
-        self.assertEqual(call_kwargs["identifier"], "test_hf")
+        self.assertEqual(call_kwargs["id"], "test_hf")
         self.assertEqual(call_kwargs["dataset_name"], "test/dataset")
         self.assertEqual(call_kwargs["dataset_type"], "image")
         self.assertEqual(call_kwargs["accelerator"], self.accelerator)
@@ -649,8 +653,10 @@ class TestHuggingfaceBackendBuilder(unittest.TestCase):
     @patch("datasets.load_dataset")
     @patch("datasets.load_dataset_builder")
     def test_audiofolder_loads_audio_without_decode(self, mock_load_dataset_builder, mock_load_dataset):
+        from datasets import Dataset
+
         mock_load_dataset_builder.return_value = SimpleNamespace(info=SimpleNamespace(splits={"train": None}))
-        mock_load_dataset.return_value = []
+        mock_load_dataset.return_value = Dataset.from_dict({"audio": []})
 
         HuggingfaceDatasetsBackend(
             accelerator=self.accelerator,
@@ -680,9 +686,24 @@ class TestHuggingfaceBackendBuilder(unittest.TestCase):
             audio_path = Path(temp_dir) / "sample.flac"
             audio_path.write_bytes(b"audio bytes")
             backend.dataset = [{"audio": str(audio_path)}]
-            backend._build_path_mapping()
 
             self.assertEqual(backend.read("0.wav"), b"audio bytes")
+            self.assertEqual(list(backend.iter_file_keys(["wav"])), ["0.wav"])
+
+    def test_huggingface_virtual_keys_need_no_index_or_sample_access(self):
+        backend = HuggingfaceDatasetsBackend(
+            accelerator=self.accelerator,
+            id="test_image",
+            dataset_name="example/images",
+            auto_load=False,
+        )
+        dataset = MagicMock()
+        dataset.__len__.return_value = 700_000_000
+        dataset.__getitem__.side_effect = AssertionError("read a dataset row")
+        backend.dataset = dataset
+        self.assertEqual(next(backend.iter_file_keys(["jpg"])), "0.jpg")
+        self.assertEqual(backend._get_index_from_path(Path("directory/699999999.jpg")), 699_999_999)
+        self.assertTrue(backend.exists("699999999.jpg"))
 
     @patch("datasets.Audio")
     def test_huggingface_audio_column_disables_decode(self, mock_audio):

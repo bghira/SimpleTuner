@@ -33,13 +33,13 @@ sudo nano /etc/exports
 Add the following line at the end of the file (replace `slave_ip` with the actual IP address of your slave machine):
 
 ```
-/home/ubuntu/simpletuner/output slave_ip(rw,sync,no_subtree_check)
+~/simpletuner/output slave_ip(rw,sync,no_subtree_check)
 ```
 
 *If you want to allow multiple slaves or an entire subnet, you can use:*
 
 ```
-/home/ubuntu/simpletuner/output subnet_ip/24(rw,sync,no_subtree_check)
+~/simpletuner/output subnet_ip/24(rw,sync,no_subtree_check)
 ```
 
 **3. Export the Shared Directory**
@@ -76,7 +76,7 @@ sudo apt install nfs-common
 Ensure the directory exists (it should already exist based on your setup):
 
 ```bash
-sudo mkdir -p /home/ubuntu/simpletuner/output
+sudo mkdir -p ~/simpletuner/output
 ```
 
 *Note:* If the directory contains data, back it up, as mounting will hide existing contents.
@@ -86,7 +86,7 @@ sudo mkdir -p /home/ubuntu/simpletuner/output
 Mount the master's shared directory to the slave's local directory (replace `master_ip` with the master's IP address):
 
 ```bash
-sudo mount master_ip:/home/ubuntu/simpletuner/output /home/ubuntu/simpletuner/output
+sudo mount master_ip:~/simpletuner/output ~/simpletuner/output
 ```
 
 **4. Verify the Mount**
@@ -94,7 +94,7 @@ sudo mount master_ip:/home/ubuntu/simpletuner/output /home/ubuntu/simpletuner/ou
 Check that the mount is successful:
 
 ```bash
-mount | grep /home/ubuntu/simpletuner/output
+mount | grep ~/simpletuner/output
 ```
 
 **5. Test Write Access**
@@ -102,10 +102,10 @@ mount | grep /home/ubuntu/simpletuner/output
 Create a test file to ensure you have write permissions:
 
 ```bash
-touch /home/ubuntu/simpletuner/output/test_file_from_slave.txt
+touch ~/simpletuner/output/test_file_from_slave.txt
 ```
 
-Then, check on the master machine if the file appears in `/home/ubuntu/simpletuner/output`.
+Then, check on the master machine if the file appears in `~/simpletuner/output`.
 
 **6. Make the Mount Persistent**
 
@@ -118,7 +118,7 @@ sudo nano /etc/fstab
 Add the following line at the end:
 
 ```
-master_ip:/home/ubuntu/simpletuner/output /home/ubuntu/simpletuner/output nfs defaults 0 0
+master_ip:~/simpletuner/output ~/simpletuner/output nfs defaults 0 0
 ```
 
 ---
@@ -170,6 +170,12 @@ If your dataset is smaller than the effective batch size:
 4. **Enable automatic oversubscription** - Use `--allow_dataset_oversubscription` to automatically adjust repeats
 
 The `--allow_dataset_oversubscription` flag (documented in [OPTIONS.md](OPTIONS.md#--allow_dataset_oversubscription)) will automatically calculate and apply the minimum required repeats for your configuration, making it ideal for prototyping or small dataset experiments.
+
+Audio-only training also partitions each duration bucket across data-parallel ranks. Context-parallel ranks within one replica share its slice. When VAE preparation removes samples from a training index, the ranks repartition the saved membership before sampling.
+
+For an indexed Webshart Parquet capture with native sampling, each rank opens a prepared membership view and reads batches of references. Geometry for supported image crops is cached by shard on disk. Keep this cache on storage available to the ranks that open it. Keep the source objects and manifest stable. A checkpoint resumes with the same dataset rules, seed, sampling policy, world size, batch sizes, and accumulation settings. Prefetch buffers batches, and the checkpoint records which batches training consumed.
+
+With an eligible unindexed Parquet image dataset and `shard_local`, all data-parallel ranks visit the same window of up to four adjacent shards. Each rank receives its slice of each global batch. Samples left in an aspect bucket that cannot fill a complete accumulation group are dropped at the window boundary. Resume reopens the saved window at the last consumed batch.
 
 ### Slow image scan / discovery
 
@@ -224,7 +230,7 @@ This will use inline gzip to reduce the amount of redundant disk space consumed 
 
 ## Configuring via 🤗 Accelerate
 
-When using `accelerate config` (`/home/user/.cache/huggingface/accelerate/default_config.yaml`) to deploy SimpleTuner, these options will take priority over the contents of `config/config.env`
+When using `accelerate config` (`~/.cache/huggingface/accelerate/default_config.yaml`) to deploy SimpleTuner, these options will take priority over the contents of `config/config.env`
 
 An example default_config for Accelerate that does not include DeepSpeed:
 

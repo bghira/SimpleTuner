@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import torch
 
+from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 from simpletuner.helpers.models.ltxvideo2.model import LTXVideo2
 from simpletuner.helpers.training.state_tracker import StateTracker
 
@@ -59,16 +60,16 @@ class TestLTXVideo2Pipeline(unittest.TestCase):
         latents = torch.randn(1, 3)
         cache = MagicMock()
         cache.retrieve_from_cache.return_value = {"latents": latents}
-        backends = {"audio-backend": {"config": {"instance_data_dir": "/data/audio"}}}
+        audio = DatasetRuntime("audio", None, None, {"dataset_type": "audio", "instance_data_dir": "/data/audio"})
+        audio.vae_cache = cache
+        video = DatasetRuntime("video", None, None, {"dataset_type": "video", "instance_data_dir": "/data"})
 
-        with (
-            patch.object(StateTracker, "get_data_backends", return_value=backends),
-            patch.object(StateTracker, "get_vaecache", return_value=cache),
-        ):
+        with patch.object(StateTracker, "datasets", {video.id: video, audio.id: audio}):
             result = self.model._load_audio_latents_for_validation("/data/audio/sample.wav")
 
         self.assertTrue(torch.equal(result.cpu(), latents))
         self.assertEqual(result.dtype, torch.float32)
+        cache.retrieve_from_cache.assert_called_once_with("/data/audio/sample.wav")
 
     def test_resolve_ltx23_flavour(self):
         self.model.config.model_flavour = "2.3-distilled"

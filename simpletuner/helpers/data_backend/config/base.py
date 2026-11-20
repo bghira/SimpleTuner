@@ -148,17 +148,30 @@ class BaseBackendConfig(ABC):
             if key in backend_dict:
                 self.config[key] = backend_dict[key]
 
-    def _memory_backend_settings_dict(self) -> Dict[str, Any]:
-        return {
-            key: self.config[key]
-            for key in (
-                "cache_dir",
-                "memory_filesystem_path",
-                "memory_filesystem_size",
-                "memory_filesystem_sudo",
-            )
-            if key in self.config
-        }
+    def _apply_artifact_storage_settings(self, backend_dict: Dict[str, Any]) -> None:
+        keys = (
+            "cache_dir",
+            "aws_bucket_name",
+            "aws_data_prefix",
+            "aws_endpoint_url",
+            "aws_access_key_id",
+            "aws_secret_access_key",
+            "aws_session_token",
+            "aws_region_name",
+            "aws_max_pool_connections",
+        )
+        for key in keys:
+            if key in backend_dict:
+                value = backend_dict[key]
+                self.config[key] = value
+                setattr(self, key, value)
+        if self.backend_type == "aws" and "aws" in backend_dict:
+            aws = backend_dict["aws"]
+            self.config["aws"] = aws
+            for key in keys[1:]:
+                if key in aws:
+                    setattr(self, key, aws[key])
+        self._apply_memory_backend_settings(backend_dict)
 
     def to_dict(self) -> Dict[str, Any]:
         result = {"id": self.id, "dataset_type": self.dataset_type.value, "config": self.config.copy()}

@@ -99,13 +99,13 @@ ControlNet 模型能够完成多种任务，这取决于训练时提供的条件
 
 ## 生成条件图像输入
 
-SimpleTuner 对 ControlNet 的支持还很新，目前用于生成训练集的选项只有一个：
+在检出的仓库中运行 Canny 工具，依次指定输入目录、原图输出目录和条件图输出目录。两个输出目录都保留相对路径和子目录，便于 Local 提供程序配对图像。
 
-- [create_canny_edge.py](/scripts/datasets/controlnet/create_canny_edge.py)
-  - 这是一个非常基础的示例，用于生成 Canny 模型训练集。
-  - 你需要修改脚本中的 `input_dir` 与 `output_dir`。
-
-少于 100 张图片的小数据集大约需要 30 秒。
+```bash
+python -m pip install opencv-python-headless
+python scripts/datasets/controlnet/create_canny_edge.py \
+  datasets/antelope datasets/antelope-data datasets/antelope-conditioning
+```
 
 ## 修改配置以训练 ControlNet 模型
 

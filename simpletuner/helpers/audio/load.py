@@ -24,6 +24,10 @@ logger = logging.getLogger(__name__)
 AudioSource = Union[str, bytes, bytearray, IO[bytes]]
 
 
+class NoAudioStreamError(ValueError):
+    """A valid video container has no audio stream."""
+
+
 def _coerce_to_stream(source: AudioSource) -> Union[str, IO[bytes]]:
     if isinstance(source, (bytes, bytearray)):
         buffer = BytesIO(source)
@@ -245,12 +249,12 @@ def load_audio_from_video(
             if result.returncode != 0:
                 stderr = result.stderr or ""
                 if "does not contain any stream" in stderr or "Output file is empty" in stderr:
-                    raise ValueError(f"Video has no audio stream: {source_path}")
+                    raise NoAudioStreamError(f"Video has no audio stream: {source_path}")
                 raise RuntimeError(f"ffmpeg failed: {stderr[:500]}")
 
             # Check if output file is empty or very small (no audio extracted)
             if not os.path.exists(tmp_wav_path) or os.path.getsize(tmp_wav_path) < 100:
-                raise ValueError(f"Video has no audio stream: {source_path}")
+                raise NoAudioStreamError(f"Video has no audio stream: {source_path}")
 
             waveform, sample_rate = _load_with_wave(tmp_wav_path)
             return waveform, sample_rate

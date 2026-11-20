@@ -213,7 +213,7 @@ class Flux3Image(ImageModelFoundation):
     def requires_validation_edit_captions(self):
         if not getattr(self.config, "validation_using_datasets", False):
             return False
-        return any(backend.get("conditioning_data") for backend in StateTracker.get_data_backends(_type="image").values())
+        return any(dataset.conditioning_datasets for dataset in StateTracker.get_datasets("image").values())
 
     def prepare_batch_conditions(self, batch, state):
         references = batch.get("conditioning_latents")

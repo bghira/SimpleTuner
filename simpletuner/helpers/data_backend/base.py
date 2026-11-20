@@ -1,11 +1,68 @@
 import gzip
+import os
 from abc import ABC, abstractmethod
+from collections import defaultdict, deque
+from contextlib import closing
+from functools import cached_property
 from io import BytesIO
+from pathlib import Path
 
 import torch
 
+from simpletuner.helpers.data_backend.source_inventory import SourceFileInventory
+
+
+def conditioning_file_path(relative_ref, root, config):
+    """Resolve a pairing key to a file-backed conditioning artifact."""
+    from simpletuner.helpers.data_backend.webshart import WebshartDataBackend
+
+    if WebshartDataBackend.is_sample_id(relative_ref):
+        relative_ref = WebshartDataBackend.parse_sample_id(relative_ref).filename
+        if os.path.isabs(relative_ref) or ".." in relative_ref.split("/"):
+            raise ValueError("Webshart pairing requires a filename relative to the conditioning dataset.")
+    if root:
+        relative_ref = os.path.normpath(relative_ref)
+        if os.path.isabs(relative_ref) or relative_ref.startswith(f"..{os.sep}"):
+            relative_ref = os.path.basename(relative_ref)
+        if relative_ref in {"", ".", ".."}:
+            raise ValueError("A conditioning reference must name a file.")
+    path = os.path.join(root, relative_ref) if root else relative_ref
+    if (config.get("conditioning_config") or {}).get("type") == "i2v_first_frame":
+        path = os.path.splitext(path)[0] + ".png"
+    return path
+
+
+def ordered_sample_payloads(dataset_id, refs, returned, *, allow_missing=False):
+    """Associate bounded provider results with the requested occurrences."""
+    payloads = defaultdict(deque)
+    for ref, payload in returned:
+        payloads[ref].append(payload)
+    for ref in refs:
+        payload = payloads[ref].popleft() if payloads[ref] else None
+        if payload is None and not allow_missing:
+            raise OSError(f"Dataset {dataset_id} could not read the requested image {ref}")
+        yield payload
+
 
 class BaseDataBackend(ABC):
+    # A sharded provider can choose a canonical number of source shards per prepared partition.
+    prepared_partition_shards = None
+    caption_projection_strategy = None
+
+    supports_artifact_presence_listing = False
+
+    @cached_property
+    def source_files(self):
+        return SourceFileInventory()
+
+    def bind_source_inventory(self, output_dir, bucket_report=None):
+        path = Path(output_dir) / f"all_image_files_{self.id}.json" if output_dir is not None else None
+        self.source_files = SourceFileInventory(path, bucket_report)
+
+    def count_source_rows(self, *, exclude_null_images=False):
+        """Return the exact source row count when the provider supports it."""
+        raise NotImplementedError("This source does not expose exact row counts.")
+
     def iter_cache_groups(self, bucket_files: dict):
         """Yield (bucket, files) groups in input order; callers drain queues between groups."""
         yield from bucket_files.items()
@@ -31,12 +88,32 @@ class BaseDataBackend(ABC):
         """
         pass
 
+    def delete_batch(self, identifiers):
+        """Delete the supplied identifiers, allowing objects to be absent."""
+        for identifier in identifiers:
+            try:
+                self.delete(identifier)
+            except FileNotFoundError:
+                continue
+
+    def read_embedded_audio(self, identifier, *, sample_rate, channels):
+        from simpletuner.helpers.audio import load_audio_from_video
+
+        payload = self.read(identifier)
+        if payload is None:
+            raise FileNotFoundError(f"Could not read video {identifier}.")
+        return load_audio_from_video(payload, sample_rate, channels)
+
     @abstractmethod
     def exists(self, identifier):
         """
         Check if the identifier exists.
         """
         pass
+
+    def bulk_exists(self, identifiers):
+        """Return presence for each requested key in the same order."""
+        return [self.exists(identifier) for identifier in identifiers]
 
     @abstractmethod
     def open_file(self, identifier, mode):
@@ -45,12 +122,21 @@ class BaseDataBackend(ABC):
         """
         pass
 
+    def open_read_stream(self, identifier):
+        """Open a binary reader for persisted metadata or artifact manifests."""
+        return closing(self.open_file(identifier, "rb"))
+
     @abstractmethod
     def list_files(self, file_extensions: list, instance_data_dir: str = None) -> tuple:
         """
         List all files matching the pattern.
         """
         pass
+
+    def iter_file_keys(self, file_extensions, instance_data_dir=None):
+        """Yield matching keys. Backends can replace the legacy grouped listing."""
+        for _, _, keys in self.list_files(file_extensions, instance_data_dir):
+            yield from keys
 
     @abstractmethod
     def get_abs_path(self, sample_path: str = None) -> tuple:
@@ -86,6 +172,14 @@ class BaseDataBackend(ABC):
         Reads content from the backend and loads it with torch.
         """
         pass
+
+    def read_cached_tensors(self, keys):
+        """Return cached tensors in request order, with None for missing keys."""
+        for key in keys:
+            try:
+                yield self.torch_load(key) if self.exists(key) else None
+            except FileNotFoundError:
+                yield None
 
     @abstractmethod
     def torch_save(self, data, filename):

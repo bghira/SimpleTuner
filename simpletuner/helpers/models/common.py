@@ -8,6 +8,7 @@ import os
 import random
 from abc import ABC, abstractmethod
 from collections import OrderedDict
+from contextvars import ContextVar
 from enum import Enum
 from numbers import Integral
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Protocol, Sequence
@@ -533,6 +534,7 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
     def __init__(self, config: dict, accelerator):
         self.config = config
         self.accelerator = accelerator
+        self._training_datasets = {}
         self.noise_schedule = None
         self.pipelines = {}
         self.controlnet = None
@@ -859,6 +861,10 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
     _data_has_images: bool = False
     _data_has_video: bool = False
     _data_has_audio: bool = False
+    _data_has_conditioning: bool = False
+
+    def bind_training_datasets(self, datasets):
+        self._training_datasets = dict(datasets)
 
     def configure_data_signals(
         self,
@@ -866,11 +872,12 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
         has_video: bool = False,
         has_audio: bool = False,
         has_grounding: bool = False,
+        has_conditioning: bool = False,
     ) -> None:
         """
         Configure data type signals from the dataloader.
 
-        Called by the factory after data backend configuration to inform the
+        Called by the factory before dataset preparation to inform the
         model about what data types are present in the training data. Models
         can override this to take action based on data types, or use the stored
         flags in other methods like get_lora_target_layers().
@@ -880,11 +887,13 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
             has_video: Whether video data is present
             has_audio: Whether audio data is present
             has_grounding: Whether grounding annotations are present
+            has_conditioning: Whether an enabled dataset has configured conditioning inputs
         """
         self._data_has_images = has_images
         self._data_has_video = has_video
         self._data_has_audio = has_audio
         self._data_has_grounding = has_grounding
+        self._data_has_conditioning = has_conditioning
 
     def _get_additional_lora_targets(self) -> list[str]:
         """
@@ -4080,6 +4089,10 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
                 for key, value in pipeline_kwargs.items()
                 if key not in ("pretrained_model_name_or_path", "watermarker", "watermark")
             }
+            for name in getattr(pipeline_class, "_optional_components", ()):
+                parameter = pipeline_init_signature.parameters.get(name)
+                if parameter is not None and parameter.default is inspect.Parameter.empty:
+                    init_kwargs.setdefault(name, None)
             pipeline_instance = pipeline_class(**init_kwargs)
         self.pipelines[pipeline_type] = pipeline_instance
 
@@ -6043,6 +6056,29 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
 
         return batch
 
+    _prompt_context_scope = ContextVar("prompt_context_scope", default=())
+    _prompt_context_override = None
+
+    @property
+    def _current_prompt_contexts(self):
+        for model, contexts in reversed(self._prompt_context_scope.get()):
+            if model is self:
+                return contexts
+        return self._prompt_context_override
+
+    @_current_prompt_contexts.setter
+    def _current_prompt_contexts(self, contexts):
+        self._prompt_context_override = contexts
+
+    @contextlib.contextmanager
+    def _use_prompt_contexts(self, contexts):
+        scope = self._prompt_context_scope
+        token = scope.set((*scope.get(), (self, contexts)))
+        try:
+            yield
+        finally:
+            scope.reset(token)
+
     @torch.no_grad()
     def encode_text_batch(
         self,
@@ -6058,13 +6094,9 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
         text_batch = self.convert_prompts_to_json(
             text_batch, is_negative_prompt=is_negative_prompt, prompt_contexts=prompt_contexts
         )
-        previous_context = getattr(self, "_current_prompt_contexts", None)
-        self._current_prompt_contexts = prompt_contexts
-        try:
+        with self._use_prompt_contexts(prompt_contexts):
             encoded_text = self._encode_prompts(text_batch, is_negative_prompt)
             return self._format_text_embedding(encoded_text)
-        finally:
-            self._current_prompt_contexts = previous_context
 
     def _format_text_embedding(self, text_embedding: torch.Tensor):
         """
@@ -6997,6 +7029,20 @@ class VideoModelFoundation(VideoTransformMixin, ImageModelFoundation):
 
     SUPPORTS_FAKE_VIDEO_STREAM = False
     AUDIO_LORA_TARGET = None
+
+    def iter_s2v_audio_inputs(self, batch):
+        """Pair each audio reference with the dataset selected by collation."""
+        refs = batch["s2v_audio_paths"]
+        dataset_ids = batch.get("s2v_audio_backend_ids")
+        if dataset_ids is None:
+            dataset_ids = [None] * len(refs)
+        for ref, dataset_id in zip(refs, dataset_ids, strict=True):
+            dataset = None
+            if dataset_id is not None:
+                dataset = self._training_datasets.get(dataset_id)
+                if dataset is None:
+                    raise ValueError(f"Audio dataset {dataset_id} is unavailable in the model's training datasets.")
+            yield ref, dataset
 
     @classmethod
     def supports_audio_only_training(cls) -> bool:

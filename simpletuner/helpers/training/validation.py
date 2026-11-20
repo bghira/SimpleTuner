@@ -5,14 +5,15 @@ import json
 import logging
 import math
 import os
+import random
 import subprocess
 import sys
 from contextlib import contextmanager, nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Optional, Sequence, Union
+from typing import Any, Mapping, Optional, Sequence, Union
 
 import diffusers
 import numpy as np
@@ -58,7 +59,10 @@ from diffusers.utils.torch_utils import is_compiled_module
 from PIL import Image, ImageDraw, ImageFont
 from transformers.utils import ContextManagers
 
+from simpletuner.helpers.data_backend.dataset_runtime import DatasetValidationSample
+from simpletuner.helpers.data_backend.dataset_types import selected_dataset_ids
 from simpletuner.helpers.data_backend.runtime.context_parallel_sync import get_cp_info, get_model_replica_data_info
+from simpletuner.helpers.metadata.preparation import DatasetReadView
 from simpletuner.helpers.models.common import PipelineTypes
 from simpletuner.helpers.models.cosmos.scheduler import RectifiedFlowAB2Scheduler
 from simpletuner.helpers.models.hidream.schedule import FlowUniPCMultistepScheduler
@@ -134,6 +138,7 @@ class ValidationPrompt:
     bbox_entities: list[dict] | None = None
     bbox_keyframes: list[dict] | None = None
     lyrics: str | None = None
+    dataset_read_view: DatasetReadView | None = None
 
 
 def resize_validation_images(validation_images, edge_length):
@@ -152,81 +157,32 @@ def resize_validation_images(validation_images, edge_length):
         )
         # we can be less precise here
         training_sample_image = training_sample_image.resize(crop_to)
-        resized_validation_samples.append(
-            ValidationPrompt(
-                shortname=validation_prompt.shortname,
-                prompt=validation_prompt.prompt,
-                type=validation_prompt.type,
-                conditioning=training_sample_image,
-                image_path=validation_prompt.image_path,
-                data_backend_id=validation_prompt.data_backend_id,
-                adapter_strength=validation_prompt.adapter_strength,
-                bbox_entities=validation_prompt.bbox_entities,
-                bbox_keyframes=validation_prompt.bbox_keyframes,
-                lyrics=validation_prompt.lyrics,
-            )
-        )
+        resized_validation_samples.append(replace(validation_prompt, conditioning=training_sample_image))
     return resized_validation_samples
 
 
 def reset_eval_datasets():
-    eval_datasets = StateTracker.get_data_backends(_type="eval", _types=None)
-    for dataset_name, dataset in eval_datasets.items():
-        if "train_dataset" not in dataset:
-            logger.debug(f"Skipping eval set {dataset_name} because it lacks a dataloader.")
+    for dataset in StateTracker.get_datasets("eval").values():
+        if dataset.training_dataloader is not None:
+            dataset.reset_evaluation()
+
+
+def iter_eval_batches(dataset_name=None):
+    """Traverse each selected evaluation schedule once."""
+    for name, dataset in StateTracker.get_datasets("eval").items():
+        if dataset.training_dataloader is None or (dataset_name is not None and name != dataset_name):
+            continue
         try:
-            dataset["sampler"]._reset_buckets(raise_exhaustion_signal=False)
-        except MultiDatasetExhausted as e:
-            pass
+            yield from dataset
+        except MultiDatasetExhausted:
+            continue
 
 
 def retrieve_eval_images(dataset_name=None):
-    """
-    If `dataset_name` is provided, only fetch samples from that specific dataset.
-    Otherwise, we iterate over *all* eval datasets until we find a valid sample.
-
-    Returns:
-        A collated batch from the eval dataset(s), or raises MultiDatasetExhausted.
-    """
-    eval_datasets = StateTracker.get_data_backends(_type="eval", _types=None)
-    output = {}
-    eval_samples = None
-    from simpletuner.helpers.training.collate import collate_fn
-
-    new_sample = None
-    # We loop until we successfully retrieve one collated batch or exhaust the data.
-    while new_sample is None:
-        # Decide which dataset(s) to pull from
-        if dataset_name is not None:
-            # Only attempt to pull from the requested dataset
-            dataset_keys = [dataset_name]
-        else:
-            # Fallback: iterate over *all* eval datasets
-            dataset_keys = list(eval_datasets.keys())
-
-        for ds_name in dataset_keys:
-            dataset = eval_datasets.get(ds_name)
-            if not dataset or "train_dataset" not in dataset:
-                logger.debug(f"Skipping eval set {ds_name} because it lacks a dataloader.")
-                continue
-            try:
-                new_sample = next(dataset["sampler"].__iter__())
-                data_loaded = dataset["train_dataset"].__getitem__(new_sample)
-                if data_loaded:
-                    output = collate_fn([data_loaded])
-                # Indicate that we've found a batch and can break out of the loop
-                new_sample = False
-                break
-
-            except MultiDatasetExhausted as e:
-                logger.debug(f"Ran out of evaluation samples for dataset {ds_name}. Resetting buckets.")
-                dataset["sampler"]._reset_buckets(raise_exhaustion_signal=False)
-                # We re-raise if we've exhausted this dataset. If `dataset_name` is set,
-                # we effectively stop; if it's None, we move to the next dataset.
-                if dataset_name is not None:
-                    raise e
-
-    return output
+    try:
+        return next(iter_eval_batches(dataset_name))
+    except StopIteration as exc:
+        raise MultiDatasetExhausted() from exc
 
 
 def _coerce_validation_image_input(image_data):
@@ -296,7 +252,16 @@ def _normalise_validation_sample(sample, idx: int = 0, fallback_shortname: str |
     bbox_keyframes: list[dict] | None = None
     lyrics: str | None = None
 
-    if isinstance(sample, PromptLibraryEntry):
+    view = None
+
+    if isinstance(sample, DatasetValidationSample):
+        shortname = sample.shortname
+        prompt = sample.prompt
+        conditioning = sample.image
+        image_path = sample.ref
+        data_backend_id = sample.dataset_id
+        view = sample.view
+    elif isinstance(sample, PromptLibraryEntry):
         prompt = sample.prompt
         adapter_strength = sample.adapter_strength
         bbox_entities = sample.bbox_entities
@@ -329,7 +294,7 @@ def _normalise_validation_sample(sample, idx: int = 0, fallback_shortname: str |
         conditioning = conditioning[0]
     if image_path is not None:
         image_path = str(image_path)
-        if shortname and "_" in shortname:
+        if data_backend_id is None and shortname and "_" in shortname:
             data_backend_id = shortname.rsplit("_", 1)[0]
 
     if not isinstance(prompt, str):
@@ -346,6 +311,7 @@ def _normalise_validation_sample(sample, idx: int = 0, fallback_shortname: str |
         bbox_entities=bbox_entities,
         bbox_keyframes=bbox_keyframes,
         lyrics=lyrics,
+        dataset_read_view=view,
     )
 
 
@@ -481,7 +447,7 @@ def _validation_reference_prompt_metadata(reference_images, image_path: str | No
     return metadata
 
 
-def _assert_eval_dataset_exists(eval_dataset_config, available_backends: dict[str, dict], context: str) -> set[str]:
+def _assert_eval_dataset_exists(eval_dataset_config, available_backends: Mapping[str, object], context: str) -> set[str]:
     """
     Make sure that every dataset requested via --eval_dataset_id exists among the loaded validation backends.
 
@@ -493,26 +459,35 @@ def _assert_eval_dataset_exists(eval_dataset_config, available_backends: dict[st
     Raises:
         ValueError: If one or more requested dataset IDs are missing.
     """
-    if eval_dataset_config is None:
-        return set()
-
-    if isinstance(eval_dataset_config, (list, tuple, set)):
-        requested_ids = {str(item) for item in eval_dataset_config}
-    else:
-        requested_ids = {str(eval_dataset_config)}
-
-    available_ids = {backend_id for backend_id in available_backends.keys()}
-
-    missing_ids = sorted(requested_ids - available_ids)
+    requested_ids = selected_dataset_ids(eval_dataset_config)
+    missing_ids = sorted(requested_ids - available_backends.keys())
     if missing_ids:
         formatted_missing = ", ".join(missing_ids)
-        formatted_available = ", ".join(sorted(available_ids)) or "none"
+        formatted_available = ", ".join(sorted(available_backends)) or "none"
         raise ValueError(
             f"--eval_dataset_id references unknown {context} dataset(s): {formatted_missing}. "
             f"Loaded datasets: {formatted_available}. "
             "Update the configuration or remove --eval_dataset_id."
         )
     return requested_ids
+
+
+_PREVIEW_DATASET_TYPES = ("image", "video", "audio")
+
+
+def _selected_validation_datasets(args, context, *dataset_types):
+    selection = getattr(args, "eval_dataset_id", None)
+    if selection and dataset_types == _PREVIEW_DATASET_TYPES:
+        dataset_types += ("eval",)
+    datasets = StateTracker.get_datasets(*dataset_types)
+    selected = _assert_eval_dataset_exists(selection, datasets, context)
+    return (
+        dataset
+        for dataset in datasets.values()
+        if (not selected or dataset.id in selected)
+        and not dataset.config.get("disable_validation", False)
+        and dataset.supports_validation_samples
+    )
 
 
 def retrieve_validation_images():
@@ -554,142 +529,62 @@ def retrieve_validation_images():
         and not use_simple_image_path_for_i2v
     )
     dataset_type = model.conditioning_validation_dataset_type() if requires_cond_input else "image"
-    data_backends = StateTracker.get_data_backends(
-        _type=dataset_type, _types=None if requires_cond_input else ["image", "video", "audio"]
-    )
+    dataset_types = (dataset_type,) if requires_cond_input else _PREVIEW_DATASET_TYPES
     dataset_type_name = getattr(dataset_type, "value", str(dataset_type))
-    selected_eval_backend_ids = _assert_eval_dataset_exists(
-        args.eval_dataset_id, data_backends, f"{dataset_type_name} validation"
-    )
+    datasets = _selected_validation_datasets(args, f"{dataset_type_name} validation", *dataset_types)
     validation_set = []
-    logger.info("Collecting validation images")
-    for _data_backend in data_backends:
-        data_backend = StateTracker.get_data_backend(_data_backend)
-        data_backend_config = data_backend.get("config", {})
-        should_skip_dataset = data_backend_config.get("disable_validation", False)
-        logger.debug(f"Backend {_data_backend}: {data_backend}")
-        if "id" not in data_backend or (
-            requires_cond_input and data_backend.get("dataset_type", None) != model.conditioning_validation_dataset_type()
-        ):
-            logger.debug(f"Skipping data backend: {_data_backend} dataset_type {data_backend.get('dataset_type', None)}")
-            continue
-        logger.debug(f"Checking data backend: {data_backend['id']}")
-        if (selected_eval_backend_ids and data_backend["id"] not in selected_eval_backend_ids) or should_skip_dataset:
-            logger.warning(f"Not collecting images from {data_backend['id']}")
-            continue
-        if "sampler" in data_backend:
-            validation_samples_from_sampler = data_backend["sampler"].retrieve_validation_set(
-                batch_size=args.num_eval_images
-            )
-            validation_samples_from_sampler = [
-                _normalise_validation_sample(sample, idx=idx) for idx, sample in enumerate(validation_samples_from_sampler)
-            ]
-            validation_input_image_pixel_edge_len = model.validation_image_input_edge_length()
-            if validation_input_image_pixel_edge_len is not None:
-                logger.debug(
-                    f"Resized validation image so that pixel edge length is {validation_input_image_pixel_edge_len}."
-                )
-                validation_samples_from_sampler = resize_validation_images(
-                    validation_samples_from_sampler,
-                    edge_length=validation_input_image_pixel_edge_len,
-                )
-
-            validation_set.extend(validation_samples_from_sampler)
-        else:
-            logger.warning(f"Data backend {data_backend['id']} does not have a sampler. Skipping.")
+    for dataset in datasets:
+        samples = dataset.validation_samples(batch_size=args.num_eval_images)
+        prompts = [_normalise_validation_sample(sample, idx=idx) for idx, sample in enumerate(samples)]
+        edge_length = model.validation_image_input_edge_length()
+        if edge_length is not None:
+            prompts = resize_validation_images(prompts, edge_length=edge_length)
+        validation_set.extend(prompts)
     logger.info(f"Collected {len(validation_set)} validation image inputs.")
     return validation_set
 
 
 def retrieve_validation_edit_images() -> list[ValidationPrompt]:
-    """
-    Returns validation prompts with edit reference conditioning.
-    for models that need **edit** validation (including I2V variants).
-
-    Logic
-    -----
-    • loop over *image* datasets that have a sampler
-    • for every deterministic validation sample returned by the sampler
-      – grab its original file path from metadata
-      – ask the dataset's *registered* conditioning backend for the
-        counterpart via `get_conditioning_sample()`
-      – add the trio to output
-    """
+    """Return validation prompts paired with the dataset's registered edit references."""
     model = StateTracker.get_model()
     if not (model.requires_validation_edit_captions() or model.requires_validation_i2v_samples()):
-        return []  # no-op for ordinary models
+        return []
 
     args = StateTracker.get_args()
-    # Respect the user's selected validation dataset via --eval_dataset_id and
-    # honour any `disable_validation: true` flags in the backend configuration.
     validation_set = []
-
-    image_backends = StateTracker.get_data_backends(_type="image")
-    selected_eval_backend_ids = _assert_eval_dataset_exists(args.eval_dataset_id, image_backends, "image validation")
-
-    # ---------- iterate over IMAGE datasets ---------------------------------
-    for backend_id, backend in image_backends.items():
-        backend_config = backend.get("config", {})
-        should_skip_dataset = backend_config.get("disable_validation", False)
-
-        # Skip datasets that the user has explicitly disabled for validation or
-        # that do not match the requested `--eval_dataset_id`.
-        if (selected_eval_backend_ids and backend.get("id") not in selected_eval_backend_ids) or should_skip_dataset:
-            logger.debug(f"Not collecting edit-validation images from {backend.get('id', backend_id)}")
+    for dataset in _selected_validation_datasets(args, "image validation", *_PREVIEW_DATASET_TYPES):
+        if not dataset.conditioning_datasets:
             continue
-        sampler = backend.get("sampler")
-        if sampler is None:  # nothing to iterate over
-            continue
-
-        # each backend should know which conditioning dataset is linked to it
-        cond_backends = StateTracker.get_conditioning_datasets(backend_id)
-        if not cond_backends:
-            logger.debug("No conditioning backend configured for this image dataset.")
-            continue
-
-        # deterministic slice for validation
-        for sample in sampler.retrieve_validation_set(batch_size=args.num_eval_images):
-            # sample == (shortname, edited_prompt, pil_image)
-            shortname, edited_prompt, sample_path, _ = sample
-
-            # original relative file-path comes from metadata backend
-            try:
-                meta = StateTracker.get_metadata_by_filepath(
-                    sample_path,
-                    data_backend_id=backend_id,
-                    search_dataset_types=["conditioning"],
+        for entry in dataset.validation_samples(batch_size=args.num_eval_images):
+            prompt = _normalise_validation_sample(entry)
+            sample_ref, source_view = prompt.image_path, prompt.dataset_read_view
+            if sample_ref is None:
+                continue
+            pairing_key = dataset.pairing_key(sample_ref)
+            if not pairing_key or os.path.isabs(pairing_key) or ".." in Path(pairing_key).parts:
+                continue
+            references = []
+            for target in dataset.conditioning_datasets:
+                revision = source_view.revision if source_view is not None else None
+                reference = target.read_conditioning_sample(
+                    pairing_key,
+                    source=dataset,
+                    source_ref=sample_ref,
+                    source_view=source_view,
+                    model=model,
+                    rng=random.Random(f"{dataset.id}:{revision}:{sample_ref}:{target.id}"),
                 )
-                image_dataset_dir_prefix = sampler.metadata_backend.instance_data_dir
-                if image_dataset_dir_prefix is None:
-                    continue
-                dataset_root = os.path.abspath(image_dataset_dir_prefix)
-                absolute_sample_path = os.path.abspath(sample_path)
-                if os.path.commonpath((dataset_root, absolute_sample_path)) != dataset_root:
-                    continue
-                rel_path = os.path.relpath(absolute_sample_path, dataset_root)
-                logger.debug(f"Removed prefix, got relative path: {rel_path}")
-                logger.debug(f"Metadata: {meta}")
-            except Exception:
-                continue  # metadata missing → skip
-
-            reference_imgs = []
-            for cond_backend in cond_backends:
-                cond_sample = cond_backend["sampler"].get_conditioning_sample(rel_path)
-
-                if cond_sample is None:
-                    continue
-
-                # Store the full TrainingSample so we can access image, path, and backend_id later
-                reference_imgs.append(cond_sample)
-            if len(reference_imgs) != len(cond_backends):
-                logger.warning(f"Didn't find enough conditioning samples for {rel_path}.")
+                if reference is not None:
+                    references.append(reference)
+            if len(references) != len(dataset.conditioning_datasets):
+                logger.warning(f"Didn't find enough conditioning samples for {pairing_key}.")
                 continue
             validation_set.append(
-                ValidationPrompt(
-                    shortname=shortname,
-                    prompt=edited_prompt,
+                replace(
+                    prompt,
                     type=ValidationConditioningType.EDIT_REFERENCES,
-                    conditioning=reference_imgs[0] if len(reference_imgs) == 1 else reference_imgs,
+                    conditioning=references[0] if len(references) == 1 else references,
+                    data_backend_id=dataset.id,
                 )
             )
 
@@ -698,14 +593,7 @@ def retrieve_validation_edit_images() -> list[ValidationPrompt]:
 
 
 def retrieve_validation_s2v_samples() -> list[ValidationPrompt]:
-    """
-    Retrieve validation samples for S2V (Speech-to-Video) models.
-
-    Returns:
-        list of validation prompts where conditioning contains:
-        - "image": PIL Image (first frame / reference image)
-        - "audio_path": str path to audio file
-    """
+    """Read validation inputs and their attached audio references."""
     model = StateTracker.get_model()
     if not getattr(model, "requires_s2v_validation_inputs", lambda: False)():
         return []
@@ -713,103 +601,23 @@ def retrieve_validation_s2v_samples() -> list[ValidationPrompt]:
     args = StateTracker.get_args()
     validation_set = []
 
-    def resolve_video_sample_path(sample_path: str, backend_config: dict, sampler: Any) -> str:
-        if not sample_path:
-            return sample_path
-        if Path(sample_path).is_absolute():
-            return sample_path
-
-        sample_root = backend_config.get("instance_data_dir")
-        if not sample_root:
-            metadata_backend = getattr(sampler, "metadata_backend", None)
-            sample_root = getattr(metadata_backend, "instance_data_dir", None)
-        if not sample_root:
-            return sample_path
-
-        return os.path.join(sample_root, sample_path.lstrip(os.sep))
-
-    def local_audio_path_or_none(audio_path: str | None) -> str | None:
-        if not audio_path:
-            return None
-        return audio_path if Path(audio_path).exists() else None
-
-    # Get video backends that have s2v_datasets linked
-    video_backends = StateTracker.get_data_backends(_type="video")
-    selected_eval_backend_ids = _assert_eval_dataset_exists(args.eval_dataset_id, video_backends, "video validation")
-
-    for backend_id, backend in video_backends.items():
-        backend_config = backend.get("config", {})
-        should_skip = backend_config.get("disable_validation", False)
-
-        if (selected_eval_backend_ids and backend.get("id") not in selected_eval_backend_ids) or should_skip:
-            logger.debug(f"Skipping S2V validation samples from {backend.get('id', backend_id)}")
+    for dataset in _selected_validation_datasets(args, "video validation", *_PREVIEW_DATASET_TYPES):
+        if not dataset.audio_datasets:
             continue
-
-        sampler = backend.get("sampler")
-        if sampler is None:
-            continue
-
-        # Check if this backend has s2v_datasets linked
-        s2v_datasets = StateTracker.get_s2v_datasets(backend_id)
-        if not s2v_datasets:
-            logger.debug(f"No s2v_datasets linked to {backend_id}, skipping for S2V validation")
-            continue
-
-        # Get validation samples from the video dataset
-        for sample in sampler.retrieve_validation_set(batch_size=args.num_eval_images):
-            # sample is (shortname, prompt, path, image)
-            if len(sample) >= 4:
-                shortname, prompt, sample_path, reference_image = sample[:4]
-            elif len(sample) == 3:
-                shortname, prompt, reference_image = sample
-                sample_path = None
-            else:
+        for sample in dataset.validation_samples(batch_size=args.num_eval_images):
+            prompt = _normalise_validation_sample(sample)
+            pairing = dataset.resolve_s2v_audio(prompt.image_path) if prompt.image_path is not None else None
+            if pairing is None:
+                logger.warning(f"No audio found for S2V validation sample: {prompt.shortname}")
                 continue
 
-            # Find matching audio from s2v_datasets
-            audio_path = None
-            if sample_path is not None:
-                resolved_sample_path = resolve_video_sample_path(sample_path, backend_config, sampler)
-                video_stem = Path(sample_path).stem
-
-                for s2v_dataset in s2v_datasets:
-                    s2v_config = s2v_dataset.get("config", {})
-                    audio_config = s2v_config.get("audio", {})
-                    if audio_config.get("source_from_video", False):
-                        audio_path = local_audio_path_or_none(resolved_sample_path)
-                        break
-                    audio_root = s2v_config.get("instance_data_dir")
-                    if not audio_root:
-                        continue
-
-                    audio_backend = s2v_dataset.get("data_backend")
-                    # Search for matching audio files
-                    audio_extensions = [".wav", ".mp3", ".flac", ".ogg", ".m4a"]
-                    for ext in audio_extensions:
-                        candidate = os.path.join(audio_root, f"{video_stem}{ext}")
-                        exists = audio_backend.exists(candidate) if audio_backend is not None else Path(candidate).exists()
-                        if exists:
-                            audio_path = candidate
-                            break
-                    if audio_path:
-                        break
-
-            if audio_path is None:
-                logger.warning(f"No audio found for S2V validation sample: {shortname}")
-                continue
-
-            # Create conditioning dict with image and audio path
-            conditioning = {
-                "image": reference_image,
-                "audio_path": audio_path,
-            }
+            audio_dataset, audio_path = pairing
             validation_set.append(
-                ValidationPrompt(
-                    shortname=shortname,
-                    prompt=prompt,
+                replace(
+                    prompt,
                     type=ValidationConditioningType.S2V,
-                    conditioning=conditioning,
-                    image_path=sample_path,
+                    conditioning={"image": prompt.conditioning, "audio_path": audio_path, "audio_dataset": audio_dataset},
+                    data_backend_id=dataset.id,
                 )
             )
 
@@ -1529,10 +1337,9 @@ def _build_validation_grounding_batch(
     embed_cache,
     max_entities: int,
     vae_scale_factor: int,
-    # Sidecar path (existing):
     image_path: str | None = None,
-    data_backend_id: str | None = None,
-    # Inline path (new):
+    dataset=None,
+    view: DatasetReadView | None = None,
     bbox_entities: list[dict] | None = None,
     shortname: str | None = None,
     target_size: tuple[int, int] | None = None,
@@ -1542,8 +1349,8 @@ def _build_validation_grounding_batch(
 
     Two modes:
 
-    *Sidecar*: provide ``image_path`` + ``data_backend_id``.  Reads a ``.bbox``
-    sidecar file and delegates to ``GroundingCollate.build_batch``.
+    *Dataset*: provide ``image_path`` and a dataset binding. Reads the published
+    metadata or a local ``.bbox`` sidecar and delegates to ``GroundingCollate.build_batch``.
 
     *Inline*: provide ``bbox_entities`` + ``shortname`` + ``target_size``.
     Builds the batch directly from pre-cached entity embeds without needing
@@ -1561,30 +1368,28 @@ def _build_validation_grounding_batch(
             target_size=target_size or (512, 512),
         )
 
-    if not image_path or not data_backend_id:
+    if not image_path or dataset is None:
         return None
 
     from simpletuner.helpers.training.grounding.collate import GroundingCollate
     from simpletuner.helpers.training.grounding.metadata import BboxMetadata
 
-    # Locate the .bbox sidecar file next to the image
-    sidecar_path = Path(image_path).with_suffix(".bbox")
-    if not sidecar_path.exists():
-        return None
+    (metadata,) = dataset.read_samples([image_path], view=view if view is not None else dataset.published_read_view())
+    entity_dicts = metadata.get("bbox_entities")
+    if not entity_dicts:
+        sidecar_path = Path(image_path).with_suffix(".bbox")
+        if not sidecar_path.exists():
+            return None
+        try:
+            entities = BboxMetadata.from_file(str(sidecar_path))
+        except Exception:
+            logger.debug(f"Failed to parse bbox sidecar for validation: {sidecar_path}")
+            return None
+        if not entities:
+            return None
+        entity_dicts = [{"label": entity.label, "bbox": list(entity.bbox)} for entity in entities]
 
-    try:
-        entities = BboxMetadata.from_file(str(sidecar_path))
-    except Exception:
-        logger.debug(f"Failed to parse bbox sidecar for validation: {sidecar_path}")
-        return None
-
-    if not entities:
-        return None
-
-    # Build a single-sample examples list matching the collate interface
-    metadata = StateTracker.get_metadata_by_filepath(str(image_path), data_backend_id) or {}
     file_target_size = metadata.get("target_size", (512, 512))
-    entity_dicts = [{"label": e.label, "bbox": list(e.bbox)} for e in entities]
     example = {
         "image_path": str(image_path),
         "target_size": file_target_size,
@@ -1594,7 +1399,7 @@ def _build_validation_grounding_batch(
     collate = GroundingCollate(max_entities=max_entities, vae_scale_factor=vae_scale_factor)
     grounding_batch = collate.build_batch(
         examples=[example],
-        data_backend_id=data_backend_id,
+        dataset_root=dataset.instance_data_dir,
         text_embed_cache=embed_cache,
         grounding_image_cache=grounding_image_cache,
     )
@@ -1798,6 +1603,7 @@ class _ValidationWorkItem:
     bbox_entities: list[dict] | None = None
     bbox_keyframes: list[dict] | None = None
     lyrics: str | None = None
+    dataset_read_view: DatasetReadView | None = None
 
 
 @dataclass(frozen=True)
@@ -2602,8 +2408,8 @@ class Validation:
         """
         Return the 1-indexed step within the current epoch based on global_step.
 
-        When datasets are scheduled to start at different epochs, the number of
-        steps per epoch changes. In that case, compute the epoch start step by
+        When dataset epoch windows differ, the number of steps per epoch changes.
+        In that case, compute the epoch start step by
         summing prior epochs using the schedule, then offset global_step.
         """
         if steps_per_epoch <= 0:
@@ -2622,9 +2428,7 @@ class Validation:
             epoch_start_step = 0
             grad_accum = max(int(getattr(self.config, "gradient_accumulation_steps", 1) or 1), 1)
             for e in range(1, current_epoch):
-                active_batches = sum(
-                    batches for start_epoch, batches in epoch_batches_schedule.items() if int(start_epoch) <= e
-                )
+                active_batches = sum(change for boundary, change in epoch_batches_schedule.items() if int(boundary) <= e)
                 epoch_start_step += math.ceil(active_batches / grad_accum)
         else:
             epoch_start_step = max(0, (current_epoch - 1) * steps_per_epoch)
@@ -3971,6 +3775,7 @@ class Validation:
                     bbox_entities=validation_prompt.bbox_entities,
                     bbox_keyframes=validation_prompt.bbox_keyframes,
                     lyrics=validation_prompt.lyrics,
+                    dataset_read_view=validation_prompt.dataset_read_view,
                 )
             )
         return work_items
@@ -4063,6 +3868,7 @@ class Validation:
             bbox_entities=item.bbox_entities,
             bbox_keyframes=item.bbox_keyframes,
             lyrics=item.lyrics,
+            dataset_read_view=item.dataset_read_view,
         )
         return {
             "index": item.index,
@@ -4588,6 +4394,7 @@ class Validation:
         bbox_entities: list[dict] | None = None,
         bbox_keyframes: list[dict] | None = None,
         lyrics: str | None = None,
+        dataset_read_view: DatasetReadView | None = None,
     ):
         """Generate validation images for a single prompt."""
         self._check_abort()
@@ -4624,6 +4431,7 @@ class Validation:
                 extra_validation_kwargs["_s2v_conditioning"] = {
                     "image": validation_input_image_for_resolution,
                     "audio_path": s2v_audio_path,
+                    "audio_dataset": validation_input_image.get("audio_dataset"),
                 }
                 if resolution[0] > 0 and resolution[1] > 0:
                     if isinstance(extra_validation_kwargs["image"], list):
@@ -4910,7 +4718,8 @@ class Validation:
                             max_entities=getattr(self.config, "max_grounding_entities", 4),
                             vae_scale_factor=8,
                             image_path=image_path,
-                            data_backend_id=data_backend_id,
+                            dataset=StateTracker.get_datasets().get(data_backend_id),
+                            view=dataset_read_view,
                         )
                     if grounding_batch is not None:
                         grounding_batch = grounding_batch.to(
@@ -5461,7 +5270,7 @@ class Evaluation:
                 return None
 
             # Calculate epoch_start_step accounting for dynamic dataset scheduling.
-            # When datasets have different start_epoch values, each epoch can have
+            # When datasets have different epoch windows, each epoch can have
             # a different step count. We must sum the actual steps from all previous
             # epochs rather than assuming (current_epoch - 1) * steps_per_epoch.
             epoch_batches_schedule = getattr(self.config, "epoch_batches_schedule", None)
@@ -5469,9 +5278,7 @@ class Evaluation:
                 epoch_start_step = 0.0
                 grad_accum = max(getattr(self.config, "gradient_accumulation_steps", 1) or 1, 1)
                 for e in range(1, int(current_epoch)):
-                    active_batches = sum(
-                        batches for start_epoch, batches in epoch_batches_schedule.items() if int(start_epoch) <= e
-                    )
+                    active_batches = sum(change for boundary, change in epoch_batches_schedule.items() if int(boundary) <= e)
                     epoch_start_step += math.ceil(active_batches / grad_accum)
             else:
                 epoch_start_step = max(0.0, (float(current_epoch) - 1.0) * steps_per_epoch)
@@ -5540,11 +5347,13 @@ class Evaluation:
           - all eval datasets if dataset_name is None
           - the specific dataset if dataset_name is given
         """
-        eval_datasets = StateTracker.get_data_backends(_type="eval", _types=None)
+        eval_datasets = StateTracker.get_datasets("eval")
         if dataset_name is not None:
             ds = eval_datasets.get(dataset_name)
-            return len(ds["sampler"]) if ds else 0
-        return sum(len(x["sampler"]) for _, x in eval_datasets.items())
+            return ds.training_batch_count() if ds and ds.training_dataloader is not None else 0
+        return sum(
+            dataset.training_batch_count() for dataset in eval_datasets.values() if dataset.training_dataloader is not None
+        )
 
     def get_timestep_schedule(self, noise_scheduler, latents: torch.Tensor | None = None):
         accept_mu = "mu" in set(inspect.signature(noise_scheduler.set_timesteps).parameters.keys())
@@ -5609,6 +5418,7 @@ class Evaluation:
         last_latent_hw = None
         logger.debug("Evaluation timesteps will be initialized after the first batch to account for dynamic shifts.")
 
+        eval_batches = iter_eval_batches(dataset_name)
         while eval_batch is not False and evaluated_sample_count < total_batches:
             try:
                 evaluated_sample_count += 1
@@ -5616,9 +5426,9 @@ class Evaluation:
                     reset_eval_datasets()
                     raise MultiDatasetExhausted("Max eval samples reached, resetting evaluations.")
                 # Pass the dataset_name so we fetch from the correct place
-                eval_batch = retrieve_eval_images(dataset_name=dataset_name)
+                eval_batch = next(eval_batches)
 
-            except MultiDatasetExhausted:
+            except (StopIteration, MultiDatasetExhausted):
                 logger.info(f"Evaluation loss calculation completed for dataset: {dataset_name}")
                 eval_batch = False
 
@@ -5715,7 +5525,7 @@ class Evaluation:
 
         # Decide if we pool or do separate passes
         pooling = getattr(self.config, "eval_dataset_pooling")
-        eval_datasets = StateTracker.get_data_backends(_type="eval", _types=None)  # dict of {name: ...}
+        eval_datasets = StateTracker.get_datasets("eval")
         if len(eval_datasets) == 0:
             return {}
 

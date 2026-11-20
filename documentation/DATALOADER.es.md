@@ -73,7 +73,7 @@ Solo válido para `dataset_type: "caption"` (singular). Este objeto opcional gen
 - `num_inference_steps` (predeterminado `40`), `guidance_scale` (`1.0`) y `seed` (`0`): parámetros de inferencia. Qwen Image usa `true_cfg_scale`; los valores superiores a uno utilizan un prompt negativo vacío. La guía de validación no sustituye este valor.
 - `output_dir` (opcional): predeterminado `cache_dir/generated-captions/<id>`. Los resultados se guardan bajo una huella de la receta y se reutilizan al reiniciar. Incluye descripciones, ajustes de inferencia, revisiones resueltas del Hub y tamaños/fechas de modificación de los pesos locales. No modifique el modelo durante la generación. Cambiar descripciones, modelo o inferencia crea otra caché; cambiar el lote no.
 
-La generación usa el modelo base con adaptadores desactivados y libera únicamente el transformador cargado para el preprocesamiento. Los textos originales no cambian. La generación requiere una ejecución de preparación con un solo proceso; las ejecuciones con varios procesos y `data_generator` se rechazan antes de ingerir las descripciones. Para entrenamiento distribuido, use los directorios generados como datasets `image` normales con `caption_strategy: "textfile"`, uno por resolución, `crop: false`, `resolution_type: "pixel"` y `resolution` igual al lado corto del grupo. Los datasets de descripciones sin generador requieren `dataloader_prefetch=false` para conservar la posición del muestreador en los checkpoints. Cambiar las descripciones, resoluciones o topología del dataset requiere iniciar otro entrenamiento; reutilizar la caché generada no hace compatibles esas reanudaciones de checkpoint.
+La generación usa el modelo base con adaptadores desactivados y libera únicamente el transformador cargado para el preprocesamiento. Los textos originales no cambian. La generación requiere una ejecución de preparación con un solo proceso; las ejecuciones con varios procesos y `data_generator` se rechazan antes de ingerir las descripciones. Para entrenamiento distribuido, use los directorios generados como datasets `image` normales con `caption_strategy: "textfile"`, uno por resolución, `crop: false`, `resolution_type: "pixel"` y `resolution` igual al lado corto del grupo. Los datasets de descripciones admiten `dataloader_prefetch: true` cuando todos los datasets de entrenamiento guardan en el checkpoint la posición consumida. Esto incluye los datasets de descripciones, la planificación nativa de Webshart y los muestreadores de imagen, vídeo y audio que guardan la posición consumida. Cambiar las descripciones, resoluciones o topología del dataset requiere iniciar otro entrenamiento; reutilizar la caché generada no hace compatibles esas reanudaciones de checkpoint.
 
 Para descubrir descripciones locales, la salida generada debe quedar fuera del `instance_data_dir` de origen; los directorios superpuestos se rechazan antes del escaneo.
 
@@ -132,6 +132,14 @@ Para descubrir descripciones locales, la salida generada debe quedar fuera del `
 - **Valores:** `true` | `false`
 - **Descripción:** Omite el cálculo previo completo de embeddings de texto. Las entradas existentes se leen de este caché; los embeddings que falten se codifican durante el entrenamiento o la validación y se escriben en el caché.
 - **Nota:** Cada dataset de imagen o vídeo asignado a este backend `text_embeds` hereda este comportamiento. Para usar otro comportamiento en determinados datasets de origen, crea otro backend `text_embeds` y asígnalo mediante el campo `text_embeds` del dataset de origen.
+
+### `text_cache_encode_only`
+
+Activa esta opción en un backend `text_embeds` para codificar el texto de cada lote durante el entrenamiento. El codificador omite la lectura y escritura de archivos de embeddings, incluidas las entradas existentes. El valor predeterminado es `false`. Para el precálculo, usa otro backend Local o AWS con permiso de escritura.
+
+### `text_cache_use_listing`
+
+En un backend AWS `text_embeds`, establece `text_cache_use_listing` en `true` para indexar los objetos existentes bajo el prefijo de la caché antes de la preparación sin conexión. Es útil cuando la caché ya está casi completa. El índice guarda la lista por lotes en un archivo SQLite temporal en el directorio de salida de la ejecución. Los procesos que comparten el directorio reutilizan un índice para el almacenamiento. Las claves ausentes de la lista se comprueban con una consulta directa al objeto. Conserva los objetos existentes bajo ese prefijo hasta que termine la preparación. El valor predeterminado es `false`.
 
 ### `text_cache_disable`
 
@@ -219,6 +227,7 @@ Esto crea automáticamente un dataset `my-videos_audio` y lo enlaza vía `s2v_da
 |-------|------|---------|-------------|
 | `audio.auto_split` | bool | true | Genera automáticamente dataset de audio desde archivos de video. Default true cuando la sección `audio` está presente. Para modelos que requieren S2V, default true incluso sin sección `audio`. |
 | `audio.source_from_video` | bool | false | (Auto-configurado) Indica que el audio se extrae del video |
+| `audio.sidecar_match` | `stem` / `relative_path` | `stem` | Busca por el nombre base del vídeo en la raíz de audio o por su ruta relativa a la raíz de vídeo. Se aplica a archivos de audio separados. |
 | `audio.allow_zero_audio` | bool | false | Genera audio con ceros para videos sin stream de audio |
 | `audio.audio_only` | bool | false | Override de compatibilidad; una configuración compuesta solo por audio lo activa automáticamente para LTX-2 y MiniMax-H3 |
 | `audio.target_resolution` | int | null | Override legado; el stream falso automático usa la geometría mínima de tokens de la familia |
@@ -836,6 +845,8 @@ En este ejemplo, el dataset de 512px se usa para los pasos 1-300, luego el datas
 - **Advertencia:** Esto es destructivo y no se puede deshacer. Úsalo con cuidado.
 - **Default:** Usa el argumento `--delete_problematic_images` del trainer (default: `false`).
 
+En las vistas nativas de Webshart, la preparación del VAE registra las muestras ilegibles como exclusiones en la vista preparada. Los objetos de origen permanecen en R2.
+
 ### `delete_nsfw_images`
 
 - **Valores:** `true` | `false`
@@ -922,8 +933,10 @@ Consulta la sección [Solución de Problemas](#solución-de-problemas-de-dataset
 
 ### `vae_cache_clear_each_epoch`
 
-- Cuando está habilitado, todos los objetos de caché VAE se eliminan del filesystem al final de cada ciclo de repeats del dataset. Esto puede ser intensivo en recursos para datasets grandes, pero combinado con `crop_style=random` y/o `crop_aspect=random` querrás tenerlo habilitado para asegurar que muestreas un rango completo de recortes de cada imagen.
-- De hecho, esta opción está **habilitada por defecto** cuando se usa bucketing aleatorio o recortes aleatorios.
+- Activa esta opción para reconstruir la caché del VAE al inicio de cada época de entrenamiento posterior a la primera. Con `crop: true` y `crop_style: random`, también se renuevan los recortes aleatorios de los conjuntos de datos mutables.
+- Con esta opción desactivada, el entrenamiento reutiliza los mismos recortes y latentes almacenados entre épocas, incluso si se configuraron recortes aleatorios. Las repeticiones del conjunto de datos reutilizan los latentes de la misma época en ambos modos.
+- Los conjuntos de imágenes en Parquet con muestreo nativo de Webshart, tamaños de destino fijos y sin entradas de condicionamiento emparejadas reutilizan la vista preparada. El proveedor elige nuevos desplazamientos de recorte al leer las filas y codifica bajo demanda los latentes VAE correspondientes. Al pasar a la siguiente época, se eliminan de la caché de esta ejecución los latentes de la época anterior.
+- Cuando cambia el recorte de un conjunto de origen mutable, los conjuntos de condicionamiento que copian sus metadatos heredan las nuevas coordenadas. Sus latentes en caché se actualizan para reflejar el cambio.
 
 ### `vae_cache_ondemand`
 
@@ -1064,6 +1077,8 @@ La forma antigua anidada `filter_func.path.include` / `exclude` / `mode` sigue a
 ### `caption_filter_list`
 
 - **Solo para datasets de text embeds.** Puede ser una lista JSON, una ruta a un archivo txt o una ruta a un documento JSON. Las cadenas de filtro pueden ser términos simples para eliminar de todos los captions, o pueden ser expresiones regulares. Además, se pueden usar entradas estilo sed `s/buscar/reemplazar/` para _reemplazar_ cadenas en el caption en lugar de simplemente eliminarlas.
+
+Los archivos de filtros se leen al abrir la caché de embeddings de texto. Las claves de las entradas filtradas se calculan a partir del texto que recibe el codificador. Después de actualizar, vuelve a generar los embeddings de las cachés configuradas con filtros. Si desactivas los filtros en una caché creada con una versión anterior, vuelve a generar también esa caché.
 
 #### Ejemplo de lista de filtros
 
@@ -1390,7 +1405,13 @@ Para un ejemplo básico de cómo usar un dataset de Hugging Face, configura `"ty
 
 Las consultas de captions usan la caché de metadatos por shard de Webshart en lugar de un mapa de captions de todo el dataset en SimpleTuner. Los archivos JSON de captions antiguos de SimpleTuner permanecen en disco y se ignoran. Los entrenamientos con captions nativos de Webshart omiten las estadísticas inferidas de palabras de activación en los metadatos de los checkpoints.
 
-Durante la preparación de la caché VAE, Webshart procesa todos los grupos de relación de aspecto de un shard antes de pasar al siguiente. Esto reduce las descargas repetidas cuando la caché de shards completos no puede contener todo el conjunto de datos. Las muestras ya almacenadas y las asignadas a otros ranks se excluyen antes de agrupar; el orden del muestreador de entrenamiento no cambia.
+Con una política de muestreo nativa, la preparación VAE lee la vista aceptada en lotes acotados de formas compatibles y divide el trabajo independientemente del orden de entrenamiento. El mantenimiento de la caché VAE anterior agrupa por shard las tareas pendientes.
+
+En Parquet nativo, el índice de pertenencia preparado registra las referencias aceptadas, los recuentos y las revisiones fijadas de la fuente. La geometría reutilizable de las imágenes con políticas de recorte compatibles se guarda en la caché de transformaciones por shard de Webshart, bajo `webshart.cache_dir`. Los bytes de las imágenes se leen de la fuente o de la caché separada de shards completos. Una nueva revisión preparada se publica tras un escaneo forzado exitoso. Reemplazar el contenido invalida las exclusiones del shard afectado. Vuelve a abrir el dataset si cambia la huella del catálogo de origen.
+
+SimpleTuner mantiene desactivada la expulsión automática de las transformaciones de Webshart. El directorio `.webshart-transforms` guarda únicamente la geometría. Un escaneo forzado exitoso inicia una nueva generación de la caché, por lo que escaneos repetidos pueden dejar generaciones anteriores en el disco. En los recortes por época compatibles, el proveedor reutiliza la forma preparada y calcula el recorte al leer la muestra.
+
+Define `text_cache_encode_only: true` en la entrada vinculada de embeddings de texto para codificar el lote actual durante el entrenamiento sin acceder a los archivos de embeddings. Para precalcularlos, utiliza un almacén Local o AWS independiente y con permisos de escritura, y selecciónalo con `text_embeds` en el dataset de imágenes.
 
 Los captions pueden ser cadenas, objetos JSON nativos o listas mixtas de ambos.
 Los objetos se conservan en los metadatos y la caché; cada objeto se convierte en
@@ -1423,14 +1444,19 @@ Los datasets Webshart cargan shards tar estilo WebDataset mediante el paquete `w
 - `metadata` es opcional y puede apuntar a metadatos separados con captions. Para repositorios Hugging Face de metadata como `webshart/conceptual-captions-12m-webdataset-metadata`, pasa el repo id; Webshart sigue el layout de subcarpetas del source, como `data/`.
 - `metadata_backend` debe ser `webshart`; `caption_strategy` debe ser `webshart` o `instanceprompt`.
 - `webshart.cache_dir` almacena la metadata de SimpleTuner y las caches de Webshart. `shard_cache_gb` y `parallel_downloads` se pasan a la cache de shards de Webshart; define `shard_cache_gb` como `0` para desactivar la cache de shards completos y mantener lecturas por rango indexadas.
+- Con la caché de fragmentos completos habilitada para Parquet remoto, cada backend mantiene abierto un lector de fragmentos en caché entre lecturas. Reserva espacio adicional por encima de `shard_cache_gb` para las descargas simultáneas y los fragmentos que los lectores activos mantienen bloqueados. Webshart escribe cada descarga en un archivo temporal antes de descartar los fragmentos antiguos.
+- Usa `webshart.sampling_policy=global` para mezclar las muestras de cada grupo de aspecto preparado o `shard_local` para formar lotes con muestras cercanas en el almacenamiento. La proximidad entre shards reduce las sustituciones en la caché de conjuntos remotos como DataComp. Omite la opción para conservar el muestreador existente.
+- Si un conjunto Parquet de imágenes aún carece de índice, `shard_local`, un `max_train_steps` fijo, `data_backend_sampling=uniform` y la codificación de texto y latentes bajo demanda permiten preparar la geometría en pequeños grupos de shards durante el entrenamiento. El texto se codifica para los lotes programados. Los lotes globales incompletos se descartan al terminar cada grupo. Los índices existentes, la mezcla global, la ponderación automática y la preparación de caché sin conexión usan la pertenencia indexada.
+- Con una política nativa de muestreo de Webshart, `scan_for_errors` comprueba las entradas VAE de la vista preparada en lotes acotados. Usa `vae_cache_scan_behaviour: recreate` para eliminar del almacén de artefactos los latentes leídos con valores o dimensiones espaciales inválidos. La vista preparada es inmutable.
+- La preparación indexada guarda en disco el índice de muestras aceptadas. Reserva espacio para el índice y la geometría de las muestras aceptadas. Las claves de caché del VAE y de las imágenes de condicionamiento incluyen el contenido de origen, la geometría preparada y los ajustes del codificador. Cambiar los pesos o migrar desde el muestreador anterior puede exigir regenerar estos archivos. Las claves de los embeddings de texto conservan su formato.
 - `webshart.caption_key` permite seleccionar campos de caption: usa `"long_caption"` para una clave o `["long_caption", "short_caption"]` para recopilar varias en el orden indicado. Las claves son nombres literales que se buscan en los metadatos JSON de la muestra, después en los metadatos del índice y, finalmente, en las entradas con nombre de sus respectivos diccionarios `captions`; se usa la primera ubicación que contiene la clave. Los valores de texto y listas se convierten en variantes de caption, sin concatenarse en un único prompt. Se ignoran los valores ausentes o vacíos; con `caption_strategy: "webshart"`, se omiten las muestras sin captions seleccionadas aunque tengan captions predeterminadas o un sidecar `.txt`. Omitir la opción conserva la búsqueda predeterminada. Se leen los sidecars JSON cuando su contenido no está en el índice. Las cachés de captions y buckets se separan según el selector configurado. En los ajustes Webshart de la WebUI, introduce una clave por línea. Las lecturas de sidecars JSON usan la caché de shards configurada en Webshart; la consulta de captions no decodifica ni materializa los datos de imagen.
 - `webshart_optimize_captions` (grafía alternativa `webshart_optimise_captions`; también se acepta como `optimize_captions`/`optimise_captions` dentro del bloque `webshart`) sondea el layout de captions al arrancar y, cuando los captions residen en miembros tar sidecar `.txt`/`.json` en lugar del índice de metadata, los consolida una sola vez en la cache local de metadata de Webshart. Sin esta opción, los datasets con captions en sidecars (por ejemplo `laion/conceptual-captions-12m-webdataset`) pagan una lectura por rango por muestra cada vez que se enumeran los captions — al arrancar, al guardar checkpoints y al generar la model card. Los datasets cuya metadata ya incluye los captions omiten la consolidación automáticamente.
 
 #### Bytes de imágenes Parquet en S3
 
-Usa `webshart.format: "parquet"` con shards locales, del Hub o de S3. `source` admite `s3://bucket` o `s3://bucket/prefix`; `webshart.manifest` selecciona un descriptor de captura relativo al origen. Requiere webshart 0.8.0 o posterior para S3 nativo y manifiestos de captura.
+Usa `webshart.format: "parquet"` con shards locales, del Hub o de S3. `source` admite `s3://bucket` o `s3://bucket/prefix`; `webshart.manifest` selecciona un descriptor de captura relativo al origen. SimpleTuner requiere Webshart 0.9.1 o posterior.
 
-`webshart.columns` asigna `image`, `captions`, `width` y `height` a columnas del origen; los nombres omitidos usan esos valores. La imagen puede ser binaria o una estructura con `bytes`. Se excluyen capturas con `url_status != "ok"` o `stored_bytes` vacío conservando los índices físicos. Sin dimensiones no hay bucketing. No se descargan las URL originales. Los lotes omiten imágenes que no se pueden decodificar.
+`webshart.columns` asigna `image`, `captions`, `width` y `height` a columnas del origen; los nombres omitidos usan esos valores. La imagen puede ser binaria o una estructura con `bytes`. Se excluyen capturas con `url_status != "ok"` o `stored_bytes` vacío conservando los índices físicos. Sin dimensiones no hay bucketing. No se descargan las URL originales. Si el VAE no puede decodificar una muestra bajo demanda, el entrenamiento se detiene e identifica la muestra. Durante la preparación nativa indexada del VAE, activa `delete_problematic_images` para excluir las muestras ilegibles de la vista preparada.
 
 Usa las opciones existentes de nivel superior `aws_region_name`, `aws_endpoint_url`, `aws_access_key_id`, `aws_secret_access_key`, `aws_session_token` y `aws_max_pool_connections`. El endpoint no incluye el bucket; el límite predeterminado es 32 solicitudes S3 simultáneas. Sin claves explícitas se usan variables AWS, identidad web o roles de contenedor/instancia. No se leen perfiles compartidos. Las representaciones de trabajadores omiten credenciales; expórtalas al entorno de los subprocesos cuando sea necesario.
 

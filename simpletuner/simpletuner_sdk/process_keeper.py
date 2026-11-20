@@ -584,6 +584,8 @@ logger.info("Subprocess exiting")
         # Remove SIMPLETUNER_WEB_MODE so subprocess can use colors even when launched from web UI
         env.pop("SIMPLETUNER_WEB_MODE", None)
         env.pop("SIMPLETUNER_DISABLE_COLORS", None)
+        # The server skips torch for its own startup; the trainer it launches must not.
+        env.pop("SIMPLETUNER_SKIP_TORCH", None)
         # env["FORCE_COLOR"] = "1"
         # env["CLICOLOR_FORCE"] = "1"
 

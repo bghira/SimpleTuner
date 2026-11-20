@@ -14,11 +14,19 @@
 
 - At task start, check `git status --short --branch` and `git worktree list`. Use an existing checkout for read-only reviews, CI checks, and GPU monitoring.
 - Use one worktree per active change. Reuse it for follow-ups, tests, and turning an experiment into a PR. Create a new worktree only when there is no suitable checkout for the change or when independent work or an incompatible base requires isolation. Fetch the target remote before creating a new branch and worktree from the target branch, outside the main checkout.
+- Fetch the target and rebase the task branch in its existing worktree. Use the branch reflog for routine recovery. Create a temporary backup ref only when needed. Remove it once the rebased changes and relevant checks are verified.
 - Run edits, builds, tests that write files, and Git mutations in the task worktree. Verify the path and branch before making changes. Keep the main checkout free of task changes. Preserve pre-existing changes in every checkout. If task changes land in the main checkout, move only your own changes and verify the main checkout matches its initial state. Ask if ownership is unclear.
 - Keep experiment results, recovery scripts, and other files needed beyond the checkout in a private directory outside the repository and its worktrees. Record the path in the handoff. Before cleanup, move existing task-owned artifacts there and verify the archive is complete and readable. Leave other people's files in place.
 - Clean up completed task worktrees at handoff, including finished experiments and closed PRs. For a merged PR, fetch the target and verify the merge includes the work, including squash and rebase merges. For work without a merge, verify that any unique commits remain on a local branch and that any uncommitted changes are preserved. Keep a worktree while further local changes or tests are pending. A fully pushed PR can keep its branch without keeping a checkout once local work is done.
 - Before removal, check staged and unstaged changes, untracked and ignored files, and any processes that use the checkout. Remove only worktrees belonging to the task or identified by the user. Use `git worktree remove` without force. If cleanup would discard files or edits, keep the worktree and report the blocker. Prune verified stale metadata as needed. Delete a local branch only after verifying its work is merged or it has no unique commits. Leave remote branches in place unless the user authorizes deletion.
 - During long tasks and at handoff, recheck `git worktree list` and `git status --short --branch` in the main checkout and any task worktrees still present. Verify the main checkout matches its initial state. Report any retained task worktree and the reason it still needs to exist.
+
+## Progress and handoff
+
+- For an active plan or TODO, report meaningful milestones in commentary and keep working on the next authorized step. A passing test run or completed subtask is a progress checkpoint. Check the remaining scope before ending the turn.
+- End the turn when the requested outcome and its verification are complete, the user asks to pause or take over, or a concrete blocker, scope decision, or permission requirement prevents further useful work. If only part of the work is blocked, continue the independent steps.
+- Ask only when the answer could materially change the implementation or its consequences. Use reasonable judgment on reversible choices and state important assumptions in progress updates.
+- At a handoff, report what was verified, what remains, and the exact blocker or decision if work is unfinished.
 
 ## Code style
 
@@ -26,7 +34,6 @@
 - DO not hide or mute import failures unless the logic actually requires it
 - Use type: ignore only when absolutely necessary
 - NEVER add a code fallback path unless it is explicit to the requirements
-- Do not make assumptions if confusion arises. Instead, stop working, and request clarification.
 - Let's not add wandering, rambling comments in notes. Be concise and to the point or leave no comment at all since the code should be self-explanatory.
 
 ## Plan inspection guidelines
@@ -37,7 +44,7 @@
 - If the plan is proposing new code infrastructure, it should contain justification for which existing code paths are similar but insufficient enough that new code is required
 - All proposals for new code should have as well, proposal for code removal or refactoring of existing code to avoid bloat and duplication - in general, our codebase should be kept as minimal as possible, so that it is easy to maintain, review, and understand for newcomers
 - If fallbacks or defensive programming practices are proposed, they must be clearly justified: the fallback should be necessary and reasonable for a user to expect, not just "in case something goes wrong".
-- Plans shouldn't "do too much", the user should be forced to break down complex problems into smaller steps that can be solved iteratively to avoid ambiguity.
+- Break complex plans into concrete steps with exit criteria. Move through those steps within the authorized scope and ask for steering when a decision changes the goal or constraints.
 - If a dataloader/dataset configuration option is being added, it should have an update in the corresponding Dataset template for the WebUI.
 
 ## File preservation

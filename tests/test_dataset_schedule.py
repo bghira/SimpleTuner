@@ -8,6 +8,7 @@ Covers:
 """
 
 import unittest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 # Import at module level for simpler test code
@@ -358,6 +359,56 @@ class TestCurriculumLearningScenarios(unittest.TestCase):
         highres_active, _ = self._is_active("highres-1024", highres, epoch_hint=1, step_hint=399, update_state=False)
         self.assertFalse(lowres_active, "Low-res should not be active at step 400")
         self.assertTrue(highres_active, "High-res should be active at step 400")
+
+    def test_prefetched_mixer_uses_optimizer_windows_and_restores_accumulation_phase(self):
+        from simpletuner.helpers.data_backend.runtime.batch_fetcher import BatchFetcher
+        from simpletuner.helpers.data_backend.runtime.dataloader_iterator import DatasetMixer
+
+        def fetcher(saved=None):
+            backends = {
+                name: SimpleNamespace(config=window, get_data_loader=lambda name=name: {"dataset": name})
+                for name, window in (
+                    ("first", {"end_step": 4}),
+                    ("next", {"start_step": 5}),
+                )
+            }
+            mixer = DatasetMixer(backends, 2, 30, saved, optimizer_step=3)
+            fetch = BatchFetcher(step=30, max_size=4, datasets=backends, mixer=mixer)
+            fetch.fetch_responses()
+            return fetch
+
+        args = SimpleNamespace(seed=19, gradient_accumulation_steps=2)
+        with patch.object(StateTracker, "get_args", return_value=args):
+            initial = fetcher()
+            first = initial.next_response(step=31)
+            self.assertEqual(first["dataset"], "first")
+            self.assertEqual(first["dataset_mixer_state"]["optimizer_step"], 3)
+            self.assertEqual(first["dataset_mixer_state"]["accumulated_microbatches"], 1)
+            resumed = fetcher(first["dataset_mixer_state"])
+            expected = [initial.next_response(step) for step in range(32, 35)]
+            actual = [resumed.next_response(step) for step in range(32, 35)]
+            self.assertEqual(expected, actual)
+            self.assertEqual([item["dataset"] for item in actual], ["first", "next", "next"])
+
+    def test_mixer_auto_weighting_uses_provider_batch_counts_once(self):
+        from simpletuner.helpers.data_backend.runtime.dataloader_iterator import DatasetMixer, get_backend_weight
+
+        backends = {
+            name: SimpleNamespace(config={"probability": probability}, training_batch_count=MagicMock(return_value=count))
+            for name, probability, count in (("local", 1, 4), ("webshart", 0.5, 20))
+        }
+        args = SimpleNamespace(seed=19, data_backend_sampling="auto-weighting")
+        with (
+            patch.object(StateTracker, "get_args", return_value=args) as get_args,
+            patch.object(StateTracker, "get_dataset_size", side_effect=AssertionError("read the global registry")),
+        ):
+            mixer = DatasetMixer(backends, 1, 0)
+            get_args.side_effect = AssertionError("retrieved sampling settings inside the mixer")
+            for step in range(10):
+                self.assertEqual(get_backend_weight("local", backends["local"], step, mixer=mixer), 4)
+                self.assertEqual(get_backend_weight("webshart", backends["webshart"], step, mixer=mixer), 10)
+        for dataset in backends.values():
+            dataset.training_batch_count.assert_called_once()
 
     def test_epoch_based_curriculum_three_stages(self):
         """

@@ -68,6 +68,14 @@ class CaptionFlowJobServiceTestCase(unittest.TestCase):
                 }
             )
 
+    def test_remote_provider_with_local_cache_path_is_not_treated_as_local_source(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            for provider in ("aws", "webshart", "csv"):
+                with self.subTest(provider=provider), self.assertRaisesRegex(ValueError, f"'{provider}' dataset provider"):
+                    resolve_captioning_dataset_source(
+                        {"id": "images", "type": provider, "dataset_type": "image", "instance_data_dir": directory}
+                    )
+
     def test_huggingface_dataset_maps_to_captionflow_source(self) -> None:
         source = resolve_captioning_dataset_source(
             {

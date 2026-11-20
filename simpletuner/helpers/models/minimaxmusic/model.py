@@ -517,20 +517,17 @@ class MiniMaxMusic(AudioModelFoundation):
 
         return self._prompt_context_from_audio_metadata(sample_metadata, str(prompt))
 
-    def text_embed_cache_metadata_for_filepath(
+    def text_embed_cache_metadata_for_preparation(
         self,
         *,
-        init_backend: dict,
+        read_metadata,
         image_path: str,
         prompt: str,
         data_backend_id: str | None,
         dataset_relative_path: str | None,
     ) -> dict:
         del data_backend_id, dataset_relative_path
-        metadata_backend = init_backend.get("metadata_backend") if isinstance(init_backend, dict) else None
-        if metadata_backend is None:
-            return {"prompt": str(prompt)}
-        sample_metadata = metadata_backend.get_metadata_by_filepath(image_path) or {}
+        sample_metadata = read_metadata(image_path) or {}
         return self._prompt_context_from_audio_metadata(sample_metadata, str(prompt))
 
     def flow_matching_target_direction(self) -> float:
@@ -1392,22 +1389,20 @@ class MiniMaxMusic(AudioModelFoundation):
         codes = example.get("audio_tokens")
         cache_metadata = {}
         if codes is None:
+            datasets = example.get("dataset_bindings", self._training_datasets)
+            backend_id = example.get("data_backend_id")
+            dataset = datasets.get(backend_id)
             token_path = example.get("audio_tokens_path")
             if token_path:
                 resolved = str(token_path)
                 if not os.path.isabs(resolved):
-                    backend_id = example.get("data_backend_id")
-                    from simpletuner.helpers.training.state_tracker import StateTracker
-
-                    backend_cfg = StateTracker.get_data_backend_config(backend_id) if backend_id else {}
-                    dataset_root = backend_cfg.get("instance_data_dir") if backend_cfg else None
+                    dataset_root = dataset.instance_data_dir if dataset is not None else None
                     if dataset_root:
                         resolved = os.path.join(dataset_root, resolved)
                 if not os.path.exists(resolved):
                     raise FileNotFoundError(f"MiniMax Music 3 audio token file not found: {resolved}")
                 codes = torch.load(resolved, map_location="cpu", weights_only=True)
             else:
-                backend_id = example.get("data_backend_id")
                 filepath = example.get("image_path") or example.get("filepath")
                 if not backend_id or not filepath:
                     raise ValueError(
@@ -1415,9 +1410,9 @@ class MiniMaxMusic(AudioModelFoundation):
                         "or an audio dataset sample with data_backend_id and image_path so the RVQ VAE cache can "
                         "provide raw per-codebook codes."
                     )
-                from simpletuner.helpers.training.state_tracker import StateTracker
-
-                codes = StateTracker.get_vaecache(id=backend_id).retrieve_from_cache(filepath)
+                if dataset is None or dataset.vae_cache is None:
+                    raise ValueError(f"Audio dataset {backend_id!r} has no bound RVQ cache.")
+                codes = dataset.vae_cache.retrieve_from_cache(filepath, view=dataset.published_read_view())
         if isinstance(codes, dict):
             metadata = codes.get("metadata")
             if isinstance(metadata, dict):

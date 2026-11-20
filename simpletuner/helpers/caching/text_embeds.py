@@ -3,12 +3,12 @@ import hashlib
 import logging
 import os
 import queue
-import time
 from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
-from itertools import batched
+from contextlib import nullcontext
+from itertools import batched, chain
 from queue import Queue
-from threading import Thread
+from threading import Condition, Thread
 from typing import Any, Dict, List, Optional, Sequence, TypedDict
 from weakref import WeakSet
 
@@ -42,6 +42,8 @@ class PromptCacheRecord(TypedDict, total=False):
 
 class TextEmbeddingCache(WebhookMixin):
     _instances: "WeakSet[TextEmbeddingCache]" = WeakSet()
+    text_cache_encode_only = False
+    preparation_listing = None
 
     def __init__(
         self,
@@ -62,6 +64,10 @@ class TextEmbeddingCache(WebhookMixin):
         model: ModelFoundation = None,
         text_cache_ondemand: bool = False,
         text_cache_disable: bool = False,
+        write_budget_bytes: int = 256 * 1024**2,
+        text_cache_encode_only: bool = False,
+        caption_filter_list: list[str] | str | None = None,
+        preparation_listing=None,
     ):
         self.id = id
         if data_backend.id != id:
@@ -72,9 +78,12 @@ class TextEmbeddingCache(WebhookMixin):
         self.tokenizers = tokenizers
         self.accelerator = accelerator
         self.cache_dir = cache_dir
+        self.preparation_listing = preparation_listing
         self.model_type = model_type
         self.model = model
-        self.text_cache_disable = bool(text_cache_disable)
+        self.caption_filters = PromptHandler.load_caption_filters(caption_filter_list)
+        self.text_cache_encode_only = bool(text_cache_encode_only)
+        self.text_cache_disable = bool(text_cache_disable) or self.text_cache_encode_only
         self.text_cache_ondemand = bool(text_cache_ondemand) or self.text_cache_disable
         self.pipeline = None
         self.prompt_handler = prompt_handler
@@ -92,16 +101,26 @@ class TextEmbeddingCache(WebhookMixin):
         )
         if self.data_backend.type in {"local", "memory"}:
             self.cache_dir = os.path.abspath(self.cache_dir)
-        self.data_backend.create_directory(self.cache_dir)
-        self.write_queue = Queue()
-        self.write_error_queue = Queue()
+        if not self.text_cache_encode_only:
+            self.data_backend.create_directory(self.cache_dir)
+        if write_budget_bytes < 1:
+            raise ValueError("write_budget_bytes must be positive")
+        self.write_budget_bytes = write_budget_bytes
+        self.pending_write_bytes = 0
+        self.peak_write_bytes = 0
+        self._writer_condition = Condition()
+        self._closed = False
+        self.write_queue = Queue(maxsize=max(1, self.process_queue_size))
+        self.write_error_queue = Queue(maxsize=1)
         self.process_write_batches = True
-        self.batch_write_thread = Thread(
-            target=self.batch_write_embeddings,
-            name=f"batch_write_thread_{self.id}",
-            daemon=True,
-        )
-        self.batch_write_thread.start()
+        self.batch_write_thread = None
+        if not self.text_cache_disable:
+            self.batch_write_thread = Thread(
+                target=self.batch_write_embeddings,
+                name=f"batch_write_thread_{self.id}",
+                daemon=True,
+            )
+            self.batch_write_thread.start()
         self.webhook_progress_interval = webhook_progress_interval
         self.disabled = False  # whether to skip or not at training time.
         TextEmbeddingCache._instances.add(self)
@@ -136,7 +155,7 @@ class TextEmbeddingCache(WebhookMixin):
                 normalized = f"{dataset_id}:{canonicalize_data_uri(data_path)}"
         return normalized
 
-    def create_hash(self, key_value, prompt=None, metadata=None):
+    def create_hash(self, key_value, prompt=None, metadata=None, *, filtered=False):
         normalized_key = self._normalize_key_value(key_value)
         model = self.model if self.model is not None else StateTracker.get_model()
         # Precomputed part of the format string
@@ -161,6 +180,9 @@ class TextEmbeddingCache(WebhookMixin):
         if self._requires_path_based_keys and prompt:
             md5_hash.update(b"\0prompt\0")
             md5_hash.update(str(prompt).encode())
+        if filtered:
+            md5_hash.update(b"\0caption-filter-v1\0")
+            md5_hash.update(prompt.encode())
         # logger.debug(f"Hashing caption: {caption}")
         result = md5_hash.hexdigest() + hash_format
         # logger.debug(f"-> {result}")
@@ -186,18 +208,27 @@ class TextEmbeddingCache(WebhookMixin):
 
         raise ValueError("Prompt record is missing both 'key' and 'prompt' values.")
 
-    def hash_prompt_with_path(self, prompt_record: PromptCacheRecord):
+    def _embedding_key(self, prompt_record: PromptCacheRecord, *, is_negative_prompt=False):
         key_value = self._resolve_cache_key_value(prompt_record)
-        return os.path.join(
-            self.cache_dir,
-            self.create_hash(key_value, prompt=prompt_record.get("prompt"), metadata=prompt_record.get("metadata")) + ".pt",
-        )
+        prompt = prompt_record.get("prompt")
+        filtered = bool(self.caption_filters and prompt and not is_negative_prompt)
+        if filtered:
+            effective = PromptHandler.apply_caption_filters(prompt, self.caption_filters)
+            if self.key_type is TextEmbedCacheKey.CAPTION and key_value == prompt:
+                key_value = effective
+            prompt = effective
+        digest = self.create_hash(key_value, prompt=prompt, metadata=prompt_record.get("metadata"), filtered=filtered)
+        return digest + ".pt", prompt
+
+    def _embedding_input(self, prompt_record: PromptCacheRecord, *, is_negative_prompt=False):
+        filename, prompt = self._embedding_key(prompt_record, is_negative_prompt=is_negative_prompt)
+        return os.path.join(self.cache_dir, filename), prompt
+
+    def hash_prompt_with_path(self, prompt_record: PromptCacheRecord):
+        return self._embedding_input(prompt_record)[0]
 
     def hash_prompt(self, prompt_record: PromptCacheRecord):
-        key_value = prompt_record.get("key") or prompt_record.get("prompt")
-        return (
-            self.create_hash(key_value, prompt=prompt_record.get("prompt"), metadata=prompt_record.get("metadata")) + ".pt"
-        )
+        return self._embedding_key(prompt_record)[0]
 
     def _normalize_prompt_records(self, prompts: Optional[Sequence[Any]]) -> List[PromptCacheRecord]:
         normalized: List[PromptCacheRecord] = []
@@ -254,6 +285,8 @@ class TextEmbeddingCache(WebhookMixin):
         attention_mask = text_encoder_output.get("attention_mask")
         true_length = None
         if isinstance(attention_mask, torch.Tensor):
+            if batch_size == 1 and attention_mask.ndim == 1:
+                return text_encoder_output
             if attention_mask.ndim < 2 or attention_mask.shape[0] != batch_size:
                 raise ValueError(
                     f"Batched attention_mask shape {tuple(attention_mask.shape)} does not match batch size {batch_size}."
@@ -297,18 +330,6 @@ class TextEmbeddingCache(WebhookMixin):
             raise TypeError(f"encode_text_batch returned {type(text_encoder_output)}; expected a dict.")
 
         batch_size = len(pending_records)
-        current_size = self.write_queue.qsize()
-        if current_size >= 2048:
-            log_msg = str(
-                f"[WARNING] Write queue size is {current_size}. This is quite large."
-                " Consider increasing the write batch size. Delaying encode so that writes can catch up."
-            )
-            if self.write_thread_bar is not None:
-                self.write_thread_bar.write(log_msg)
-            else:
-                logger.warning(log_msg)
-            while self.write_queue.qsize() > 100:
-                time.sleep(0.1)
         for index, filename in enumerate(pending_filenames):
             self.save_to_cache(
                 filename,
@@ -341,37 +362,44 @@ class TextEmbeddingCache(WebhookMixin):
                 except AttributeError:
                     pass
 
-    def discover_all_files(self):
-        """Identify all files in the data backend."""
-        logger.info(f"{self.rank_info}(id={self.id}) Listing all text embed cache entries")
-        # This isn't returned, because we merely check if it's stored, or, store it.
-        (
-            StateTracker.get_text_cache_files(data_backend_id=self.id)
-            or StateTracker.set_text_cache_files(
-                self.data_backend.list_files(
-                    instance_data_dir=self.cache_dir,
-                    file_extensions=["pt"],
-                ),
-                data_backend_id=self.id,
-            )
-        )
-        self.debug_log(" -> done listing all text embed cache entries")
-
     def save_to_cache(self, filename, embeddings):
         """Add write requests to the queue instead of writing directly."""
         if self.text_cache_disable:
             return
-        if not self.batch_write_thread.is_alive():
-            logger.debug("Restarting background write thread.")
-            # Start the thread again.
-            self.process_write_batches = True
-            self.batch_write_thread = Thread(target=self.batch_write_embeddings)
-            self.batch_write_thread.start()
-        packed = self.model.pack_text_embeddings_for_cache(embeddings)
-        self.write_queue.put((packed, filename))
-        logger.debug(
-            f"save_to_cache called for {filename}, write queue has {self.write_queue.qsize()} items, and the write thread's status: {self.batch_write_thread.is_alive()}"
-        )
+        self._queue_packed(filename, self.model.pack_text_embeddings_for_cache(embeddings))
+
+    @staticmethod
+    def _packed_bytes(packed):
+        # A narrow tensor view can keep its entire backing storage alive.
+        if torch.is_tensor(packed):
+            return packed.untyped_storage().nbytes()
+        if isinstance(packed, dict):
+            return sum(TextEmbeddingCache._packed_bytes(child) for child in packed.values())
+        if isinstance(packed, (tuple, list)):
+            return sum(TextEmbeddingCache._packed_bytes(child) for child in packed)
+        if isinstance(packed, (bytes, bytearray)):
+            return len(packed)
+        return 0
+
+    def _queue_packed(self, filename, packed):
+        size = self._packed_bytes(packed)
+        with self._writer_condition:
+            self._writer_condition.wait_for(
+                lambda: self._closed
+                or (
+                    not self.write_queue.full()
+                    and (self.pending_write_bytes == 0 or self.pending_write_bytes + size <= self.write_budget_bytes)
+                )
+            )
+            if self._closed:
+                raise RuntimeError("Text embedding cache writer is closed.")
+            if not self.batch_write_thread.is_alive():
+                self.process_write_batches = True
+                self.batch_write_thread = Thread(target=self.batch_write_embeddings, daemon=True)
+                self.batch_write_thread.start()
+            self.pending_write_bytes += size
+            self.peak_write_bytes = max(self.peak_write_bytes, self.pending_write_bytes)
+            self.write_queue.put_nowait((packed, filename, size))
 
     def encode_dropout_caption(self):
         """Encode and cache the dropout (null/empty) caption embedding."""
@@ -394,7 +422,7 @@ class TextEmbeddingCache(WebhookMixin):
         # This ensures consistent retrieval during validation
         key = f"__validation_negative__{negative_prompt}" if self._requires_path_based_keys else negative_prompt
         prompt_record: PromptCacheRecord = {"prompt": negative_prompt, "key": key, "metadata": {}}
-        filename = self.hash_prompt_with_path(prompt_record)
+        filename, _ = self._embedding_input(prompt_record, is_negative_prompt=True)
 
         self.save_to_cache(filename, negative_embeds)
         logger.debug(f"Validation negative prompt encoded and saved to cache")
@@ -420,16 +448,25 @@ class TextEmbeddingCache(WebhookMixin):
                     batch.append(self.write_queue.get_nowait())
                     logger.debug(f"Batch now contains {len(batch)} items.")
 
-                self.process_write_batch(batch)
+                self.process_write_batch([(packed, filename) for packed, filename, _ in batch])
                 if self.write_thread_bar is not None:
                     self.write_thread_bar.update(len(batch))
                 logger.debug("Processed batch write.")
                 written_elements += len(batch)
             except Exception as error:
-                self.write_error_queue.put(error)
+                try:
+                    self.write_error_queue.put_nowait(error)
+                except queue.Full:
+                    pass  # The first failure is reported to the caller.
                 logger.exception("An error occurred while writing embeddings to disk.")
             finally:
-                for _ in batch:
+                completed = len(batch)
+                size = sum(entry[2] for entry in batch)
+                del first_item, batch
+                with self._writer_condition:
+                    self.pending_write_bytes -= size
+                    self._writer_condition.notify_all()
+                for _ in range(completed):
                     self.write_queue.task_done()
         logger.debug("Exiting background batch write thread.")
 
@@ -458,8 +495,9 @@ class TextEmbeddingCache(WebhookMixin):
         logger.debug(f"Completed write batch of {len(batch)} items")
 
     def load_from_cache(self, filename):
-        result = self.data_backend.torch_load(filename)
+        return self._unpack_cached_embeddings(filename, self.data_backend.torch_load(filename))
 
+    def _unpack_cached_embeddings(self, filename, result):
         # Handle backward compatibility: old cache files stored tuples, new format uses dicts
         if isinstance(result, tuple):
             # Convert old tuple format to new dict format using model's _format_text_embedding
@@ -509,6 +547,67 @@ class TextEmbeddingCache(WebhookMixin):
 
         return prompt_embeds, masks
 
+    @torch.no_grad()
+    def read_training_batch(self, entries, *, device=None):
+        """Return one unpacked embedding per occurrence and encode cache misses together."""
+        records = self._normalize_prompt_records(entries)
+        filenames = []
+        by_filename = {}
+        unique = {}
+        for record in records:
+            filename, prompt = self._embedding_input(record)
+            filenames.append(filename)
+            unique.setdefault(filename, {**record, "prompt": prompt})
+        cached = (None for _ in unique) if self.text_cache_encode_only else self.data_backend.read_cached_tensors(unique)
+        missing = {}
+        for (filename, record), result in zip(unique.items(), cached, strict=True):
+            if result is not None:
+                by_filename[filename] = self._unpack_cached_embeddings(filename, result)
+                continue
+            if not self.text_cache_ondemand:
+                raise FileNotFoundError(
+                    f"Missing precomputed text embedding: {filename}. "
+                    "Precompute embeddings for every caption alternative or enable text_cache_ondemand."
+                )
+            if self.model.requires_text_embed_image_context() and not record["metadata"]:
+                raise ValueError("On-demand text encoding requires image-context metadata for every missing prompt.")
+            missing[filename] = record
+
+        for batch in batched(missing.items(), self.text_encoder_batch_size):
+            prompts = [record["prompt"] for _, record in batch]
+            if any(prompt is None for prompt in prompts):
+                raise ValueError("Cannot encode a training occurrence without a caption.")
+            encoded = self._encode_text_batch(
+                prompts,
+                is_negative_prompt=False,
+                prompt_contexts=[record["metadata"] for _, record in batch],
+                is_validation=False,
+            )
+            for index, (filename, _) in enumerate(batch):
+                sample = (
+                    encoded
+                    if self.text_encoder_batch_size == 1
+                    else self._slice_batch_output_for_cache(encoded, index, len(batch))
+                )
+                packed = self.model.pack_text_embeddings_for_cache(sample)
+                if not self.text_cache_disable:
+                    self._queue_packed(filename, packed)
+                by_filename[filename] = self.model.unpack_text_embeddings_from_cache(packed)
+        self.wait_for_pending_writes()
+        if device is not None:
+            by_filename = {key: move_dict_of_tensors_to_device(value, device) for key, value in by_filename.items()}
+        return [by_filename[name] for name in filenames]
+
+    def _uncached_records(self, records, *, is_negative_prompt=False, probe=None):
+        unique = {}
+        for record in records:
+            filename, _ = self._embedding_input(record, is_negative_prompt=is_negative_prompt)
+            unique.setdefault(filename, record)
+        presence = (self.data_backend.bulk_exists if probe is None else probe)(unique)
+        for record, present in zip(unique.values(), presence, strict=True):
+            if not present:
+                yield record
+
     def precompute_embeddings(
         self,
         prompt_records: Iterable[PromptCacheRecord],
@@ -516,7 +615,9 @@ class TextEmbeddingCache(WebhookMixin):
         batch_size: int = 128,
         progress_callback: Callable[[int], None] | None = None,
     ) -> int:
-        """Consume an explicitly partitioned preparation stream without listing the cache."""
+        """Consume an explicitly partitioned preparation stream using the bound presence lookup."""
+        if self.text_cache_encode_only:
+            raise ValueError("Text embedding preparation requires a writable cache binding.")
         if self.model is None:
             self.model = StateTracker.get_model()
         if not self.model.uses_text_embeddings_cache():
@@ -526,27 +627,28 @@ class TextEmbeddingCache(WebhookMixin):
         processed = 0
         if progress_callback is not None:
             progress_callback(processed)
-        for batch in batched(prompt_records, batch_size):
-            pending = []
-            filenames = set()
-            for record in self._normalize_prompt_records(batch):
-                filename = self.hash_prompt_with_path(record)
-                if filename in filenames or self.data_backend.exists(filename):
-                    continue
-                filenames.add(filename)
-                if self.model.requires_text_embed_image_context() and not record.get("metadata"):
-                    raise ValueError("Text embedding preparation requires image-context metadata for every prompt.")
-                pending.append(record)
-            if pending:
-                self.compute_prompt_embeddings_with_model(
-                    pending,
-                    return_concat=False,
-                    load_from_cache=False,
-                    split_between_processes=False,
-                )
-            processed += len(batch)
-            if progress_callback is not None:
-                progress_callback(processed)
+        batches = batched(prompt_records, batch_size)
+        first = next(batches, None)
+        if first is None:
+            return 0
+        lookup = self.preparation_listing.open() if self.preparation_listing is not None else nullcontext()
+        with lookup as probe:
+            for batch in chain((first,), batches):
+                pending = []
+                for record in self._uncached_records(self._normalize_prompt_records(batch), probe=probe):
+                    if self.model.requires_text_embed_image_context() and not record.get("metadata"):
+                        raise ValueError("Text embedding preparation requires image-context metadata for every prompt.")
+                    pending.append(record)
+                if pending:
+                    self.compute_prompt_embeddings_with_model(
+                        pending,
+                        return_concat=False,
+                        load_from_cache=False,
+                        split_between_processes=False,
+                    )
+                processed += len(batch)
+                if progress_callback is not None:
+                    progress_callback(processed)
         self.wait_for_pending_writes()
         return processed
 
@@ -571,47 +673,18 @@ class TextEmbeddingCache(WebhookMixin):
             self.debug_log("No prompt records were provided to text embed cache.")
             return None
         self.debug_log("Initialising text embed calculator...")
-        if not self.batch_write_thread.is_alive():
-            self.debug_log("Restarting background write thread.")
-            # Start the thread again.
-            self.process_write_batches = True
-            self.batch_write_thread = Thread(target=self.batch_write_embeddings)
-            self.batch_write_thread.start()
-
-        existing_cache_filenames = list((StateTracker.get_text_cache_files(data_backend_id=self.id) or {}).keys())
-
-        all_cache_filenames = [self.hash_prompt_with_path(record) for record in prompt_records]
-
-        # Create a set for faster lookups
-        existing_cache_filenames_set = set(existing_cache_filenames)
-
-        # Determine which prompts are not cached
-        uncached_records = []
-        uncached_cache_filenames_set = set()
-        for record, filename in zip(prompt_records, all_cache_filenames):
-            if filename in existing_cache_filenames_set or filename in uncached_cache_filenames_set:
-                continue
-            uncached_records.append(record)
-            uncached_cache_filenames_set.add(filename)
-
-        # If all prompts are cached and certain conditions are met, return None
-        if not uncached_records and not return_concat:
-            self.debug_log(
-                f"All prompts are cached, ignoring (is_validation={is_validation}, return_concat={return_concat}, existing={existing_cache_filenames})"
-            )
+        raw_records = prompt_records
+        if not return_concat and self.text_cache_encode_only:
             return None
-        else:
-            self.debug_log(
-                f"(uncached_prompts={len(uncached_records)}, is_validation={is_validation}, return_concat={return_concat})"
-            )
-
-        # Proceed with uncached prompts
-        raw_records = uncached_records if uncached_records else prompt_records
-
-        # Only check for metadata if we're going to encode (not just load from cache)
-        requires_context = self.model.requires_text_embed_image_context()
-        should_encode = not load_from_cache
-        if requires_context and uncached_records and should_encode:
+        if not return_concat:
+            # Partition before probing the store. Other workers may publish hits during this traversal.
+            if split_between_processes and not load_from_cache:
+                raw_records = self.split_prompt_records_between_processes(raw_records)
+                split_between_processes = False
+            raw_records = list(self._uncached_records(raw_records, is_negative_prompt=is_negative_prompt))
+            if not raw_records:
+                return None
+        if self.model.requires_text_embed_image_context() and not load_from_cache:
             contextless_records = [record for record in raw_records if not record.get("metadata")]
             if contextless_records and not is_validation:
                 logger.warning(
@@ -666,12 +739,12 @@ class TextEmbeddingCache(WebhookMixin):
         split_between_processes: bool = True,
     ):
         prompt_embeds_all = []
-        should_encode = not load_from_cache
+        should_encode = self.text_cache_encode_only or not load_from_cache
         args = StateTracker.get_args()
         records = self._normalize_prompt_records(prompt_records)
         if not records:
             return None
-        if should_encode and split_between_processes:
+        if not load_from_cache and split_between_processes:
             local_records = self.split_prompt_records_between_processes(records)
         else:
             local_records = records
@@ -711,15 +784,10 @@ class TextEmbeddingCache(WebhookMixin):
                 current_idx += 1
                 if progress_callback is not None:
                     progress_callback(current_idx + 1, len(local_records))
-                filename = self.hash_prompt_with_path(record)
-                prompt = record.get("prompt")
-                debug_msg = f"Processing file: {filename}, prompt: {prompt}, records: {record}"
-                prompt = PromptHandler.filter_caption(self.data_backend, prompt)
-                debug_msg = f"{debug_msg}\n -> filtered prompt: {prompt}"
+                filename, prompt = self._embedding_input(record, is_negative_prompt=is_negative_prompt)
                 if prompt is None:
                     logger.error(f"Filename {filename} does not have a caption.")
                     continue
-                logger.debug(debug_msg)
                 record = {**record, "prompt": prompt}
                 encode_current_prompt = should_encode
                 if return_concat and load_from_cache and not encode_current_prompt:
@@ -785,16 +853,6 @@ class TextEmbeddingCache(WebhookMixin):
                     logger.debug(
                         f"Filename {filename} prompt embeds: {gather_dict_of_tensors_shapes(tensors=text_encoder_output)}, keys: {text_encoder_output.keys()}"
                     )
-                    # Get the current size of the queue.
-                    current_size = self.write_queue.qsize()
-                    if current_size >= 2048:
-                        log_msg = str(
-                            f"[WARNING] Write queue size is {current_size}. This is quite large."
-                            " Consider increasing the write batch size. Delaying encode so that writes can catch up."
-                        )
-                        self.write_thread_bar.write(log_msg)
-                        while self.write_queue.qsize() > 100:
-                            time.sleep(0.1)
                     self.debug_log(f"Adding embed to write queue: {filename}")
                     self.save_to_cache(filename, text_encoder_output)
 
@@ -810,9 +868,9 @@ class TextEmbeddingCache(WebhookMixin):
                         )
 
                     if return_concat:
-                        # we're returning the embeds for training, so we'll prepare them
+                        # Cache misses join CPU cache hits; direct encodes stay on the training device.
                         text_encoder_output = move_dict_of_tensors_to_device(
-                            tensors=text_encoder_output, device=self.accelerator.device
+                            tensors=text_encoder_output, device=self.accelerator.device if should_encode else "cpu"
                         )
                     else:
                         # if we're not returning them, we'll just nuke them
@@ -868,7 +926,20 @@ class TextEmbeddingCache(WebhookMixin):
 
         return text_encoder_output
 
-    def __del__(self):
-        """Ensure that the batch write thread is properly closed."""
-        if self.batch_write_thread.is_alive():
-            self.batch_write_thread.join()
+    def finish_preparation(self):
+        if self.preparation_listing is not None:
+            self.preparation_listing.close()
+            self.preparation_listing = None
+
+    def close(self):
+        """Drain a job-owned cache and release its writer and model references."""
+        with self._writer_condition:
+            self._closed = True
+            self.process_write_batches = False
+            self._writer_condition.notify_all()
+        try:
+            self.wait_for_pending_writes()
+        finally:
+            if self.batch_write_thread is not None:
+                self.batch_write_thread.join()
+            self.finish_preparation()

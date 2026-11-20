@@ -59,12 +59,38 @@ class SamplerURIPathTests(unittest.TestCase):
                 sampler.data_backend.read_image.assert_called_once_with(canonical)
 
 
+class SamplerStatePublicationTests(unittest.TestCase):
+    def test_failed_checkpoint_write_preserves_previous_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / "checkpoint.json")
+            manager = BucketStateManager("images")
+            previous = {"seen_images": {"image.jpg": 2}}
+            manager.save_state(previous, path)
+            with self.assertRaises(TypeError):
+                manager.save_state({"seen_images": {"image.jpg": 3}, "invalid": object()}, path)
+            self.assertEqual(manager.load_state(path), previous)
+
+    def test_follower_reconstructs_consumed_counts_from_portable_batches(self):
+        from simpletuner.helpers.multiaspect.progress import LegacySamplerProgress
+
+        follower = LegacySamplerProgress({}, {"position": 0, "repeat": 0})
+        follower.acknowledge({"position": 1, "repeat": 0, "refs": ("a", "a")})
+        with follower.checkpoint_seen() as seen:
+            self.assertEqual(seen, {"a": 2})
+        follower.acknowledge({"position": 2, "repeat": 1, "refs": ("b", "c")})
+        with follower.checkpoint_seen() as seen:
+            self.assertEqual(seen, {"b": 1, "c": 1})
+
+
 class TestMultiAspectSampler(unittest.TestCase):
     def setUp(self):
         self.process_state = PartialState()
         self.accelerator = MagicMock(num_processes=1, process_index=0)
         self.accelerator.log = MagicMock()
-        self.metadata_backend = Mock(spec=DiscoveryMetadataBackend)
+        self.metadata_backend = Mock(spec=DiscoveryMetadataBackend, epoch_provider=None)
+        self.metadata_backend.get_metadata_batch.side_effect = lambda refs: MetadataBackend.get_metadata_batch(
+            self.metadata_backend, refs
+        )
         self.metadata_backend.id = "foo"
         self.metadata_backend.aspect_ratio_bucket_indices = {
             "1.0": ["image1", "image2", "image3", "image4"],
@@ -90,120 +116,14 @@ class TestMultiAspectSampler(unittest.TestCase):
     def test_len(self):
         self.assertEqual(len(self.sampler), 2)
 
-    def test_model_card_video_overview_honors_sample_cap_and_nested_video_config(self):
-        sampler = object.__new__(MultiAspectSampler)
-        sampler.id = "video-dataset"
-        sampler.metadata_backend = SimpleNamespace(seen_images={str(i): True for i in range(1000)})
-        sampler._get_unseen_images = MagicMock(return_value=[None] * 3997)
-        sampler.metadata_backend.aspect_ratio_bucket_indices = {"1.0": [None] * 600}
-        sampler.metadata_backend.max_num_samples = 4096
-        sampler.metadata_backend.bucket_report = None
-        sampler.accelerator = SimpleNamespace(num_processes=8, process_index=0)
-        sampler.logger = MagicMock()
-        sampler.sample_type_strs = "videos"
-        sampler.buckets = ["0.75", "1.0", "1.25", "1.5", "1.75"]
-        sampler.is_regularisation_data = False
-        sampler.conditioning_type = None
-
-        with (
-            patch.object(
-                StateTracker,
-                "get_data_backend_config",
-                return_value={"max_num_samples": "not-an-int", "video": {"num_frames": 39}},
-            ),
-            patch.object(StateTracker, "get_dataset_schedule", return_value={"reached": True}),
-        ):
-            overview = sampler.log_state(show_rank=False, alt_stats=True)
-
-        self.assertIn("- Total number of videos: 4096", overview)
-        self.assertIn("- Target frame count: 39", overview)
-        self.assertIn("- FPS: unknown", overview)
-        self.assertNotIn("~39976", overview)
-        self.assertNotIn("~4800", overview)
-
-    def test_model_card_overview_uses_bucket_count_not_seen_progress(self):
-        sampler = object.__new__(MultiAspectSampler)
-        sampler.id = "video-dataset"
-        sampler.metadata_backend = SimpleNamespace(
-            aspect_ratio_bucket_indices={"1.0": [None] * 65536},
-            bucket_report=None,
-            max_num_samples=None,
-            seen_images={str(i): True for i in range(5740)},
-        )
-        sampler._get_unseen_images = MagicMock(return_value=[None] * 65536)
-        sampler.accelerator = SimpleNamespace(num_processes=4, process_index=0)
-        sampler.logger = MagicMock()
-        sampler.sample_type_strs = "videos"
-        sampler.buckets = ["1.0"]
-        sampler.is_regularisation_data = False
-        sampler.conditioning_type = None
-
-        with (
-            patch.object(StateTracker, "get_data_backend_config", return_value={"video": {"num_frames": 39}}),
-            patch.object(StateTracker, "get_dataset_schedule", return_value={"reached": True}),
-            patch("simpletuner.helpers.multiaspect.sampler.get_cp_aware_dp_info", return_value=(1, 0, 4)),
-        ):
-            overview = sampler.log_state(show_rank=False, alt_stats=True)
-
-        self.assertIn("- Total number of videos: 65536", overview)
-        self.assertNotIn("285096", overview)
-        self.assertNotIn("~", overview)
-
-    def test_model_card_overview_scales_data_parallel_bucket_shard_without_seen_progress(self):
-        sampler = object.__new__(MultiAspectSampler)
-        sampler.id = "video-dataset"
-        sampler.metadata_backend = SimpleNamespace(
-            aspect_ratio_bucket_indices={"1.0": [None] * 8192},
-            bucket_report=None,
-            max_num_samples=None,
-            seen_images={str(i): True for i in range(250)},
-        )
-        sampler._get_unseen_images = MagicMock(return_value=[None] * 7942)
-        sampler.accelerator = SimpleNamespace(num_processes=8, process_index=0)
-        sampler.logger = MagicMock()
-        sampler.sample_type_strs = "videos"
-        sampler.buckets = ["1.0"]
-        sampler.is_regularisation_data = False
-        sampler.conditioning_type = None
-
-        with (
-            patch.object(StateTracker, "get_data_backend_config", return_value={}),
-            patch.object(StateTracker, "get_dataset_schedule", return_value={"reached": True}),
-            patch("simpletuner.helpers.multiaspect.sampler.get_cp_aware_dp_info", return_value=(8, 0, 1)),
-        ):
-            overview = sampler.log_state(show_rank=False, alt_stats=True)
-
-        self.assertIn("- Total number of videos: ~65536", overview)
-        self.assertNotIn("67536", overview)
-
-    def test_model_card_overview_prefers_exact_bucket_report_total(self):
-        sampler = object.__new__(MultiAspectSampler)
-        sampler.id = "image-dataset"
-        sampler.metadata_backend = SimpleNamespace(
-            aspect_ratio_bucket_indices={"1.0": [None] * 16},
-            bucket_report=SimpleNamespace(bucket_summaries={"post_refresh": {"total_samples": 123}}),
-            max_num_samples=None,
-            seen_images={str(i): True for i in range(7)},
-        )
-        sampler._get_unseen_images = MagicMock(return_value=[None] * 16)
-        sampler.accelerator = SimpleNamespace(num_processes=8, process_index=0)
-        sampler.logger = MagicMock()
-        sampler.sample_type_strs = "images"
-        sampler.buckets = ["1.0"]
-        sampler.is_regularisation_data = False
-        sampler.conditioning_type = None
-        sampler.resolution = 512
-        sampler.resolution_type = "pixel"
-
-        with (
-            patch.object(StateTracker, "get_data_backend_config", return_value={}),
-            patch.object(StateTracker, "get_dataset_schedule", return_value={"reached": True}),
-            patch("simpletuner.helpers.multiaspect.sampler.get_cp_aware_dp_info", return_value=(8, 0, 1)),
-        ):
-            overview = sampler.log_state(show_rank=False, alt_stats=True)
-
-        self.assertIn("- Total number of images: 123", overview)
-        self.assertNotIn("~128", overview)
+    def test_len_counts_partial_batches_separately_for_each_bucket_and_repeat(self):
+        self.metadata_backend.aspect_ratio_bucket_indices = {
+            "1.0": ["image1", "image2", "image3"],
+            "1.5": ["image4", "image5", "image6"],
+            "2.0": [],
+        }
+        self.sampler.dataset_runtime.config["repeats"] = 1
+        self.assertEqual(len(self.sampler), 8)
 
     def test_save_state(self):
         with patch.object(self.sampler.state_manager, "save_state") as mock_save_state:
@@ -245,19 +165,9 @@ class TestMultiAspectSampler(unittest.TestCase):
             metadata_backend.seen_occurrence_count("same.jpg")
 
     def test_i2v_first_frame_conditioning_sample_maps_video_to_png(self):
-        sampler = object.__new__(MultiAspectSampler)
-        sampler.id = "conditioning"
-        sampler.model = None
-        sampler.metadata_backend = SimpleNamespace(instance_data_dir="/conditioning")
-        sampler.conditioning_type = "reference_strict"
-        sampler.source_dataset_id = None
-        sampler.caption_strategy = "filename"
-        sampler.instance_prompt = None
-        sampler.prepend_instance_prompt = False
-        sampler.use_captions = True
-        sampler.disable_multiline_split = False
-        sampler.logger = MagicMock()
-        sampler.debug_log = MagicMock()
+        metadata_backend = SimpleNamespace(
+            instance_data_dir="/conditioning", epoch_provider=None, requires_complete_preparation=False
+        )
 
         read_paths = []
 
@@ -274,23 +184,27 @@ class TestMultiAspectSampler(unittest.TestCase):
             "training_sample_path": "11.mp4",
         }
 
-        sampler.data_backend = SimpleNamespace(read_image=read_image)
-        sampler.metadata_backend.get_metadata_by_filepath = lambda path: metadata if path == "/conditioning/11.png" else None
-        sampler.dataset_runtime = DatasetRuntime("conditioning", sampler.data_backend, sampler.metadata_backend, {})
+        data_backend = SimpleNamespace(read_image=read_image)
+        metadata_backend.get_metadata_by_filepath = lambda path: metadata if path == "/conditioning/11.png" else None
+        metadata_backend.get_metadata_batch = lambda refs: MetadataBackend.get_metadata_batch(metadata_backend, refs)
         backend_config = {
             "conditioning_config": {"type": "i2v_first_frame"},
+            "conditioning_type": "reference_strict",
             "crop": False,
             "crop_style": "random",
             "resolution": 8,
             "resolution_type": "pixel",
         }
+        metadata_backend.active_dataset_config = backend_config
+        metadata_backend.conditioning_ref = MetadataBackend.conditioning_ref.__get__(metadata_backend)
 
+        dataset = DatasetRuntime("conditioning", data_backend, metadata_backend, backend_config)
         with (
             patch.object(StateTracker, "get_data_backend_config", return_value=backend_config),
             patch.object(StateTracker, "get_model", return_value=None),
             patch("simpletuner.helpers.prompts.PromptHandler.magic_prompt", return_value="caption"),
         ):
-            conditioning_sample = sampler.get_conditioning_sample("/training/11.mp4")
+            conditioning_sample = dataset.read_conditioning_sample("/training/11.mp4")
 
         self.assertEqual(read_paths, ["/conditioning/11.png"])
         self.assertIsNotNone(conditioning_sample)
@@ -322,28 +236,31 @@ class TestMultiAspectSampler(unittest.TestCase):
                     os.makedirs(os.path.dirname(mask_path), exist_ok=True)
                     Image.new("RGB", (8, 8), color=(image_idx * 255,) * 3).save(mask_path)
 
-                conditioning_metadata = Mock(spec=DiscoveryMetadataBackend)
+                conditioning_metadata = Mock(spec=DiscoveryMetadataBackend, epoch_provider=None)
+                conditioning_metadata.get_metadata_batch.side_effect = lambda refs: (metadata for _ in refs)
                 conditioning_metadata.id = conditioning_id
                 conditioning_metadata.instance_data_dir = conditioning_dir
+                conditioning_metadata.active_dataset_config = {}
+                conditioning_metadata.conditioning_ref.side_effect = MetadataBackend.conditioning_ref.__get__(
+                    conditioning_metadata
+                )
                 conditioning_metadata.aspect_ratio_bucket_indices = {}
                 conditioning_metadata.get_metadata_by_filepath.return_value = metadata
-                conditioning_sampler = MultiAspectSampler(
-                    dataset_runtime=DatasetRuntime(
-                        conditioning_id, LocalDataBackend(self.accelerator, conditioning_id), conditioning_metadata, {}
-                    ),
-                    accelerator=self.accelerator,
-                    batch_size=2,
-                    model=None,
-                    conditioning_type="mask",
+                conditioning_datasets.append(
+                    DatasetRuntime(
+                        conditioning_id,
+                        LocalDataBackend(self.accelerator, conditioning_id),
+                        conditioning_metadata,
+                        {**backend_config, "conditioning_type": "mask"},
+                    )
                 )
-                conditioning_datasets.append({"id": conditioning_id, "sampler": conditioning_sampler})
 
             for sampling_mode in ("random", "combined"):
                 for dataset_count in (1, 2):
                     with (
                         self.subTest(sampling_mode=sampling_mode, dataset_count=dataset_count),
                         patch.object(
-                            StateTracker, "get_conditioning_datasets", return_value=conditioning_datasets[:dataset_count]
+                            self.sampler.dataset_runtime, "conditioning_datasets", conditioning_datasets[:dataset_count]
                         ),
                         patch.object(
                             StateTracker,
@@ -368,7 +285,33 @@ class TestMultiAspectSampler(unittest.TestCase):
                             )
                             self.assertEqual(mask.image.getpixel((0, 0)), (mask_idx % len(samples) * 255,) * 3)
                             self.assertEqual(mask.conditioning_type, "mask")
+                            self.assertEqual(
+                                mask.training_sample_path(self.sampler.id), samples[mask_idx % len(samples)]["image_path"]
+                            )
                         self.sampler.logger.warning.assert_not_called()
+
+    def test_legacy_random_conditioning_uses_reproducible_sample_choices(self):
+        self.sampler.current_epoch = 3
+        samples = [{"image_path": f"sample-{index}.png"} for index in range(24)]
+        source = self.sampler.dataset_runtime
+        source.metadata_backend.instance_data_dir = ""
+        targets = tuple(
+            SimpleNamespace(id=f"mask-{index}", read_conditioning_sample=Mock(side_effect=lambda *a, **kw: Mock()))
+            for index in range(2)
+        )
+        with (
+            patch.object(source, "conditioning_datasets", targets),
+            patch.object(
+                StateTracker, "get_args", return_value=SimpleNamespace(conditioning_multidataset_sampling="random")
+            ),
+        ):
+            output = self.sampler.connect_conditioning_samples(samples)
+        selected = [record._source_dataset_id for record in output[len(samples) :]]
+        expected = [
+            targets[random.Random(f"{self.sampler.id}:3:{source.pairing_key(sample['image_path'])}").randrange(2)].id
+            for sample in samples
+        ]
+        self.assertEqual(selected, expected)
 
     def test_load_states_with_matching_batch_size_restores_schedule_before_normalizing_legacy_seen_flags(self):
         self.sampler.state_manager.load_state.return_value = {
@@ -395,7 +338,18 @@ class TestMultiAspectSampler(unittest.TestCase):
         self.assertEqual(self.sampler.exhausted_buckets, ["old"])
         self.assertEqual(self.metadata_backend.seen_images["same.jpg"], 2)
         self.assertEqual(self.metadata_backend.seen_images["other.jpg"], 0)
-        self.assertTrue(self.metadata_backend.seen_images["legacy.jpg"])
+        self.assertIs(self.metadata_backend.seen_images["legacy.jpg"], True)
+
+    def test_loading_integer_seen_counts_does_not_walk_the_bucket_schedule(self):
+        schedule = MagicMock(wraps={"1.0": ["image1", "image1", "image2"]})
+        schedule.values.side_effect = AssertionError("checkpoint walked the complete bucket schedule")
+        self.metadata_backend.aspect_ratio_bucket_indices = schedule
+        self.sampler.state_manager.load_state.return_value = {"buckets": ["1.0"], "seen_images": {"image1": 2}}
+
+        self.sampler.load_states(self.state_path)
+
+        self.assertEqual(self.metadata_backend.seen_images, {"image1": 2})
+        schedule.values.assert_not_called()
 
     def test_load_states_rejects_batch_size_mismatch_before_mutation(self):
         self.sampler.state_manager.load_state.return_value = {
@@ -412,7 +366,7 @@ class TestMultiAspectSampler(unittest.TestCase):
 
         self.metadata_backend.aspect_ratio_bucket_indices = {"fresh": ["fresh.jpg"]}
         self.metadata_backend.seen_images = {"fresh.jpg": 1}
-        self.sampler._val_master_list = ["fresh.jpg"]
+        self.sampler.validation_cursor = MagicMock()
         self.sampler.buckets = ["fresh"]
         self.sampler.current_bucket = "fresh"
         self.sampler.exhausted_buckets = ["fresh-exhausted"]
@@ -433,7 +387,7 @@ class TestMultiAspectSampler(unittest.TestCase):
         )
         self.assertEqual(self.metadata_backend.aspect_ratio_bucket_indices, {"fresh": ["fresh.jpg"]})
         self.assertEqual(self.metadata_backend.seen_images, {"fresh.jpg": 1})
-        self.assertEqual(self.sampler._val_master_list, ["fresh.jpg"])
+        self.sampler.validation_cursor.close.assert_not_called()
         self.assertEqual(self.sampler.buckets, ["fresh"])
         self.assertEqual(self.sampler.current_bucket, "fresh")
         self.assertEqual(self.sampler.exhausted_buckets, ["fresh-exhausted"])
@@ -622,6 +576,8 @@ class TestSamplerResumeSchedule(unittest.TestCase):
                 side_effect=lambda value: shuffle_seed,
             ),
         ):
+            backend.runtime_args = StateTracker.get_args()
+            backend.active_dataset_config = StateTracker.get_data_backend_config(backend.id)
             MetadataBackend.split_buckets_between_processes(
                 backend,
                 gradient_accumulation_steps=1,
@@ -642,7 +598,7 @@ class TestSamplerResumeSchedule(unittest.TestCase):
         sampler.current_epoch = 1
         sampler.sample_type_strs = "images"
         sampler.logger = MagicMock()
-        sampler._val_master_list = []
+        sampler.validation_cursor = MagicMock()
         sampler.state_manager = BucketStateManager(backend.id)
         return sampler
 
@@ -785,9 +741,10 @@ class TestIterationUnseenIndex(unittest.TestCase):
     def tearDown(self):
         self.get_args.stop()
 
-    def _sampler(self, buckets, seen, use_index):
+    def _sampler(self, buckets, seen, use_index, *, track_consumed=False, repeats=0):
         metadata_backend = object.__new__(DiscoveryMetadataBackend)
         metadata_backend.id = "unseen"
+        metadata_backend.removed_samples = set()
         metadata_backend.instance_data_dir = ""
         metadata_backend.aspect_ratio_bucket_indices = copy.deepcopy(buckets)
         metadata_backend.seen_images = dict(seen)
@@ -797,14 +754,17 @@ class TestIterationUnseenIndex(unittest.TestCase):
         data_backend = MockDataBackend()
         data_backend.id = "unseen"
         sampler = MultiAspectSampler(
-            dataset_runtime=DatasetRuntime("unseen", data_backend, metadata_backend, {}),
-            accelerator=MagicMock(num_processes=1, process_index=0),
+            dataset_runtime=DatasetRuntime("unseen", data_backend, metadata_backend, {"repeats": repeats}),
+            accelerator=SimpleNamespace(num_processes=1, process_index=0),
             batch_size=4,
             minimum_image_size=0,
             model=MagicMock(),
+            track_consumed=track_consumed,
         )
-        sampler._validate_and_yield_images_from_samples = lambda samples, bucket: [{"image_path": p} for p in samples]
-        sampler.connect_conditioning_samples = lambda samples: samples
+        sampler._validate_and_yield_images_from_samples = lambda samples, bucket, **kwargs: [
+            {"image_path": p} for p in samples
+        ]
+        sampler.connect_conditioning_samples = lambda samples, **kwargs: samples
         sampler.connect_s2v_samples = lambda samples: samples
         stored = {}
         sampler.state_manager = SimpleNamespace(
@@ -814,6 +774,80 @@ class TestIterationUnseenIndex(unittest.TestCase):
         if not use_index:
             sampler._iteration_unseen_images = sampler._get_unseen_images
         return sampler
+
+    def test_persistent_sampler_keeps_the_next_bucket_after_a_padded_batch(self):
+        from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
+
+        full_bucket = [f"full-{index}.jpg" for index in range(8)]
+        buckets = {"0.5": ["short.jpg"], "1.0": full_bucket}
+        sampler = self._sampler(buckets, {}, True)
+        sampler.buckets = list(buckets)
+        sampler.current_bucket = None
+        batches = iter(sampler)
+        self.assertEqual([record["image_path"] for record in next(batches)], ["short.jpg"] * 4)
+        self.assertCountEqual(
+            [record["image_path"] for _ in range(2) for record in next(batches)],
+            full_bucket,
+        )
+        with self.assertRaises(MultiDatasetExhausted):
+            next(batches)
+
+    def test_consumed_checkpoint_ignores_prefetch_across_repeat_boundaries(self):
+        from simpletuner.helpers.data_backend.runtime.batch_fetcher import BatchFetcher
+        from simpletuner.helpers.data_backend.runtime.dataloader_iterator import DatasetMixer
+
+        class Batches:
+            def __init__(self, sampler):
+                self.sampler = sampler
+
+            def __iter__(self):
+                for batch in self.sampler:
+                    yield {"images": [row["image_path"] for row in batch], "seed": batch[0]["caption_dropout_seed"]}
+
+        buckets = {"0.5": ["a", "b", "b"], "1.0": ["c", "d", "e", "f"]}
+
+        def runtime():
+            sampler = self._sampler(buckets, {}, True, track_consumed=True, repeats=1)
+            dataset = sampler.dataset_runtime
+            dataset.sampler = sampler
+            dataset.training_dataloader = Batches(sampler)
+            dataset.start_epoch(1)
+            return dataset
+
+        def fetch(dataset, state=None):
+            datasets = {dataset.id: dataset}
+            mixer = DatasetMixer(datasets, epoch=1, step=0, saved=state)
+            fetcher = BatchFetcher(step=mixer.step, max_size=8, datasets=datasets, mixer=mixer)
+            fetcher.fetch_responses()
+            return fetcher
+
+        args = SimpleNamespace(seed=22, print_sampler_statistics=False)
+        with (
+            patch.object(StateTracker, "get_args", return_value=args),
+            patch.object(StateTracker, "exhausted_backends", []),
+            patch.object(StateTracker, "repeats", {}),
+            tempfile.TemporaryDirectory() as directory,
+        ):
+            filename = str(Path(directory) / "training_state.json")
+            original = runtime()
+            fetcher = fetch(original)
+            first = fetcher.next_response(1)
+            original.acknowledge_batch(first["dataset_continuation"])
+            self.assertEqual(original.sampler.fetched_state()["position"], 4)
+            self.assertEqual(original.sampler.fetched_state()["repeat"], 1)
+            original.sampler.save_state(filename)
+            state = original.sampler.state_manager.load_state(filename)
+            self.assertEqual(state["legacy_cursor"]["position"], 1)
+            self.assertEqual(state["legacy_cursor"]["repeat"], 0)
+            self.assertEqual(sum(state["seen_images"].values()), 4)
+
+            resumed = runtime()
+            resumed.sampler.state_manager.load_state = lambda path: state
+            resumed.sampler.load_states(filename)
+            replay = fetch(resumed, first["dataset_mixer_state"])
+            expected = [fetcher.next_response(step) for step in range(2, 6)]
+            self.assertEqual([replay.next_response(step) for step in range(2, 6)], expected)
+            self.assertIs(expected[-1], False)
 
     def _run(self, sampler, epochs, restore_schedule, per_step):
         """Drain `epochs` epochs, disturbing the schedule and seen state the way training can.

@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 from types import SimpleNamespace
@@ -61,6 +62,7 @@ from simpletuner.helpers.models.minimaxh3.pipeline_ref import MiniMaxH3Ref2VAPip
 from simpletuner.helpers.models.minimaxh3.scheduler import MiniMaxH3Scheduler
 from simpletuner.helpers.models.minimaxh3.sparse_attention import initialize_minimax_h3_flex_attention
 from simpletuner.helpers.models.minimaxh3.transformer import MiniMaxH3Transformer3DModel
+from simpletuner.helpers.models.prompt_upsampling import load_prompt_images
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.musubi_block_swap import apply_musubi_pretrained_defaults
 from simpletuner.helpers.training.explorative_modeling import reduce_loss_to_samples, reshape_candidate_batch
@@ -73,6 +75,7 @@ from simpletuner.helpers.training.lora_format import (
 )
 from simpletuner.helpers.training.multi_process import should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
+from simpletuner.helpers.utils.pathing import canonicalize_data_uri
 
 logger = logging.getLogger(__name__)
 if should_log():
@@ -876,6 +879,17 @@ class MiniMaxH3(VideoModelFoundation):
     def requires_text_embed_image_context(self) -> bool:
         return True
 
+    def requires_text_embed_conditioning_pixels(self) -> bool:
+        # Read the same original reference as offline preparation.
+        return False
+
+    def text_embed_cache_context_key(self, metadata: dict, *, prompt=None) -> str | None:
+        reference = self._prompt_image_reference(metadata)
+        if reference is None:
+            return None
+        dataset_id, path = reference
+        return json.dumps(("h3-reference-v1", dataset_id, canonicalize_data_uri(path)), separators=(",", ":"))
+
     def should_precompute_dropout_caption(self) -> bool:
         return False
 
@@ -893,43 +907,6 @@ class MiniMaxH3(VideoModelFoundation):
         if prompt == "":
             return f"{default_key}:__caption_dropout__"
         return default_key
-
-    def text_embed_cache_metadata_for_filepath(
-        self,
-        *,
-        init_backend: dict,
-        image_path: str,
-        prompt: str,
-        data_backend_id: str | None,
-        dataset_relative_path: str | None,
-    ) -> dict:
-        del init_backend, image_path, prompt
-        conditioning_datasets = StateTracker.get_conditioning_datasets(data_backend_id)
-        if not conditioning_datasets:
-            return {}
-
-        image_paths = []
-        data_backend_ids = []
-        for conditioning_backend in conditioning_datasets:
-            conditioning_backend_id = conditioning_backend.get("id")
-            conditioning_config = conditioning_backend.get("config", {})
-            conditioning_root = conditioning_config.get("instance_data_dir")
-            if not conditioning_backend_id or not conditioning_root or not dataset_relative_path:
-                continue
-            conditioning_path = os.path.join(conditioning_root, dataset_relative_path)
-            if (conditioning_config.get("conditioning_config") or {}).get("type") == "i2v_first_frame":
-                conditioning_path = os.path.splitext(conditioning_path)[0] + ".png"
-            image_paths.append(conditioning_path)
-            data_backend_ids.append(conditioning_backend_id)
-
-        if not image_paths:
-            return {}
-        return {
-            "image_paths": image_paths,
-            "data_backend_ids": data_backend_ids,
-            "image_path": image_paths[0],
-            "data_backend_id": data_backend_ids[0],
-        }
 
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
         encoded = []
@@ -1025,27 +1002,23 @@ class MiniMaxH3(VideoModelFoundation):
         direct_image = context.get("conditioning_pixel_values")
         if direct_image is not None:
             return self._coerce_prompt_image(direct_image)
-        image_paths = context.get("image_paths")
-        data_backend_ids = context.get("data_backend_ids")
-        if isinstance(image_paths, (list, tuple)) and image_paths:
-            image_path = image_paths[0]
-            if isinstance(data_backend_ids, (list, tuple)) and data_backend_ids:
-                data_backend_id = data_backend_ids[0]
-            else:
-                data_backend_id = context.get("data_backend_id")
-        else:
-            # `image_path` alone identifies the target sample in ordinary T2V
-            # backends. Only plural paths or direct pixels denote reference context.
+        reference = self._prompt_image_reference(context)
+        if reference is None:
             return None
-        if not image_path or not data_backend_id:
+        dataset_id, image_path = reference
+        image = load_prompt_images([image_path], [dataset_id], dataset_bindings=context.get("dataset_bindings"))[0]
+        return self._coerce_prompt_image(image)
+
+    @staticmethod
+    def _prompt_image_reference(context: dict) -> tuple[str, str] | None:
+        paths = context.get("image_paths")
+        if not isinstance(paths, (list, tuple)) or not paths or not paths[0]:
             return None
-        backend_entry = StateTracker.get_data_backend(data_backend_id)
-        if backend_entry is None:
-            return None
-        data_backend = backend_entry.get("data_backend")
-        if data_backend is None:
-            return None
-        return self._coerce_prompt_image(data_backend.read_image(image_path))
+        dataset_ids = context.get("data_backend_ids")
+        dataset_id = (
+            dataset_ids[0] if isinstance(dataset_ids, (list, tuple)) and dataset_ids else context.get("data_backend_id")
+        )
+        return (dataset_id, paths[0]) if dataset_id else None
 
     @staticmethod
     def _coerce_prompt_image(image) -> Image.Image | None:

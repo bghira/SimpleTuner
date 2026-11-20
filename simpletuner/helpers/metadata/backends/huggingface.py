@@ -3,8 +3,17 @@ import logging
 import os
 import time
 import traceback
+from bisect import bisect_right
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing, contextmanager
+from itertools import batched, chain
+from threading import Lock
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Union
+from uuid import UUID, uuid4
 
+import ijson
 import numpy as np
 from huggingface_hub import hf_hub_download
 from huggingface_hub.utils import EntryNotFoundError, HfHubHTTPError, HFValidationError, LocalEntryNotFoundError
@@ -15,6 +24,8 @@ from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.dataset_types import ensure_dataset_type
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
+from simpletuner.helpers.metadata.backends.huggingface_transforms import HuggingFaceTransformStore
+from simpletuner.helpers.metadata.preparation import DatasetViewChangedError, PreparationView, ShardedPreparationIndex
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
 from simpletuner.helpers.training import image_file_extensions
 from simpletuner.helpers.training.multi_process import should_log
@@ -37,6 +48,8 @@ else:
 
 
 class HuggingfaceMetadataBackend(MetadataBackend):
+    caption_projection_strategy = "huggingface"
+
     def __init__(
         self,
         id: str,
@@ -66,6 +79,8 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         composite_image_column: str = "image",
         quality_filter: Optional[Dict[str, Any]] = None,
         dataset_type: str = "image",
+        dataset_config: dict | None = None,
+        runtime_args=None,
         max_num_samples: int = None,
     ):
         self.hf_config = hf_config
@@ -131,89 +146,47 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             minimum_num_frames=minimum_num_frames,
             maximum_num_frames=maximum_num_frames,
             num_frames=num_frames,
+            dataset_config=dataset_config,
+            runtime_args=runtime_args,
             cache_file_suffix=cache_file_suffix,
             repeats=repeats,
             max_num_samples=max_num_samples,
+            load_cache_on_init=False,
         )
-        if not (StateTracker.get_data_backend_config(id) or {}).get("dataset_type"):
+        if not self.dataset_config.get("dataset_type"):
             self.dataset_type = ensure_dataset_type(dataset_type)
 
-        if not hasattr(data_backend, "dataset"):
-            raise ValueError("HuggingfaceMetadataBackend requires HuggingfaceDatasetsBackend")
+        self._prepared_writer = None
+        self._prepared_writes = deque()
+        self._prepared_write_lock = Lock()
         with accelerator.main_process_first():
-            self.caption_cache = self._extract_captions_to_dict()
-        accelerator.wait_for_everyone()
-        with accelerator.main_process_first():
+            if not hasattr(data_backend, "dataset"):
+                raise ValueError("HuggingfaceMetadataBackend requires HuggingfaceDatasetsBackend")
+            self._caption_rows = self._select_caption_columns(data_backend.dataset)
             self.reload_cache()
-            self.load_image_metadata()
+            if self._published_geometry is None:
+                self.load_image_metadata()
+            if not data_backend.streaming and self.uses_caption_strategy("huggingface"):
+                missing = set()
+                for refs in batched(chain.from_iterable(self.aspect_ratio_bucket_indices.values()), 128):
+                    missing.update(
+                        ref for ref, caption in zip(refs, self.read_caption_batch(refs), strict=True) if caption is None
+                    )
+                if missing:
+                    self.remove_images(missing)
+                    self.save_cache()
         accelerator.wait_for_everyone()
 
-    def _extract_captions_to_dict(self) -> Dict[str, Union[str, List[str]]]:
-        import concurrent.futures
-
-        captions_cache_file = f"{self.cache_file}_captions.json"
-        if self.data_backend.exists(captions_cache_file):
-            try:
-                raw = self.data_backend.read(captions_cache_file)
-                if raw:
-                    captions = json.loads(raw)
-                    logger.info(f"Loaded {len(captions)} captions from cache file {captions_cache_file}")
-                    return captions
-            except Exception as e:
-                logger.warning(f"Error loading caption cache, will regenerate: {e}")
-        logger.info("Extracting captions from Hugging Face dataset...")
-        indices = self._limited_dataset_indices()
-
-        def process_item(idx):
-            item = self.data_backend.dataset[idx]
-            virtual_path = f"{idx}.{self.file_extension}"
-            if self.quality_filter and self.quality_column in item:
-                quality = item[self.quality_column]
-                if not self._passes_quality_filter(quality):
-                    return None
-            caption = self._extract_caption_from_item(item)
-            if caption:
-                return (virtual_path, caption)
+    def _select_caption_columns(self, dataset):
+        if self.data_backend.streaming:
             return None
-
-        captions = {}
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            results = list(
-                tqdm(
-                    executor.map(process_item, indices),
-                    desc="Extracting captions",
-                    total=len(indices),
-                    ncols=100,
-                    mininterval=0.5,
-                    ascii=True,
-                    position=int(os.environ.get("RANK", 0)),
-                )
-            )
-        for result in results:
-            if result:
-                virtual_path, caption = result
-                captions[virtual_path] = caption
-
-        try:
-            self.data_backend.write(captions_cache_file, json.dumps(captions))
-            logger.info(f"Saved {len(captions)} captions to cache file {captions_cache_file}")
-        except Exception as e:
-            logger.warning(f"Error saving caption cache: {e}")
-
-        logger.info(f"Extracted {len(captions)} captions from dataset")
-        return captions
-
-    def _limited_dataset_indices(self) -> List[int]:
-        total_items = len(self.data_backend.dataset)
-        all_files = [f"{idx}.{self.file_extension}" for idx in range(total_items)]
-        limited_files = self._apply_max_num_samples_limit(all_files)
-        indices = []
-        for virtual_path in limited_files:
-            try:
-                indices.append(int(str(virtual_path).rsplit(".", 1)[0]))
-            except (TypeError, ValueError):
-                continue
-        return indices
+        fields = list(self.caption_column) if isinstance(self.caption_column, list) else [self.caption_column]
+        fields.extend((self.fallback_caption_column, self.description_column, self.quality_column))
+        if _dataset_type_value(self.dataset_type) == "audio":
+            fields.extend([*(self.audio_caption_fields or ()), "audio"])
+        requested = {name.split(".", 1)[0] for name in fields if name}
+        columns = [name for name in dataset.column_names if name in requested]
+        return dataset.select_columns(columns) if columns else None
 
     def _extract_caption_from_item(self, item: Dict) -> Optional[Union[str, List[str]]]:
         caption = None
@@ -364,6 +337,9 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             return None
         return value or None
 
+    def _source_revision(self):
+        return getattr(getattr(self.data_backend, "dataset", None), "_fingerprint", None)
+
     def reload_cache(self, set_config: bool = True):
         if self.data_backend.exists(self.cache_file):
             try:
@@ -373,13 +349,29 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             except Exception as e:
                 logger.warning(f"Error loading aspect ratio bucket cache, creating new one: {e}")
                 cache_data = {}
-            self.aspect_ratio_bucket_indices = cache_data.get("aspect_ratio_bucket_indices", {})
-            if set_config:
-                self.config = cache_data.get("config", {})
-            # Load filtering statistics if present
-            self.filtering_statistics = cache_data.get("filtering_statistics")
+            stored_revision = cache_data.get("source_revision")
+            stale_geometry = stored_revision is not None and stored_revision != self._source_revision()
+            publication = None if stale_geometry else cache_data.get("huggingface_geometry")
+            transforms = self._open_transform_store(publication) if publication is not None else None
+            with self.metadata_semaphor:
+                self._stale_geometry = stale_geometry
+                self._published_geometry = publication
+                if transforms is not None:
+                    self.image_metadata = transforms
+                    self.image_metadata_loaded = True
+                elif stale_geometry or isinstance(self.image_metadata, HuggingFaceTransformStore):
+                    self.image_metadata = {}
+                    self.image_metadata_loaded = False
+                self.aspect_ratio_bucket_indices = (
+                    {} if stale_geometry else cache_data.get("aspect_ratio_bucket_indices", {})
+                )
+                if set_config:
+                    self.config = cache_data.get("config", {})
+                self.filtering_statistics = cache_data.get("filtering_statistics")
         else:
             logger.debug("No cache file found, starting fresh.")
+            self._stale_geometry = False
+            self._published_geometry = None
 
     def save_cache(self, enforce_constraints: bool = False):
         if enforce_constraints:
@@ -395,17 +387,68 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             key: [str(path) for path in value] for key, value in self.aspect_ratio_bucket_indices.items()
         }
         cache_data = {
-            "config": StateTracker.get_data_backend_config(data_backend_id=self.data_backend.id),
-            "aspect_ratio_bucket_indices": aspect_ratio_bucket_indices_str,
+            "source_revision": self._source_revision(),
+            "config": self.active_dataset_config,
         }
+        if isinstance(self.image_metadata, HuggingFaceTransformStore):
+            self.flush_prepared_metadata()
+            cache_data["huggingface_geometry"] = {
+                "generation": self.image_metadata.directory.name,
+                "shard_ends": list(self.image_metadata.boundaries),
+            }
+        cache_data["aspect_ratio_bucket_indices"] = aspect_ratio_bucket_indices_str
         # Include filtering statistics if available
         if self.filtering_statistics is not None:
             cache_data["filtering_statistics"] = self.filtering_statistics
         cache_data_str = json.dumps(cache_data)
         self.data_backend.write(self.cache_file, cache_data_str)
+        self._published_geometry = cache_data.get("huggingface_geometry")
+        self._stale_geometry = False
         logger.debug("Aspect ratio cache saved.")
 
+    def enqueue_prepared_metadata(self, records):
+        if not records:
+            return
+        with self._prepared_write_lock:
+            if self._prepared_writer is None:
+                self._prepared_writer = ThreadPoolExecutor(max_workers=1, thread_name_prefix="hf-prepared-metadata")
+            if len(self._prepared_writes) == 4:
+                self._prepared_writes[0].result()
+                self._prepared_writes.popleft()
+            target = self.image_metadata
+            records = dict(records)
+
+            def update():
+                with self.metadata_semaphor:
+                    target.update(records)
+
+            self._prepared_writes.append(self._prepared_writer.submit(update))
+
+    def _drain_prepared_writes(self):
+        while self._prepared_writes:
+            self._prepared_writes[0].result()
+            self._prepared_writes.popleft()
+
+    def flush_prepared_metadata(self):
+        with self._prepared_write_lock:
+            self._drain_prepared_writes()
+            super().flush_prepared_metadata()
+
+    def close(self):
+        with self._prepared_write_lock:
+            if self._prepared_writer is not None:
+                try:
+                    if self._prepared_writes:
+                        self._drain_prepared_writes()
+                        super().flush_prepared_metadata()
+                finally:
+                    self._prepared_writer.shutdown(wait=True)
+                    self._prepared_writer = None
+        super().close()
+
     def save_image_metadata(self):
+        if isinstance(self.image_metadata, HuggingFaceTransformStore):
+            return
         full_metadata_path = self.metadata_file
         if not str(self.metadata_file).endswith(".json"):
             full_metadata_path = f"{self.metadata_file}_{self.id}.json"
@@ -414,6 +457,18 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         logger.debug(f"Metadata file saved to {full_metadata_path}")
 
     def load_image_metadata(self):
+        if getattr(self, "_stale_geometry", False):
+            with self.metadata_semaphor:
+                self.image_metadata = {}
+                self.image_metadata_loaded = False
+            return
+        publication = getattr(self, "_published_geometry", None)
+        if publication is not None:
+            transforms = self._open_transform_store(publication)
+            with self.metadata_semaphor:
+                self.image_metadata = transforms
+                self.image_metadata_loaded = True
+            return
         full_metadata_path = self.metadata_file
         if not str(self.metadata_file).endswith(".json"):
             full_metadata_path = f"{self.metadata_file}_{self.id}.json"
@@ -437,6 +492,35 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                 self.image_metadata_loaded = False
             logger.debug(f"Metadata file does not exist: {full_metadata_path}")
 
+    def _open_transform_store(self, publication):
+        shards = self.data_backend.preparation_shards
+        if shards is None or [shard.stop for shard in shards] != publication["shard_ends"]:
+            raise ValueError("Hugging Face transform cache requires the same Arrow shard layout. Reprocess the dataset.")
+        generation = UUID(hex=publication["generation"]).hex
+        directory = self._transform_directory(generation)
+        if not directory.is_dir():
+            raise FileNotFoundError("Hugging Face transform cache is missing. Reprocess the dataset.")
+        return HuggingFaceTransformStore(directory, shards, self.data_backend._get_index_from_path)
+
+    def _transform_directory(self, generation):
+        publication = self.data_backend.cache_write_path(self.cache_file).resolve()
+        return publication.with_suffix(".transforms") / generation
+
+    def _start_sharded_geometry(self):
+        shards = self.data_backend.preparation_shards
+        if shards is None:
+            return
+        directory = self._transform_directory(uuid4().hex)
+        directory.mkdir(parents=True, exist_ok=False)
+        self.image_metadata = HuggingFaceTransformStore(directory, shards, self.data_backend._get_index_from_path)
+        self.image_metadata_loaded = True
+
+    def get_metadata_batch(self, refs):
+        metadata = self.image_metadata
+        if isinstance(metadata, HuggingFaceTransformStore):
+            return metadata.read_batch(refs)
+        return super().get_metadata_batch(refs)
+
     def _passes_quality_filter(self, quality_assessment: Dict) -> bool:
         if not self.quality_filter or not quality_assessment:
             return True
@@ -446,8 +530,113 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                 return False
         return True
 
+    def _caption_position(self, ref):
+        if self._caption_rows is None:
+            return None
+        try:
+            position = self.data_backend._get_index_from_path(ref)
+        except ValueError:
+            return None
+        return position if position is not None and 0 <= position < len(self._caption_rows) else None
+
+    def _caption_at_row(self, item):
+        if self.quality_filter and not self._passes_quality_filter(item.get(self.quality_column)):
+            return None
+        return self._extract_caption_from_item(item)
+
     def caption_cache_entry(self, index: str) -> Optional[Union[str, List[str]]]:
-        return self.caption_cache.get(str(index), None)
+        position = self._caption_position(index)
+        return self._caption_at_row(self._caption_rows[position]) if position is not None else None
+
+    def read_caption_batch(self, refs):
+        positions = [self._caption_position(ref) for ref in refs]
+        selected = list(dict.fromkeys(position for position in positions if position is not None))
+        if not selected:
+            return [None] * len(positions)
+
+        columns = self._caption_rows[selected]
+        captions = {
+            position: self._caption_at_row(dict(zip(columns, values, strict=True)))
+            for position, values in zip(selected, zip(*columns.values(), strict=True), strict=True)
+        }
+        return [captions.get(position) for position in positions]
+
+    def _sharded_preparation_index(self, *, metadata=None):
+        shards = self.data_backend.preparation_shards
+        publication = getattr(self, "cache_file", None)
+        if shards is None or publication is None or not self.data_backend.exists(publication):
+            return None
+
+        sizes = tuple(len(shard) for shard in shards)
+        boundaries = tuple(shard.stop for shard in shards)
+        dataset = self.data_backend.dataset
+
+        def partition_for(ref):
+            row = self.data_backend._get_index_from_path(ref)
+            if row is None or not 0 <= row < len(dataset):
+                raise ValueError("Prepared Hugging Face membership contains a row outside the current split.")
+            return bisect_right(boundaries, row)
+
+        metadata = self.image_metadata if metadata is None else metadata
+        with self.data_backend.open_read_stream(publication) as source:
+            if isinstance(metadata, HuggingFaceTransformStore):
+                generation = None
+                for field, _, value in ijson.parse(source):
+                    if field == "huggingface_geometry.generation":
+                        generation = value
+                        break
+                    if field == "aspect_ratio_bucket_indices":
+                        break
+                if generation != metadata.directory.name:
+                    raise DatasetViewChangedError("Hugging Face prepared geometry changed. Reload the dataset.")
+                source.seek(0)
+            return ShardedPreparationIndex.open(
+                source, source_revision=dataset._fingerprint, partition_sizes=sizes, partition_for=partition_for
+            )
+
+    @contextmanager
+    def open_preparation_view(self, *, worker=0, workers=1):
+        metadata = self.image_metadata
+        index = None if self._preparation_source is not None else self._sharded_preparation_index(metadata=metadata)
+        if index is None:
+            with super().open_preparation_view(worker=worker, workers=workers) as view:
+                yield view
+            return
+        if not index.accepted_samples:
+            raise ValueError("No accepted samples in dataset metadata; scan the dataset before preparing text embeddings.")
+        lookup = self
+        if isinstance(metadata, HuggingFaceTransformStore):
+            lookup = SimpleNamespace(get_metadata_by_filepath=metadata.get)
+        with closing(index.groups(worker, workers)) as groups:
+            yield PreparationView(chain.from_iterable(refs for _, refs in groups), lookup)
+
+    def iter_preparation_batches(self, worker, workers, batch_size):
+        index = None if self._preparation_source is not None else self._sharded_preparation_index()
+        if index is None:
+            yield from super().iter_preparation_batches(worker, workers, batch_size)
+            return
+        for bucket, refs in index.groups(worker, workers):
+            for batch in batched(refs, batch_size):
+                yield bucket, batch
+
+    def _preparation_ownership(self, worker, workers):
+        shards = self.data_backend.preparation_shards
+        if shards is None:
+            return super()._preparation_ownership(worker, workers)
+        boundaries = tuple(shard.stop for shard in shards)
+
+        def owns(ref):
+            row = self.data_backend._get_index_from_path(ref)
+            return bisect_right(boundaries, row) % workers == worker
+
+        return owns
+
+    def _limited_dataset_indices(self) -> range | list[int]:
+        indices = range(len(self.data_backend.dataset))
+        if self.max_num_samples is None or len(indices) <= self.max_num_samples:
+            return indices
+        refs = self._apply_max_num_samples_limit([f"{idx}.{self.file_extension}" for idx in indices])
+        return [int(ref.rsplit(".", 1)[0]) for ref in refs]
 
     def _discover_new_files(self, for_metadata: bool = False, ignore_existing_cache: bool = False):
         # for HF datasets, we process all items
@@ -455,16 +644,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             logger.warning("Cannot discover files in streaming mode")
             return []
 
-        total_items = len(self.data_backend.dataset)
-        is_composite = self.composite_config.get("enabled", False)
-        select_index = self.composite_config.get("select_index", None)
-        all_files = []
-        for idx in range(total_items):
-            virtual_path = f"{idx}.{self.file_extension}"
-            all_files.append(virtual_path)
-
-        # Apply max_num_samples limit deterministically after explicit dataset filters.
-        all_files = self._apply_max_num_samples_limit(all_files)
+        all_files = [f"{idx}.{self.file_extension}" for idx in self._limited_dataset_indices()]
 
         if ignore_existing_cache:
             logger.debug("Ignoring existing cache, returning all files")
@@ -615,6 +795,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         statistics: Optional[dict] = None,
         aspect_ratio_rounding: int = 2,
         filtered_files_queue=None,
+        require_caption=False,
     ) -> Dict:
         if statistics is None:
             statistics = {}
@@ -639,6 +820,10 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                     statistics.setdefault("skipped", {}).setdefault("quality", 0)
                     statistics["skipped"]["quality"] += 1
                     return aspect_ratio_bucket_indices
+            if require_caption and self._extract_caption_from_item(item) is None:
+                statistics["skipped"]["missing_caption"] += 1
+                return aspect_ratio_bucket_indices
+
             dataset_type_value = _dataset_type_value(self.dataset_type)
             if dataset_type_value == "audio":
                 sample_metadata = dict(self.image_metadata.get(image_path_str, {}))
@@ -724,6 +909,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                     data_backend_id=self.id,
                     image_metadata=sample_metadata,
                     image_path=image_path_str,
+                    data_backend_config=self.active_dataset_config,
                 )
             elif dataset_type_value == "video":
                 if self.video_column not in item:
@@ -755,6 +941,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                     data_backend_id=self.id,
                     image_metadata=sample_metadata,
                     image_path=image_path_str,
+                    data_backend_config=self.active_dataset_config,
                 )
             else:
                 training_sample = None
@@ -821,6 +1008,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             "total_processed": 0,
             "skipped": {
                 "already_exists": 0,
+                "missing_caption": 0,
                 "quality": 0,
                 "metadata_missing": 0,
                 "not_found": 0,
@@ -840,6 +1028,12 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             self.aspect_ratio_bucket_indices = {}
             self.image_metadata = {}
             existing_files = set()
+        if ignore_existing_cache or not self.image_metadata_loaded:
+            self._start_sharded_geometry()
+            if isinstance(self.image_metadata, HuggingFaceTransformStore):
+                self.aspect_ratio_bucket_indices = {}
+                existing_files = set()
+                statistics["skipped"]["already_exists"] = 0
         if self.bucket_report:
             self.bucket_report.record_stage(
                 "existing_cache",
@@ -851,6 +1045,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         metadata_updates = {}
 
         indices = self._limited_dataset_indices()
+        require_caption = self.uses_caption_strategy("huggingface")
         if self.bucket_report:
             pending_items = max(len(indices) - len(existing_files), 0)
             self.bucket_report.record_stage(
@@ -872,7 +1067,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
 
             virtual_path = f"{idx}.{self.file_extension}"
 
-            if virtual_path in existing_files:
+            if virtual_path in existing_files or virtual_path in self.removed_samples:
                 continue
 
             aspect_ratio_bucket_updates = self._process_for_bucket(
@@ -881,8 +1076,12 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                 metadata_updates=metadata_updates,
                 delete_problematic_images=self.delete_problematic_images,
                 statistics=statistics,
+                require_caption=require_caption,
             )
             statistics["total_processed"] += 1
+            if len(metadata_updates) >= 128:
+                self.enqueue_prepared_metadata(metadata_updates)
+                metadata_updates = {}
 
             current_time = time.time()
             if (current_time - last_save_time) >= self.metadata_update_interval:
@@ -891,22 +1090,20 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                     self.aspect_ratio_bucket_indices.setdefault(key, []).extend(value)
                 aspect_ratio_bucket_updates = {}
 
-                for path, metadata in metadata_updates.items():
-                    self.set_metadata_by_filepath(path, metadata, update_json=False)
+                self.enqueue_prepared_metadata(metadata_updates)
                 metadata_updates = {}
 
+                self.flush_prepared_metadata()
                 self.save_cache(enforce_constraints=False)
-                self.save_image_metadata()
                 last_save_time = current_time
         for key, value in aspect_ratio_bucket_updates.items():
             self.aspect_ratio_bucket_indices.setdefault(key, []).extend(value)
 
-        for path, metadata in metadata_updates.items():
-            self.set_metadata_by_filepath(path, metadata, update_json=False)
+        self.enqueue_prepared_metadata(metadata_updates)
 
         logger.info(f"Processing complete. Statistics: {statistics}")
         self.filtering_statistics = statistics
-        self.save_image_metadata()
+        self.flush_prepared_metadata()
         self.save_cache(enforce_constraints=True)
         if self.bucket_report:
             self.bucket_report.update_statistics(statistics)
@@ -922,18 +1119,6 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             for bucket in self.aspect_ratio_bucket_indices.values()
             if repeat_len(bucket) >= self.batch_size
         )
-
-    def remove_images(self, image_paths: List[str]):
-        if not isinstance(image_paths, list):
-            image_paths = [image_paths]
-
-        for image_path in image_paths:
-            if image_path in self.caption_cache:
-                del self.caption_cache[image_path]
-            for bucket, images in self.aspect_ratio_bucket_indices.items():
-                if image_path in images:
-                    self.aspect_ratio_bucket_indices[bucket].remove(image_path)
-                    logger.debug(f"Removed {image_path} from bucket {bucket}")
 
     def refresh_buckets(self, rank: int = None):
         # override refresh_buckets for HuggingFace datasets

@@ -4,9 +4,6 @@ from pathlib import Path
 import numpy
 import regex as re
 
-from simpletuner.helpers.data_backend.filters import build_dataset_filter, filter_file_list
-from simpletuner.helpers.training import image_file_extensions
-from simpletuner.helpers.training.multi_process import _get_rank as get_rank
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.simpletuner_sdk.server.services.prompt_library_service import PromptLibraryEntry, PromptLibraryService
 
@@ -304,32 +301,6 @@ class PromptHandler:
         return caption_values[0] if caption_values else ""
 
     @staticmethod
-    def retrieve_prompt_column_from_parquet(
-        sampler_backend_id: str,
-    ) -> str:
-        parquetdb = StateTracker.get_parquet_database(sampler_backend_id)
-        dataframe = parquetdb[0]
-        if dataframe is None:
-            raise ValueError(f"Parquet database not found for sampler {sampler_backend_id}.")
-        caption_column = (
-            StateTracker.get_data_backend_config(sampler_backend_id).get("parquet", {}).get("caption_column", None)
-        )
-        if not caption_column:
-            raise ValueError(
-                f"Caption column not found for sampler {sampler_backend_id}. Config: {StateTracker.get_data_backend_config(sampler_backend_id)}"
-            )
-        # Return just that column
-        all_captions = dataframe[caption_column].values
-        fallback_caption_column = (
-            StateTracker.get_data_backend_config(sampler_backend_id).get("parquet", {}).get("fallback_caption_column")
-        )
-        if fallback_caption_column is not None and all_captions is not None:
-            # Combine the lists
-            fallback_captions = dataframe[fallback_caption_column].values
-            all_captions = [x if x else y for x, y in zip(all_captions, fallback_captions)]
-        return all_captions
-
-    @staticmethod
     def prepare_instance_prompt_from_parquet(
         image_path: str,
         use_captions: bool,
@@ -347,23 +318,10 @@ class PromptHandler:
                 raise ValueError("Instance prompt is required when instance_prompt_only is enabled.")
             return instance_prompt
         if metadata_backend is None:
-            metadata_backend = StateTracker.get_data_backend(sampler_backend_id)["metadata_backend"]
-            (
-                parquet_db,
-                filename_column,
-                caption_column,
-                fallback_caption_column,
-                identifier_includes_extension,
-            ) = StateTracker.get_parquet_database(sampler_backend_id)
-        else:
-            parquet_db = metadata_backend.parquet_database
-            parquet_config = metadata_backend.parquet_config
-            filename_column = parquet_config.get("filename_column")
-            caption_column = parquet_config.get("caption_column")
-            fallback_caption_column = parquet_config.get("fallback_caption_column")
-            identifier_includes_extension = parquet_config.get("identifier_includes_extension", False)
+            metadata_backend = StateTracker.get_dataset(sampler_backend_id).metadata_backend
         if metadata_backend is None:
             raise ValueError(f"Could not find metadata backend for sampler {sampler_backend_id}")
+        identifier_includes_extension = metadata_backend.parquet_config.get("identifier_includes_extension", False)
         if backend_config is None:
             backend_config = StateTracker.get_data_backend_config(data_backend_id=data_backend.id)
         instance_data_dir = backend_config.get("instance_data_dir")
@@ -376,13 +334,9 @@ class PromptHandler:
         if not identifier_includes_extension:
             image_filename_stem = os.path.splitext(image_filename_stem)[0]
         image_caption = metadata_backend.caption_cache_entry(image_filename_stem)
-        if instance_prompt is None and fallback_caption_column and not image_caption:
+        if instance_prompt is None and not image_caption:
             raise CaptionNotFoundError(
-                f"Could not locate caption for image {image_path} in sampler_backend {sampler_backend_id} with filename column {filename_column}, caption column {caption_column}, and a parquet database with {len(parquet_db)} entries."
-            )
-        elif instance_prompt is None and not fallback_caption_column and not image_caption:
-            raise CaptionNotFoundError(
-                f"Could not locate caption for image {image_path} in sampler_backend {sampler_backend_id} with filename column {filename_column}, caption column {caption_column}, and a parquet database with {len(parquet_db)} entries."
+                f"Could not locate a Parquet caption for image {image_path} in dataset {sampler_backend_id}."
             )
         caption_values = PromptHandler._normalize_caption_payload(image_caption)
         if prepend_instance_prompt:
@@ -405,7 +359,7 @@ class PromptHandler:
         image_caption = image_caption.replace("_", " ")
         if prepend_instance_prompt:
             image_caption = instance_prompt + " " + image_caption
-        # get_all_captions strips captions before the text embed cache hashes them.
+        # Use the same whitespace normalization for training and cache preparation.
         return image_caption.strip()
 
     @staticmethod
@@ -456,6 +410,7 @@ class PromptHandler:
         instance_prompt: str = None,
         sampler_backend_id: str = None,
         metadata_backend=None,
+        caption_lookup=None,
     ) -> str:
         """
         Prepare prompt from HuggingFace dataset metadata.
@@ -479,27 +434,16 @@ class PromptHandler:
         if sampler_backend_id is None:
             sampler_backend_id = data_backend.id
 
-        # Get the metadata backend
-        if metadata_backend is None:
-            backend_info = StateTracker.get_data_backend(sampler_backend_id)
-            if not backend_info or "metadata_backend" not in backend_info:
-                raise ValueError(f"Could not find metadata backend for {sampler_backend_id}")
-            metadata_backend = backend_info["metadata_backend"]
-
-        # For HuggingFace, the image_path is already the virtual path like "0.jpg"
-        caption = metadata_backend.caption_cache_entry(image_path)
+        if caption_lookup is None:
+            if metadata_backend is None:
+                metadata_backend = StateTracker.get_dataset(sampler_backend_id).metadata_backend
+                if metadata_backend is None:
+                    raise ValueError(f"Could not find metadata backend for {sampler_backend_id}")
+            caption_lookup = metadata_backend.caption_cache_entry
+        caption = caption_lookup(image_path)
 
         if caption is None:
-            # Try to resolve directly from the dataset row as a fallback.
-            try:
-                idx_str = str(image_path).split(".")[0]
-                idx = int(idx_str)
-                item = metadata_backend.data_backend.dataset[idx]
-                caption = metadata_backend._extract_caption_from_item(item)
-            except Exception:
-                caption = None
-            if caption is None:
-                raise CaptionNotFoundError(f"Could not find caption for {image_path} in HuggingFace dataset")
+            raise CaptionNotFoundError(f"Could not find caption for {image_path} in HuggingFace dataset")
 
         caption_values = PromptHandler._normalize_caption_payload(caption)
 
@@ -518,21 +462,20 @@ class PromptHandler:
         instance_prompt: str = None,
         sampler_backend_id: str = None,
         metadata_backend=None,
+        caption_lookup=None,
     ) -> str:
         if not use_captions:
             if not instance_prompt:
                 raise ValueError("Instance prompt is required when instance_prompt_only is enabled.")
             return instance_prompt
 
-        if sampler_backend_id is None:
-            sampler_backend_id = data_backend.id
-
-        if metadata_backend is None:
-            backend_info = StateTracker.get_data_backend(sampler_backend_id)
-            if not backend_info or "metadata_backend" not in backend_info:
-                raise ValueError(f"Could not find metadata backend for {sampler_backend_id}")
-            metadata_backend = backend_info["metadata_backend"]
-        caption = metadata_backend.caption_cache_entry(image_path)
+        if caption_lookup is None:
+            if metadata_backend is None:
+                metadata_backend = StateTracker.get_dataset(sampler_backend_id or data_backend.id).metadata_backend
+                if metadata_backend is None:
+                    raise ValueError(f"Could not find metadata backend for {sampler_backend_id or data_backend.id}")
+            caption_lookup = metadata_backend.caption_cache_entry
+        caption = caption_lookup(image_path)
         if caption is None:
             raise CaptionNotFoundError(f"Could not find caption for {image_path} in Webshart dataset")
 
@@ -542,10 +485,6 @@ class PromptHandler:
             caption_values = [instance_prompt + " " + c for c in caption_values]
 
         return PromptHandler._restore_caption_payload_shape(caption, caption_values)
-
-    @staticmethod
-    def caption_for_sampler(sampler, image_path):
-        return sampler.dataset_runtime.resolve_caption(image_path)
 
     @staticmethod
     def magic_prompt(
@@ -559,6 +498,7 @@ class PromptHandler:
         disable_multiline_split: bool = False,
         metadata_backend=None,
         backend_config=None,
+        caption_lookup=None,
     ) -> str:
         """Pull a prompt for an image file like magic, using one of the available caption strategies.
 
@@ -626,6 +566,7 @@ class PromptHandler:
                 data_backend=data_backend,
                 sampler_backend_id=sampler_backend_id,
                 metadata_backend=metadata_backend,
+                caption_lookup=caption_lookup,
             )
         elif caption_strategy == "webshart":
             instance_prompt = PromptHandler.prepare_instance_prompt_from_webshart(
@@ -636,6 +577,7 @@ class PromptHandler:
                 data_backend=data_backend,
                 sampler_backend_id=sampler_backend_id,
                 metadata_backend=metadata_backend,
+                caption_lookup=caption_lookup,
             )
         elif caption_strategy == "instanceprompt":
             if instance_prompt is None:
@@ -677,224 +619,6 @@ class PromptHandler:
         return instance_prompt
 
     @staticmethod
-    def get_all_captions(
-        instance_data_dir: str,
-        use_captions: bool,
-        prepend_instance_prompt: bool,
-        data_backend: BaseDataBackend,
-        caption_strategy: str,
-        instance_prompt: str = None,
-        return_image_paths: bool = False,
-        disable_multiline_split: bool = False,
-    ) -> list:
-        logger.debug(
-            "Gathering captions for data backend. "
-            f"Parameters: {instance_data_dir=} {use_captions=} {prepend_instance_prompt=} {data_backend=} {caption_strategy=} {instance_prompt=}"
-        )
-
-        # Get shuffle config from StateTracker
-        backend_config = StateTracker.get_data_backend_config(data_backend.id) or {}
-        caption_shuffle_config = backend_config.get("caption_shuffle", {})
-        shuffle_enabled = caption_shuffle_config.get("enable", False)
-        captions = []
-        caption_image_paths = []
-        images_missing_captions = []
-        try:
-            data_backend_state = StateTracker.get_data_backend(data_backend.id) or {}
-        except KeyError:
-            data_backend_state = {}
-        metadata_backend = data_backend_state.get("metadata_backend")
-        bucket_indices = getattr(metadata_backend, "aspect_ratio_bucket_indices", None)
-        max_num_samples = getattr(metadata_backend, "max_num_samples", None) or backend_config.get("max_num_samples")
-        if max_num_samples and isinstance(bucket_indices, dict) and bucket_indices:
-            all_image_files = []
-            for bucket in sorted(bucket_indices.keys(), key=str):
-                all_image_files.extend(bucket_indices[bucket])
-        else:
-            all_image_files = StateTracker.get_image_files(data_backend_id=data_backend.id) or data_backend.list_files(
-                instance_data_dir=instance_data_dir, file_extensions=image_file_extensions
-            )
-        if isinstance(all_image_files, list) and len(all_image_files) > 0 and isinstance(all_image_files[0], tuple):
-            all_image_files = all_image_files[0][2]
-        all_image_files = filter_file_list(all_image_files, build_dataset_filter(backend_config))
-        from tqdm import tqdm
-
-        # if caption_strategy == "parquet":
-        #     return PromptHandler.retrieve_prompt_column_from_parquet(
-        #         sampler_backend_id=data_backend.id
-        #     )
-
-        if caption_strategy == "instanceprompt":
-            if instance_prompt is None or instance_prompt == "":
-                raise ValueError("caption_strategy='instanceprompt' requires an instance_prompt value.")
-            instance_prompts = instance_prompt
-            if isinstance(instance_prompts, str):
-                instance_prompts = [instance_prompts.strip()]
-            else:
-                instance_prompts = [str(p).strip() for p in instance_prompts]
-            for image_path in all_image_files:
-                for prompt in instance_prompts:
-                    captions.append(prompt)
-                    if return_image_paths:
-                        caption_image_paths.append(image_path)
-            if return_image_paths:
-                return captions, images_missing_captions, caption_image_paths
-            return captions, images_missing_captions
-
-        webhook_handler = None
-        should_notify = False
-        stage_key = None
-        stage_label = "Extracting captions"
-        total_files = len(all_image_files)
-        if caption_strategy == "huggingface":
-            webhook_handler = StateTracker.get_webhook_handler()
-            if webhook_handler is not None and get_rank() == 0:
-                should_notify = True
-                backend_id = getattr(data_backend, "id", "dataset")
-                stage_key = f"caption_extract_{backend_id}"
-                webhook_handler.send_lifecycle_stage(
-                    stage_key=stage_key,
-                    stage_label=stage_label,
-                    stage_status="running",
-                    message=f"Extracting captions for {backend_id} (huggingface).",
-                    progress_current=0,
-                    progress_total=total_files,
-                    progress_percent=0,
-                )
-
-        progress_every = max(total_files // 100, 100) if total_files else 1
-        processed = 0
-        completed = False
-        try:
-            for image_path in tqdm(
-                all_image_files,
-                desc="Loading captions",
-                total=total_files,
-                disable=True if get_rank() > 0 else False,
-                leave=False,
-                ncols=125,
-            ):
-                try:
-                    # If shuffle enabled, get raw caption without prepend, then shuffle, then prepend
-                    effective_prepend = False if shuffle_enabled else prepend_instance_prompt
-
-                    if caption_strategy == "filename":
-                        caption = PromptHandler.prepare_instance_prompt_from_filename(
-                            image_path=str(image_path),
-                            use_captions=use_captions,
-                            prepend_instance_prompt=effective_prepend,
-                            instance_prompt=instance_prompt,
-                        )
-                    elif caption_strategy == "textfile":
-                        caption = PromptHandler.prepare_instance_prompt_from_textfile(
-                            image_path,
-                            use_captions=use_captions,
-                            prepend_instance_prompt=effective_prepend,
-                            instance_prompt=instance_prompt,
-                            data_backend=data_backend,
-                            disable_multiline_split=disable_multiline_split,
-                        )
-                    elif caption_strategy == "parquet":
-                        caption = PromptHandler.prepare_instance_prompt_from_parquet(
-                            image_path,
-                            use_captions=use_captions,
-                            prepend_instance_prompt=effective_prepend,
-                            instance_prompt=instance_prompt,
-                            data_backend=data_backend,
-                            sampler_backend_id=data_backend.id,
-                        )
-                    elif caption_strategy == "huggingface":
-                        caption = PromptHandler.prepare_instance_prompt_from_huggingface(
-                            image_path,
-                            use_captions=use_captions,
-                            prepend_instance_prompt=effective_prepend,
-                            instance_prompt=instance_prompt,
-                            data_backend=data_backend,
-                            sampler_backend_id=data_backend.id,
-                        )
-                    elif caption_strategy == "webshart":
-                        caption = PromptHandler.prepare_instance_prompt_from_webshart(
-                            image_path,
-                            use_captions=use_captions,
-                            prepend_instance_prompt=effective_prepend,
-                            instance_prompt=instance_prompt,
-                            data_backend=data_backend,
-                            sampler_backend_id=data_backend.id,
-                        )
-                    elif caption_strategy == "csv":
-                        caption = data_backend.get_caption(image_path)
-                    else:
-                        raise ValueError(
-                            f"Unsupported caption strategy: {caption_strategy}. Supported: 'filename', 'textfile', 'parquet', 'instanceprompt', 'csv', 'huggingface', 'webshart'"
-                        )
-                except CaptionNotFoundError as e:
-                    logger.error(f"Could not load caption for image {image_path}: {e}")
-                    images_missing_captions.append(image_path)
-                else:
-                    caption_values = PromptHandler._normalize_caption_payload(caption)
-
-                    # Apply shuffle expansion if enabled
-                    if shuffle_enabled:
-                        expanded_captions = []
-                        for value in caption_values:
-                            shuffled = CaptionShuffler.expand_with_shuffles(value, caption_shuffle_config)
-                            # Apply prepend to each shuffled variant if needed
-                            if prepend_instance_prompt and instance_prompt:
-                                shuffled = [instance_prompt + " " + s for s in shuffled]
-                            expanded_captions.extend(shuffled)
-                        caption_values = expanded_captions
-
-                    for value in caption_values:
-                        captions.append(value)
-                        if return_image_paths:
-                            caption_image_paths.append(image_path)
-                finally:
-                    processed += 1
-                    if should_notify and (processed % progress_every == 0 or processed == total_files):
-                        progress_percent = (processed / total_files) * 100 if total_files else 100
-                        webhook_handler.send_lifecycle_stage(
-                            stage_key=stage_key,
-                            stage_label=stage_label,
-                            stage_status="running",
-                            message=f"Extracting captions ({processed}/{total_files}).",
-                            progress_current=processed,
-                            progress_total=total_files,
-                            progress_percent=progress_percent,
-                        )
-            completed = True
-        except Exception:
-            if should_notify:
-                webhook_handler.send_lifecycle_stage(
-                    stage_key=stage_key,
-                    stage_label=stage_label,
-                    stage_status="failed",
-                    message="Caption extraction failed.",
-                    progress_current=processed,
-                    progress_total=total_files,
-                    progress_percent=(processed / total_files) * 100 if total_files else 0,
-                )
-            raise
-        finally:
-            if should_notify and completed:
-                webhook_handler.send_lifecycle_stage(
-                    stage_key=stage_key,
-                    stage_label=stage_label,
-                    stage_status="completed",
-                    message="Caption extraction completed.",
-                    progress_current=processed,
-                    progress_total=total_files,
-                    progress_percent=(processed / total_files) * 100 if total_files else 100,
-                )
-
-        # Deduplicate captions
-        # TODO: Investigate why this prevents captions from processing on multigpu systems.
-        # captions = list(set(captions))
-
-        if return_image_paths:
-            return captions, images_missing_captions, caption_image_paths
-        return captions, images_missing_captions
-
-    @staticmethod
     def filter_caption(data_backend: BaseDataBackend, caption: str) -> str:
         """Just filter a single caption.
 
@@ -922,90 +646,36 @@ class PromptHandler:
         If a line doesn't have any regex control characters in it, we'll treat it as a string.
         """
         data_backend_config = StateTracker.get_data_backend_config(data_backend_id=data_backend.id)
-        caption_filter_list = data_backend_config.get("caption_filter_list", None)
-        if not caption_filter_list or caption_filter_list == "":
+        filters = PromptHandler.load_caption_filters(data_backend_config.get("caption_filter_list"))
+        if not filters:
             return captions
-        if type(caption_filter_list) == str and os.path.splitext(caption_filter_list)[1] == ".json":
-            # It's a path to a filter list. Load it in JSON format.
-            caption_filter_list_path = Path(caption_filter_list)
-            try:
-                with open(caption_filter_list_path, "r") as caption_filter_list:
-                    caption_filter_list = json.load(caption_filter_list)
-            except Exception as e:
-                logger.error(f"Caption filter list for data backend '{data_backend.id}' could not be loaded: {e}")
-                raise e
-        elif type(caption_filter_list) == str and os.path.splitext(caption_filter_list)[1] == ".txt":
-            # We have a plain text list of filter strings/regex. Load them into an array:
-            caption_filter_list_path = Path(caption_filter_list)
-            try:
-                with open(caption_filter_list_path, "r") as caption_filter_list:
-                    caption_filter_list = caption_filter_list.readlines()
-                    # Strip newlines from the ends:
-                    caption_filter_list = [x.strip("\n") for x in caption_filter_list]
-            except Exception as e:
-                logger.error(f"Caption filter list for data backend '{data_backend.id}' could not be loaded: {e}")
-                raise e
-        # We have the filter list. Is it valid and non-empty?
-        if type(caption_filter_list) != list or len(caption_filter_list) == 0:
-            logger.debug(f"Data backend '{data_backend.id}' has an invalid or empty caption filter list.")
-            return captions
-        elif type(caption_filter_list) is not list:
-            raise ValueError(f"Data backend '{data_backend.id}' has an invalid caption filter list: {caption_filter_list}")
-        # Iterate through each caption
-        filtered_captions = []
-        for caption in tqdm(
-            captions,
-            desc="Filtering captions",
-            total=len(captions),
-            ncols=125,
-            disable=True if len(captions) < 10 else False,
-        ):
-            if type(caption) is list:
-                caption = caption[0]
-            modified_caption = caption
-            # Apply each filter to the caption
-            logger.debug(f"Filtering caption: {modified_caption}")
-            if modified_caption is None:
-                logger.error(f"Encountered a None caption in the list, data backend: {data_backend.id}")
-                continue
-            for filter_item in caption_filter_list:
-                # Check for special replace pattern 's/replace/entry/'
-                if filter_item.startswith("s/") and filter_item.count("/") == 2:
-                    _, search, replace = filter_item.split("/")
-                    regex_modified_caption = re.sub(search, replace, modified_caption)
-                    if regex_modified_caption != modified_caption:
-                        # logger.debug(
-                        #     f"Applying regex SEARCH {filter_item} to caption: {modified_caption}"
-                        # )
-                        modified_caption = regex_modified_caption
-                else:
-                    # Treat as plain string and remove occurrences
-                    if modified_caption is not None:
-                        modified_caption = str(modified_caption).replace(filter_item, "")
-                try:
-                    # Assume all filters as regex patterns for flexibility
-                    pattern = re.compile(filter_item)
-                    try:
-                        regex_modified_caption = pattern.sub("", modified_caption)
-                    except:
-                        regex_modified_caption = modified_caption
-                    if regex_modified_caption != modified_caption:
-                        # logger.debug(
-                        #     f"Applying regex FILTER {filter_item} to caption: {modified_caption}"
-                        # )
-                        modified_caption = regex_modified_caption
-                except re.error as e:
-                    logger.error(f"Regex error with pattern {filter_item}: {e}")
+        values = (caption[0] if isinstance(caption, list) else caption for caption in captions)
+        return [PromptHandler.apply_caption_filters(caption, filters) for caption in values if caption is not None]
 
-            # Add the modified caption to the filtered list
-            # if caption != modified_caption:
-            #     logger.debug(
-            #         f"After all filters have finished, here is the modified caption: {modified_caption}"
-            #     )
-            filtered_captions.append(modified_caption)
+    @staticmethod
+    def load_caption_filters(filters):
+        if isinstance(filters, str):
+            path = Path(filters)
+            if path.suffix == ".json":
+                filters = json.loads(path.read_text())
+            elif path.suffix == ".txt":
+                with path.open() as stream:
+                    filters = [line.rstrip("\n") for line in stream]
+        return tuple(filters) if isinstance(filters, list) else ()
 
-        # Return the list of modified captions
-        return filtered_captions
+    @staticmethod
+    def apply_caption_filters(caption, filters):
+        for item in filters:
+            if item.startswith("s/") and item.count("/") == 2:
+                _, search, replacement = item.split("/")
+                caption = re.sub(search, replacement, caption)
+            else:
+                caption = str(caption).replace(item, "")
+            try:
+                caption = re.sub(item, "", caption)
+            except re.error as error:
+                logger.error(f"Regex error with pattern {item}: {error}")
+        return caption
 
     @staticmethod
     def load_user_prompts(user_prompt_path: str = None):

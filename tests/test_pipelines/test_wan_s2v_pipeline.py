@@ -125,30 +125,30 @@ class TestWanS2VModelMetadata(unittest.TestCase):
         )
 
 
-class TestWanS2VStateTrackerIntegration(unittest.TestCase):
-    """Test StateTracker S2V dataset methods."""
-
-    def test_s2v_dataset_methods_exist(self):
-        """Test that StateTracker has s2v_datasets methods."""
+class TestWanS2VCollateIntegration(unittest.TestCase):
+    def test_training_consumes_on_demand_audio_from_the_selected_datasets(self):
+        from simpletuner.helpers.models.wan_s2v.model import WanS2V
         from simpletuner.helpers.training.state_tracker import StateTracker
 
-        self.assertTrue(hasattr(StateTracker, "set_s2v_datasets"))
-        self.assertTrue(hasattr(StateTracker, "get_s2v_datasets"))
-        self.assertTrue(hasattr(StateTracker, "get_s2v_mappings"))
-
-
-class TestWanS2VCollateIntegration(unittest.TestCase):
-    """Test that collate function handles s2v_audio_paths."""
-
-    def test_collate_returns_s2v_audio_paths(self):
-        """Test that collate function returns s2v_audio_paths field."""
-        # The function should include s2v_audio_paths in its return
-        import inspect
-
-        from simpletuner.helpers.training.collate import collate_fn
-
-        source = inspect.getsource(collate_fn)
-        self.assertIn("s2v_audio_paths", source)
+        model = WanS2V.__new__(WanS2V)
+        source_a, source_b = mock.Mock(), mock.Mock()
+        model.bind_training_datasets({"first": source_a, "second": source_b})
+        model.encode_audio = mock.Mock(return_value=torch.zeros(1, 2, 3, 4))
+        batch = {
+            "latents": torch.zeros(2, 4, 4, 8, 8),
+            "s2v_audio_paths": ["shared/key.mp4", "shared/key.mp4"],
+            "s2v_audio_backend_ids": ["first", "second"],
+        }
+        with mock.patch.object(StateTracker, "get_dataset", side_effect=AssertionError("global dataset lookup")):
+            result = model.prepare_batch_conditions(batch)
+        self.assertEqual(result["audio_embeds"].shape[0], 2)
+        self.assertEqual(
+            model.encode_audio.call_args_list,
+            [
+                mock.call("shared/key.mp4", audio_dataset=source_a),
+                mock.call("shared/key.mp4", audio_dataset=source_b),
+            ],
+        )
 
 
 class TestWanS2VAudioInterpolation(unittest.TestCase):

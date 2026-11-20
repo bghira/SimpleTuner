@@ -304,7 +304,6 @@ class TestS2VSampleConnection(unittest.TestCase):
         """Test that video path is used as audio path when source_from_video=True."""
         from simpletuner.helpers.training.state_tracker import StateTracker
 
-        # Mock StateTracker.get_s2v_datasets to return a dataset with source_from_video
         s2v_datasets = [
             {
                 "config": {
@@ -318,13 +317,21 @@ class TestS2VSampleConnection(unittest.TestCase):
 
         samples = [{"image_path": "/data/videos/test.mp4"}]
 
-        with patch.object(StateTracker, "get_s2v_datasets", return_value=s2v_datasets):
+        with patch.object(StateTracker, "get_dataset", side_effect=AssertionError("global relationship lookup")):
             # Create a minimal sampler mock
             from unittest.mock import MagicMock
 
             sampler = MagicMock()
             sampler.id = "test-videos"
-            sampler.debug_log = MagicMock()
+            from types import SimpleNamespace
+
+            from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+
+            sampler.dataset_runtime = DatasetRuntime("test-videos", None, None, {})
+            sampler.dataset_runtime.audio_datasets = [
+                SimpleNamespace(**{"id": "audio", "metadata_backend": None, "data_backend": None, **entry})
+                for entry in s2v_datasets
+            ]
 
             # Import and bind the method
             from simpletuner.helpers.multiaspect.sampler import MultiAspectSampler
@@ -356,10 +363,18 @@ class TestS2VSampleConnection(unittest.TestCase):
             {"image_path": "/data/videos/no_audio.mp4"},
         ]
 
-        with patch.object(StateTracker, "get_s2v_datasets", return_value=s2v_datasets):
+        with patch.object(StateTracker, "get_dataset", side_effect=AssertionError("global relationship lookup")):
             sampler = MagicMock()
             sampler.id = "test-videos"
-            sampler.debug_log = MagicMock()
+            from types import SimpleNamespace
+
+            from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+
+            sampler.dataset_runtime = DatasetRuntime("test-videos", None, None, {})
+            sampler.dataset_runtime.audio_datasets = [
+                SimpleNamespace(**{"id": "audio", "metadata_backend": None, "data_backend": None, **entry})
+                for entry in s2v_datasets
+            ]
 
             from simpletuner.helpers.multiaspect.sampler import MultiAspectSampler
 

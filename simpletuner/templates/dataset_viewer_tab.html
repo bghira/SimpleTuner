@@ -19,6 +19,8 @@
             <button type="button"
                     class="btn btn-outline-danger btn-sm"
                     x-show="scanning"
+                    aria-label="Cancel dataset scan"
+                    :disabled="_scanStarting || scanProgress.status === 'cancelling'"
                     @click="cancelScan()">
                 <i class="fas fa-stop me-1"></i> Cancel
             </button>
@@ -36,7 +38,8 @@
     <div x-show="scanning" class="viewer-scan-progress mb-3">
         <div class="d-flex justify-content-between align-items-center mb-1">
             <span class="small text-muted">
-                Scanning: <strong x-text="scanProgress.dataset_id || '...'"></strong>
+                <span x-text="scanProgress.status === 'cancelling' ? 'Cancelling' : 'Scanning'"></span>
+                <strong x-text="scanProgress.dataset_id || '...'"></strong>
             </span>
             <span class="small text-muted" x-show="scanProgress.total > 0"
                   x-text="scanProgress.current + ' / ' + scanProgress.total"></span>
@@ -64,6 +67,8 @@
                       x-text="cacheProgress.current + ' / ' + cacheProgress.total"></span>
                 <button type="button"
                         class="btn btn-outline-danger btn-sm py-0 px-2"
+                        aria-label="Cancel cache preparation"
+                        :disabled="!_cacheJobId || cacheProgress.status === 'cancelling'"
                         @click="cancelCacheJob()">
                     <i class="fas fa-stop viewer-text-xs"></i> Cancel
                 </button>
@@ -137,17 +142,19 @@
                             <i class="fas fa-chevron-right viewer-expand-icon"
                                :class="{ 'rotated': expandedDataset === ds.dataset_id }"></i>
                             <span class="fw-semibold" x-text="ds.dataset_id"></span>
-                            <span class="badge"
-                                  :class="ds.has_cache ? 'bg-success' : 'bg-secondary'"
-                                  x-text="ds.has_cache ? 'Cached' : 'No Cache'"></span>
+                            <span class="badge viewer-preparation-status"
+                                  :class="ds.has_cache ? 'bg-success' : ds.scan_incomplete ? 'bg-warning text-dark' : 'bg-secondary'"
+                                  x-text="ds.has_cache ? 'Cached' : ds.scan_incomplete ? 'Scan incomplete' : 'No Cache'"></span>
                             <span class="badge bg-info" x-show="ds.conditioning_type"
                                   x-text="ds.conditioning_type"></span>
                             <span class="badge bg-warning text-dark" x-show="ds.auto_generated">auto-generated</span>
                         </div>
                         <div class="d-flex align-items-center gap-3">
                             <span class="text-muted small" x-show="ds.has_cache">
-                                <span x-text="ds.total_files"></span> files &middot;
-                                <span x-text="ds.bucket_count"></span> buckets
+                                <span x-show="ds.physical_rows == null" x-text="ds.total_files + ' files'"></span>
+                                <span class="viewer-prepared-count" x-show="ds.physical_rows != null"
+                                      x-text="ds.accepted_samples + ' accepted / ' + ds.physical_rows + ' source rows'"></span>
+                                &middot; <span x-text="ds.bucket_count"></span> buckets
                             </span>
                             <button type="button"
                                     class="btn btn-outline-warning btn-sm py-0 px-2"
@@ -174,7 +181,7 @@
                     <div x-show="!ds.has_cache" class="text-center py-4 px-3">
                         <p class="text-muted small mb-2">
                             <i class="fas fa-info-circle text-warning me-1"></i>
-                            No scan data available. Run a metadata scan to populate bucket cache.
+                            <span x-text="ds.scan_incomplete ? 'The metadata scan has no completed publication yet.' : 'Run a metadata scan to browse this dataset.'"></span>
                         </p>
                         <button type="button"
                                 class="btn btn-outline-warning btn-sm"
@@ -212,7 +219,7 @@
                                 <h6><i class="fas fa-comment-alt me-1"></i>Caption Health</h6>
                                 <div class="d-flex align-items-center gap-2">
                                     <span class="badge bg-dark" x-text="captionStatus[ds.dataset_id]?.strategy || 'unknown'"></span>
-                                    <div class="progress flex-grow-1" style="height: 6px;">
+                                    <div class="progress flex-grow-1" style="height: 6px;" x-show="captionStatus[ds.dataset_id]?.coverage_ratio != null">
                                         <div class="progress-bar"
                                              :class="{
                                                  'bg-success': (captionStatus[ds.dataset_id]?.coverage_ratio || 0) > 0.95,
@@ -223,7 +230,7 @@
                                         </div>
                                     </div>
                                     <span class="small text-muted"
-                                          x-text="Math.round((captionStatus[ds.dataset_id]?.coverage_ratio || 0) * 100) + '%'"></span>
+                                          x-text="captionStatus[ds.dataset_id]?.coverage_ratio == null ? 'Unavailable' : Math.round(captionStatus[ds.dataset_id].coverage_ratio * 100) + '%'"></span>
                                 </div>
                                 <template x-for="warn in (captionStatus[ds.dataset_id]?.warnings || [])" :key="warn">
                                     <div class="text-warning small mt-1 viewer-text-xs" x-text="warn"></div>
@@ -268,16 +275,16 @@
                                             class="btn btn-sm btn-outline-primary py-0 px-2"
                                             x-show="cacheCapabilities.text_embeds"
                                             @click.stop="startCacheJob(ds.dataset_id, 'text_embeds')"
-                                            :disabled="caching || scanning"
-                                            title="Pre-compute text encoder embeddings for this dataset's captions">
+                                            :disabled="caching || scanning || !cacheCapabilities.datasets?.[ds.dataset_id]?.text_embeds?.prepare"
+                                            :title="cacheCapabilities.datasets?.[ds.dataset_id]?.text_embeds?.reason || 'Prepare text embeddings for this dataset'">
                                         <i class="fas fa-font viewer-text-xs me-1"></i>Text Embeds
                                     </button>
                                     <button type="button"
                                             class="btn btn-sm btn-outline-primary py-0 px-2"
                                             x-show="cacheCapabilities.vae"
                                             @click.stop="startCacheJob(ds.dataset_id, 'vae')"
-                                            :disabled="caching || scanning"
-                                            title="Pre-compute VAE latents for this dataset's images">
+                                            :disabled="caching || scanning || !cacheCapabilities.datasets?.[ds.dataset_id]?.vae?.prepare"
+                                            :title="cacheCapabilities.datasets?.[ds.dataset_id]?.vae?.reason || 'Prepare VAE latents for this dataset'">
                                         <i class="fas fa-image viewer-text-xs me-1"></i>VAE Latents
                                     </button>
                                     <button type="button"
@@ -313,8 +320,8 @@
                                 <template x-if="ds.conditioning_data && ds.conditioning_data.length > 0">
                                     <div class="d-flex gap-2 flex-wrap mb-1">
                                         <template x-for="condId in ds.conditioning_data" :key="condId">
-                                            <button class="btn btn-sm viewer-bucket-btn py-0 px-2"
-                                                    @click.stop="pairsOffset = 0; loadConditioningPairs(ds.dataset_id, condId)">
+                                            <button type="button" class="btn btn-sm viewer-bucket-btn py-0 px-2"
+                                                    @click.stop="selectConditioningPair(ds.dataset_id, condId)">
                                                 <i class="fas fa-link me-1 viewer-text-xxs"></i>
                                                 <span x-text="condId"></span>
                                             </button>
@@ -326,8 +333,8 @@
                                 <template x-if="ds.source_dataset_id">
                                     <div class="d-flex align-items-center gap-2">
                                         <span class="text-muted small">Source:</span>
-                                        <button class="btn btn-sm viewer-bucket-btn py-0 px-2"
-                                                @click.stop="pairsOffset = 0; loadConditioningPairs(ds.source_dataset_id, ds.dataset_id)">
+                                        <button type="button" class="btn btn-sm viewer-bucket-btn py-0 px-2"
+                                                @click.stop="selectConditioningPair(ds.source_dataset_id, ds.dataset_id)">
                                             <i class="fas fa-link me-1 viewer-text-xxs"></i>
                                             <span x-text="ds.source_dataset_id"></span>
                                         </button>
@@ -346,10 +353,10 @@
                         </div>
 
                         <!-- Conditioning pairs viewer (expanded inline) -->
-                        <div x-show="conditioningPairs && expandedDataset === ds.dataset_id" class="px-3 py-2 viewer-section">
+                        <div x-show="conditioningPairSelection && expandedDataset === ds.dataset_id" class="px-3 py-2 viewer-section">
                             <div class="d-flex justify-content-between align-items-center mb-2">
                                 <span class="small text-muted">
-                                    <span x-text="conditioningPairs?.total_pairs || 0"></span> matched pairs
+                                    <span x-text="conditioningPairs?.scope === 'unavailable' ? 'Pairing index unavailable' : (conditioningPairs?.scope === 'source_page' ? conditioningPairs.pairs.length + ' matched pairs on this source page' : (conditioningPairs?.total_pairs ?? 0) + ' matched pairs')"></span>
                                     <span x-show="conditioningPairs?.source_orphan_count > 0"
                                           class="text-warning ms-2">
                                         <i class="fas fa-exclamation-triangle viewer-text-xxs"></i>
@@ -361,18 +368,20 @@
                                         <span x-text="conditioningPairs?.conditioning_orphan_count"></span> conditioning orphans
                                     </span>
                                 </span>
-                                <div class="d-flex gap-2 align-items-center" x-show="conditioningPairs?.total_pairs > pairsLimit">
-                                    <button class="btn btn-outline-secondary btn-sm"
+                                <div class="d-flex gap-2 align-items-center" x-show="(conditioningPairs?.source_total ?? conditioningPairs?.total_pairs) > pairsLimit">
+                                    <button type="button" class="btn btn-outline-secondary btn-sm"
+                                            aria-label="Previous conditioning pairs"
                                             :disabled="pairsOffset === 0"
-                                            @click="pairsPrevPage(ds.conditioning_data?.[0] || ds.source_dataset_id, ds.conditioning_data ? ds.conditioning_data[0] : ds.dataset_id)">
+                                            @click="pairsPrevPage()">
                                         <i class="fas fa-chevron-left"></i>
                                     </button>
                                     <span class="text-muted small"
-                                          x-text="(pairsOffset + 1) + '-' + Math.min(pairsOffset + pairsLimit, conditioningPairs?.total_pairs || 0)">
+                                          x-text="(pairsOffset + 1) + '-' + Math.min(pairsOffset + pairsLimit, conditioningPairs?.source_total ?? conditioningPairs?.total_pairs ?? 0)">
                                     </span>
-                                    <button class="btn btn-outline-secondary btn-sm"
-                                            :disabled="pairsOffset + pairsLimit >= (conditioningPairs?.total_pairs || 0)"
-                                            @click="pairsNextPage(ds.conditioning_data?.[0] || ds.source_dataset_id, ds.conditioning_data ? ds.conditioning_data[0] : ds.dataset_id)">
+                                    <button type="button" class="btn btn-outline-secondary btn-sm"
+                                            aria-label="Next conditioning pairs"
+                                            :disabled="pairsOffset + pairsLimit >= (conditioningPairs?.source_total ?? conditioningPairs?.total_pairs ?? 0)"
+                                            @click="pairsNextPage()">
                                         <i class="fas fa-chevron-right"></i>
                                     </button>
                                 </div>
@@ -385,12 +394,12 @@
                             <div x-show="!loadingPairs && conditioningPairs?.pairs" class="viewer-conditioning-pairs">
                                 <template x-for="pair in (conditioningPairs?.pairs || [])" :key="pair.source_path">
                                     <div class="viewer-pair-row d-flex gap-2 mb-2 align-items-center">
-                                        <div class="viewer-pair-thumb" @click="showFileDetail(ds.source_dataset_id || ds.dataset_id, pair.source_path)">
+                                        <div class="viewer-pair-thumb" @click="showFileDetail(conditioningPairSelection.sourceId, pair.source_path, conditioningPairSelection.sourceRevision)">
                                             <div class="text-muted text-center viewer-text-xxs">Source</div>
                                             <div class="viewer-pair-filename" x-text="pair.source_path.split('/').pop()"></div>
                                         </div>
                                         <i class="fas fa-arrow-right text-muted viewer-text-xxs"></i>
-                                        <div class="viewer-pair-thumb" @click="showFileDetail(ds.conditioning_data?.[0] || ds.dataset_id, pair.conditioning_path)">
+                                        <div class="viewer-pair-thumb" @click="showFileDetail(conditioningPairSelection.conditioningId, pair.conditioning_path, conditioningPairSelection.conditioningRevision)">
                                             <div class="text-muted text-center viewer-text-xxs">Conditioning</div>
                                             <div class="viewer-pair-filename" x-text="pair.conditioning_path.split('/').pop()"></div>
                                         </div>
@@ -547,7 +556,7 @@
                                 Crop: <span x-text="selectedFile?.crop_coordinates?.join(', ')"></span>
                                 <span x-show="cropModified" class="text-warning ms-1">(modified)</span>
                             </span>
-                            <button x-show="cropModified"
+                            <button type="button" x-show="cropModified"
                                     class="btn btn-sm btn-info"
                                     :disabled="savingCrop"
                                     @click="saveCropCoordinates()">
@@ -597,7 +606,7 @@
                                     <i class="fas fa-vector-square me-1"></i>Bounding Boxes
                                     <span class="badge bg-secondary ms-1" x-text="selectedFile.bbox_entities.length"></span>
                                 </label>
-                                <small class="text-muted" style="font-size: 0.75rem;">
+                                <small x-show="selectedFile?.metadata_editable" class="text-muted" style="font-size: 0.75rem;">
                                     Draw to create &middot; Click to select &middot; Double-click to rename &middot; <kbd>Del</kbd> to remove
                                 </small>
                             </div>
@@ -607,7 +616,7 @@
                                     <span x-text="bboxCanvas ? bboxCanvas.getBoxes().length + ' box(es)' : ''"></span>
                                     <span x-show="bboxModified" class="text-warning ms-1">(modified)</span>
                                 </span>
-                                <button x-show="bboxModified"
+                                <button type="button" x-show="bboxModified"
                                         class="btn btn-sm btn-info"
                                         :disabled="savingBbox"
                                         @click="saveBboxEntities()">
@@ -662,8 +671,8 @@
                     </div>
 
                     <!-- Per-file actions -->
-                    <div x-show="!loadingFileDetail && selectedFile" class="d-flex gap-2 mt-3 pt-3 border-top border-secondary">
-                        <button class="btn btn-sm btn-outline-info"
+                    <div x-show.important="!loadingFileDetail && selectedFile?.metadata_editable" class="d-flex gap-2 mt-3 pt-3 border-top border-secondary">
+                        <button type="button" class="btn btn-sm btn-outline-info"
                                 :disabled="rebuildingMetadata"
                                 @click="rebuildFileMetadata()"
                                 title="Recalculate target size, crop coordinates, and aspect ratio from current config">
@@ -671,7 +680,7 @@
                             <i class="fas fa-sync-alt me-1" x-show="!rebuildingMetadata"></i>
                             Rebuild Metadata
                         </button>
-                        <button class="btn btn-sm btn-outline-warning"
+                        <button type="button" class="btn btn-sm btn-outline-warning"
                                 :disabled="deletingVaeCache"
                                 @click="deleteVaeCacheFile()"
                                 title="Delete the cached VAE latent so it is regenerated on next training run">
@@ -680,6 +689,9 @@
                             Delete VAE Cache
                         </button>
                     </div>
+                    <p x-show="!loadingFileDetail && selectedFile?.metadata_editable === false" class="text-muted small mt-3">
+                        Rescan the dataset to recompute its prepared metadata or clear its artifacts.
+                    </p>
                 </div>
             </div>
         </div>

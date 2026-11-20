@@ -1,4 +1,5 @@
 import unittest
+from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -28,6 +29,23 @@ class LoadImageTests(unittest.TestCase):
         self.assertIsInstance(image, Image.Image)
         self.assertEqual(image.mode, "RGB")
         self.assertEqual(image.size, (4, 3))
+
+    @staticmethod
+    def _png(array, mode):
+        buffer = BytesIO()
+        Image.fromarray(array, mode).save(buffer, "PNG")
+        return buffer.getvalue()
+
+    def test_a_grey_image_with_alpha_loads_as_the_rgb_its_rgba_twin_does(self):
+        grey_alpha = np.random.default_rng(0).integers(0, 256, (6, 5, 2), dtype=np.uint8)
+        rgba = np.concatenate([grey_alpha[..., :1]] * 3 + [grey_alpha[..., 1:]], axis=2)
+        from simpletuner.helpers.image_manipulation import load
+
+        with patch.object(load.tsr, "imdecode_py", wraps=load.tsr.imdecode_py) as decode:
+            image = load_image(self._png(grey_alpha, "LA"))
+        self.assertEqual([call.args[1] for call in decode.call_args_list], [-1])
+        self.assertEqual(image.mode, "RGB")
+        np.testing.assert_array_equal(np.array(image), np.array(load_image(self._png(rgba, "RGBA"))))
 
 
 if __name__ == "__main__":

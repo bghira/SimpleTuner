@@ -1,7 +1,9 @@
+from __future__ import annotations
+
 import json
 import logging
 import os
-from typing import Any, Optional, Union
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 import numpy as np
 import scipy.io.wavfile
@@ -15,6 +17,9 @@ from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_d
 from simpletuner.helpers.models.common import AudioModelFoundation, ModelFoundation
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.validation_images import save_image_with_validation_format
+
+if TYPE_CHECKING:
+    from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
@@ -632,94 +637,99 @@ def _duration_bucket_sort_key(bucket_key: str) -> tuple:
         return (1, bucket_key)
 
 
-def _format_duration_buckets(metadata_backend) -> Optional[str]:
-    if metadata_backend is None:
+def _positive_sample_count(value):
+    try:
+        value = int(value)
+    except (TypeError, ValueError):
         return None
-    bucket_indices = getattr(metadata_backend, "aspect_ratio_bucket_indices", {}) or {}
-    if not bucket_indices:
-        return None
-    parts = []
-    for bucket in sorted(bucket_indices.keys(), key=_duration_bucket_sort_key):
-        count = len(bucket_indices.get(bucket) or [])
-        parts.append(f"{bucket} ({count})")
-    if not parts:
-        return None
-    return "- Duration buckets: " + ", ".join(parts)
+    return value if value > 0 else None
 
 
-def _extract_audio_format_hints(metadata_backend, config: dict) -> tuple[Optional[Any], Optional[Any]]:
-    sample_rate = config.get("sample_rate") or config.get("audio_sample_rate")
-    num_channels = config.get("num_channels") or config.get("audio_num_channels")
-    if metadata_backend is None:
-        return sample_rate, num_channels
-    entries = getattr(metadata_backend, "image_metadata", {}) or {}
-    if not entries and hasattr(metadata_backend, "get_metadata"):
-        try:
-            entries = metadata_backend.get_metadata() or {}
-        except Exception:
-            entries = {}
-    first_entry = next(iter(entries.values()), None) if isinstance(entries, dict) else None
-    if isinstance(first_entry, dict):
-        sample_rate = sample_rate or first_entry.get("sample_rate")
-        num_channels = num_channels or first_entry.get("num_channels")
-    return sample_rate, num_channels
-
-
-def _audio_dataset_overview(dataset_id: str, dataset_backend: dict) -> str:
-    sampler = dataset_backend.get("sampler")
-    metadata_backend = dataset_backend.get("metadata_backend")
-    config = StateTracker.get_data_backend_config(dataset_id) or {}
-    lines = []
-    repeats = config.get("repeats", 0)
-    lines.append(f"- Repeats: {repeats}")
-    sample_count = None
-    if metadata_backend is not None:
-        try:
-            sample_count = len(getattr(metadata_backend, "image_metadata", {}) or {})
-        except Exception:
-            sample_count = None
-    if sample_count is None and sampler is not None:
-        try:
-            sample_count = len(sampler)
-        except Exception:
-            sample_count = None
-    if sample_count is not None:
-        lines.append(f"- Total number of audio files: {sample_count}")
-    sample_rate, num_channels = _extract_audio_format_hints(metadata_backend, config)
-    formatted_rate = _format_sample_rate(sample_rate)
-    if formatted_rate:
+def _audio_dataset_overview(dataset: DatasetRuntime) -> str:
+    config = dataset.config
+    options = config.get("audio") or {}
+    lines = [f"- Repeats: {config.get('repeats', 0)}"]
+    stored_count, stored_rate, stored_channels = dataset.audio_metadata_summary()
+    sample_count = dataset.describe().accepted_samples
+    lines.append(f"- Total number of audio files: {stored_count if sample_count is None else sample_count}")
+    sample_rate = config.get("sample_rate") or config.get("audio_sample_rate") or options.get("sample_rate") or stored_rate
+    channels = config.get("num_channels") or config.get("audio_num_channels") or options.get("channels") or stored_channels
+    if formatted_rate := _format_sample_rate(sample_rate):
         lines.append(f"- Sample rate: {formatted_rate}")
-    if num_channels:
-        try:
-            int_channels = int(num_channels)
-            if int_channels > 0:
-                lines.append(f"- Channels: {int_channels}")
-        except (TypeError, ValueError):
-            lines.append(f"- Channels: {num_channels}")
-    bucket_line = _format_duration_buckets(metadata_backend)
-    if bucket_line:
-        lines.append(bucket_line)
-    if sampler is not None:
-        lines.append(
-            f"- Used for regularisation data: {'Yes' if getattr(sampler, 'is_regularisation_data', False) else 'No'}"
-        )
-        conditioning_type = getattr(sampler, "conditioning_type", None)
-        if conditioning_type:
-            lines.append(f"- Conditioning type: {conditioning_type}")
+    if num_channels := _positive_sample_count(channels):
+        lines.append(f"- Channels: {num_channels}")
+    counts = dataset.rank_bucket_counts()
+    if counts:
+        ordered = sorted(counts, key=_duration_bucket_sort_key)
+        lines.append("- Duration buckets: " + ", ".join(f"{bucket} ({counts[bucket]})" for bucket in ordered))
+    _append_dataset_role(lines, dataset)
     return "\n".join(lines) + "\n"
 
 
-def _dataset_overview_for_model(model: ModelFoundation, dataset_id: str, dataset_backend: dict) -> str:
-    try:
-        dataset_type = ensure_dataset_type(dataset_backend.get("dataset_type"), default=DatasetType.IMAGE)
-    except Exception:
-        dataset_type = DatasetType.IMAGE
+def _append_dataset_role(lines, dataset):
+    lines.append(f"- Used for regularisation data: {'Yes' if dataset.is_regularisation_data else 'No'}")
+    if conditioning_type := dataset.conditioning_type:
+        lines.append(f"- Conditioning type: {conditioning_type}")
+
+
+def _dataset_overview_for_model(model: ModelFoundation, dataset: DatasetRuntime) -> str:
+    config = dataset.config
+    dataset_type = ensure_dataset_type(config["dataset_type"])
     if isinstance(model, AudioModelFoundation) and dataset_type is DatasetType.AUDIO:
-        return _audio_dataset_overview(dataset_id, dataset_backend)
-    sampler = dataset_backend.get("sampler")
-    if sampler is None:
-        return ""
-    return sampler.log_state(show_rank=False, alt_stats=True)
+        return _audio_dataset_overview(dataset)
+
+    description = dataset.describe()
+    count = description.accepted_samples
+    if dataset.uses_native_schedule:
+        lines = [f"- Accepted samples: {count if count is not None else 'unknown'}"]
+        if dataset.training_dataloader is not None:
+            lines.append(f"- Scheduled batches per rank: {dataset.training_batch_count()}")
+        return "\n".join(lines) + "\n"
+
+    bucket_counts = dataset.rank_bucket_counts()
+    estimate = False
+    if count is None and config.get("type") != "webshart":
+        count, estimate = dataset.estimate_accepted_sample_count(bucket_counts)
+    cap = _positive_sample_count(config.get("max_num_samples")) or _positive_sample_count(dataset.sample_limit())
+    if count is not None and cap is not None:
+        estimate = False
+        count = min(count, cap)
+    media = {DatasetType.IMAGE: "images", DatasetType.VIDEO: "videos", DatasetType.AUDIO: "audio"}[dataset_type]
+    count_description = f"~{count}" if estimate else count if count is not None else "unknown"
+    lines = [
+        f"- Repeats: {config.get('repeats', 0)}",
+        f"- Total number of {media}: {count_description}",
+        f"- Total number of aspect buckets on this rank: {len(bucket_counts)}",
+    ]
+    schedule = StateTracker.get_dataset_schedule(dataset.id) or {}
+    start_epoch = schedule.get("start_epoch", 1)
+    start_step = schedule.get("start_step", 0)
+    reached = schedule.get("reached", False)
+    if start_epoch > 1 or start_step > 0 or not reached:
+        status = "not reached"
+        if reached:
+            epoch = schedule.get("reached_at_epoch")
+            step = schedule.get("reached_at_step")
+            status = f"reached at epoch {epoch if epoch is not None else '?'}, step {step if step is not None else '?'}"
+        lines.append(f"- Schedule: start_epoch={start_epoch}, start_step={start_step} ({status})")
+    if dataset_type is DatasetType.IMAGE:
+        resolution_unit = "megapixels" if config.get("resolution_type") == "area" else "px"
+        crop = config.get("crop")
+        lines.append(f"- Resolution: {config.get('resolution')} {resolution_unit}")
+        lines.append(f"- Cropped: {crop}")
+        if crop:
+            lines.append(f"- Crop style: {config.get('crop_style')}")
+            lines.append(f"- Crop aspect: {config.get('crop_aspect')}")
+    elif dataset_type is DatasetType.VIDEO:
+        video = config.get("video") or {}
+        lines.append(f"- Target frame count: {config.get('frames_per_video') or video.get('num_frames') or 'unknown'}")
+        lines.append(f"- FPS: {config.get('fps') or video.get('fps') or 'unknown'}")
+    else:
+        sample_rate = config.get("sample_rate") or config.get("audio_sample_rate") or "unknown"
+        lines.append(f"- Sample rate: {sample_rate}")
+        lines.append(f"- Target samples: {config.get('sample_size') or config.get('audio_samples') or 'unknown'}")
+    _append_dataset_role(lines, dataset)
+    return "\n".join(lines) + "\n"
 
 
 def _normalize_validation_prompts(validation_prompts):
@@ -768,12 +778,9 @@ def save_model_card(
         optimizer_config = ""
     os.makedirs(assets_folder, exist_ok=True)
     datasets_str = ""
-    datasettypes = ["image", "video", "audio"]
-    data_backends = StateTracker.get_data_backends(_types=datasettypes)
-    for dataset_id, dataset_backend in data_backends.items():
-        if "sampler" in dataset_backend:
-            datasets_str += f"### {dataset_id}\n"
-            datasets_str += _dataset_overview_for_model(model, dataset_id, dataset_backend)
+    for dataset in StateTracker.get_datasets(DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.AUDIO).values():
+        datasets_str += f"### {dataset.id}\n"
+        datasets_str += _dataset_overview_for_model(model, dataset)
     widget_str = ""
     idx = 0
     negative_prompt_text = str(args.validation_negative_prompt)

@@ -133,8 +133,10 @@ class AssistantLoRADistillerTests(unittest.TestCase):
             "attention_masks": torch.ones(1, 5),
         }
         return patch(
-            "simpletuner.helpers.distillation.assistant_lora.distiller.StateTracker.get_data_backend",
-            return_value={"text_embed_cache": SimpleNamespace(compute_embeddings_for_prompts=Mock(return_value=embeddings))},
+            "simpletuner.helpers.distillation.assistant_lora.distiller.StateTracker.get_dataset",
+            return_value=SimpleNamespace(
+                text_embed_cache=SimpleNamespace(compute_embeddings_for_prompts=Mock(return_value=embeddings))
+            ),
         )
 
     def test_native_qwen_rollout_and_training_backpropagate_only_adapter(self):
@@ -201,10 +203,10 @@ class AssistantLoRADistillerTests(unittest.TestCase):
         for size in (3, 1, 2):
             embeddings = {"prompt_embeds": torch.randn(size, 5, 8)}
             with patch(
-                "simpletuner.helpers.distillation.assistant_lora.distiller.StateTracker.get_data_backend",
-                return_value={
-                    "text_embed_cache": SimpleNamespace(compute_embeddings_for_prompts=Mock(return_value=embeddings))
-                },
+                "simpletuner.helpers.distillation.assistant_lora.distiller.StateTracker.get_dataset",
+                return_value=SimpleNamespace(
+                    text_embed_cache=SimpleNamespace(compute_embeddings_for_prompts=Mock(return_value=embeddings))
+                ),
             ):
                 prepared = distiller.prepare_caption_batch(
                     {"captions": ["a fox"] * size, "data_backend_id": "captions"}, model, {}
@@ -405,17 +407,40 @@ class AssistantCaptionCacheTests(unittest.TestCase):
         events = []
         factory = FactoryRegistry.__new__(FactoryRegistry)
         factory.args = SimpleNamespace(distillation_method="assistant_lora", skip_file_discovery="caption")
-        factory.accelerator = SimpleNamespace(is_local_main_process=True, num_processes=1)
+        factory.accelerator = SimpleNamespace(
+            is_local_main_process=False, num_processes=2, process_index=1, wait_for_everyone=lambda: None
+        )
         factory.caption_backends = {}
+        factory.datasets = {}
         metadata = _CaptionMetadata(events)
-        metadata.caption_records = {"one": CaptionRecord("one", "a fox", "captions")}
-        metadata._ordered_ids = ["one"]
+        metadata.caption_records = {
+            "one": CaptionRecord("one", "a fox", "captions"),
+            "two": CaptionRecord("two", "a rabbit", "captions"),
+        }
+        metadata._ordered_ids = ["one", "two"]
+        cached = []
+
+        def precompute(records, *, batch_size):
+            self.assertIs(iter(records), records)
+            self.assertEqual(batch_size, 2)
+            cached.extend(records)
+            events.append("cache")
+
         cache = SimpleNamespace(
             text_cache_ondemand=False,
-            compute_embeddings_for_prompts=Mock(side_effect=lambda *args, **kwargs: events.append("cache")),
+            precompute_embeddings=Mock(side_effect=precompute),
+            read_batch_size=1,
+            text_encoder_batch_size=2,
         )
         factory._assign_text_embed_cache = lambda backend, runtime: runtime.update(text_embed_cache=cache)
-        factory._create_caption_dataloader = lambda *args: events.append("loader")
+        sampler = Mock()
+        loader = Mock()
+
+        def attach_loader(config, bundle):
+            events.append("loader")
+            bundle.update(train_dataset=Mock(), sampler=sampler, train_dataloader=loader)
+
+        factory._create_caption_dataloader = attach_loader
         backend = {"id": "captions", "type": "local", "dataset_type": "caption"}
         with (
             patch("simpletuner.helpers.data_backend.factory.create_backend_config", return_value=_CaptionConfig()),
@@ -427,9 +452,14 @@ class AssistantCaptionCacheTests(unittest.TestCase):
             patch("simpletuner.helpers.data_backend.factory.StateTracker") as tracker,
         ):
             factory._configure_caption_backend(backend)
-        cache.compute_embeddings_for_prompts.assert_called_once_with(["a fox"], return_concat=False, load_from_cache=False)
+        cache.precompute_embeddings.assert_called_once()
+        self.assertEqual(cached, [{"prompt": "a rabbit"}])
         self.assertEqual(events, ["load", "cache", "loader"])
-        self.assertIs(tracker.register_data_backend.call_args.args[0]["text_embed_cache"], cache)
+        runtime = tracker.register_dataset.call_args.args[0]
+        self.assertIs(factory.datasets["captions"], runtime)
+        self.assertIs(runtime.text_embed_cache, cache)
+        self.assertIs(runtime.sampler, sampler)
+        self.assertIs(runtime.training_dataloader, loader)
 
 
 if __name__ == "__main__":

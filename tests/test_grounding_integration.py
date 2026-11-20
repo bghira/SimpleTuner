@@ -592,25 +592,42 @@ class TestGroundingBatchTo(unittest.TestCase):
         self.assertEqual(moved.text_embeds.dtype, torch.float16)
 
 
-class TestStateTrackerGroundingCache(unittest.TestCase):
-    """Test StateTracker grounding image embed cache methods."""
+class TestGroundingCacheBinding(unittest.TestCase):
+    def test_prepares_only_annotated_accepted_samples_through_the_provider(self):
+        from tempfile import TemporaryDirectory
+        from types import SimpleNamespace
 
-    def test_set_and_get_cache(self):
-        from simpletuner.helpers.training.state_tracker import StateTracker
+        from PIL import Image
 
-        mock_cache = MagicMock()
-        StateTracker.set_grounding_image_embed_cache("test_backend", mock_cache)
-        result = StateTracker.get_grounding_image_embed_cache("test_backend")
-        self.assertIs(result, mock_cache)
+        from simpletuner.helpers.caching.grounding_image_embed import GroundingImageEmbedCache
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 
-        # Cleanup
-        StateTracker._grounding_image_embed_caches.pop("test_backend", None)
+        annotated = "webshart://0/7/shard/7.jpg"
+        unannotated = "webshart://0/8/shard/8.jpg"
+        media = Image.new("RGB", (12, 8), "yellow")
+        feature_backend = MagicMock(embed_dim=2)
+        feature_backend.embed_image.return_value = [torch.ones(2)]
+        source = MagicMock()
+        source.read_image_batch.return_value = ([annotated], [media])
+        source.list_files.side_effect = AssertionError("source inventory")
+        metadata = SimpleNamespace(
+            iter_preparation_batches=lambda worker, workers, batch_size: iter([("wide", (annotated, unannotated))]),
+            get_metadata_batch=lambda refs: (
+                {"bbox_entities": [{"label": "cat", "bbox": [0, 0, 0.5, 1]}]} if ref == annotated else {} for ref in refs
+            ),
+        )
 
-    def test_get_nonexistent_returns_none(self):
-        from simpletuner.helpers.training.state_tracker import StateTracker
-
-        result = StateTracker.get_grounding_image_embed_cache("nonexistent_backend")
-        self.assertIsNone(result)
+        with TemporaryDirectory() as directory:
+            dataset = DatasetRuntime("grounded", source, metadata, {})
+            cache = GroundingImageEmbedCache(feature_backend, directory)
+            dataset.grounding_image_embed_cache = cache
+            self.assertEqual(cache.process_all(dataset), 1)
+            self.assertEqual(cache.process_all(dataset), 0)
+            source.read_image_batch.assert_called_once_with([annotated])
+            feature_backend.embed_image.assert_called_once()
+            self.assertEqual(feature_backend.embed_image.call_args.args[0][0].size, (6, 8))
+            torch.testing.assert_close(dataset.grounding_image_embed_cache.retrieve(annotated, 0), torch.ones(2))
+            self.assertIsNone(cache.retrieve(unannotated, 0))
 
 
 class TestCfgDoubleGligenDict(unittest.TestCase):

@@ -76,6 +76,20 @@ class StrictI2VDatasetValidationTest(unittest.TestCase):
             {"id": "text-embeds", "dataset_type": "text_embeds", "type": "local", "default": True},
         ]
 
+    def test_dataset_plan_rejects_disabled_audio_and_conditioning_targets(self):
+        for field, role in (("conditioning_data", "conditioning"), ("s2v_datasets", "audio")):
+            with self.subTest(field=field):
+                configs = self._base_datasets() + [
+                    {"id": "video", "dataset_type": "video", "type": "local", field: ["related"]},
+                    {"id": "related", "dataset_type": role, "type": "local", "disable": True},
+                ]
+                issues = compute_validations(configs, blueprints=[])
+                self.assertTrue(any(issue.level == "error" and issue.field == f"video.{field}" for issue in issues))
+                configs[-1].pop("disable")
+                self.assertFalse(
+                    any(issue.field == f"video.{field}" for issue in compute_validations(configs, blueprints=[]))
+                )
+
     def _collect_errors(self, validations):
         return [message.message for message in validations if message.level == "error"]
 
@@ -199,8 +213,8 @@ class IsImmediatelyAvailableTest(unittest.TestCase):
         dataset = {"id": "test", "dataset_type": "image", "type": "local", "start_epoch": 5}
         self.assertFalse(_is_immediately_available(dataset))
 
-    def test_start_step_greater_than_0_not_immediate(self):
-        """start_step > 0 means delayed."""
+    def test_start_step_greater_than_1_not_immediate(self):
+        """start_step > 1 means delayed."""
         dataset = {"id": "test", "dataset_type": "image", "type": "local", "start_step": 100}
         self.assertFalse(_is_immediately_available(dataset))
 
@@ -215,7 +229,7 @@ class IsImmediatelyAvailableTest(unittest.TestCase):
         self.assertFalse(_is_immediately_available(dataset))
 
     def test_epoch_immediate_step_delayed(self):
-        """If start_step > 0 even with start_epoch=1, not immediate."""
+        """A start step later than the first optimizer step is delayed."""
         dataset = {"id": "test", "dataset_type": "image", "type": "local", "start_epoch": 1, "start_step": 50}
         self.assertFalse(_is_immediately_available(dataset))
 
@@ -225,7 +239,7 @@ class IsImmediatelyAvailableTest(unittest.TestCase):
         self.assertTrue(_is_immediately_available(dataset))
 
     def test_negative_start_step_is_immediate(self):
-        """Negative start_step is treated as <= 0 (immediate)."""
+        """A negative start_step is clamped to zero."""
         dataset = {"id": "test", "dataset_type": "image", "type": "local", "start_step": -10}
         self.assertTrue(_is_immediately_available(dataset))
 
@@ -237,7 +251,7 @@ class IsImmediatelyAvailableTest(unittest.TestCase):
     def test_float_start_step(self):
         """Float values for start_step should work."""
         dataset = {"id": "test", "dataset_type": "image", "type": "local", "start_step": 0.5}
-        self.assertFalse(_is_immediately_available(dataset))
+        self.assertTrue(_is_immediately_available(dataset))
 
 
 class DatasetSchedulingValidationTest(unittest.TestCase):
@@ -259,6 +273,22 @@ class DatasetSchedulingValidationTest(unittest.TestCase):
 
     def _collect_by_field(self, validations, field):
         return [message for message in validations if message.field == field]
+
+    def test_webshart_plan_and_training_validate_the_same_sampling_policy(self):
+        from simpletuner.helpers.data_backend.config.image import ImageBackendConfig
+
+        for policy in (None, "", "global", "shard_local", "shard_locl", False):
+            with self.subTest(policy=policy):
+                dataset = dict(id="images", type="webshart", dataset_type="image", source="capture")
+                dataset["webshart"] = {"sampling_policy": policy}
+                errors = self._collect_by_field(compute_validations([dataset]), "images.webshart.sampling_policy")
+                if policy in (False, "shard_locl"):
+                    with self.assertRaises(ValueError) as failure:
+                        ImageBackendConfig.from_dict(dataset, {})
+                    self.assertEqual([(error.level, error.message) for error in errors], [("error", str(failure.exception))])
+                else:
+                    self.assertEqual(errors, [])
+                    ImageBackendConfig.from_dict(dataset, {})
 
     def test_immediate_dataset_passes_validation(self):
         """Single immediate dataset should pass scheduling validation."""
@@ -349,6 +379,23 @@ class DatasetSchedulingValidationTest(unittest.TestCase):
         validations = compute_validations(datasets, blueprints=[])
         scheduling_errors = self._collect_by_field(validations, "scheduling")
         self.assertEqual(len(scheduling_errors), 0)
+
+    def test_first_optimizer_step_is_available_with_normalized_config(self):
+        for start_step in (1, "1"):
+            with self.subTest(start_step=start_step):
+                datasets = self._base_datasets()
+                datasets.append(
+                    {
+                        "id": "image",
+                        "dataset_type": "image",
+                        "type": "local",
+                        "start_epoch": "1",
+                        "start_step": start_step,
+                        "end_step": 1,
+                    }
+                )
+                validations = compute_validations(datasets, blueprints=[])
+                self.assertEqual(self._collect_by_field(validations, "scheduling"), [])
 
     def test_no_training_datasets_no_scheduling_error(self):
         """If there are no training datasets, scheduling validation should not trigger."""

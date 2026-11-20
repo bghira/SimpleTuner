@@ -2,6 +2,7 @@ import json
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from simpletuner.helpers.metadata.backends.caption import CaptionMetadataBackend
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -55,8 +56,7 @@ class DummyHFBackend(InMemoryDataBackend):
 class TestCaptionMetadataBackend(unittest.TestCase):
     def setUp(self):
         StateTracker.set_args(SimpleNamespace(output_dir="/tmp"))
-        StateTracker.data_backends = {}
-        StateTracker.all_caption_files = {}
+        StateTracker._pending_dataset_configs = {}
         self.backend = InMemoryDataBackend()
         self.accelerator = SimpleNamespace(is_local_main_process=True)
         self.instance_dir = "/datasets/captions"
@@ -109,6 +109,25 @@ class TestCaptionMetadataBackend(unittest.TestCase):
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0].caption_text, "one caption")
         self.assertEqual(records[0].data_backend_id, "caption")
+        with (
+            patch.object(reloaded_backend, "iter_records", side_effect=AssertionError("walked the caption view")),
+            patch.object(reloaded_backend, "load_image_metadata", side_effect=AssertionError("reopened the caption view")),
+        ):
+            self.assertEqual(reloaded_backend.caption_revision(), caption_backend.caption_revision())
+
+        self.backend.write(f"{self.instance_dir}/only.txt", "changed caption")
+        reloaded_backend.ingest_from_file_cache({f"{self.instance_dir}/only.txt": False})
+        self.assertNotEqual(reloaded_backend.caption_revision(), caption_backend.caption_revision())
+
+    def test_ingestion_updates_bucket_without_rebuilding_its_index(self):
+        caption_backend = self._create_backend()
+        caption_backend.reset_records()
+        bucket = caption_backend.aspect_ratio_bucket_indices["captions"]
+        for index in range(3):
+            caption_backend._store_record(str(index), f"caption {index}", None)
+            self.assertIs(caption_backend.aspect_ratio_bucket_indices["captions"], bucket)
+        self.assertEqual(bucket, ["0", "1", "2"])
+        self.assertEqual(bucket, caption_backend.list_metadata_ids())
 
     def test_ingest_from_parquet_manifest(self):
         manifest_path = "/manifests/captions.jsonl"

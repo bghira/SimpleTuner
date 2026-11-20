@@ -269,6 +269,26 @@ class DatasetDetectTestCase(APITestCase, unittest.TestCase):
         self.assertFalse(data["hasDataset"])
         self.assertEqual(data["path"], str(empty_dir.resolve()))
 
+    def test_detect_uses_indexed_membership_counts(self) -> None:
+        from simpletuner.helpers.metadata.backends.webshart_membership import publish_indexed_membership
+
+        dataset_dir = self.datasets_dir / "indexed"
+        dataset_dir.mkdir()
+        bucket_file = dataset_dir / "aspect_ratio_bucket_indices_capture.json"
+        publish_indexed_membership(
+            bucket_file,
+            {"config": {"resolution": 512}, "bucket_counts": {"square": 2_000_000, "wide": 4}},
+        )
+
+        response = self.client.get("/api/datasets/detect", params={"path": str(dataset_dir)})
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["hasDataset"])
+        self.assertEqual(data["totalFiles"], 2_000_004)
+        self.assertEqual(data["aspectRatios"], ["square", "wide"])
+        self.assertEqual(data["config"], {"resolution": 512})
+
     def test_detect_outside_datasets_dir_denied(self) -> None:
         """Test that detecting outside datasets_dir is denied by default."""
         outside_dir = self.temp_dir / "outside"

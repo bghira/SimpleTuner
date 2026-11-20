@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 from PIL import Image
 
+from simpletuner.helpers.models.common import TextEmbedCacheKey
 from simpletuner.inference import CheckpointInferenceRuntime, run_checkpoint_inference
 
 
@@ -34,6 +35,7 @@ class TestCheckpointInferenceWorker(unittest.TestCase):
             )
             trainer.model.text_encoders = []
             trainer.model.tokenizers = []
+            trainer.model.text_embed_cache_key.return_value = TextEmbedCacheKey.CAPTION
             trainer.model.uses_validation_negative_prompt.return_value = False
             trainer.model.pipeline = object()
             trainer.distiller = None
@@ -42,16 +44,19 @@ class TestCheckpointInferenceWorker(unittest.TestCase):
             runtime.checkpoint_name = "checkpoint-100"
             runtime.session_dir = Path(temporary_directory) / "session"
             runtime.job_id = "test-runtime"
+            runtime.embed_cache = None
 
             with (
                 patch("simpletuner.inference.Trainer", return_value=trainer),
-                patch("simpletuner.inference.LocalDataBackend"),
-                patch("simpletuner.inference.TextEmbeddingCache") as embed_cache_class,
                 patch("simpletuner.inference.StateTracker"),
                 patch("simpletuner.inference.AttentionBackendController"),
             ):
-                embed_cache_class.return_value.discover_all_files.return_value = None
-                runtime._load({}, lambda: False, False)
+                try:
+                    runtime._load({}, lambda: False, False)
+                    writer = runtime.embed_cache.batch_write_thread
+                finally:
+                    runtime.close()
+                self.assertFalse(writer.is_alive())
 
             call_names = [call[0] for call in trainer.method_calls]
             self.assertLess(

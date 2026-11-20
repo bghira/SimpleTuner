@@ -31,11 +31,47 @@ from simpletuner.helpers.data_backend.dataset_types import DatasetType
 class TestFactoryEdgeCases(unittest.TestCase):
     """Test edge cases and error conditions for factory.py."""
 
+    def test_relationships_validate_enabled_targets_without_opening_datasets(self):
+        from simpletuner.helpers.data_backend.config.relationships import resolve_dataset_relationships
+
+        video = {"id": "video", "dataset_type": "video", "conditioning_data": "reference", "s2v_datasets": ["audio"]}
+        reference = {"id": "reference", "dataset_type": "conditioning"}
+        audio = {"id": "audio", "dataset_type": "audio"}
+        resolve = resolve_dataset_relationships
+        self.assertEqual(resolve([video, reference, audio]), ({"video": ["reference"]}, {"video": ["audio"]}))
+        for target in (reference, audio):
+            with self.subTest(dataset=target["id"]), patch.dict(target, disabled=True):
+                with self.assertRaisesRegex(ValueError, f"{target['id']}.*enabled"):
+                    resolve([video, reference, audio])
+        for field in ("source_dataset_id", "metadata_clone_source_id"):
+            with self.subTest(field=field), patch.dict(reference, {field: "missing"}):
+                with self.assertRaisesRegex(ValueError, f"{field}.*missing"):
+                    resolve([video, reference, audio])
+
+    def test_embedded_audio_discovery_keeps_the_video_source_connection_settings(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        factory = FactoryRegistry.__new__(FactoryRegistry)
+        factory.args = SimpleNamespace(output_dir="output", model_family="wan_s2v")
+        factory.model = self.model
+        factory._requires_s2v_datasets = lambda: True
+        for type_, options in (
+            ("aws", {"aws_session_token": "temporary-session", "aws_data_prefix": ["a/", "b/"]}),
+            ("huggingface", {"split": "validation", "data_files": ["part.parquet"], "huggingface": {"revision": "main"}}),
+        ):
+            with self.subTest(backend=type_):
+                video = {"id": "video", "type": type_, "dataset_type": "video", **options}
+                _, audio = factory._inject_s2v_audio_configs([video])
+                self.assertEqual({key: audio[key] for key in options}, options)
+                self.assertEqual(audio["source_dataset_id"], video["id"])
+
     def setUp(self):
         """Set up test fixtures."""
         self.accelerator = MagicMock()
         self.accelerator.is_main_process = True
         self.accelerator.is_local_main_process = True
+        self.accelerator.num_processes = 1
+        self.accelerator.process_index = 0
         self.accelerator.device = "cuda"
         self.accelerator.main_process_first.return_value.__enter__ = MagicMock()
         self.accelerator.main_process_first.return_value.__exit__ = MagicMock()
@@ -44,6 +80,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
         self.model = MagicMock()
         self.model.requires_conditioning_latents.return_value = False
         self.model.requires_conditioning_dataset.return_value = False
+        self.model.requires_conditioning_image_embeds.return_value = False
         self.model.get_vae.return_value = MagicMock()
         self.model.get_pipeline.return_value = MagicMock()
         self.model.AUTOENCODER_CLASS = "AutoencoderKL"
@@ -56,6 +93,11 @@ class TestFactoryEdgeCases(unittest.TestCase):
 
         self.temp_dir = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.temp_dir)
+        self.args.output_dir = self.temp_dir
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        self.enterContext(patch.object(StateTracker, "args", self.args))
+        self.enterContext(patch.object(StateTracker, "accelerator", self.accelerator))
 
     def _setup_args(self):
         """Set up args with default values."""
@@ -103,6 +145,109 @@ class TestFactoryEdgeCases(unittest.TestCase):
         with open(config_path, "w") as f:
             json.dump(config_data, f, indent=2)
         return config_path
+
+    def test_duplicate_enabled_ids_rejected_before_opening_artifact_providers(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        for use_file in (True, False):
+            with self.subTest(use_file=use_file):
+                config = [
+                    {"id": "shared", "type": "local", "dataset_type": "image", "conditioning_data": "ref"},
+                    {"id": "ref", "type": "local", "dataset_type": "conditioning"},
+                    {"id": "shared", "type": "aws", "dataset_type": "text_embeds"},
+                ]
+                self.args.data_backend_config = self._create_temp_config(config)
+                factory = FactoryRegistry(
+                    args=self.args,
+                    accelerator=self.accelerator,
+                    text_encoders=self.text_encoders,
+                    tokenizers=self.tokenizers,
+                    model=self.model,
+                )
+                with patch.object(factory, "configure_text_embed_backends") as configure_artifacts:
+                    with self.assertRaisesRegex(ValueError, "Duplicate id: 'shared'"):
+                        factory.configure(None if use_file else config)
+                    configure_artifacts.assert_not_called()
+
+    def test_invalid_explicit_dataset_links_fail_before_artifact_open(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        for use_file in (True, False):
+            for field, role in (("conditioning_data", "conditioning"), ("s2v_datasets", "audio")):
+                for target in (
+                    [],
+                    [{"id": "target", "dataset_type": role, "type": "local", "disabled": True}],
+                    [{"id": "target", "dataset_type": "image", "type": "local"}],
+                ):
+                    with self.subTest(use_file=use_file, field=field, target=target):
+                        config = [
+                            {"id": "videos", "dataset_type": "video", "type": "local", field: "target"},
+                            *target,
+                        ]
+                        self.args.data_backend_config = self._create_temp_config(config)
+                        factory = FactoryRegistry(
+                            self.args, self.accelerator, self.text_encoders, self.tokenizers, self.model
+                        )
+                        with patch.object(factory, "configure_text_embed_backends") as configure_artifacts:
+                            with self.assertRaisesRegex(ValueError, f"{field} references 'target'.*enabled {role}"):
+                                factory.configure(None if use_file else config)
+                            configure_artifacts.assert_not_called()
+
+    def test_held_out_dataset_receives_its_conditioning_and_audio_bindings(self):
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        config = [
+            {"id": "training", "dataset_type": "image"},
+            {"id": "held-out", "dataset_type": "eval", "conditioning_data": "reference", "s2v_datasets": ["audio"]},
+            {"id": "reference", "dataset_type": "conditioning"},
+            {"id": "audio", "dataset_type": "audio"},
+        ]
+        factory = FactoryRegistry(self.args, self.accelerator, self.text_encoders, self.tokenizers, self.model)
+        factory.text_embed_backends["text"] = {}
+        self.model.requires_s2v_datasets.return_value = False
+
+        def register(backend, *_):
+            dataset = DatasetRuntime(backend["id"], None, None, backend)
+            StateTracker.register_dataset(dataset)
+            factory.datasets[dataset.id] = dataset
+
+        with (
+            patch.object(StateTracker, "datasets", {}),
+            patch.object(StateTracker, "_pending_dataset_configs", {}),
+            patch.object(factory, "_configure_single_data_backend", side_effect=register),
+        ):
+            factory.configure_data_backends(config)
+            held_out = StateTracker.get_dataset("held-out")
+            self.assertEqual(held_out.conditioning_datasets, (StateTracker.get_dataset("reference"),))
+            self.assertEqual(held_out.audio_datasets, (StateTracker.get_dataset("audio"),))
+            self.assertFalse(StateTracker.get_dataset("training").audio_datasets)
+
+    def test_sort_prepares_all_shared_conditioning_sources_before_the_target(self):
+        from simpletuner.helpers.data_backend.factory import sort_dataset_configs_by_dependencies
+
+        sources = [
+            {"id": "first", "dataset_type": "image", "conditioning_data": "target"},
+            {"id": "second", "dataset_type": "image", "conditioning_data": ["target"]},
+        ]
+        for explicit_source in (None, "first"):
+            with self.subTest(explicit_source=explicit_source):
+                target = {"id": "target", "dataset_type": "conditioning", "source_dataset_id": explicit_source}
+                generated = {"id": "derived", "metadata_clone_source_id": "target"}
+                ordered = sort_dataset_configs_by_dependencies([generated, target, *sources])
+                self.assertEqual([item["id"] for item in ordered], ["first", "second", "target", "derived"])
+
+    def test_sort_diagnoses_a_cycle_in_a_later_inbound_dependency(self):
+        from simpletuner.helpers.data_backend.factory import sort_dataset_configs_by_dependencies
+
+        configs = [
+            {"id": "target"},
+            {"id": "first", "conditioning_data": "target"},
+            {"id": "second", "source_dataset_id": "target", "conditioning_data": "target"},
+        ]
+        with self.assertRaisesRegex(ValueError, "Circular dependency"):
+            sort_dataset_configs_by_dependencies(configs)
 
     def test_audio_dataset_materializes_audio_only_for_capable_model(self):
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
@@ -271,18 +416,12 @@ class TestFactoryEdgeCases(unittest.TestCase):
             model=self.model,
         )
 
-        loaded_config = factory.load_configuration()
-
-        with patch("simpletuner.helpers.data_backend.factory.StateTracker") as mock_state_tracker:
-            mock_state_tracker.get_data_backends.return_value = {"duplicate_id": {"id": "duplicate_id"}}
-            mock_state_tracker.clear_data_backends.return_value = None
-
-            with self.assertRaises(ValueError) as context:
-                factory.configure_data_backends(loaded_config)
-
-        self.assertIn("unique 'id' field", str(context.exception))
+        with self.assertRaisesRegex(ValueError, "Duplicate id: 'duplicate_id'"):
+            factory.load_configuration()
+        mock_validate_paths.assert_not_called()
 
     def test_dataset_vae_cache_modes_use_dataset_ondemand_mode(self):
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
         from simpletuner.helpers.data_backend.factory import FactoryRegistry, init_backend_config
 
         factory = FactoryRegistry(
@@ -293,13 +432,14 @@ class TestFactoryEdgeCases(unittest.TestCase):
             model=self.model,
         )
         modes = [
-            ({"vae_cache_ondemand": True}, False, ()),
-            ({"vae_cache_disable": True}, True, ()),
-            ({"vae_cache_ondemand": True}, False, ("vae_cache_disable",)),
+            ({"vae_cache_ondemand": True}, False, (), False),
+            ({"vae_cache_disable": True}, True, (), False),
+            ({"vae_cache_ondemand": True}, False, ("vae_cache_disable",), False),
+            ({}, False, (), True),
         ]
 
-        for backend_mode, expected_disable, missing_config_keys in modes:
-            with self.subTest(backend_mode=backend_mode, missing_config_keys=missing_config_keys):
+        for backend_mode, expected_disable, missing_config_keys, lazy_recrop in modes:
+            with self.subTest(backend_mode=backend_mode, missing_config_keys=missing_config_keys, lazy_recrop=lazy_recrop):
                 backend = {
                     "id": "dataset-ondemand-cache",
                     "type": "local",
@@ -314,9 +454,12 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 init_backend.update(
                     {
                         "data_backend": MagicMock(id=backend["id"], type="local"),
-                        "metadata_backend": MagicMock(),
+                        "metadata_backend": MagicMock(recrops_lazily=lazy_recrop),
                         "instance_data_dir": self.temp_dir,
                     }
+                )
+                init_backend["dataset_runtime"] = DatasetRuntime(
+                    backend["id"], init_backend["data_backend"], init_backend["metadata_backend"], init_backend["config"]
                 )
                 image_embed_backend = {"data_backend": MagicMock(type="local")}
 
@@ -327,10 +470,10 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 ):
                     mock_state_tracker.get_vae.return_value = MagicMock()
                     mock_state_tracker.get_webhook_handler.return_value = None
-                    mock_state_tracker.get_image_files.return_value = {}
 
                     mock_vae_instance = MagicMock()
                     mock_vae_instance.vae_cache_ondemand = True
+                    mock_vae_instance.needs_legacy_cache_inventory.return_value = False
                     mock_vae_instance.set_webhook_handler.return_value = None
                     mock_vae_instance.build_vae_cache_filename_map.return_value = None
                     mock_vae_cache.return_value = mock_vae_instance
@@ -352,6 +495,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 self.assertEqual(expected_disable, init_backend["config"]["vae_cache_disable"])
                 self.assertTrue(init_backend["config"]["vae_cache_ondemand"])
                 mock_vae_instance.discover_all_files.assert_not_called()
+                mock_vae_instance.build_vae_cache_filename_map.assert_not_called()
+                init_backend["data_backend"].source_files.read.assert_not_called()
 
     def test_ondemand_text_embed_backend_skips_dataset_precomputation(self):
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
@@ -372,167 +517,98 @@ class TestFactoryEdgeCases(unittest.TestCase):
         self.assertTrue(init_backend["config"]["hash_filenames"])
         set_config.assert_called_once_with("image-dataset", init_backend["config"])
 
-    def test_text_embed_precompute_splits_full_dataset_records_between_processes(self):
+    def test_cli_text_preparation_uses_the_published_view_before_or_after_binding_conditioning(self):
+        from io import BytesIO
+
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
+        from simpletuner.helpers.metadata.backends.base import MetadataBackend
         from simpletuner.helpers.models.common import TextEmbedCacheKey
 
-        factory = FactoryRegistry.__new__(FactoryRegistry)
-        factory._uses_text_embeddings_cache = lambda: True
-        factory._append_image_context_dropout_prompt_record = lambda *_args, **_kwargs: None
-        factory.args = SimpleNamespace(
-            prepend_instance_prompt=False,
-            instance_prompt=None,
-            only_instance_prompt=False,
-            skip_file_discovery="",
-        )
-        factory.accelerator = SimpleNamespace(device="cpu")
-        factory.text_encoders = []
-        factory.model = SimpleNamespace(
-            requires_text_embed_image_context=lambda: False,
-            text_embed_cache_key=lambda: TextEmbedCacheKey.CAPTION,
-        )
-        cache = MagicMock(text_cache_ondemand=False)
-        init_backend = {
-            "id": "image-dataset",
-            "config": {"caption_strategy": "textfile"},
-            "data_backend": object(),
-            "instance_data_dir": "dataset",
-            "metadata_backend": MagicMock(),
-            "text_embed_cache": cache,
-        }
+        class Provider(MetadataBackend):
+            pass
 
-        with (
-            patch(
-                "simpletuner.helpers.data_backend.factory.PromptHandler.get_all_captions",
-                return_value=(["caption"], [], ["dataset/sample.png"]),
-            ),
-            patch("simpletuner.helpers.data_backend.factory.move_text_encoders"),
-            patch(
-                "simpletuner.helpers.data_backend.factory.StateTracker.get_args",
-                return_value=SimpleNamespace(output_dir="output"),
-            ),
-            patch("simpletuner.helpers.data_backend.factory.StateTracker.set_data_backend_config"),
-        ):
-            factory._process_text_embeddings({}, init_backend, None)
-
-        cache.compute_embeddings_for_prompts.assert_called_once()
-        self.assertTrue(cache.compute_embeddings_for_prompts.call_args.kwargs["split_between_processes"])
-
-    def test_bounded_text_precompute_covers_every_rank_local_sample(self):
-        from simpletuner.helpers.data_backend.factory import FactoryRegistry
-        from simpletuner.helpers.models.common import TextEmbedCacheKey
-
-        for deferred in (False, True):
-            with self.subTest(deferred=deferred):
-                encoded = set()
-                for rank in range(4):
-                    factory = FactoryRegistry.__new__(FactoryRegistry)
-                    factory._uses_text_embeddings_cache = lambda: True
-                    factory._append_image_context_dropout_prompt_record = lambda *_args, **_kwargs: None
-                    factory.args = SimpleNamespace(
-                        caption_strategy="instanceprompt",
-                        prepend_instance_prompt=False,
-                        instance_prompt="caption",
-                        only_instance_prompt=False,
-                        skip_file_discovery="",
+        for image_context, random_captions in ((False, False), (True, False), (False, True)):
+            with self.subTest(image_context=image_context, random_captions=random_captions):
+                deferred = image_context or random_captions
+                factory = FactoryRegistry.__new__(FactoryRegistry)
+                factory._uses_text_embeddings_cache = lambda: True
+                factory.args = SimpleNamespace(
+                    skip_file_discovery="",
+                    conditioning_multidataset_sampling="random" if random_captions else "combined",
+                )
+                factory.accelerator = SimpleNamespace(device="cpu", num_processes=4)
+                factory.model = SimpleNamespace(
+                    requires_text_embed_image_context=lambda: image_context,
+                    text_embed_cache_key=lambda: (
+                        TextEmbedCacheKey.CAPTION if random_captions else TextEmbedCacheKey.DATASET_AND_FILENAME
+                    ),
+                )
+                factory.text_encoders = []
+                factory._deferred_text_embed_datasets = []
+                refs = [f"{index}.png" for index in range(16)]
+                published = json.dumps({"aspect_ratio_bucket_indices": {"square": refs}}).encode()
+                metadata = object.__new__(Provider)
+                metadata.cache_file = "membership.json"
+                metadata.instance_data_dir = None
+                metadata.read_only = True
+                backend = MagicMock(
+                    id="images",
+                    read=MagicMock(side_effect=AssertionError("full bucket index read")),
+                    open_read_stream=MagicMock(side_effect=lambda _: BytesIO(published)),
+                )
+                metadata.data_backend = backend
+                metadata.get_metadata_by_filepath = MagicMock(return_value={})
+                config = {
+                    "caption_strategy": "instanceprompt",
+                    "instance_prompt": "caption",
+                    "conditioning_data": ["input-a", "input-b"] if random_captions else (["reference"] if deferred else []),
+                }
+                runtime = DatasetRuntime("images", backend, metadata, config)
+                if random_captions:
+                    runtime.conditioning_datasets = tuple(
+                        SimpleNamespace(
+                            id=dataset_id,
+                            config={"conditioning_type": "reference_strict"},
+                            conditioning_ref=lambda path, dataset_id=dataset_id: f"{dataset_id}/{path}",
+                            resolve_caption=lambda path: path.split("/", 1)[0],
+                        )
+                        for dataset_id in config["conditioning_data"]
                     )
-                    factory.accelerator = SimpleNamespace(device="cpu")
-                    factory.text_encoders = []
-                    factory.model = SimpleNamespace(
-                        requires_text_embed_image_context=lambda: False,
-                        text_embed_cache_key=lambda: TextEmbedCacheKey.DATASET_AND_FILENAME,
-                    )
-                    paths = [f"{index}.png" for index in range(rank * 4, (rank + 1) * 4)]
-                    metadata = SimpleNamespace(
-                        max_num_samples=16,
-                        aspect_ratio_bucket_indices={"1.0": paths},
-                        get_metadata_by_filepath=lambda _path: {},
-                    )
-                    cache = SimpleNamespace(text_cache_ondemand=False)
-
-                    def encode(records, *, split_between_processes, **_kwargs):
-                        if split_between_processes:
-                            records = records[rank : rank + 1]
-                        encoded.update(record["key"] for record in records)
-
-                    cache.compute_embeddings_for_prompts = encode
-                    backend = {"caption_strategy": "instanceprompt", "max_num_samples": 16}
-                    init_backend = {
-                        "id": "image-dataset",
-                        "config": {"caption_strategy": "instanceprompt"},
-                        "data_backend": SimpleNamespace(id="image-dataset"),
-                        "instance_data_dir": "dataset",
-                        "metadata_backend": metadata,
-                        "text_embed_cache": cache,
-                    }
-                    factory._deferred_text_embed_backends = [(backend, init_backend)]
-                    with (
-                        patch("simpletuner.helpers.data_backend.factory.move_text_encoders"),
-                        patch(
-                            "simpletuner.helpers.data_backend.factory.StateTracker.get_args",
-                            return_value=SimpleNamespace(output_dir="output"),
-                        ),
-                        patch(
-                            "simpletuner.helpers.data_backend.factory.StateTracker.get_data_backend_config",
-                            return_value=init_backend["config"],
-                        ),
-                        patch(
-                            "simpletuner.helpers.data_backend.factory.StateTracker.get_data_backend",
-                            return_value=init_backend,
-                        ),
-                        patch(
-                            "simpletuner.helpers.data_backend.factory.StateTracker.get_conditioning_datasets",
-                            return_value=[],
-                        ),
-                        patch("simpletuner.helpers.data_backend.factory.StateTracker.set_data_backend_config"),
-                    ):
+                prepared = []
+                cache = SimpleNamespace(
+                    text_cache_ondemand=False,
+                    read_batch_size=2,
+                    text_encoder_batch_size=2,
+                    precompute_embeddings=lambda records, **kwargs: prepared.extend(records),
+                )
+                runtime.text_embed_cache = cache
+                bundle = {
+                    "id": "images",
+                    "instance_data_dir": None,
+                    "config": dict(config),
+                    "dataset_runtime": runtime,
+                    "text_embed_cache": cache,
+                }
+                with (
+                    patch("simpletuner.helpers.data_backend.factory.move_text_encoders"),
+                    patch("simpletuner.helpers.data_backend.factory.StateTracker.set_data_backend_config"),
+                    patch.object(backend.source_files, "read", side_effect=AssertionError("source inventory")),
+                ):
+                    for rank in range(4):
+                        factory.accelerator.process_index = rank
+                        metadata.aspect_ratio_bucket_indices = {"square": [refs[0], refs[0]]}
+                        factory._process_text_embeddings(config, bundle, None)
                         if deferred:
+                            self.assertEqual(factory._deferred_text_embed_datasets, [runtime])
                             factory._process_deferred_text_embeddings()
-                        else:
-                            factory._process_text_embeddings(backend, init_backend, None)
-                self.assertEqual(encoded, {f"image-dataset:{index}.png" for index in range(16)})
-
-    def test_deferred_text_embed_precompute_splits_full_dataset_records_between_processes(self):
-        from simpletuner.helpers.data_backend.factory import FactoryRegistry
-        from simpletuner.helpers.models.common import TextEmbedCacheKey
-
-        factory = FactoryRegistry.__new__(FactoryRegistry)
-        factory._uses_text_embeddings_cache = lambda: True
-        factory._append_image_context_dropout_prompt_record = lambda *_args, **_kwargs: None
-        factory.args = SimpleNamespace(
-            caption_strategy="textfile",
-            prepend_instance_prompt=False,
-            instance_prompt=None,
-            only_instance_prompt=False,
-        )
-        factory.accelerator = SimpleNamespace(device="cpu")
-        factory.text_encoders = []
-        factory.model = SimpleNamespace(text_embed_cache_key=lambda: TextEmbedCacheKey.CAPTION)
-        cache = MagicMock(text_cache_ondemand=False)
-        backend = {"caption_strategy": "textfile"}
-        init_backend = {
-            "id": "image-dataset",
-            "config": {"caption_strategy": "textfile"},
-            "data_backend": object(),
-            "instance_data_dir": "dataset",
-            "metadata_backend": MagicMock(),
-            "text_embed_cache": cache,
-        }
-        factory._deferred_text_embed_backends = [(backend, init_backend)]
-
-        with (
-            patch("simpletuner.helpers.data_backend.factory.StateTracker.get_conditioning_datasets", return_value=[]),
-            patch(
-                "simpletuner.helpers.data_backend.factory.PromptHandler.get_all_captions",
-                return_value=(["caption"], [], ["dataset/sample.png"]),
-            ),
-            patch("simpletuner.helpers.data_backend.factory.move_text_encoders"),
-        ):
-            factory._process_deferred_text_embeddings()
-
-        cache.compute_embeddings_for_prompts.assert_called_once()
-        self.assertTrue(cache.compute_embeddings_for_prompts.call_args.kwargs["split_between_processes"])
-        self.assertEqual(factory._deferred_text_embed_backends, [])
+                if random_captions:
+                    self.assertCountEqual(
+                        [record["prompt"] for record in prepared],
+                        ["input-a"] * len(refs) + ["input-b"] * len(refs),
+                    )
+                else:
+                    self.assertCountEqual([record["key"] for record in prepared], [f"images:{ref}" for ref in refs])
 
     def test_text_embed_disable_config_implies_ondemand_without_mutating_global_args(self):
         from simpletuner.helpers.data_backend.factory import init_backend_config
@@ -552,6 +628,47 @@ class TestFactoryEdgeCases(unittest.TestCase):
         self.assertTrue(result["config"]["text_cache_ondemand"])
         self.assertFalse(self.args.text_cache_disable)
         self.assertFalse(self.args.text_cache_ondemand)
+
+    def test_local_root_in_config_matches_the_configured_root(self):
+        from simpletuner.helpers.data_backend.config import ImageBackendConfig
+        from simpletuner.helpers.data_backend.factory import init_backend_config
+
+        backend = {"id": "edit", "type": "local", "instance_data_dir": " /data/edit/ "}
+        self.assertEqual(ImageBackendConfig.from_dict(backend, self.args).instance_data_dir, "/data/edit")
+        result = init_backend_config(backend, self.args, self.accelerator)
+        self.assertEqual(result["config"]["instance_data_dir"], "/data/edit")
+
+    def test_config_versioning_compares_normalised_vae_cache_settings(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry, init_backend_config
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        self.enterContext(patch.object(StateTracker, "set_data_backend_config"))
+        factory = FactoryRegistry.__new__(FactoryRegistry)
+        factory.args = self.args
+        self.args.override_dataset_config = False
+        user = {"id": "train", "type": "local", "instance_data_dir": "/data", "vae_cache_disable": True}
+        saved = init_backend_config(dict(user, vae_cache_ondemand=False), self.args, self.accelerator)["config"]
+        self.assertTrue(saved["vae_cache_ondemand"])
+        for current, flagged in (
+            (dict(user, vae_cache_ondemand=False), False),
+            ({**user, "vae_cache_disable": False}, True),
+        ):
+            with self.subTest(current=current):
+                result = init_backend_config(dict(current), self.args, self.accelerator)
+                result["metadata_backend"] = MagicMock(config=deepcopy(saved))
+                result["metadata_backend"].__len__.return_value = 1
+                with patch("simpletuner.helpers.data_backend.factory.logger") as logger:
+                    factory._handle_config_versioning(dict(current), result)
+                self.assertEqual(logger.error.called, flagged)
+
+        self.args.override_dataset_config = True
+        before = init_backend_config({**user, "vae_cache_disable": False}, self.args, self.accelerator)["config"]
+        result = init_backend_config(dict(user, vae_cache_ondemand=False), self.args, self.accelerator)
+        result["metadata_backend"] = MagicMock(config=deepcopy(before))
+        result["metadata_backend"].__len__.return_value = 1
+        factory._handle_config_versioning(dict(user, vae_cache_ondemand=False), result)
+        self.assertTrue(result["metadata_backend"].config["vae_cache_ondemand"])
+        self.args.override_dataset_config = False
 
     def test_webshart_path_filter_reaches_metadata_config(self):
         from simpletuner.helpers.data_backend.factory import init_backend_config
@@ -749,9 +866,14 @@ class TestFactoryEdgeCases(unittest.TestCase):
             patch("simpletuner.helpers.data_backend.factory.torch.utils.data.DataLoader"),
         ):
             factory._handle_config_versioning(backend, init_backend)
+            factory._bind_dataset_runtime(init_backend, None)
             factory._create_dataset_and_sampler(backend, init_backend, conditioning_type=None)
 
-        set_config.assert_called_once_with(init_backend["id"], init_backend["config"])
+        set_config.assert_called_once()
+        registered_id, setup_config = set_config.call_args.args
+        self.assertEqual(registered_id, init_backend["id"])
+        self.assertEqual(setup_config["train_batch_size"], effective_train_batch_size)
+        self.assertIs(init_backend["config"], init_backend["dataset_runtime"].config)
         self.assertEqual(init_backend["config"]["train_batch_size"], effective_train_batch_size)
         self.assertEqual(metadata_backend.batch_size, effective_train_batch_size)
         self.assertEqual(metadata_backend.config["train_batch_size"], effective_train_batch_size)
@@ -799,14 +921,18 @@ class TestFactoryEdgeCases(unittest.TestCase):
                     model=self.model,
                 )
                 with (
-                    patch.dict(StateTracker.data_backends, {backend["id"]: init_backend}, clear=True),
+                    patch.dict(StateTracker._pending_dataset_configs, {backend["id"]: live_config}, clear=True),
+                    patch.object(StateTracker, "own_dataset_resource"),
+                    patch.object(StateTracker, "register_dataset"),
                     patch("simpletuner.helpers.data_backend.factory.MultiAspectDataset"),
                     patch("simpletuner.helpers.data_backend.factory.MultiAspectSampler") as sampler,
                     patch("simpletuner.helpers.data_backend.factory.torch.utils.data.DataLoader"),
                 ):
                     metadata.reload_cache()
+                    self.assertIs(init_backend["config"], live_config)
+                    factory._bind_dataset_runtime(init_backend, None)
                     factory._create_dataset_and_sampler(backend, init_backend, conditioning_type=None)
-                self.assertIs(init_backend["config"], live_config)
+                self.assertIs(init_backend["config"], init_backend["dataset_runtime"].config)
                 self.assertEqual(sampler.call_args.kwargs["batch_size"], dataset_batch_size or 8)
 
     def test_cached_batch_size_does_not_override_changed_global_default(self):
@@ -966,7 +1092,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
         )
         with (
             patch(
-                "simpletuner.helpers.metadata.backends.discovery.DiscoveryMetadataBackend",
+                "simpletuner.helpers.data_backend.builders.base.JsonMetadataBackend",
                 side_effect=create_metadata_backend,
             ),
             patch(
@@ -1092,7 +1218,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
             model=self.model,
         )
 
-        with patch("simpletuner.helpers.metadata.backends.huggingface.HuggingfaceMetadataBackend") as mock_backend:
+        with patch("simpletuner.helpers.data_backend.builders.base.HuggingfaceMetadataBackend") as mock_backend:
             mock_backend_instance = MagicMock()
             mock_backend.return_value = mock_backend_instance
 
@@ -1189,8 +1315,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 factory.configure_text_embed_backends(loaded_config)
                 factory.configure_data_backends(loaded_config)
 
-                # Check that warnings were logged (the exact calls depend on the implementation)
-                # We mainly want to ensure no exceptions are raised for DeepFloyd
+                self.assertTrue(any("DeepFloyd" in call.args[0] for call in mock_warning.call_args_list))
 
     @patch("simpletuner.helpers.data_backend.factory.FactoryRegistry._validate_dataset_paths")
     def test_pixel_area_resolution_conversion(self, mock_validate_paths):
@@ -1235,7 +1360,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
             self._setup_comprehensive_mocks(mock_state_tracker)
 
             # Patch metadata backend to return non-zero length (avoid validation failure)
-            with patch("simpletuner.helpers.metadata.backends.discovery.DiscoveryMetadataBackend") as mock_metadata:
+            with patch("simpletuner.helpers.data_backend.builders.base.JsonMetadataBackend") as mock_metadata:
                 mock_metadata_instance = MagicMock()
                 mock_metadata_instance.refresh_buckets.return_value = None
                 mock_metadata_instance.split_buckets_between_processes.return_value = None
@@ -1384,22 +1509,23 @@ class TestFactoryEdgeCases(unittest.TestCase):
         """Test memory tracking and metrics functionality."""
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
 
-        factory = FactoryRegistry(
-            args=self.args,
-            accelerator=self.accelerator,
-            text_encoders=self.text_encoders,
-            tokenizers=self.tokenizers,
-            model=self.model,
-        )
+        with patch("tracemalloc.start", side_effect=AssertionError("factory enabled allocation tracing")):
+            factory = FactoryRegistry(
+                args=self.args,
+                accelerator=self.accelerator,
+                text_encoders=self.text_encoders,
+                tokenizers=self.tokenizers,
+                model=self.model,
+            )
 
         # Test memory usage tracking
         initial_memory = factory._get_memory_usage()
         self.assertIsInstance(initial_memory, float)
-        self.assertGreaterEqual(initial_memory, 0)
+        self.assertGreater(initial_memory, 0)
 
         # Test peak memory update
         factory._update_peak_memory()
-        self.assertGreaterEqual(factory.metrics["memory_usage"]["peak"], 0)
+        self.assertGreater(factory.metrics["memory_usage"]["peak"], 0)
 
         # Test performance logging
         factory._log_performance_metrics("test_stage", {"test_metric": 123})
@@ -1476,14 +1602,12 @@ class TestFactoryEdgeCases(unittest.TestCase):
 
         # Additional mocks for complete configuration
         mock_state_tracker.get_vae.return_value = MagicMock()
-        mock_state_tracker.get_image_files.return_value = ["image1.jpg", "image2.jpg"]
-        mock_state_tracker.set_image_files.return_value = ["image1.jpg", "image2.jpg"]
         mock_state_tracker.get_conditioning_mappings.return_value = []
         mock_state_tracker.delete_cache_files.return_value = None
         mock_state_tracker.load_aspect_resolution_map.return_value = None
 
         # Mock all the backend classes
-        local_backend_patcher = patch("simpletuner.helpers.data_backend.factory.LocalDataBackend")
+        local_backend_patcher = patch("simpletuner.helpers.data_backend.builders.local.LocalDataBackend")
         mock_local = local_backend_patcher.start()
         self.addCleanup(local_backend_patcher.stop)
         mock_local.return_value.list_files.return_value = ["image1.jpg", "image2.jpg"]
@@ -1503,7 +1627,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
         mock_vae_instance.set_webhook_handler.return_value = None
         mock_vae_cache.return_value = mock_vae_instance
 
-        metadata_backend_patcher = patch("simpletuner.helpers.metadata.backends.discovery.DiscoveryMetadataBackend")
+        metadata_backend_patcher = patch("simpletuner.helpers.data_backend.builders.base.JsonMetadataBackend")
         mock_metadata = metadata_backend_patcher.start()
         self.addCleanup(metadata_backend_patcher.stop)
         mock_metadata_instance = MagicMock()
@@ -1517,21 +1641,16 @@ class TestFactoryEdgeCases(unittest.TestCase):
         mock_metadata_instance.resolution = 1024
         mock_metadata.return_value = mock_metadata_instance
 
-        dataset_patcher = patch("simpletuner.helpers.multiaspect.dataset.MultiAspectDataset")
+        dataset_patcher = patch("simpletuner.helpers.data_backend.factory.MultiAspectDataset")
         dataset_patcher.start()
         self.addCleanup(dataset_patcher.stop)
 
-        sampler_patcher = patch("simpletuner.helpers.multiaspect.sampler.MultiAspectSampler")
+        sampler_patcher = patch("simpletuner.helpers.data_backend.factory.MultiAspectSampler")
         mock_sampler = sampler_patcher.start()
         self.addCleanup(sampler_patcher.stop)
         mock_sampler_instance = MagicMock()
         mock_sampler_instance.caption_strategy = "filename"
         mock_sampler.return_value = mock_sampler_instance
-
-        prompt_handler_patcher = patch("simpletuner.helpers.prompts.PromptHandler")
-        mock_prompt = prompt_handler_patcher.start()
-        self.addCleanup(prompt_handler_patcher.stop)
-        mock_prompt.get_all_captions.return_value = (["caption1"], [])
 
     def test_empty_dataset_validation_training(self):
         """Test that training datasets with no usable samples raise an error."""
@@ -1672,6 +1791,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 # batch_size=4 × 8 GPUs × 1 grad_accum = 32 effective batch size
                 # 4 samples < 32 effective batch size → should fail
                 with self.assertRaises(ValueError) as context:
+                    mock_backend.runtime_args = StateTracker.get_args()
+                    mock_backend.active_dataset_config = StateTracker.get_data_backend_config(mock_backend.id)
                     MetadataBackend.split_buckets_between_processes(mock_backend, gradient_accumulation_steps=1)
 
         error_msg = str(context.exception)
@@ -1718,6 +1839,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 # batch_size=1 × 2 GPUs × 1 grad_accum = 2 effective batch size
                 # 8 samples >= 2 effective batch size → should succeed (not raise during validation)
                 try:
+                    mock_backend.runtime_args = StateTracker.get_args()
+                    mock_backend.active_dataset_config = StateTracker.get_data_backend_config(mock_backend.id)
                     MetadataBackend.split_buckets_between_processes(mock_backend, gradient_accumulation_steps=1)
                 except ValueError as e:
                     if "Dataset configuration will produce zero usable batches" in str(e):
@@ -1750,6 +1873,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
             mock_get_args.return_value = mock_args
 
             try:
+                mock_backend.runtime_args = StateTracker.get_args()
+                mock_backend.active_dataset_config = StateTracker.get_data_backend_config(mock_backend.id)
                 MetadataBackend.split_buckets_between_processes(mock_backend, gradient_accumulation_steps=4)
             except ValueError as e:
                 if "Dataset configuration will produce zero usable batches" in str(e):
@@ -1786,6 +1911,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
 
                 # Should NOT raise, should auto-adjust repeats
                 try:
+                    mock_backend.runtime_args = StateTracker.get_args()
+                    mock_backend.active_dataset_config = StateTracker.get_data_backend_config(mock_backend.id)
                     MetadataBackend.split_buckets_between_processes(mock_backend, gradient_accumulation_steps=1)
                     self.assertEqual(mock_backend.repeats, 0)
                     self.assertEqual(len(mock_backend.aspect_ratio_bucket_indices["1.0"]), 4)
@@ -1822,6 +1949,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
 
                 # Should raise because manual repeats are insufficient
                 with self.assertRaises(ValueError) as context:
+                    mock_backend.runtime_args = StateTracker.get_args()
+                    mock_backend.active_dataset_config = StateTracker.get_data_backend_config(mock_backend.id)
                     MetadataBackend.split_buckets_between_processes(mock_backend, gradient_accumulation_steps=1)
 
                 error_msg = str(context.exception)
@@ -1857,6 +1986,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
 
                 # Should raise error with suggestion to enable flag
                 with self.assertRaises(ValueError) as context:
+                    mock_backend.runtime_args = StateTracker.get_args()
+                    mock_backend.active_dataset_config = StateTracker.get_data_backend_config(mock_backend.id)
                     MetadataBackend.split_buckets_between_processes(mock_backend, gradient_accumulation_steps=1)
 
                 error_msg = str(context.exception)
@@ -1877,16 +2008,19 @@ class TestFactoryEdgeCases(unittest.TestCase):
         factory._handle_config_versioning = MagicMock()
 
         cases = (
-            ("fixed_steps", 100, False, False),
-            ("oversubscribed_fixed_steps", 100, True, True),
-            ("epoch_driven", 0, False, True),
+            ("fixed_steps", 100, False, None, False),
+            ("oversubscribed_fixed_steps", 100, True, None, True),
+            ("epoch_driven", 0, False, None, True),
+            ("separate_validation_dataset", 100, False, "train-held-out", False),
+            ("held_out_by_name", 100, False, "train", None),
+            ("held_out_by_list", 100, False, ["train"], None),
         )
-        for name, max_train_steps, allow_oversubscription, expected in cases:
+        for name, max_train_steps, allow_oversubscription, eval_dataset_id, expected in cases:
             with self.subTest(name=name):
                 factory.args.max_train_steps = max_train_steps
                 factory.args.allow_dataset_oversubscription = allow_oversubscription
                 factory.args.skip_file_discovery = "aspect"
-                factory.args.eval_dataset_id = None
+                factory.args.eval_dataset_id = eval_dataset_id
 
                 metadata_backend = MagicMock()
                 init_backend = {
@@ -1901,6 +2035,9 @@ class TestFactoryEdgeCases(unittest.TestCase):
                     conditioning_type=None,
                 )
 
+                if expected is None:
+                    metadata_backend.split_buckets_between_processes.assert_not_called()
+                    continue
                 metadata_backend.split_buckets_between_processes.assert_called_once_with(
                     gradient_accumulation_steps=factory.args.gradient_accumulation_steps,
                     apply_padding=expected,
@@ -1930,15 +2067,16 @@ class TestFactoryEdgeCases(unittest.TestCase):
         )
         factory._handle_config_versioning = MagicMock()
 
-        def finish_discovery():
+        def finish_discovery(failure):
+            self.assertIsNone(failure)
             Path(self.temp_dir, f"aspect_resolution_map-{resolution}.json").write_text(json.dumps({"0.68": expected_size}))
+            return []
 
         def check_geometry(**kwargs):
             target_size, _, aspect = MultiaspectImage.calculate_new_size_by_pixel_area(0.68, resolution, (680, 1000))
             self.assertEqual(aspect, 0.68)
             self.assertEqual(target_size, expected_size)
 
-        self.accelerator.wait_for_everyone.side_effect = finish_discovery
         for is_main_process in (True, False):
             with self.subTest(is_main_process=is_main_process):
                 self.accelerator.is_main_process = is_main_process
@@ -1954,6 +2092,9 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 with (
                     patch.object(StateTracker, "args", self.args),
                     patch.object(StateTracker, "aspect_resolution_map", {resolution: {"0.68": (1264, 1856)}}),
+                    patch(
+                        "simpletuner.helpers.training.multi_process.gather_across_processes", side_effect=finish_discovery
+                    ),
                 ):
                     factory._handle_bucket_operations(
                         backend={"id": "train"},
@@ -1963,9 +2104,82 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 metadata_backend.reload_cache.assert_called_once_with()
                 metadata_backend.split_buckets_between_processes.assert_called_once()
 
+    def test_bucket_discovery_failure_keeps_every_rank_out_of_reload(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        factory = FactoryRegistry(
+            args=self.args,
+            accelerator=self.accelerator,
+            text_encoders=self.text_encoders,
+            tokenizers=self.tokenizers,
+            model=self.model,
+        )
+        self.accelerator.num_processes = 2
+        self.args.skip_file_discovery = ""
+        for is_local_main in (True, False):
+            with self.subTest(is_local_main=is_local_main):
+                self.accelerator.is_local_main_process = is_local_main
+                self.accelerator.process_index = int(not is_local_main)
+                metadata = MagicMock()
+                metadata.refresh_buckets.side_effect = FileNotFoundError("source moved")
+                with patch(
+                    "simpletuner.helpers.training.multi_process.gather_across_processes",
+                    return_value=["rank 0: FileNotFoundError: source moved"],
+                ) as gather:
+                    with self.assertRaisesRegex(FileNotFoundError if is_local_main else RuntimeError, "source moved"):
+                        factory._handle_bucket_operations(
+                            {"id": "train"}, {"id": "train", "metadata_backend": metadata}, None
+                        )
+                    gather.assert_called_once_with("rank 0: FileNotFoundError: source moved" if is_local_main else None)
+                metadata.reload_cache.assert_not_called()
+                metadata.split_buckets_between_processes.assert_not_called()
+                self.accelerator.wait_for_everyone.assert_not_called()
+
+    def test_native_parquet_provider_failure_precedes_bucket_preparation(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        factory = FactoryRegistry(self.args, self.accelerator, self.text_encoders, self.tokenizers, self.model)
+        self.accelerator.num_processes = 2
+        backend = {
+            "id": "capture",
+            "type": "webshart",
+            "webshart": {"format": "parquet", "sampling_policy": "global"},
+            "preserve_data_backend_cache": True,
+        }
+        initial = {"id": "capture", "dataset_type": "image", "config": {"resolution": 128}}
+        with (
+            patch("simpletuner.helpers.data_backend.factory.init_backend_config", return_value=initial),
+            patch.object(factory, "_configure_backend_by_type", side_effect=OSError("catalogue unavailable")),
+            patch.object(factory, "_handle_bucket_operations") as prepare,
+            patch("simpletuner.helpers.training.multi_process.gather_across_processes", return_value=[]) as gather,
+        ):
+            with self.assertRaisesRegex(OSError, "catalogue unavailable"):
+                factory._configure_single_data_backend(backend, [backend], [], [], False)
+            gather.assert_called_once_with("rank 0: OSError: catalogue unavailable")
+            prepare.assert_not_called()
+
+    def test_loading_another_resolution_preserves_the_first_geometry_map(self):
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        with (
+            patch.object(StateTracker, "aspect_resolution_map", {}),
+            patch.object(
+                StateTracker,
+                "_load_from_disk",
+                side_effect=[{"1.0": [512, 512]}, {"1.0": [1024, 1024]}, {"1.0": [528, 528]}],
+            ),
+        ):
+            StateTracker.load_aspect_resolution_map(0.25)
+            StateTracker.load_aspect_resolution_map(1.0)
+            self.assertEqual(StateTracker.get_resolution_by_aspect(0.25, 1.0), [512, 512])
+            StateTracker.load_aspect_resolution_map(0.25)
+            self.assertEqual(StateTracker.get_resolution_by_aspect(0.25, 1.0), [528, 528])
+            self.assertEqual(StateTracker.get_resolution_by_aspect(1.0, 1.0), [1024, 1024])
+
     @patch("simpletuner.helpers.data_backend.factory.DatasetDuplicator.copy_metadata")
     @patch("simpletuner.helpers.data_backend.factory.StateTracker")
     def test_metadata_clone_requires_explicit_source_marker(self, mock_state_tracker, mock_copy_metadata):
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
 
         self.args.skip_file_discovery = "aspect"
@@ -1978,6 +2192,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
             "config": {},
             "dataset_type": "audio",
             "metadata_backend": metadata_backend,
+            "data_backend": MagicMock(),
         }
         factory = FactoryRegistry(
             args=self.args,
@@ -1996,6 +2211,9 @@ class TestFactoryEdgeCases(unittest.TestCase):
 
         mock_copy_metadata.assert_not_called()
 
+        source = DatasetRuntime("primary", None, None, {})
+        mock_state_tracker.get_dataset.return_value = source
+        factory._bind_dataset_runtime(init_backend, None)
         factory._handle_bucket_operations(
             backend={
                 "id": "generated-conditioning",
@@ -2007,8 +2225,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
             conditioning_type=None,
         )
 
-        mock_state_tracker.get_data_backend.assert_called_once_with("primary")
-        mock_copy_metadata.assert_called_once()
+        mock_state_tracker.get_dataset.assert_called_once_with("primary")
+        mock_copy_metadata.assert_called_once_with(source=source, target=init_backend["dataset_runtime"], generated=True)
 
     def test_image_embeds_backend_configuration(self):
         """Image embed configuration should not instantiate VAE cache directly."""
@@ -2040,7 +2258,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
             self._setup_state_tracker_mocks(mock_state_tracker)
             mock_state_tracker.get_vae.return_value = MagicMock()
 
-            with patch("simpletuner.helpers.data_backend.factory.LocalDataBackend") as mock_local:
+            with patch("simpletuner.helpers.data_backend.builders.local.LocalDataBackend") as mock_local:
                 mock_local.return_value.list_files.return_value = []
 
                 # Use autospec=True to validate constructor parameters
@@ -2417,6 +2635,61 @@ class TestMetadataBackendEmptyStringHandling(unittest.TestCase):
             # Should auto-set to "huggingface"
             self.assertEqual(backend["metadata_backend"], "huggingface")
 
+    def test_conditioning_geometry_is_resolved_before_provider_construction(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        factory = FactoryRegistry.__new__(FactoryRegistry)
+        factory.args = SimpleNamespace(
+            resolution=512,
+            resolution_type="pixel",
+            minimum_image_size=256,
+            maximum_image_size=None,
+            target_downsample_size=None,
+        )
+        for source_first in (True, False):
+            with self.subTest(source_first=source_first):
+                source = {
+                    "id": "images",
+                    "type": "local",
+                    "conditioning_data": ["references"],
+                    "resolution": 1024,
+                    "resolution_type": "pixel_area",
+                    "minimum_image_size": 512,
+                }
+                references = {
+                    "id": "references",
+                    "type": "aws",
+                    "dataset_type": "conditioning",
+                    "resolution": 256,
+                    "resolution_type": "pixel",
+                }
+                config = [source, references] if source_first else [references, source]
+                factory._resolve_conditioning_geometry(config)
+                self.assertEqual(references["resolution_type"], "area")
+                self.assertEqual(references["resolution"], source["resolution"])
+                self.assertEqual(references["minimum_image_size"], source["minimum_image_size"])
+                self.assertEqual(references["resolution"], 1.048576)
+
+    def test_shared_conditioning_geometry_is_validated_before_applying_assignments(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        factory = FactoryRegistry.__new__(FactoryRegistry)
+        factory.args = SimpleNamespace(resolution_type="pixel")
+        for edges in ((128, 128), (128, 512), (512, 128)):
+            with self.subTest(edges=edges):
+                target = {"id": "mask", "dataset_type": "conditioning", "resolution": 256}
+                sources = [
+                    {"id": name, "conditioning_data": "mask", "resolution": edge}
+                    for name, edge in zip(("first", "second"), edges, strict=True)
+                ]
+                if edges[0] == edges[1]:
+                    factory._resolve_conditioning_geometry([*sources, target])
+                    self.assertEqual(target["resolution"], 128)
+                else:
+                    with self.assertRaisesRegex(ValueError, "mask has conflicting geometry from first and second"):
+                        factory._resolve_conditioning_geometry([*sources, target])
+                    self.assertEqual(target["resolution"], 256)
+
     def test_configure_metadata_backend_empty_string_uses_discovery(self):
         """_configure_metadata_backend should treat empty string as 'discovery'."""
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
@@ -2442,7 +2715,7 @@ class TestMetadataBackendEmptyStringHandling(unittest.TestCase):
             model=self.model,
         )
 
-        with patch("simpletuner.helpers.metadata.backends.discovery.DiscoveryMetadataBackend") as mock_backend:
+        with patch("simpletuner.helpers.data_backend.builders.base.JsonMetadataBackend") as mock_backend:
             mock_backend_instance = MagicMock()
             mock_backend.return_value = mock_backend_instance
 
@@ -2477,7 +2750,7 @@ class TestMetadataBackendEmptyStringHandling(unittest.TestCase):
             model=self.model,
         )
 
-        with patch("simpletuner.helpers.metadata.backends.discovery.DiscoveryMetadataBackend") as mock_backend:
+        with patch("simpletuner.helpers.data_backend.builders.base.JsonMetadataBackend") as mock_backend:
             mock_backend_instance = MagicMock()
             mock_backend.return_value = mock_backend_instance
 
@@ -2572,7 +2845,7 @@ class TestEvalDatasetVAECacheMetadata(TestFactoryEdgeCases):
             instance_data_dir=data_dir,
             file_extensions=image_file_extensions,
         )
-        StateTracker.set_image_files(all_files, data_backend_id="eval-test")
+        data_backend.source_files.publish(all_files)
 
         metadata_backend = DiscoveryMetadataBackend(
             id="eval-test",
@@ -2666,7 +2939,7 @@ class TestEvalDatasetVAECacheMetadata(TestFactoryEdgeCases):
             instance_data_dir=data_dir,
             file_extensions=image_file_extensions,
         )
-        StateTracker.set_image_files(all_files, data_backend_id="eval-test")
+        data_backend.source_files.publish(all_files)
 
         # --- MAIN PROCESS: refresh_buckets writes metadata to disk ---
         main_metadata_backend = DiscoveryMetadataBackend(
@@ -2790,7 +3063,7 @@ class TestEvalDatasetVAECacheMetadata(TestFactoryEdgeCases):
             instance_data_dir=data_dir,
             file_extensions=image_file_extensions,
         )
-        StateTracker.set_image_files(all_files, data_backend_id="eval-test")
+        data_backend.source_files.publish(all_files)
 
         metadata_backend = DiscoveryMetadataBackend(
             id="eval-test",
@@ -2820,14 +3093,9 @@ class TestEvalDatasetVAECacheMetadata(TestFactoryEdgeCases):
         finally:
             release_feeders.set()
 
-        # Register the data backend in StateTracker (as factory does at line 4141)
-        init_backend = {
-            "id": "eval-test",
-            "data_backend": data_backend,
-            "metadata_backend": metadata_backend,
-            "dataset_type": "eval",
-        }
-        StateTracker.register_data_backend(init_backend)
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+
+        StateTracker.register_dataset(DatasetRuntime("eval-test", data_backend, metadata_backend, backend_config))
 
         # Get a filepath from the bucket indices
         all_bucket_files = []
@@ -2851,7 +3119,6 @@ class TestEvalDatasetVAECacheMetadata(TestFactoryEdgeCases):
         )
 
         # StateTracker lookup with eval explicitly included must work
-        # (this is the code path VAECache uses via _metadata_search_types)
         st_meta_eval = StateTracker.get_metadata_by_filepath(
             filepath,
             data_backend_id="eval-test",

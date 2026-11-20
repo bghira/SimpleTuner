@@ -20,21 +20,25 @@
                                 editingDataset.start_step = undefined;
                             } else if (editingDataset._scheduleMode === 'epoch') {
                                 editingDataset.start_step = undefined;
-                                if (!editingDataset.start_epoch || editingDataset.start_epoch < 2) editingDataset.start_epoch = 2;
+                                if (!editingDataset.start_epoch || editingDataset.start_epoch < 1) editingDataset.start_epoch = 2;
                             } else if (editingDataset._scheduleMode === 'step') {
                                 editingDataset.start_epoch = undefined;
                                 if (!editingDataset.start_step || editingDataset.start_step < 1) editingDataset.start_step = 1;
+                            } else if (editingDataset._scheduleMode === 'both') {
+                                if (!editingDataset.start_epoch) editingDataset.start_epoch = 2;
+                                if (!editingDataset.start_step) editingDataset.start_step = 1;
                             }
                             markAsUnsaved()
                         ">
                     <option value="none">Immediate</option>
                     <option value="epoch">By Epoch</option>
                     <option value="step">By Step</option>
+                    <option value="both">By Epoch and Step</option>
                 </select>
             </div>
 
             <!-- Epoch-based scheduling -->
-            <div class="col-md-4" x-show="editingDataset._scheduleMode === 'epoch'" x-cloak>
+            <div class="col-md-4" x-show="['epoch', 'both'].includes(editingDataset._scheduleMode)" x-cloak>
                 <label class="form-label small">Start Epoch <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#start_epoch') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="number"
                        class="form-control form-control-sm"
@@ -43,12 +47,12 @@
                        x-model.number.lazy="editingDataset.start_epoch"
                        @input="markAsUnsaved()"
                        placeholder="2">
-                <div class="form-text small">Activates at this epoch</div>
+                <div class="form-text small">First eligible epoch</div>
             </div>
 
             <!-- Step-based scheduling -->
-            <div class="col-md-4" x-show="editingDataset._scheduleMode === 'step'" x-cloak>
-                <label class="form-label small">Start Step <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#start_step') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+            <div class="col-md-4" x-show="['step', 'both'].includes(editingDataset._scheduleMode)" x-cloak>
+                <label class="form-label small">Start Optimizer Step <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#start_step') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="number"
                        class="form-control form-control-sm"
                        min="0"
@@ -56,7 +60,7 @@
                        x-model.number.lazy="editingDataset.start_step"
                        @input="markAsUnsaved()"
                        placeholder="100">
-                <div class="form-text small">Activates at this step</div>
+                <div class="form-text small">First eligible optimizer step</div>
             </div>
         </div>
 
@@ -77,17 +81,21 @@
                             } else if (editingDataset._endScheduleMode === 'step') {
                                 editingDataset.end_epoch = undefined;
                                 if (!editingDataset.end_step || editingDataset.end_step < 1) editingDataset.end_step = (editingDataset.start_step || 0) + 100;
+                            } else if (editingDataset._endScheduleMode === 'both') {
+                                if (!editingDataset.end_epoch) editingDataset.end_epoch = (editingDataset.start_epoch || 1) + 1;
+                                if (!editingDataset.end_step) editingDataset.end_step = (editingDataset.start_step || 0) + 100;
                             }
                             markAsUnsaved()
                         ">
                     <option value="none">Never (runs indefinitely)</option>
                     <option value="epoch">By Epoch</option>
                     <option value="step">By Step</option>
+                    <option value="both">By Epoch and Step</option>
                 </select>
             </div>
 
             <!-- End Epoch -->
-            <div class="col-md-4" x-show="editingDataset._endScheduleMode === 'epoch'" x-cloak>
+            <div class="col-md-4" x-show="['epoch', 'both'].includes(editingDataset._endScheduleMode)" x-cloak>
                 <label class="form-label small">End Epoch <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#end_epoch--end_step') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="number"
                        class="form-control form-control-sm"
@@ -96,12 +104,12 @@
                        x-model.number.lazy="editingDataset.end_epoch"
                        @input="markAsUnsaved()"
                        placeholder="5">
-                <div class="form-text small">Stops after this epoch</div>
+                <div class="form-text small">Last eligible epoch</div>
             </div>
 
             <!-- End Step -->
-            <div class="col-md-4" x-show="editingDataset._endScheduleMode === 'step'" x-cloak>
-                <label class="form-label small">End Step <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#end_epoch--end_step') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+            <div class="col-md-4" x-show="['step', 'both'].includes(editingDataset._endScheduleMode)" x-cloak>
+                <label class="form-label small">End Optimizer Step <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#end_epoch--end_step') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="number"
                        class="form-control form-control-sm"
                        min="1"
@@ -109,39 +117,12 @@
                        x-model.number.lazy="editingDataset.end_step"
                        @input="markAsUnsaved()"
                        placeholder="300">
-                <div class="form-text small">Stops after this step</div>
+                <div class="form-text small">Last eligible optimizer step</div>
             </div>
         </div>
 
-        <!-- Status indicator -->
-        <div class="alert alert-info small py-2 px-3 mb-0 mt-2">
-            <span x-show="(editingDataset._scheduleMode === 'none' || !editingDataset._scheduleMode) && (editingDataset._endScheduleMode === 'none' || !editingDataset._endScheduleMode)">
-                <i class="fas fa-check-circle me-1"></i> This dataset is available throughout training
-            </span>
-            <span x-show="editingDataset._scheduleMode === 'epoch' && (editingDataset._endScheduleMode === 'none' || !editingDataset._endScheduleMode)" x-cloak>
-                <i class="fas fa-clock me-1"></i> Skipped until epoch <strong x-text="editingDataset.start_epoch || 2"></strong>, then active indefinitely
-            </span>
-            <span x-show="editingDataset._scheduleMode === 'step' && (editingDataset._endScheduleMode === 'none' || !editingDataset._endScheduleMode)" x-cloak>
-                <i class="fas fa-clock me-1"></i> Skipped until step <strong x-text="editingDataset.start_step || 1"></strong>, then active indefinitely
-            </span>
-            <span x-show="(editingDataset._scheduleMode === 'none' || !editingDataset._scheduleMode) && editingDataset._endScheduleMode === 'epoch'" x-cloak>
-                <i class="fas fa-hourglass-end me-1"></i> Active from start, stops after epoch <strong x-text="editingDataset.end_epoch || 1"></strong>
-            </span>
-            <span x-show="(editingDataset._scheduleMode === 'none' || !editingDataset._scheduleMode) && editingDataset._endScheduleMode === 'step'" x-cloak>
-                <i class="fas fa-hourglass-end me-1"></i> Active from start, stops after step <strong x-text="editingDataset.end_step || 1"></strong>
-            </span>
-            <span x-show="editingDataset._scheduleMode === 'epoch' && editingDataset._endScheduleMode === 'epoch'" x-cloak>
-                <i class="fas fa-arrows-alt-h me-1"></i> Active from epoch <strong x-text="editingDataset.start_epoch || 2"></strong> to <strong x-text="editingDataset.end_epoch || 1"></strong>
-            </span>
-            <span x-show="editingDataset._scheduleMode === 'step' && editingDataset._endScheduleMode === 'step'" x-cloak>
-                <i class="fas fa-arrows-alt-h me-1"></i> Active from step <strong x-text="editingDataset.start_step || 1"></strong> to <strong x-text="editingDataset.end_step || 1"></strong>
-            </span>
-            <span x-show="editingDataset._scheduleMode === 'epoch' && editingDataset._endScheduleMode === 'step'" x-cloak>
-                <i class="fas fa-arrows-alt-h me-1"></i> Starts at epoch <strong x-text="editingDataset.start_epoch || 2"></strong>, stops at step <strong x-text="editingDataset.end_step || 1"></strong>
-            </span>
-            <span x-show="editingDataset._scheduleMode === 'step' && editingDataset._endScheduleMode === 'epoch'" x-cloak>
-                <i class="fas fa-arrows-alt-h me-1"></i> Starts at step <strong x-text="editingDataset.start_step || 1"></strong>, stops at epoch <strong x-text="editingDataset.end_epoch || 1"></strong>
-            </span>
+        <div class="form-text small text-muted mt-2">
+            A dataset becomes active once all its start conditions are met. The end epoch and end optimizer step are inclusive.
         </div>
     </div>
 </div>

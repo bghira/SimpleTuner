@@ -4,13 +4,17 @@ and cache operations (text embeds, VAE, conditioning)."""
 
 from __future__ import annotations
 
+import hashlib
 import importlib.metadata
 import importlib.util
-from typing import Any, Dict, List, Literal, Optional
+import json
+from contextlib import contextmanager
+from typing import Annotated, Any, Dict, List, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, conlist
 
+from simpletuner.helpers.metadata.preparation import DatasetViewChangedError
 from simpletuner.simpletuner_sdk.server.services.cache_job_service import get_cache_service
 from simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware import get_current_user
 from simpletuner.simpletuner_sdk.server.services.cloud.auth.models import User
@@ -18,9 +22,11 @@ from simpletuner.simpletuner_sdk.server.services.dataset_scan_service import get
 from simpletuner.simpletuner_sdk.server.services.dataset_viewer_service import (
     AudioPreview,
     CaptionValidationResult,
+    DatasetFileMutationUnavailable,
     DatasetFilePage,
     DatasetGraph,
     DatasetSummary,
+    DatasetViewChanged,
     DatasetViewerService,
     FilteredFilesReport,
     OrphanReport,
@@ -37,7 +43,9 @@ router = APIRouter(prefix="/api/datasets", tags=["dataset_viewer"])
 
 
 def _get_viewer_service() -> DatasetViewerService:
-    return DatasetViewerService()
+    from .datasets import _store
+
+    return DatasetViewerService(plan_path=_store().path)
 
 
 def _load_plan() -> List[Dict[str, Any]]:
@@ -67,13 +75,14 @@ def _require_dataset_config(dataset_id: str) -> Dict[str, Any]:
 
 
 def _get_global_config() -> Dict[str, Any]:
-    """Get global training config values relevant to scanning."""
+    """Get global training config values relevant to scanning, keyed without the CLI's ``--``."""
     try:
         from simpletuner.simpletuner_sdk.server.services.configs_service import ConfigsService
 
-        return ConfigsService().get_active_config().get("config", {})
+        config = ConfigsService().get_active_config().get("config", {})
     except Exception:
         return {}
+    return {key.removeprefix("--"): value for key, value in config.items()}
 
 
 # ---------------------------------------------------------------------------
@@ -109,22 +118,35 @@ async def get_viewer_summaries(
 async def get_viewer_files(
     dataset_id: str,
     bucket_key: Optional[str] = None,
-    limit: int = 50,
-    offset: int = 0,
+    limit: Annotated[int, Query(ge=0, le=1024)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    view_revision: Optional[str] = None,
     _user: User = Depends(get_current_user),
 ) -> DatasetFilePage:
     """Paginated file listing from a dataset's bucket cache."""
-    return _get_viewer_service().get_dataset_files(
-        _require_dataset_config(dataset_id), bucket_key=bucket_key, limit=limit, offset=offset
-    )
+    try:
+        return _get_viewer_service().get_dataset_files(
+            _require_dataset_config(dataset_id),
+            bucket_key=bucket_key,
+            limit=limit,
+            offset=offset,
+            view_revision=view_revision,
+        )
+    except DatasetViewChanged as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/viewer/file-metadata")
 async def get_viewer_file_metadata(
-    dataset_id: str, file_path: str, _user: User = Depends(get_current_user)
+    dataset_id: str, file_path: str, view_revision: Optional[str] = None, _user: User = Depends(get_current_user)
 ) -> Dict[str, Any]:
     """Per-file metadata from the metadata cache."""
-    meta = _get_viewer_service().get_file_metadata(_require_dataset_config(dataset_id), file_path)
+    try:
+        meta = _get_viewer_service().get_file_metadata(
+            _require_dataset_config(dataset_id), file_path, view_revision=view_revision
+        )
+    except DatasetViewChanged as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if meta is None:
         return {"path": file_path, "found": False}
     return {"found": True, **meta.model_dump()}
@@ -134,20 +156,29 @@ async def get_viewer_file_metadata(
 async def get_viewer_thumbnails(
     dataset_id: str,
     bucket_key: Optional[str] = None,
-    limit: int = 24,
-    offset: int = 0,
+    limit: Annotated[int, Query(ge=0, le=128)] = 24,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    view_revision: Optional[str] = None,
     _user: User = Depends(get_current_user),
 ) -> List[ViewerThumbnailInfo]:
     """Thumbnails for files in a dataset bucket."""
-    return _get_viewer_service().get_dataset_thumbnails(
-        _require_dataset_config(dataset_id), bucket_key=bucket_key, limit=limit, offset=offset
-    )
+    try:
+        return _get_viewer_service().get_dataset_thumbnails(
+            _require_dataset_config(dataset_id),
+            bucket_key=bucket_key,
+            limit=limit,
+            offset=offset,
+            view_revision=view_revision,
+        )
+    except DatasetViewChanged as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/viewer/preview")
 async def get_viewer_preview(
     dataset_id: str,
     file_path: str,
+    view_revision: Optional[str] = None,
     _user: User = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """Preview images for the file detail modal.
@@ -159,18 +190,35 @@ async def get_viewer_preview(
     config = _require_dataset_config(dataset_id)
 
     # Load metadata so the preview can simulate the crop pipeline
-    meta = service.get_file_metadata(config, file_path)
-    meta_dict = meta.model_dump() if meta else None
-
-    result = service.get_image_preview(config, file_path, metadata=meta_dict)
+    try:
+        meta = service.get_file_metadata(config, file_path, view_revision=view_revision)
+        meta_dict = meta.model_dump() if meta else None
+        result = service.get_image_preview(config, file_path, metadata=meta_dict, view_revision=view_revision)
+    except DatasetViewChanged as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if result is None:
         raise HTTPException(status_code=404, detail="Image not available")
     return result
 
 
-class CropCoordinatesUpdate(BaseModel):
+class SingleFileAction(BaseModel):
     dataset_id: str
     file_path: str
+    view_revision: Optional[str] = None
+    metadata_revision: Optional[str] = None
+
+
+@contextmanager
+def _viewer_file_action():
+    try:
+        yield
+    except DatasetViewChangedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except DatasetFileMutationUnavailable as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+class CropCoordinatesUpdate(SingleFileAction):
     crop_coordinates: conlist(int, min_length=2, max_length=2)
 
 
@@ -182,24 +230,28 @@ async def update_viewer_crop_coordinates(
     service = _get_viewer_service()
     config = _require_dataset_config(request.dataset_id)
 
-    if not service.update_crop_coordinates(config, request.file_path, request.crop_coordinates):
+    with _viewer_file_action():
+        edit = service.update_crop_coordinates(
+            config,
+            request.file_path,
+            request.crop_coordinates,
+            view_revision=request.view_revision,
+            metadata_revision=request.metadata_revision,
+        )
+    if edit is None:
         raise HTTPException(status_code=404, detail="Metadata entry not found")
 
-    # Re-generate the cropped preview with the new coordinates
-    meta = service.get_file_metadata(config, request.file_path)
-    meta_dict = meta.model_dump() if meta else None
-    result = service.get_image_preview(config, request.file_path, metadata=meta_dict)
+    result = service.get_image_preview(config, request.file_path, metadata=edit.record)
 
     return {
         "saved": True,
         "crop_coordinates": request.crop_coordinates,
         "cropped": result.get("cropped") if result else None,
+        "metadata_revision": edit.revision,
     }
 
 
-class BboxEntitiesUpdate(BaseModel):
-    dataset_id: str
-    file_path: str
+class BboxEntitiesUpdate(SingleFileAction):
     bbox_entities: Optional[List[Dict[str, Any]]] = None
 
 
@@ -211,18 +263,22 @@ async def update_viewer_bbox_entities(
     service = _get_viewer_service()
     config = _require_dataset_config(request.dataset_id)
 
-    if not service.update_bbox_entities(config, request.file_path, request.bbox_entities):
+    with _viewer_file_action():
+        edit = service.update_bbox_entities(
+            config,
+            request.file_path,
+            request.bbox_entities,
+            view_revision=request.view_revision,
+            metadata_revision=request.metadata_revision,
+        )
+    if edit is None:
         raise HTTPException(status_code=404, detail="Metadata entry not found")
 
     return {
         "saved": True,
         "bbox_entities": request.bbox_entities,
+        "metadata_revision": edit.revision,
     }
-
-
-class SingleFileAction(BaseModel):
-    dataset_id: str
-    file_path: str
 
 
 def _captioning_install_command() -> str:
@@ -248,6 +304,7 @@ class CaptioningCapabilities(BaseModel):
     version: Optional[str] = None
     required_version: str = "0.5.0"
     install_command: str = Field(default_factory=_captioning_install_command)
+    eligible_dataset_ids: list[str] = Field(default_factory=list)
 
 
 class CaptioningJobRequest(BaseModel):
@@ -316,7 +373,21 @@ async def get_captioning_capabilities(_user: User = Depends(get_current_user)) -
     except importlib.metadata.PackageNotFoundError:
         version = None
 
-    return CaptioningCapabilities(installed=True, ready=_version_at_least(version, "0.5.0"), version=version)
+    from simpletuner.simpletuner_sdk.server.services.captionflow_job_service import resolve_captioning_dataset_source
+
+    plan, _, _ = _cache_plan()
+    eligible = []
+    for config in plan:
+        if not config.get("id"):
+            continue
+        try:
+            resolve_captioning_dataset_source(config)
+        except ValueError:
+            continue
+        eligible.append(config["id"])
+    return CaptioningCapabilities(
+        installed=True, ready=_version_at_least(version, "0.5.0"), version=version, eligible_dataset_ids=eligible
+    )
 
 
 @router.post("/captioning/jobs", response_model=CaptioningJobResponse)
@@ -368,19 +439,40 @@ async def rebuild_file_metadata(request: SingleFileAction, _user: User = Depends
     config = _require_dataset_config(request.dataset_id)
     global_config = _get_global_config()
 
-    result = service.rebuild_file_metadata(config, global_config, request.file_path)
-    if result is None:
+    with _viewer_file_action():
+        edit = service.rebuild_file_metadata(
+            config,
+            global_config,
+            request.file_path,
+            view_revision=request.view_revision,
+            metadata_revision=request.metadata_revision,
+        )
+    if edit is None:
         raise HTTPException(status_code=404, detail="Could not rebuild metadata for this file")
 
-    return {"rebuilt": True, "metadata": result}
+    return {"rebuilt": True, "metadata": edit.record, "metadata_revision": edit.revision}
 
 
 @router.post("/viewer/delete-vae-cache")
 async def delete_vae_cache_file(request: SingleFileAction, _user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Delete the VAE cache file for a single image/video."""
     service = _get_viewer_service()
-    config = _require_dataset_config(request.dataset_id)
-    return service.delete_vae_cache_file(config, request.file_path)
+    try:
+        plan = _load_plan()
+    except ValueError:
+        plan = []
+    config = next((dataset for dataset in plan if dataset.get("id") == request.dataset_id), None)
+    if config is None:
+        raise HTTPException(status_code=404, detail=f"Dataset '{request.dataset_id}' not found in plan")
+    with _viewer_file_action():
+        return service.delete_vae_cache_file(
+            config,
+            request.file_path,
+            view_revision=request.view_revision,
+            metadata_revision=request.metadata_revision,
+            global_config=_get_global_config(),
+            dataset_plan=plan,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -409,8 +501,8 @@ async def get_viewer_filter_summary(dataset_id: str, _user: User = Depends(get_c
 async def get_viewer_filtered_files(
     dataset_id: str,
     reason: Optional[str] = None,
-    limit: int = 50,
-    offset: int = 0,
+    limit: Annotated[int, Query(ge=0, le=1024)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
     _user: User = Depends(get_current_user),
 ) -> FilteredFilesReport:
     """Files that were filtered out by size/aspect ratio settings."""
@@ -438,23 +530,31 @@ async def get_viewer_graph(_user: User = Depends(get_current_user)) -> DatasetGr
 async def get_viewer_conditioning_pairs(
     source_id: str,
     conditioning_id: str,
-    limit: int = 12,
-    offset: int = 0,
+    limit: Annotated[int, Query(ge=0, le=128)] = 12,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    source_view_revision: Optional[str] = None,
+    conditioning_view_revision: Optional[str] = None,
     _user: User = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """Matched conditioning pairs between source and conditioning datasets."""
-    return _get_viewer_service().get_conditioning_pairs(
-        _require_dataset_config(source_id),
-        _require_dataset_config(conditioning_id),
-        limit=limit,
-        offset=offset,
-    )
+    try:
+        return _get_viewer_service().get_conditioning_pairs(
+            _require_dataset_config(source_id),
+            _require_dataset_config(conditioning_id),
+            limit=limit,
+            offset=offset,
+            source_view_revision=source_view_revision,
+            conditioning_view_revision=conditioning_view_revision,
+        )
+    except DatasetViewChanged as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/viewer/conditioning-match")
 async def get_viewer_conditioning_match(
     dataset_id: str,
     file_path: str,
+    view_revision: Optional[str] = None,
     _user: User = Depends(get_current_user),
 ) -> Optional[Dict[str, Any]]:
     """Find the conditioning image matching a source file."""
@@ -463,17 +563,28 @@ async def get_viewer_conditioning_match(
     except ValueError:
         return None
     config = _require_dataset_config(dataset_id)
-    return _get_viewer_service().get_conditioning_file_match(config, datasets, file_path)
+    try:
+        return _get_viewer_service().get_conditioning_file_match(
+            config, datasets, file_path, view_revision=view_revision, global_config=_get_global_config()
+        )
+    except DatasetViewChanged as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/viewer/conditioning-orphans", response_model=OrphanReport)
 async def get_viewer_conditioning_orphans(
-    source_id: str, conditioning_id: str, _user: User = Depends(get_current_user)
+    source_id: str,
+    conditioning_id: str,
+    limit: Annotated[int, Query(ge=0, le=500)] = 500,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    _user: User = Depends(get_current_user),
 ) -> OrphanReport:
     """Orphaned files between source and conditioning datasets."""
     return _get_viewer_service().get_orphaned_files(
         _require_dataset_config(source_id),
         _require_dataset_config(conditioning_id),
+        limit=limit,
+        offset=offset,
     )
 
 
@@ -484,16 +595,35 @@ async def get_viewer_conditioning_orphans(
 
 @router.get("/viewer/video-preview", response_model=VideoPreview)
 async def get_viewer_video_preview(
-    dataset_id: str, file_path: str, frame_count: int = 4, _user: User = Depends(get_current_user)
+    dataset_id: str,
+    file_path: str,
+    frame_count: Annotated[int, Query(ge=1, le=16)] = 4,
+    view_revision: Optional[str] = None,
+    _user: User = Depends(get_current_user),
 ) -> VideoPreview:
     """Video preview with extracted frames."""
-    return _get_viewer_service().get_video_preview(_require_dataset_config(dataset_id), file_path, frame_count=frame_count)
+    try:
+        return _get_viewer_service().get_video_preview(
+            _require_dataset_config(dataset_id), file_path, frame_count=frame_count, view_revision=view_revision
+        )
+    except DatasetViewChanged as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/viewer/audio-preview", response_model=AudioPreview)
-async def get_viewer_audio_preview(dataset_id: str, file_path: str, _user: User = Depends(get_current_user)) -> AudioPreview:
+async def get_viewer_audio_preview(
+    dataset_id: str,
+    file_path: str,
+    view_revision: Optional[str] = None,
+    _user: User = Depends(get_current_user),
+) -> AudioPreview:
     """Audio preview with waveform."""
-    return _get_viewer_service().get_audio_preview(_require_dataset_config(dataset_id), file_path)
+    try:
+        return _get_viewer_service().get_audio_preview(
+            _require_dataset_config(dataset_id), file_path, view_revision=view_revision
+        )
+    except DatasetViewChanged as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -506,17 +636,23 @@ class ScanRequest(BaseModel):
     force_rescan: bool = False
     clear_vae_cache: bool = False
     clear_conditioning_cache: bool = False
+    plan_scope: Optional[str] = None
 
 
 class ScanAllRequest(BaseModel):
     force_rescan: bool = False
+    plan_scope: Optional[str] = None
 
 
 @router.post("/scan")
 async def start_dataset_scan(request: ScanRequest, _user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Start a metadata scan for a single dataset."""
-    config = _require_dataset_config(request.dataset_id)
-    global_config = _get_global_config()
+    plan, global_config, scope = _cache_plan()
+    if request.plan_scope is not None and request.plan_scope != scope:
+        raise HTTPException(status_code=409, detail="The dataset plan changed. Refresh it before scanning.")
+    config = next((dataset for dataset in plan if dataset.get("id") == request.dataset_id), None)
+    if config is None:
+        raise HTTPException(status_code=404, detail=f"Dataset '{request.dataset_id}' not found in plan")
     try:
         job_id = get_scan_service().scan_dataset(
             request.dataset_id,
@@ -525,29 +661,38 @@ async def start_dataset_scan(request: ScanRequest, _user: User = Depends(get_cur
             force_rescan=request.force_rescan,
             clear_vae_cache=request.clear_vae_cache,
             clear_conditioning_cache=request.clear_conditioning_cache,
+            dataset_plan=plan,
+            plan_scope=scope,
         )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(status_code=409, detail=str(e))
-    return {"job_id": job_id, "dataset_id": request.dataset_id}
+    return {"job_id": job_id, "dataset_id": request.dataset_id, "plan_scope": scope}
 
 
 @router.post("/scan/all")
 async def start_scan_all(request: ScanAllRequest, _user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Queue all browsable datasets for sequential scanning."""
-    try:
-        datasets = _load_plan()
-    except ValueError:
-        raise HTTPException(status_code=404, detail="No dataset plan found")
-
-    browsable = [ds for ds in datasets if str(ds.get("dataset_type", "")).lower() not in ("text_embeds", "image_embeds")]
+    datasets, global_config, scope = _cache_plan()
+    if request.plan_scope is not None and request.plan_scope != scope:
+        raise HTTPException(status_code=409, detail="The dataset plan changed. Refresh it before scanning.")
+    browsable = [
+        ds
+        for ds in datasets
+        if str(ds.get("dataset_type", "")).lower() not in ("text_embeds", "image_embeds", "conditioning_image_embeds")
+        and not (ds.get("disabled") or ds.get("disable"))
+    ]
     if not browsable:
         raise HTTPException(status_code=400, detail="No scannable datasets in plan")
 
     try:
-        queue_id = get_scan_service().scan_all(browsable, _get_global_config(), force_rescan=request.force_rescan)
+        queue_id = get_scan_service().scan_all(
+            browsable, global_config, force_rescan=request.force_rescan, dataset_plan=datasets, plan_scope=scope
+        )
     except RuntimeError as e:
         raise HTTPException(status_code=409, detail=str(e))
-    return {"queue_id": queue_id, "dataset_count": len(browsable)}
+    return {"queue_id": queue_id, "dataset_count": len(browsable), "plan_scope": scope}
 
 
 @router.get("/scan/active")
@@ -555,17 +700,19 @@ async def get_active_scan(
     _user: User = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """Current active scan status, if any. Returns {active: false} when idle."""
+    _, _, scope = _cache_plan()
     result = get_scan_service().get_active_status()
-    if result is None:
-        return {"active": False}
+    if result is None or result["plan_scope"] != scope:
+        return {"active": False, "plan_scope": scope}
     return {"active": True, **result}
 
 
 @router.get("/scan/status")
 async def get_scan_status_endpoint(job_id: str, _user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Status of a scan job."""
+    _, _, scope = _cache_plan()
     result = get_scan_service().get_scan_status(job_id)
-    if result is None:
+    if result is None or result["plan_scope"] != scope:
         raise HTTPException(status_code=404, detail=f"Scan job '{job_id}' not found")
     return result
 
@@ -573,16 +720,20 @@ async def get_scan_status_endpoint(job_id: str, _user: User = Depends(get_curren
 @router.get("/scan/queue-status")
 async def get_scan_queue_status(queue_id: str, _user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Status of a scan queue."""
+    _, _, scope = _cache_plan()
     result = get_scan_service().get_queue_status(queue_id)
-    if result is None:
+    if result is None or result["plan_scope"] != scope:
         raise HTTPException(status_code=404, detail=f"Scan queue '{queue_id}' not found")
     return result
 
 
 @router.post("/scan/cancel")
-async def cancel_scan(_user: User = Depends(get_current_user)) -> Dict[str, Any]:
+async def cancel_scan(
+    job_id: Optional[str] = None, queue_id: Optional[str] = None, _user: User = Depends(get_current_user)
+) -> Dict[str, Any]:
     """Cancel the active scan and remaining queue."""
-    return {"cancelled": get_scan_service().cancel_scan()}
+    _, _, scope = _cache_plan()
+    return {"cancelled": get_scan_service().cancel_scan(job_id=job_id, queue_id=queue_id, plan_scope=scope)}
 
 
 # ---------------------------------------------------------------------------
@@ -593,34 +744,57 @@ async def cancel_scan(_user: User = Depends(get_current_user)) -> Dict[str, Any]
 class CacheStartRequest(BaseModel):
     dataset_id: str
     cache_type: Literal["text_embeds", "vae", "conditioning"]
+    plan_scope: Optional[str] = None
+
+
+def _cache_plan():
+    from .datasets import _store
+
+    store = _store()
+    try:
+        plan, _, _ = store.load()
+    except ValueError:
+        plan = []
+    config = _get_global_config()
+    identity = json.dumps([str(store.path.resolve()), plan, config], sort_keys=True, default=str)
+    return plan, config, hashlib.sha256(identity.encode()).hexdigest()
 
 
 @router.get("/cache/capabilities")
 async def get_cache_capabilities(_user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Available cache types based on model family and dataset configuration."""
-    global_config = _get_global_config()
+    datasets, global_config, scope = _cache_plan()
     model_family = global_config.get("model_family", "")
-    try:
-        datasets = _load_plan()
-    except ValueError:
-        datasets = []
 
     from simpletuner.simpletuner_sdk.server.services.cache_job_service import CacheJobService
 
-    return CacheJobService.get_capabilities(model_family, datasets, global_config)
+    return {"plan_scope": scope, **CacheJobService.get_capabilities(model_family, datasets, global_config)}
 
 
 @router.post("/cache/start")
 async def start_cache_job(request: CacheStartRequest, _user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Start a background cache job for a dataset."""
-    config = _require_dataset_config(request.dataset_id)
-    global_config = _get_global_config()
+    plan, global_config, scope = _cache_plan()
+    if request.plan_scope is not None and request.plan_scope != scope:
+        raise HTTPException(status_code=409, detail="The dataset plan changed. Refresh it before preparing artifacts.")
+    config = next((entry for entry in plan if entry.get("id") == request.dataset_id), None)
+    if config is None:
+        raise HTTPException(status_code=404, detail=f"Dataset '{request.dataset_id}' not found in plan")
+    service = get_cache_service()
+    if request.cache_type != "conditioning":
+        model_family = global_config.get("model_family", "")
+        capabilities = service.get_capabilities(model_family, plan, global_config)
+        available = capabilities["datasets"].get(request.dataset_id, {}).get(request.cache_type, {})
+        if not available.get("prepare"):
+            raise HTTPException(status_code=422, detail=available.get("reason") or "This dataset cannot prepare that cache.")
     try:
-        job_id = get_cache_service().start_cache_job(
+        job_id = service.start_cache_job(
             request.dataset_id,
             request.cache_type,
             config,
             global_config,
+            dataset_plan=plan,
+            plan_scope=scope,
         )
     except RuntimeError as e:
         raise HTTPException(status_code=409, detail=str(e))
@@ -630,7 +804,8 @@ async def start_cache_job(request: CacheStartRequest, _user: User = Depends(get_
 @router.get("/cache/active")
 async def get_active_cache_job(_user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Current active cache job status, if any."""
-    result = get_cache_service().get_active_status()
+    _, _, scope = _cache_plan()
+    result = get_cache_service().get_active_status(plan_scope=scope)
     if result is None:
         return {"active": False}
     return {"active": True, **result}
@@ -639,13 +814,15 @@ async def get_active_cache_job(_user: User = Depends(get_current_user)) -> Dict[
 @router.get("/cache/status")
 async def get_cache_job_status(job_id: str, _user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Status of a cache job."""
-    result = get_cache_service().get_job_status(job_id)
+    _, _, scope = _cache_plan()
+    result = get_cache_service().get_job_status(job_id, plan_scope=scope)
     if result is None:
         raise HTTPException(status_code=404, detail=f"Cache job '{job_id}' not found")
     return result
 
 
 @router.post("/cache/cancel")
-async def cancel_cache_job(_user: User = Depends(get_current_user)) -> Dict[str, Any]:
+async def cancel_cache_job(job_id: Optional[str] = None, _user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Cancel the active cache job."""
-    return {"cancelled": get_cache_service().cancel()}
+    _, _, scope = _cache_plan()
+    return {"cancelled": get_cache_service().cancel(job_id=job_id, plan_scope=scope)}

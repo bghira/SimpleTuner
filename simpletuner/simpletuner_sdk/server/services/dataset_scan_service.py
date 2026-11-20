@@ -3,16 +3,20 @@
 from __future__ import annotations
 
 import logging
+import multiprocessing
 import os
+import re
 import shutil
 import threading
 import time
 import uuid
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
+
+from .dataset_worker import dataset_worker
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +24,7 @@ logger = logging.getLogger(__name__)
 class ScanStatus(str, Enum):
     PENDING = "pending"
     RUNNING = "running"
+    CANCELLING = "cancelling"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -35,6 +40,9 @@ class ScanJob:
     error: Optional[str] = None
     started_at: Optional[float] = None
     finished_at: Optional[float] = None
+    plan_scope: Optional[str] = None
+    queue_id: Optional[str] = None
+    queue_index: Optional[int] = None
 
 
 @dataclass
@@ -44,6 +52,8 @@ class ScanQueue:
     jobs: Dict[str, ScanJob] = field(default_factory=dict)
     current_index: int = 0
     cancelled: bool = False
+    finished: bool = False
+    plan_scope: Optional[str] = None
 
 
 class _ScanAcceleratorStub:
@@ -107,6 +117,26 @@ class _ScanArgsNamespace:
         return getattr(self, key, default)
 
 
+def _execute_scan_process(connection, cancelled, dataset_config, global_config, force_rescan, dataset_plan):
+    def report(current, total):
+        if cancelled.is_set():
+            raise RuntimeError("Scan cancelled by user")
+        if current % 50 == 0 or current == total:
+            connection.send({"current": current, "total": total})
+
+    with connection:
+        if cancelled.is_set():
+            return
+        try:
+            DatasetScanService()._execute_scan(
+                dataset_config, global_config, force_rescan, report, dataset_plan=dataset_plan
+            )
+        except Exception as e:
+            if not cancelled.is_set():
+                logger.exception("Dataset metadata scan failed")
+                connection.send({"error": str(e)})
+
+
 class DatasetScanService:
     """Manages standalone dataset metadata scans with progress broadcasting."""
 
@@ -117,6 +147,7 @@ class DatasetScanService:
 
     def __init__(self, broadcast_fn: Optional[Callable] = None):
         self._broadcast_fn = broadcast_fn
+        self._cancel_event = None
 
     def _broadcast(self, event_type: str, data: Dict[str, Any]):
         if self._broadcast_fn:
@@ -140,6 +171,32 @@ class DatasetScanService:
             cls._get_resolved_webui_output_dir(),
             output_dir,
         )
+
+    @classmethod
+    def _build_scan_args(cls, dataset_config: Dict[str, Any], global_config: Dict[str, Any]) -> _ScanArgsNamespace:
+        configured = {key.removeprefix("--").replace("-", "_"): value for key, value in global_config.items()}
+        scan_keys = (
+            "resolution",
+            "resolution_type",
+            "minimum_image_size",
+            "maximum_image_size",
+            "target_downsample_size",
+            "caption_strategy",
+            "only_instance_prompt",
+            "model_type",
+            "model_family",
+            "aspect_bucket_alignment",
+            "aspect_bucket_rounding",
+            "seed",
+            "train_batch_size",
+            "disable_bucket_pruning",
+            "framerate",
+            "cache_dir",
+        )
+        settings = {**configured, **dataset_config}
+        args = _ScanArgsNamespace({key: settings[key] for key in scan_keys if key in settings})
+        args.output_dir = cls._resolve_scan_output_dir(configured.get("output_dir") or args.output_dir)
+        return args
 
     @staticmethod
     def _convert_pixel_area(dataset_config: Dict[str, Any], scan_args: _ScanArgsNamespace) -> Dict[str, Any]:
@@ -191,99 +248,90 @@ class DatasetScanService:
         )
         return os.path.abspath(resolved) if resolved else None
 
-    def clear_vae_cache(self, dataset_config: Dict[str, Any], global_config: Dict[str, Any]) -> Optional[str]:
-        """Delete the VAE cache directory for a dataset. Returns the path cleared, or None."""
-        vae_dir = self._resolve_vae_cache_dir(dataset_config, global_config)
-        if not vae_dir or not os.path.isdir(vae_dir):
+    def _local_vae_clear_directory(self, dataset_config, global_config, dataset_plan):
+        from .cache_job_service import resolve_image_artifact_entry
+
+        store = resolve_image_artifact_entry(dataset_config, dataset_plan, "image_embeds") or dataset_config
+        if store.get("type", "local") != "local":
+            raise ValueError("Clearing latents during a rescan requires a Local artifact store.")
+        cache_path = self._resolve_vae_cache_dir(dataset_config, global_config)
+        if cache_path is None:
+            return None
+        directory = Path(cache_path).resolve()
+        for item in dataset_plan or [dataset_config]:
+            if item.get("type", "local") in {"local", "csv"}:
+                root = item.get("csv_cache_dir") or item.get("instance_data_dir")
+                for source in [root] if isinstance(root, str) else root or []:
+                    if Path(source).resolve().is_relative_to(directory):
+                        raise ValueError("The latent cache directory overlaps a dataset source directory.")
+            if item.get("id") != dataset_config["id"]:
+                other_cache = self._resolve_vae_cache_dir(item, global_config)
+                if other_cache:
+                    other_directory = Path(other_cache).resolve()
+                    if other_directory.is_relative_to(directory) or directory.is_relative_to(other_directory):
+                        raise ValueError("The latent cache directory overlaps another dataset's latent cache.")
+        return directory
+
+    def clear_vae_cache(self, dataset_config, global_config, *, dataset_plan=None) -> Optional[str]:
+        """Clear generated latent files while keeping the store directory and other files."""
+        directory = self._local_vae_clear_directory(dataset_config, global_config, dataset_plan)
+        if directory is None or not directory.is_dir():
             return None
 
-        shutil.rmtree(vae_dir)
-        logger.info("Cleared VAE cache directory: %s", vae_dir)
-        return vae_dir
+        for root, _, files in os.walk(directory):
+            for name in files:
+                if re.fullmatch(r"[0-9a-f]{64}\.pt", name):
+                    (Path(root) / name).unlink(missing_ok=True)
+        logger.info("Cleared VAE cache files from: %s", directory)
+        return str(directory)
 
-    def clear_conditioning_cache(self, dataset_config: Dict[str, Any], global_config: Dict[str, Any]) -> List[str]:
-        """Delete auto-generated conditioning data directories for a dataset.
+    @staticmethod
+    def conditioning_cache_root(global_config, dataset_config):
+        from .cache_job_service import CacheJobService
 
-        Only removes directories that would be auto-generated by the duplicator
-        (i.e. derived from the ``conditioning`` generators block).  Manually
-        declared conditioning datasets referenced via ``conditioning_data`` are
-        never touched.
+        args = CacheJobService._build_args(global_config)
+        if template := CacheJobService._resolve_global_key(global_config, "cache_dir"):
+            return Path(CacheJobService._resolve_cache_dir(template, global_config, dataset_config))
+        return Path(args.output_dir) / "cache"
 
-        Returns the list of paths that were deleted.
-        """
+    def _conditioning_cache_directories(self, dataset_config, global_config, dataset_plan):
+        from simpletuner.helpers.metadata.utils.duplicator import DatasetDuplicator
+
         generators = dataset_config.get("conditioning") or []
         if isinstance(generators, dict):
             generators = [generators]
         if not generators:
             return []
 
-        source_id = dataset_config.get("id", "")
-
-        # Derive cache_root from cache_dir_vae (same heuristic as the viewer)
-        cache_root = None
-        cache_dir_vae = dataset_config.get("cache_dir_vae", "")
-        if cache_dir_vae:
-            from simpletuner.helpers.configuration.template_vars import resolve_string_placeholders
-
-            output_dir = global_config.get("output_dir", "")
-            if not output_dir:
-                output_dir = os.path.join(os.getcwd(), ".simpletuner_output")
-            output_dir = self._resolve_scan_output_dir(output_dir)
-
-            resolved_vae = resolve_string_placeholders(
-                cache_dir_vae,
-                variables={
-                    "output_dir": output_dir,
-                    "model_family": global_config.get("model_family", ""),
-                    "id": dataset_config.get("id", ""),
-                },
-            )
-            if resolved_vae:
-                resolved_vae = os.path.abspath(resolved_vae)
-                parts = Path(resolved_vae).parts
-                try:
-                    vae_idx = parts.index("vae")
-                    cache_root = str(Path(*parts[:vae_idx]))
-                except (ValueError, TypeError):
-                    pass
-
-        # Also try global cache_dir directly
-        if cache_root is None:
-            raw_cache_dir = global_config.get("cache_dir", "")
-            if raw_cache_dir:
-                from simpletuner.helpers.configuration.template_vars import resolve_string_placeholders
-
-                output_dir = global_config.get("output_dir", "")
-                if not output_dir:
-                    output_dir = os.path.join(os.getcwd(), ".simpletuner_output")
-                output_dir = self._resolve_scan_output_dir(output_dir)
-
-                cache_root = resolve_string_placeholders(
-                    raw_cache_dir,
-                    variables={
-                        "output_dir": output_dir,
-                        "model_family": global_config.get("model_family", ""),
-                    },
-                )
-                if cache_root:
-                    cache_root = os.path.abspath(cache_root)
-
-        if not cache_root:
-            logger.warning("Cannot determine cache root to clear conditioning data")
-            return []
-
-        cleared = []
-        for gen in generators:
-            gen_type = gen.get("type", "")
-            if not gen_type:
+        cache_root = self.conditioning_cache_root(global_config, dataset_config).resolve()
+        conditioning_root = cache_root / "conditioning_data"
+        source_roots = [
+            Path(config["instance_data_dir"]).resolve()
+            for config in dataset_plan or [dataset_config]
+            if config.get("type", "local") == "local" and config.get("instance_data_dir")
+        ]
+        paths = []
+        for generator in generators:
+            generator_type = generator.get("type")
+            if not generator_type or generator.get("instance_data_dir"):
                 continue
-            gen_id = gen.get("id") or f"{source_id}_conditioning_{gen_type}"
-            cond_dir = os.path.join(cache_root, "conditioning_data", gen_id)
-            if os.path.isdir(cond_dir):
-                shutil.rmtree(cond_dir)
-                logger.info("Cleared auto-generated conditioning directory: %s", cond_dir)
-                cleared.append(cond_dir)
+            dataset_id = DatasetDuplicator.generated_conditioning_id(dataset_config["id"], generator_type)
+            path = Path(DatasetDuplicator.generated_conditioning_directory(cache_root, dataset_id))
+            if path != path.resolve() or not path.is_relative_to(conditioning_root) or path == conditioning_root:
+                raise ValueError("The generated conditioning directory is outside the conditioning cache.")
+            if any(source.is_relative_to(path) for source in source_roots):
+                raise ValueError("The generated conditioning cache overlaps a dataset source directory.")
+            paths.append(path)
+        return paths
 
+    def clear_conditioning_cache(self, dataset_config, global_config, *, dataset_plan=None) -> List[str]:
+        """Clear the cache-owned directories of configured conditioning generators."""
+        cleared = []
+        for path in self._conditioning_cache_directories(dataset_config, global_config, dataset_plan):
+            if path.is_dir():
+                shutil.rmtree(path)
+                cleared.append(str(path))
+                logger.info("Cleared auto-generated conditioning directory: %s", path)
         return cleared
 
     def scan_dataset(
@@ -294,6 +342,9 @@ class DatasetScanService:
         force_rescan: bool = False,
         clear_vae_cache: bool = False,
         clear_conditioning_cache: bool = False,
+        *,
+        dataset_plan=None,
+        plan_scope=None,
     ) -> str:
         """Start a background scan for a single dataset. Returns job_id."""
         # Prevent scanning while a cache job is active
@@ -306,24 +357,30 @@ class DatasetScanService:
             pass
 
         if clear_vae_cache:
-            self.clear_vae_cache(dataset_config, global_config or {})
+            self._local_vae_clear_directory(dataset_config, global_config or {}, dataset_plan)
         if clear_conditioning_cache:
-            self.clear_conditioning_cache(dataset_config, global_config or {})
+            self._conditioning_cache_directories(dataset_config, global_config or {}, dataset_plan)
 
         with self._lock:
-            if self._active_job and self._active_job.status == ScanStatus.RUNNING:
-                raise RuntimeError("A scan is already in progress. Cancel it first or wait.")
+            if self._scan_thread is not None and self._scan_thread.is_alive():
+                raise RuntimeError("A scan is already in progress. Wait for it to finish.")
 
             job_id = str(uuid.uuid4())[:8]
-            job = ScanJob(job_id=job_id, dataset_id=dataset_id)
+            job = ScanJob(job_id=job_id, dataset_id=dataset_id, plan_scope=plan_scope)
             self._active_job = job
+            self._active_queue = None
 
-        self._scan_thread = threading.Thread(
-            target=self._run_scan,
-            args=(job, dataset_config, global_config or {}, force_rescan),
-            daemon=True,
-        )
-        self._scan_thread.start()
+            self._scan_thread = threading.Thread(
+                target=self._run_scan,
+                args=(job, dataset_config, global_config or {}, force_rescan),
+                kwargs={
+                    "clear_vae_cache": clear_vae_cache,
+                    "clear_conditioning_cache": clear_conditioning_cache,
+                    "dataset_plan": dataset_plan,
+                },
+                daemon=True,
+            )
+            self._scan_thread.start()
         return job_id
 
     def scan_all(
@@ -331,6 +388,9 @@ class DatasetScanService:
         datasets: List[Dict[str, Any]],
         global_config: Optional[Dict[str, Any]] = None,
         force_rescan: bool = False,
+        *,
+        dataset_plan=None,
+        plan_scope=None,
     ) -> str:
         """Queue all datasets for sequential scanning. Returns queue_id."""
         try:
@@ -342,26 +402,29 @@ class DatasetScanService:
             pass
 
         with self._lock:
-            if self._active_job and self._active_job.status == ScanStatus.RUNNING:
+            if self._scan_thread is not None and self._scan_thread.is_alive():
                 raise RuntimeError("A scan is already in progress.")
 
             queue_id = str(uuid.uuid4())[:8]
             dataset_ids = [ds.get("id", "") for ds in datasets]
-            queue = ScanQueue(queue_id=queue_id, dataset_ids=dataset_ids)
+            queue = ScanQueue(queue_id=queue_id, dataset_ids=dataset_ids, plan_scope=plan_scope)
 
-            for ds in datasets:
+            for index, ds in enumerate(datasets):
                 ds_id = ds.get("id", "")
                 job_id = str(uuid.uuid4())[:8]
-                queue.jobs[ds_id] = ScanJob(job_id=job_id, dataset_id=ds_id, status=ScanStatus.PENDING)
+                queue.jobs[ds_id] = ScanJob(
+                    job_id=job_id, dataset_id=ds_id, plan_scope=plan_scope, queue_id=queue_id, queue_index=index
+                )
 
             self._active_queue = queue
+            self._active_job = queue.jobs.get(dataset_ids[0]) if dataset_ids else None
 
-        self._scan_thread = threading.Thread(
-            target=self._run_queue,
-            args=(queue, datasets, global_config or {}, force_rescan),
-            daemon=True,
-        )
-        self._scan_thread.start()
+            self._scan_thread = threading.Thread(
+                target=self._run_queue,
+                args=(queue, datasets, global_config or {}, force_rescan, dataset_plan or datasets),
+                daemon=True,
+            )
+            self._scan_thread.start()
         return queue_id
 
     def get_scan_status(self, job_id: str) -> Optional[Dict[str, Any]]:
@@ -384,6 +447,8 @@ class DatasetScanService:
         completed = sum(1 for j in queue.jobs.values() if j.status == ScanStatus.COMPLETED)
         return {
             "queue_id": queue.queue_id,
+            "plan_scope": queue.plan_scope,
+            "active": not queue.finished,
             "total": len(queue.dataset_ids),
             "completed": completed,
             "current_index": queue.current_index,
@@ -394,31 +459,43 @@ class DatasetScanService:
     def get_active_status(self) -> Optional[Dict[str, Any]]:
         """Return status of whatever scan is currently active, if any."""
         job = self._active_job
-        if job and job.status == ScanStatus.RUNNING:
+        if job and self._scan_thread is not None and self._scan_thread.is_alive():
             result = self._job_to_dict(job)
             queue = self._active_queue
-            if queue and not queue.cancelled:
-                result["queue_id"] = queue.queue_id
+            if queue and not queue.finished:
                 result["queue_total"] = len(queue.dataset_ids)
                 result["queue_completed"] = sum(1 for j in queue.jobs.values() if j.status == ScanStatus.COMPLETED)
             return result
         return None
 
-    def cancel_scan(self) -> bool:
+    def cancel_scan(self, *, job_id=None, queue_id=None, plan_scope=None) -> bool:
         """Cancel the active scan and any remaining queue."""
         with self._lock:
-            if self._active_queue:
-                self._active_queue.cancelled = True
-            if self._active_job and self._active_job.status == ScanStatus.RUNNING:
-                self._active_job.status = ScanStatus.CANCELLED
-                self._active_job.finished_at = time.time()
-                return True
-        return False
+            job, queue = self._active_job, self._active_queue
+            if job is None or (job_id is not None and job.job_id != job_id):
+                return False
+            if plan_scope is not None and job.plan_scope != plan_scope:
+                return False
+            if queue_id is not None and (queue is None or queue.queue_id != queue_id):
+                return False
+            if queue is not None and not queue.finished:
+                queue.cancelled = True
+            elif job.status not in (ScanStatus.PENDING, ScanStatus.RUNNING):
+                return False
+            if job.status in (ScanStatus.PENDING, ScanStatus.RUNNING):
+                job.status = ScanStatus.CANCELLING
+                if self._cancel_event is not None:
+                    self._cancel_event.set()
+                self._broadcast("dataset_scan", self._job_to_dict(job))
+            return True
 
     @staticmethod
     def _job_to_dict(job: ScanJob) -> Dict[str, Any]:
         return {
             "job_id": job.job_id,
+            "plan_scope": job.plan_scope,
+            "queue_id": job.queue_id,
+            "queue_index": job.queue_index,
             "dataset_id": job.dataset_id,
             "status": job.status.value,
             "current": job.current,
@@ -432,45 +509,57 @@ class DatasetScanService:
         dataset_config: Dict[str, Any],
         global_config: Dict[str, Any],
         force_rescan: bool,
+        *,
+        clear_vae_cache: bool = False,
+        clear_conditioning_cache: bool = False,
+        dataset_plan=None,
     ):
-        job.status = ScanStatus.RUNNING
-        job.started_at = time.time()
-        self._broadcast(
-            "dataset_scan",
-            {"job_id": job.job_id, "dataset_id": job.dataset_id, "status": "running"},
-        )
+        context = multiprocessing.get_context("spawn")
+        with self._lock:
+            if job.status == ScanStatus.CANCELLING or (self._active_queue and self._active_queue.cancelled):
+                job.status = ScanStatus.CANCELLED
+                job.finished_at = time.time()
+                self._broadcast("dataset_scan", self._job_to_dict(job))
+                return
+            cancelled = self._cancel_event = context.Event()
+            job.status = ScanStatus.RUNNING
+            job.started_at = time.time()
+            self._broadcast("dataset_scan", self._job_to_dict(job))
 
         try:
-            self._execute_scan(job, dataset_config, global_config, force_rescan)
-            if job.status == ScanStatus.CANCELLED:
-                return
-            job.status = ScanStatus.COMPLETED
-            job.finished_at = time.time()
-            self._broadcast(
-                "dataset_scan",
-                {
-                    "job_id": job.job_id,
-                    "dataset_id": job.dataset_id,
-                    "status": "completed",
-                    "total": job.total,
-                },
-            )
+            with dataset_worker(
+                context, _execute_scan_process, cancelled, dataset_config, global_config, force_rescan, dataset_plan
+            ) as messages:
+                for data in messages:
+                    if "error" in data:
+                        raise RuntimeError(data["error"])
+                    with self._lock:
+                        if job.status == ScanStatus.CANCELLING:
+                            continue
+                        job.current, job.total = data["current"], data["total"]
+                        self._broadcast("dataset_scan", self._job_to_dict(job))
+            with self._lock:
+                if job.status == ScanStatus.CANCELLING:
+                    return
+                if clear_vae_cache:
+                    self.clear_vae_cache(dataset_config, global_config, dataset_plan=dataset_plan)
+                if clear_conditioning_cache:
+                    self.clear_conditioning_cache(dataset_config, global_config, dataset_plan=dataset_plan)
+                job.status = ScanStatus.COMPLETED
         except Exception as e:
-            if job.status == ScanStatus.CANCELLED:
-                return
+            with self._lock:
+                if job.status == ScanStatus.CANCELLING:
+                    return
+                job.status = ScanStatus.FAILED
+                job.error = str(e)
             logger.exception("Scan failed for %s", job.dataset_id)
-            job.status = ScanStatus.FAILED
-            job.error = str(e)
-            job.finished_at = time.time()
-            self._broadcast(
-                "dataset_scan",
-                {
-                    "job_id": job.job_id,
-                    "dataset_id": job.dataset_id,
-                    "status": "failed",
-                    "error": str(e),
-                },
-            )
+        finally:
+            with self._lock:
+                self._cancel_event = None
+                if job.status == ScanStatus.CANCELLING:
+                    job.status = ScanStatus.CANCELLED
+                job.finished_at = time.time()
+                self._broadcast("dataset_scan", self._job_to_dict(job))
 
     def _run_queue(
         self,
@@ -478,10 +567,11 @@ class DatasetScanService:
         datasets: List[Dict[str, Any]],
         global_config: Dict[str, Any],
         force_rescan: bool,
+        dataset_plan,
     ):
         for i, ds_config in enumerate(datasets):
             if queue.cancelled:
-                for ds_id, j in queue.jobs.items():
+                for j in queue.jobs.values():
                     if j.status == ScanStatus.PENDING:
                         j.status = ScanStatus.CANCELLED
                 break
@@ -495,108 +585,66 @@ class DatasetScanService:
             with self._lock:
                 self._active_job = job
 
-            self._run_scan(job, ds_config, global_config, force_rescan)
+            self._run_scan(job, ds_config, global_config, force_rescan, dataset_plan=dataset_plan)
 
             self._broadcast(
                 "dataset_scan_queue",
                 {
                     "queue_id": queue.queue_id,
+                    "plan_scope": queue.plan_scope,
                     "completed": i + 1,
                     "total": len(datasets),
                     "current_dataset_id": ds_id,
                 },
             )
+        with self._lock:
+            queue.finished = True
+            self._broadcast("dataset_scan_queue", self.get_queue_status(queue.queue_id))
 
     def _execute_scan(
         self,
-        job: ScanJob,
         dataset_config: Dict[str, Any],
         global_config: Dict[str, Any],
         force_rescan: bool,
+        on_progress,
+        *,
+        dataset_plan=None,
     ):
         """Execute the actual metadata scan using existing infrastructure."""
-        from simpletuner.helpers.data_backend.builders import create_backend_builder
-        from simpletuner.helpers.data_backend.config import create_backend_config
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
         from simpletuner.helpers.training.state_tracker import StateTracker
 
-        # Build args namespace from global config and dataset config
-        args_overrides = {}
-        for key in (
-            "resolution",
-            "resolution_type",
-            "minimum_image_size",
-            "maximum_image_size",
-            "target_downsample_size",
-            "caption_strategy",
-            "model_type",
-            "model_family",
-        ):
-            if key in dataset_config:
-                args_overrides[key] = dataset_config[key]
-            elif key in global_config:
-                args_overrides[key] = global_config[key]
-
-        scan_args = _ScanArgsNamespace(args_overrides)
-        scan_args.output_dir = self._resolve_scan_output_dir(scan_args.output_dir)
+        scan_args = self._build_scan_args(dataset_config, global_config)
         accelerator = _ScanAcceleratorStub()
 
         # Apply pixel_area -> area conversion (normally done by DataBackendFactory)
         dataset_config = self._convert_pixel_area(dataset_config, scan_args)
 
-        # Temporarily set StateTracker args for the scan
-        original_args = StateTracker.get_args()
         StateTracker.set_args(scan_args)
+        StateTracker.set_accelerator(accelerator)
 
-        config_id = None
-        try:
-            # Create config object
-            args_dict = {k: getattr(scan_args, k, None) for k in vars(scan_args)}
-            config = create_backend_config(dataset_config, args_dict)
-            config_id = config.id
-
-            # Skip validation for scan-only operation - some fields may not be set
-            # config.validate(args_dict)
-
-            # Register dataset config with StateTracker so metadata backends
-            # can read resolution_type, crop settings, etc.
-            StateTracker.set_data_backend_config(config.id, config.to_dict()["config"])
-
-            # Create data backend
-            builder = create_backend_builder(config.backend_type, accelerator, scan_args)
-            data_backend = builder.build(config)
-
-            # Create metadata backend
-            metadata_backend = builder.create_metadata_backend(config, data_backend, args_dict)
-
-            # Define progress callback
-            def on_progress(current: int, total: int):
-                if job.status == ScanStatus.CANCELLED:
-                    raise RuntimeError("Scan cancelled by user")
-                job.current = current
-                job.total = total
-                # Throttle broadcasts to every 50 files or 2 seconds
-                if current % 50 == 0 or current == total:
-                    self._broadcast(
-                        "dataset_scan",
-                        {
-                            "job_id": job.job_id,
-                            "dataset_id": job.dataset_id,
-                            "status": "running",
-                            "current": current,
-                            "total": total,
-                        },
-                    )
-
-            # Run the scan
-            metadata_backend.compute_aspect_ratio_bucket_indices(
-                ignore_existing_cache=force_rescan,
-                progress_callback=on_progress,
-            )
-        finally:
-            # Restore original args and clean up registered config
-            StateTracker.set_args(original_args)
-            if config_id is not None:
-                StateTracker.data_backends.pop(config_id, None)
+        with ExitStack() as scope:
+            dataset = DatasetRuntime.from_config(dataset_config, scan_args, accelerator)
+            scope.callback(dataset.close)
+            audio = dataset_config.get("audio") or {}
+            source_id = dataset_config.get("source_dataset_id") or audio.get("source_dataset_id")
+            if audio.get("source_from_video") and source_id:
+                source_config = next(
+                    (
+                        source
+                        for source in dataset_plan or ()
+                        if source.get("id") == source_id and not (source.get("disabled") or source.get("disable"))
+                    ),
+                    None,
+                )
+                if source_config is None:
+                    raise ValueError(f"Dataset {dataset.id} requires an enabled video source {source_id}.")
+                source_config = self._convert_pixel_area(source_config, scan_args)
+                dataset.source_dataset = DatasetRuntime.from_config(
+                    source_config, scan_args, accelerator, preparation_only=True
+                )
+                scope.callback(dataset.source_dataset.close)
+            dataset.prepare_view(force_rescan=force_rescan, progress_callback=on_progress)
 
 
 # Module-level singleton

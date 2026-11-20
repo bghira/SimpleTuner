@@ -1,53 +1,53 @@
-import os
+import argparse
+import importlib
+import shutil
+from pathlib import Path
 
 import cv2
-
-try:
-    import pillow_jxl
-except ModuleNotFoundError:
-    pass
 import numpy as np
 from PIL import Image
 
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".jxl"}
+
 
 def generate_canny_edge_dataset(input_dir, output_dir_original, output_dir_edges):
-    # Create output directories if they do not exist
-    if not os.path.exists(output_dir_original):
-        os.makedirs(output_dir_original)
-    if not os.path.exists(output_dir_edges):
-        os.makedirs(output_dir_edges)
+    source = Path(input_dir).resolve()
+    originals = Path(output_dir_original).resolve()
+    conditioning = Path(output_dir_edges).resolve()
+    if not source.is_dir():
+        raise ValueError("The input directory must exist.")
+    for first, second in ((source, originals), (source, conditioning), (originals, conditioning)):
+        if first.is_relative_to(second) or second.is_relative_to(first):
+            raise ValueError("The input, original output, and conditioning output directories must be disjoint.")
 
-    # Process each image in the input directory
-    for filename in os.listdir(input_dir):
-        if filename.lower().endswith((".png", ".jpg", ".jpeg", ".jxl")):
-            image_path = os.path.join(input_dir, filename)
-            original_image = Image.open(image_path)
-            original_image.save(os.path.join(output_dir_original, filename))
+    for image_path in sorted(source.rglob("*")):
+        suffix = image_path.suffix.lower()
+        if not image_path.is_file() or suffix not in IMAGE_SUFFIXES:
+            continue
+        if suffix == ".jxl":
+            importlib.import_module("pillow_jxl")
 
-            # Read image in grayscale
-            image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-            if image is None:
-                # If OpenCV fails, try loading the image with Pillow
-                try:
-                    pil_image = Image.open(image_path)
-                    # Convert Pillow image to a format OpenCV can use
-                    image = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
-                except Exception as e:
-                    print(f"Failed to load image with Pillow: {e}")
-                    continue
-            # Apply Canny edge detection
-            edges = cv2.Canny(image, 100, 200)
-
-            # Save edge image
-            edge_image_path = os.path.join(output_dir_edges, filename)
-            cv2.imwrite(edge_image_path, edges)
-            print(f"Processed {filename}")
+        relative_path = image_path.relative_to(source)
+        original_path = originals / relative_path
+        edge_path = conditioning / relative_path
+        if not original_path.resolve().is_relative_to(originals) or not edge_path.resolve().is_relative_to(conditioning):
+            raise ValueError(f"An output path for {relative_path} resolves outside its dataset directory.")
+        original_path.parent.mkdir(parents=True, exist_ok=True)
+        edge_path.parent.mkdir(parents=True, exist_ok=True)
+        with Image.open(image_path) as image:
+            edges = cv2.Canny(np.asarray(image.convert("L")), 100, 200)
+        Image.fromarray(edges).save(edge_path)
+        shutil.copy2(image_path, original_path)
+        print(f"Processed {relative_path}")
 
 
 if __name__ == "__main__":
-    input_dir = "/Volumes/ml/datasets/animals/antelope"  # Update this to your folder path
-    # Update this to your desired output path for originals
-    output_dir_original = "/Volumes/ml/datasets/canny-edge/animals/antelope-data"
-    # Update this to your desired output path for edges
-    output_dir_edges = "/Volumes/ml/datasets/canny-edge/animals/antelope-conditioning"
-    generate_canny_edge_dataset(input_dir, output_dir_original, output_dir_edges)
+    parser = argparse.ArgumentParser(description="Create matching originals and Canny conditioning images.")
+    parser.add_argument("input_dir", type=Path)
+    parser.add_argument("output_dir_original", type=Path)
+    parser.add_argument("output_dir_edges", type=Path)
+    arguments = parser.parse_args()
+    try:
+        generate_canny_edge_dataset(arguments.input_dir, arguments.output_dir_original, arguments.output_dir_edges)
+    except ValueError as exc:
+        parser.error(str(exc))

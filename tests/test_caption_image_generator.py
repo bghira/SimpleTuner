@@ -89,7 +89,8 @@ class CaptionImageGeneratorTests(unittest.TestCase):
 
     def generator(self, pipeline=None, config=None, records=None):
         model = _Model(pipeline or _Pipeline())
-        return CaptionImageGenerator(model, config or self.config, records or self.records, self.temp.name)
+        selected = self.records if records is None else records
+        return CaptionImageGenerator(model, config or self.config, lambda: iter(selected), self.temp.name)
 
     def test_oom_retries_same_seeds_and_remembers_each_bucket(self):
         pipeline = _Pipeline({(64, 64): 2, (128, 64): 1})
@@ -117,6 +118,30 @@ class CaptionImageGeneratorTests(unittest.TestCase):
         resumed = self.generator(resumed_pipeline)
         resumed.generate()
         self.assertEqual(resumed_pipeline.calls, [(128, 64, ["caption 0"], [36])])
+
+    def test_generation_keeps_pending_caption_reads_bounded(self):
+        stream_progress = []
+
+        def records():
+            progress = []
+            stream_progress.append(progress)
+            for record in self.records:
+                progress.append(record.metadata_id)
+                yield record
+
+        pipeline = _Pipeline()
+        generator = CaptionImageGenerator(_Model(pipeline), {**self.config, "batch_size": 2}, records, self.temp.name)
+        self.assertEqual([len(progress) for progress in stream_progress], [5])
+        original = generator._generate_batch
+
+        def generate_batch(pipeline, samples, width, height):
+            if len(pipeline.calls) % 3 == 0:
+                self.assertEqual(len(stream_progress[-1]), 2)
+            return original(pipeline, samples, width, height)
+
+        with patch.object(generator, "_generate_batch", side_effect=generate_batch):
+            generator.generate()
+        self.assertEqual([len(progress) for progress in stream_progress], [5, 5, 5])
 
     def test_complete_cache_skips_model_loading(self):
         generator = self.generator()
@@ -330,23 +355,21 @@ class CaptionGeneratorConfigTests(unittest.TestCase):
             factory = FactoryRegistry.__new__(FactoryRegistry)
             factory.args = SimpleNamespace(cache_dir=directory, distillation_method=None)
             factory.model = _Model(_Pipeline())
+            factory.model.configure_data_signals = MagicMock()
             factory.accelerator = SimpleNamespace(is_main_process=True, wait_for_everyone=MagicMock())
             factory.metrics = {"backend_counts": {}}
             factory.text_embed_backends = {"text": {}}
             factory.caption_backends = {}
-            factory.data_backends = {}
+            factory.datasets = {}
             factory.distiller_requirement_profile = None
             factory.distillation_method = None
             factory._log_performance_metrics = MagicMock()
             for name in (
                 "_requires_conditioning_dataset",
                 "_requires_s2v_datasets",
-                "_connect_conditioning_datasets",
-                "_connect_s2v_datasets",
             ):
                 setattr(factory, name, MagicMock(return_value=False))
             for name in (
-                "synchronize_conditioning_settings",
                 "_validate_audio_only_datasets",
                 "_validate_edit_model_conditioning_type",
                 "_process_deferred_text_embeddings",
@@ -362,7 +385,6 @@ class CaptionGeneratorConfigTests(unittest.TestCase):
                 self.assertEqual(backend["dataset_type"], "image")
                 image_paths = list(Path(backend["instance_data_dir"]).glob("*.png"))
                 self.assertEqual(len(image_paths), 1)
-                factory.data_backends[backend["id"]] = backend
 
             factory._configure_single_data_backend = MagicMock(side_effect=configure_image)
             config = [
@@ -378,7 +400,7 @@ class CaptionGeneratorConfigTests(unittest.TestCase):
                 patch("simpletuner.helpers.data_backend.factory.StateTracker") as state,
                 patch("simpletuner.helpers.data_backend.caption_generator.HfApi") as api,
             ):
-                state.get_data_backends.return_value = {}
+                state.get_datasets.return_value = {}
                 api.return_value.model_info.return_value.sha = "model-commit"
                 self.assertFalse(factory._caption_batches_supported())
                 factory.configure_data_backends(config)
@@ -424,11 +446,9 @@ class CaptionGeneratorConfigTests(unittest.TestCase):
         factory.accelerator = SimpleNamespace(is_main_process=True, wait_for_everyone=MagicMock())
         record = CaptionRecord("one", "a fox", "prompts")
 
-        def build_caption(backend):
-            StateTracker.set_data_backend_config(backend["id"], dict(backend))
-            return {"metadata_backend": SimpleNamespace(iter_records=lambda: iter([record]))}
-
-        factory._build_caption_backend = MagicMock(side_effect=build_caption)
+        factory._build_caption_backend = MagicMock(
+            return_value={"metadata_backend": SimpleNamespace(iter_records=lambda: iter([record]))}
+        )
         config = [
             {
                 "id": "prompts",
@@ -440,11 +460,11 @@ class CaptionGeneratorConfigTests(unittest.TestCase):
         ]
         with (
             patch("simpletuner.helpers.data_backend.caption_generator.CaptionImageGenerator") as generator,
-            patch.object(StateTracker, "data_backends", {}),
+            patch.object(StateTracker, "_pending_dataset_configs", {"prompts": {"resolution": 128}}),
         ):
             generator.return_value.bucket_directories.return_value = {"512x512": "cache/a", "768x1024": "cache/b"}
             factory._materialize_caption_generators(config)
-            self.assertNotIn("prompts", StateTracker.data_backends)
+            self.assertEqual(StateTracker._pending_dataset_configs, {"prompts": {"resolution": 128}})
         generator.return_value.generate.assert_called_once_with()
         self.assertEqual([entry["dataset_type"] for entry in config], ["image", "image"])
         self.assertEqual([entry["id"] for entry in config], ["prompts-generated-512x512", "prompts-generated-768x1024"])

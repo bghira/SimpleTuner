@@ -7,9 +7,7 @@ import numpy as np
 import torch
 from PIL import Image
 
-from simpletuner.helpers.training import image_file_extensions
 from simpletuner.helpers.training.multi_process import rank_info, should_log
-from simpletuner.helpers.training.state_tracker import StateTracker
 
 try:
     from simpletuner.helpers.webhooks.mixin import WebhookMixin
@@ -51,6 +49,7 @@ class ImageEmbedCache(WebhookMixin):
         self.model = model
         self.accelerator = accelerator
         self.metadata_backend = metadata_backend
+        self.native_sampling = getattr(metadata_backend, "native_policy", None) in ("global", "shard_local")
         self.image_data_backend = image_data_backend
         self.cache_data_backend = cache_data_backend if cache_data_backend is not None else image_data_backend
         self.instance_data_dir = instance_data_dir or ""
@@ -65,9 +64,6 @@ class ImageEmbedCache(WebhookMixin):
         self.rank_info = rank_info()
 
         self.webhook_handler = None
-
-        self.image_path_to_embed_path: dict[str, str] = {}
-        self.embed_path_to_image_path: dict[str, str] = {}
 
         self.embedder = None
 
@@ -106,6 +102,10 @@ class ImageEmbedCache(WebhookMixin):
     def generate_embed_filename(self, filepath: str) -> Tuple[str, str]:
         if filepath.endswith(".pt"):
             return filepath, os.path.basename(filepath)
+        if self.native_sampling and self.image_data_backend.is_sample_id(filepath):
+            ref = self.image_data_backend.normalize_sample_id(filepath)
+            name = self.metadata_backend.image_artifact_key(ref, "conditioning", self.model) + ".pt"
+            return os.path.join(self.cache_dir, name), name
         base_filename = os.path.splitext(os.path.basename(filepath))[0]
         if self.hash_filenames:
             base_filename = sha256(str(base_filename).encode()).hexdigest()
@@ -123,49 +123,6 @@ class ImageEmbedCache(WebhookMixin):
         else:
             full_filename = os.path.join(self.cache_dir, base_filename)
         return full_filename, base_filename
-
-    def build_embed_filename_map(self, all_image_files: List[str]) -> None:
-        self.image_path_to_embed_path.clear()
-        self.embed_path_to_image_path.clear()
-
-        for image_file in all_image_files:
-            cache_filename, _ = self.generate_embed_filename(image_file)
-            if self.cache_data_backend.type in {"local", "memory"}:
-                cache_filename = os.path.abspath(cache_filename)
-            self.image_path_to_embed_path[image_file] = cache_filename
-            self.embed_path_to_image_path[cache_filename] = image_file
-
-    def discover_all_files(self) -> List[str]:
-        all_image_files = StateTracker.get_image_files(data_backend_id=self.id) or StateTracker.set_image_files(
-            self.image_data_backend.list_files(
-                instance_data_dir=self.instance_data_dir,
-                file_extensions=image_file_extensions,
-            ),
-            data_backend_id=self.id,
-        )
-        StateTracker.get_conditioning_image_embed_files(self.id) or StateTracker.set_conditioning_image_embed_files(
-            self.cache_data_backend.list_files(
-                instance_data_dir=self.cache_dir,
-                file_extensions=["pt"],
-            ),
-            data_backend_id=self.id,
-        )
-        self.debug_log(f"ConditioningImageEmbedCache discover_all_files found {len(all_image_files)} sources")
-        return all_image_files
-
-    def discover_unprocessed_files(self) -> List[str]:
-        if not self.image_path_to_embed_path:
-            return []
-
-        pending = []
-        for image_path, embed_path in self.image_path_to_embed_path.items():
-            test_path = embed_path
-            if self.cache_data_backend.type in {"local", "memory"}:
-                test_path = os.path.abspath(embed_path)
-            if not self.cache_data_backend.exists(test_path):
-                pending.append(image_path)
-
-        return pending
 
     def _load_image_for_embedding(self, filepath: str) -> Image.Image:
         sample = self.image_data_backend.read_image(filepath)
@@ -255,21 +212,12 @@ class ImageEmbedCache(WebhookMixin):
         raise ValueError("Conditioning image embed provider returned an unsupported embedding type.")
 
     def _write_embed(self, filepath: str, embedding: torch.Tensor) -> None:
-        cache_path = self.image_path_to_embed_path.get(filepath)
-        if cache_path is None:
-            cache_path, _ = self.generate_embed_filename(filepath)
-            self.image_path_to_embed_path[filepath] = cache_path
-            self.embed_path_to_image_path[cache_path] = filepath
-
+        cache_path, _ = self.generate_embed_filename(filepath)
         directory = os.path.dirname(cache_path)
         if directory and self.cache_data_backend.type in {"local", "memory"}:
             os.makedirs(directory, exist_ok=True)
 
         self.cache_data_backend.torch_save(embedding, cache_path)
-
-        current_cache = StateTracker.get_conditioning_image_embed_files(self.id)
-        if isinstance(current_cache, dict):
-            current_cache[cache_path] = True
 
     def process_files(
         self,
@@ -290,26 +238,28 @@ class ImageEmbedCache(WebhookMixin):
             self.debug_log(f"Processing batch {idx // self.embed_batch_size + 1}: {len(batch_paths)} files")
             valid_paths, embeddings = self._encode_batch(batch_paths, captions=batch_captions)
             self.debug_log(f"Encoded {len(valid_paths)} valid embeddings from batch")
+            if self.native_sampling and (valid_paths != batch_paths or len(embeddings) != len(batch_paths)):
+                raise ValueError("The conditioning encoder did not return every requested Webshart embedding.")
             for fp, embed in zip(valid_paths, embeddings):
                 self._write_embed(fp, embed)
             if progress_callback is not None:
                 progress_callback(min(idx + len(batch_paths), total), total)
-        if self.cache_dir:
-            StateTracker.set_conditioning_image_embed_files(
-                self.cache_data_backend.list_files(
-                    instance_data_dir=self.cache_dir,
-                    file_extensions=["pt"],
-                ),
-                data_backend_id=self.id,
-            )
+
+    def prepare_dataset(self, dataset, *, worker=0, workers=1, progress_callback=None):
+        current = 0
+        total = dataset.describe().accepted_samples
+        for _, refs in dataset.iter_preparation_batches(worker=worker, workers=workers, batch_size=self.embed_batch_size):
+            keys = (self.generate_embed_filename(ref)[0] for ref in refs)
+            cached = self.cache_data_backend.bulk_exists(keys)
+            pending = [ref for ref, present in zip(refs, cached, strict=True) if not present]
+            self.process_files(pending)
+            current += len(refs)
+            if progress_callback:
+                progress_callback(current, total)
+        return current
 
     def retrieve_from_cache(self, filepath: str, caption: Optional[str] = None) -> torch.Tensor:
-        if filepath not in self.image_path_to_embed_path:
-            cache_path, _ = self.generate_embed_filename(filepath)
-            self.image_path_to_embed_path[filepath] = cache_path
-            self.embed_path_to_image_path[cache_path] = filepath
-
-        cache_path = self.image_path_to_embed_path[filepath]
+        cache_path, _ = self.generate_embed_filename(filepath)
         if not self.cache_data_backend.exists(cache_path):
             caption_batch = [caption] if caption is not None else None
             self.process_files([filepath], captions=caption_batch)

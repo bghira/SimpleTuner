@@ -1,7 +1,9 @@
-"""Measure bounded Webshart metadata preparation and image-batch decoding.
+"""Measure Webshart source metadata and image reads outside the trainer.
 
 Run from the repository root with a normal dataset JSON configuration. Results
-contain aggregate metrics only. Use AWS environment variables for credentials.
+contain aggregate metrics only. The first image pass may reuse a configured
+disk cache. Later passes reuse the same reader. Use AWS environment variables
+for credentials.
 """
 
 import argparse
@@ -28,7 +30,12 @@ def benchmark(config, *, shards=1, samples=128, batch_size=32, repeats=2):
     backend = WebshartBackendBuilder(SimpleNamespace(is_local_main_process=False), {}).build(
         ImageBackendConfig.from_dict(config, {})
     )
-    report = {"discovery_seconds": time.perf_counter() - started, "dataset_shards": backend.num_shards()}
+    report = {
+        "scope": "webshart_source_reads",
+        "webshart_version": backend.webshart.__version__,
+        "discovery_seconds": time.perf_counter() - started,
+        "dataset_shards": backend.num_shards(),
+    }
     started = time.perf_counter()
     paths = []
     rows = eligible = scanned = 0
@@ -50,7 +57,7 @@ def benchmark(config, *, shards=1, samples=128, batch_size=32, repeats=2):
         sampled_images=len(paths),
         passes=[],
     )
-    for _ in range(repeats):
+    for index in range(repeats):
         started = time.perf_counter()
         decoded = 0
         for offset in range(0, len(paths), batch_size):
@@ -60,6 +67,7 @@ def benchmark(config, *, shards=1, samples=128, batch_size=32, repeats=2):
         elapsed = time.perf_counter() - started
         report["passes"].append(
             dict(
+                reader_pass="first" if index == 0 else "reused",
                 seconds=elapsed,
                 decoded=decoded,
                 decode_failures=len(paths) - decoded,
@@ -67,6 +75,8 @@ def benchmark(config, *, shards=1, samples=128, batch_size=32, repeats=2):
             )
         )
     report["resident_bytes"] = psutil.Process().memory_info().rss
+    if backend.format == "parquet":
+        report["transport"] = backend.dataset.io_stats()
     return report
 
 

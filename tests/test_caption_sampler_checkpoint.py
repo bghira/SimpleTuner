@@ -1,6 +1,8 @@
+import hashlib
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -9,8 +11,10 @@ from torch.utils.data import DataLoader
 
 from simpletuner.helpers.data_backend.caption_dataset import CaptionDataset
 from simpletuner.helpers.data_backend.caption_sampler import CaptionSampler
+from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 from simpletuner.helpers.data_backend.factory import FactoryRegistry
-from simpletuner.helpers.data_backend.runtime.dataloader_iterator import random_dataloader_iterator
+from simpletuner.helpers.data_backend.runtime.batch_fetcher import BatchFetcher
+from simpletuner.helpers.data_backend.runtime.dataloader_iterator import DatasetMixer, random_dataloader_iterator
 from simpletuner.helpers.metadata.captions import CaptionRecord
 from simpletuner.helpers.training.caption_collate import collate_caption_batch
 from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
@@ -25,7 +29,7 @@ class CaptionSamplerCheckpointTests(unittest.TestCase):
         self.args = SimpleNamespace(seed=42, gradient_accumulation_steps=1, data_backend_sampling="uniform")
         for key, value in [
             ("args", self.args),
-            ("data_backends", {}),
+            ("_pending_dataset_configs", {}),
             ("exhausted_backends", []),
             ("repeats", {}),
             ("epoch", 1),
@@ -60,7 +64,9 @@ class CaptionSamplerCheckpointTests(unittest.TestCase):
         sampler = self.sampler()
         loader = self.loader(sampler)
         backends = {"caption": loader}
-        outputs = [random_dataloader_iterator(step, backends)["metadata_ids"] for step in range(3)]
+        with patch.object(self.metadata, "list_metadata_ids", wraps=self.metadata.list_metadata_ids) as inventory:
+            outputs = [random_dataloader_iterator(step, backends)["metadata_ids"] for step in range(3)]
+            inventory.assert_called_once()
         self.assertEqual(outputs, [["meta-0", "meta-1"], ["meta-2", "meta-3"], ["meta-4", "meta-0"]])
         self.assertFalse(random_dataloader_iterator(3, backends))
         self.assertEqual(backends, {})
@@ -68,6 +74,15 @@ class CaptionSamplerCheckpointTests(unittest.TestCase):
         self.assertEqual(sampler._cursor, 0)
         fresh_epoch = random_dataloader_iterator(4, {"caption": loader})
         self.assertEqual(fresh_epoch["metadata_ids"], ["meta-0", "meta-1"])
+
+    def test_checkpoint_caption_digest_matches_legacy_format_without_listing(self):
+        self.metadata._records["meta-0"] = replace(self.metadata.get_record("meta-0"), caption_text='猫, "dog"')
+        expected_records = [[record.metadata_id, record.caption_text] for record in self.metadata.iter_records()]
+        expected_hash = hashlib.sha256(json.dumps(expected_records, ensure_ascii=False).encode("utf-8")).hexdigest()
+        sampler = self.sampler()
+        with patch.object(self.metadata, "list_metadata_ids", side_effect=AssertionError("materialized caption IDs")):
+            self.assertEqual(sampler._checkpoint_layout()["captions_sha256"], expected_hash)
+            self.assertEqual(len(sampler), 3)
 
     def test_mid_epoch_checkpoint_restores_exact_next_batch_on_each_rank(self):
         for rank in (0, 1):
@@ -169,11 +184,50 @@ class CaptionSamplerCheckpointTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "invalid epoch or cursor"):
                 sampler.load_states(state_path)
 
-    def test_caption_prefetch_is_rejected_before_loader_creation(self):
-        factory = FactoryRegistry.__new__(FactoryRegistry)
-        factory.args = SimpleNamespace(dataloader_prefetch=True)
-        with self.assertRaisesRegex(ValueError, "dataloader_prefetch=false"):
-            factory._create_caption_dataloader({}, {})
+    def test_caption_loader_tracks_consumed_progress_independent_of_prefetch(self):
+        for prefetch in (False, True):
+            with self.subTest(prefetch=prefetch):
+                factory = FactoryRegistry.__new__(FactoryRegistry)
+                factory.args = SimpleNamespace(dataloader_prefetch=prefetch, train_batch_size=2, seed=42)
+                factory.accelerator = self.accelerator
+                bundle = {"id": "caption", "config": {"train_batch_size": 2}, "metadata_backend": self.metadata}
+                factory._create_caption_dataloader({"shuffle": False}, bundle)
+                self.assertTrue(bundle["sampler"].tracks_consumed_batches)
+                self.assertEqual(next(iter(bundle["train_dataloader"]))["metadata_ids"], ["meta-0", "meta-1"])
+
+    def test_prefetched_caption_checkpoint_resumes_at_the_consumed_frontier(self):
+        def runtime():
+            dataset = DatasetRuntime("caption", None, self.metadata, {"dataset_type": "caption", "repeats": 1})
+            dataset.sampler = self.sampler(track_consumed=True, repeats=1)
+            dataset.training_dataloader = self.loader(dataset.sampler)
+            dataset.start_epoch(1)
+            self.assertTrue(dataset.supports_consumed_checkpoint)
+            return dataset
+
+        def prefetch(dataset, saved=None):
+            backends = {dataset.id: dataset}
+            mixer = DatasetMixer(backends, epoch=1, step=0, saved=saved)
+            fetcher = BatchFetcher(step=mixer.step, max_size=8, datasets=backends, mixer=mixer)
+            fetcher.fetch_responses()
+            return fetcher
+
+        original = runtime()
+        fetcher = prefetch(original)
+        first = fetcher.next_response(step=1)
+        original.acknowledge_batch(first["dataset_continuation"])
+        self.assertEqual(first["metadata_ids"], ["meta-0", "meta-1"])
+        self.assertEqual(original.sampler.fetched_state(), {"epoch": 0, "cursor": 10})
+        with tempfile.TemporaryDirectory() as directory:
+            filename = str(Path(directory) / "training_state.json")
+            original.sampler.save_state(filename)
+            resumed = runtime()
+            resumed.sampler.load_states(filename)
+            self.assertEqual(resumed.sampler.fetched_state(), {"epoch": 0, "cursor": 2})
+            replay = prefetch(resumed, saved=first["dataset_mixer_state"])
+            for step in range(2, 7):
+                self.assertEqual(replay.next_response(step), fetcher.next_response(step))
+            resumed.start_epoch(2)
+            self.assertEqual(next(iter(resumed))["metadata_ids"], ["meta-0", "meta-1"])
 
 
 if __name__ == "__main__":

@@ -1,10 +1,13 @@
 """Tests for cache_job_service: capabilities, job management, mutual exclusion."""
 
 import unittest
+from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, Mock, patch
 
+from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.simpletuner_sdk.server.services.cache_job_service import (
     CacheJob,
     CacheJobService,
@@ -16,6 +19,36 @@ from simpletuner.simpletuner_sdk.server.services.cache_job_service import (
 
 
 class TestCacheCapabilities(unittest.TestCase):
+    def test_cache_preparation_modes_follow_each_datasets_selected_store(self):
+        stores = [
+            {"id": "offline", "default": True},
+            {"id": "on-demand", "text_cache_ondemand": True},
+            {"id": "read-existing", "text_cache_disable": True},
+            {"id": "encode-only", "text_cache_encode_only": True},
+        ]
+        plan = [
+            {
+                **entry,
+                "type": "local",
+                "dataset_type": "text_embeds",
+                "cache_dir": "cache/" + entry["id"],
+            }
+            for entry in stores
+        ]
+        plan += [{"id": entry["id"] + "-images", "type": "local", "text_embeds": entry["id"]} for entry in stores]
+        caps = CacheJobService.get_capabilities("flux", plan, {"vae_cache_disable": True})["datasets"]
+        for store, mode, prepare in (
+            ("offline", "precomputed", True),
+            ("on-demand", "on_demand", True),
+            ("read-existing", "read_existing", False),
+            ("encode-only", "encode_only", False),
+        ):
+            with self.subTest(store=store):
+                role = caps[store + "-images"]
+                text = role["text_embeds"]
+                self.assertEqual((text["store_id"], text["mode"], text["prepare"]), (store, mode, prepare))
+                self.assertFalse(role["vae"]["prepare"])
+
     def test_flux_has_text_and_vae(self):
         caps = CacheJobService.get_capabilities("flux", [], {})
         self.assertTrue(caps["text_embeds"])
@@ -134,6 +167,20 @@ class TestCacheAcceleratorStub(unittest.TestCase):
         self.assertIs(stub.unwrap_model(obj), obj)
 
 
+def waiting_cache_worker(connection, cancelled, job, config, global_config, plan):
+    from simpletuner.helpers.training.state_tracker import StateTracker
+
+    StateTracker.set_args(global_config)
+    job.status = CacheJobStatus.RUNNING
+    job.stage = "waiting"
+    with connection:
+        connection.send(CacheJobService._job_to_dict(job))
+        if not cancelled.wait(30):
+            raise TimeoutError("Did not receive cancellation")
+        job.status = CacheJobStatus.CANCELLED
+        connection.send(CacheJobService._job_to_dict(job))
+
+
 class TestCacheJobManagement(unittest.TestCase):
     def setUp(self):
         self.service = CacheJobService(broadcast_fn=MagicMock())
@@ -144,8 +191,65 @@ class TestCacheJobManagement(unittest.TestCase):
     def test_get_active_status_when_idle(self):
         self.assertIsNone(self.service.get_active_status())
 
+    def test_spawned_worker_has_isolated_state_and_receives_cancellation(self):
+        import threading
+
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        ready = threading.Event()
+        before = StateTracker.get_args()
+        statuses = []
+
+        def broadcast(data, event_type):
+            statuses.append(data["status"])
+            if data["stage"] == "waiting":
+                ready.set()
+
+        self.service._broadcast_fn = broadcast
+        with (
+            patch("simpletuner.simpletuner_sdk.server.services.dataset_scan_service.get_scan_service") as scan,
+            patch.object(self.service, "_check_training_running", return_value=False),
+            patch(
+                "simpletuner.simpletuner_sdk.server.services.cache_job_service._execute_cache_process", waiting_cache_worker
+            ),
+        ):
+            scan.return_value.get_active_status.return_value = None
+            job = self.service.start_cache_job("images", "vae", {"id": "images"}, {"tenant": "worker"})
+            try:
+                self.assertTrue(ready.wait(30))
+                self.assertIs(StateTracker.get_args(), before)
+            finally:
+                self.service.cancel()
+                self.service._thread.join(30)
+            self.assertFalse(self.service._thread.is_alive())
+            self.assertIsNone(self.service.get_active_status())
+            self.assertEqual(self.service.get_job_status(job)["status"], "cancelled")
+            self.assertEqual(statuses[-2:], ["cancelling", "cancelled"])
+
+    def test_spawned_worker_propagates_terminal_error(self):
+        with (
+            patch("simpletuner.simpletuner_sdk.server.services.dataset_scan_service.get_scan_service") as scan,
+            patch.object(self.service, "_check_training_running", return_value=False),
+        ):
+            scan.return_value.get_active_status.return_value = None
+            job = self.service.start_cache_job("images", "invalid", {"id": "images"}, {})
+            self.service._thread.join(30)
+            self.assertFalse(self.service._thread.is_alive())
+            self.assertIn("Unknown cache type", self.service.get_job_status(job)["error"])
+            self.assertEqual(self.service.get_job_status(job)["status"], "failed")
+
     def test_cancel_when_idle(self):
         self.assertFalse(self.service.cancel())
+
+    def test_status_and_cancel_use_the_saved_plan_and_job(self):
+        job = CacheJob("job", "images", "vae", status=CacheJobStatus.RUNNING, plan_scope="first")
+        self.service._active_job = job
+        self.assertIsNone(self.service.get_active_status(plan_scope="second"))
+        self.assertIsNone(self.service.get_job_status("job", plan_scope="second"))
+        self.assertFalse(self.service.cancel(job_id="job", plan_scope="second"))
+        self.assertFalse(self.service.cancel(job_id="earlier", plan_scope="first"))
+        self.assertEqual(self.service.get_active_status(plan_scope="first")["job_id"], "job")
+        self.assertTrue(self.service.cancel(job_id="job", plan_scope="first"))
 
     def test_job_to_dict(self):
         job = CacheJob(
@@ -285,7 +389,7 @@ class TestStateTrackerSetup(unittest.TestCase):
     """Verify that cache execute methods set StateTracker globals correctly."""
 
     def test_accelerator_stub_has_is_local_main_process(self):
-        """StateTracker.set_text_cache_files() requires accelerator.is_local_main_process."""
+        """Standalone providers use the local-main-process flag during setup."""
         stub = _CacheAcceleratorStub()
         self.assertTrue(stub.is_local_main_process)
 
@@ -326,32 +430,245 @@ class TestStateTrackerSetup(unittest.TestCase):
             StateTracker.set_accelerator(original)
 
 
+class _LegacyPreparationMetadata(SimpleNamespace):
+    _preparation_source = None
+    instance_data_dir = None
+    close = MetadataBackend.close
+    _source_revision = MetadataBackend._source_revision
+    _open_accepted_groups = MetadataBackend._open_accepted_groups
+    _preparation_ownership = MetadataBackend._preparation_ownership
+    open_preparation_view = MetadataBackend.open_preparation_view
+
+
+class TestImageArtifactPreparation(unittest.TestCase):
+    def test_vae_job_uses_training_defaults_and_the_modality_vae(self):
+        service = CacheJobService()
+        dataset = {"id": "audio", "type": "local", "dataset_type": "audio", "vae_batch_size": 2}
+        source = Mock(type="local")
+        chosen_vae = object()
+        model = Mock()
+        model.get_vae_for_dataset_type.return_value = chosen_vae
+        runtime = DatasetRuntime("audio", source, Mock(), {**dataset, "instance_data_dir": "audio"})
+        with TemporaryDirectory() as directory:
+            job = CacheJob("job", "audio", "vae")
+            with (
+                patch.object(service, "_load_model", return_value=model),
+                patch.object(service, "_create_dataset_runtime", return_value=runtime),
+                patch.object(service, "_prepare_image_artifacts"),
+                patch("simpletuner.helpers.caching.vae.VAECache") as cache,
+            ):
+                service._run_cache_job(job, dataset, {"model_family": "test", "output_dir": directory})
+            self.assertEqual(job.status, CacheJobStatus.COMPLETED, job.error)
+            self.assertEqual(Path(cache.call_args.kwargs["cache_dir"]), Path(directory) / "cache/audio/vae/test/audio")
+        model.get_vae_for_dataset_type.assert_called_once_with("audio")
+        self.assertIs(cache.call_args.kwargs["vae"], chosen_vae)
+        self.assertEqual(cache.call_args.kwargs["vae_batch_size"], 2)
+
+    def test_vae_job_rejects_disabled_writes_before_model_loading(self):
+        service = CacheJobService()
+        job = CacheJob("job", "images", "vae")
+        with patch.object(service, "_load_model") as load:
+            service._run_cache_job(job, {"id": "images", "type": "local"}, {"vae_cache_disable": True})
+        self.assertEqual(job.status, CacheJobStatus.FAILED)
+        self.assertIn("writes disabled", job.error)
+        load.assert_not_called()
+
+    def test_conditioning_cache_job_binds_z_image_reference_capability(self):
+        from simpletuner.helpers.models.z_image_omni.model import ZImageOmni
+
+        service = CacheJobService()
+        model = ZImageOmni.__new__(ZImageOmni)
+        model.config = SimpleNamespace()
+        reference = {
+            "id": "references",
+            "type": "local",
+            "dataset_type": "conditioning",
+            "cache_dir_conditioning_image_embeds": "cache/references",
+        }
+        source = {"id": "source", "dataset_type": "image", "conditioning_data": "references"}
+        runtime = DatasetRuntime("references", Mock(type="local"), Mock(), {**reference, "instance_data_dir": "references"})
+        self.assertFalse(model.requires_conditioning_image_embeds())
+        for selected in (source, reference):
+            with self.subTest(selected=selected["id"]):
+                job = CacheJob("job", selected["id"], "conditioning")
+                with (
+                    patch.object(service, "_load_model", return_value=model),
+                    patch.object(service, "_create_dataset_runtime", return_value=runtime) as open_dataset,
+                    patch.object(service, "_prepare_image_artifacts"),
+                    patch("simpletuner.helpers.caching.image_embed.ImageEmbedCache") as cache,
+                ):
+                    service._run_cache_job(job, selected, {"model_family": "z_image_omni"}, [source, reference])
+
+                self.assertEqual(job.status, CacheJobStatus.COMPLETED, job.error)
+                self.assertTrue(model.requires_conditioning_image_embeds())
+                open_dataset.assert_called_once()
+                self.assertIs(open_dataset.call_args.args[0], reference)
+                self.assertEqual(cache.call_args.kwargs["id"], "references")
+
+    def test_image_cache_preparation_keeps_the_training_dataset_registered(self):
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        service = CacheJobService()
+        job = CacheJob("job", "video", "vae")
+        training = DatasetRuntime("video", None, None, {"dataset_type": "video"})
+        preparation = DatasetRuntime("video", None, None, {"dataset_type": "video"})
+        cache = Mock()
+        cache.prepare_dataset.return_value = 8
+        with patch.object(StateTracker, "datasets", {"video": training}):
+            service._prepare_image_artifacts(job, preparation, "vae_cache", cache)
+            self.assertIs(StateTracker.get_dataset("video"), training)
+        self.assertIs(preparation.vae_cache, cache)
+        self.assertIsNone(training.vae_cache)
+        self.assertIs(cache.prepare_dataset.call_args.args[0], preparation)
+
+    def test_vae_and_conditioning_jobs_use_the_configured_artifact_store(self):
+        service = CacheJobService()
+        source = Mock(type="webshart")
+        store = Mock(type="aws")
+        global_config = {"model_family": "sdxl"}
+        for role, kind, cache_dir_key, implementation in (
+            ("image_embeds", "vae", "cache_dir_vae", "simpletuner.helpers.caching.vae.VAECache"),
+            (
+                "conditioning_image_embeds",
+                "conditioning",
+                "cache_dir_conditioning_image_embeds",
+                "simpletuner.helpers.caching.image_embed.ImageEmbedCache",
+            ),
+        ):
+            with self.subTest(role=role):
+                dataset = {
+                    "id": "source",
+                    "type": "webshart",
+                    "source": "s3://source",
+                    role: "artifacts",
+                    cache_dir_key: "cache/images",
+                }
+                entry = {
+                    "id": "artifacts",
+                    "type": "aws",
+                    "dataset_type": role,
+                    "aws_bucket_name": "artifacts",
+                    "aws_endpoint_url": "https://storage.example",
+                    "aws_access_key_id": "example",
+                    "aws_secret_access_key": "example",
+                }
+                metadata = Mock()
+                runtime = DatasetRuntime("source", source, metadata, {**dataset, "instance_data_dir": "source"})
+                job = CacheJob("job", "source", kind)
+                with (
+                    patch.object(service, "_load_model", return_value=Mock()),
+                    patch.object(service, "_create_dataset_runtime", return_value=runtime),
+                    patch.object(service, "_prepare_image_artifacts"),
+                    patch("simpletuner.helpers.data_backend.builders.aws.S3DataBackend", return_value=store) as s3,
+                    patch(implementation) as cache,
+                ):
+                    service._run_cache_job(job, dataset, global_config, [dataset, entry])
+
+                self.assertEqual(job.status, CacheJobStatus.COMPLETED, job.error)
+                self.assertEqual(s3.call_args.kwargs["bucket_name"], "artifacts")
+                self.assertIs(cache.call_args.kwargs["image_data_backend"], source)
+                self.assertIs(cache.call_args.kwargs["cache_data_backend"], store)
+                self.assertEqual(cache.call_args.kwargs["cache_dir"], "cache/images")
+                metadata.close.assert_called_once_with()
+
+
 class TestStreamingTextPreparation(unittest.TestCase):
+
+    def test_artifact_store_is_independent_of_source(self):
+        from pathlib import Path
+
+        service = CacheJobService()
+        source = {"id": "source", "type": "webshart", "text_embeds": "embeddings"}
+        store = {"id": "embeddings", "type": "local", "dataset_type": "text_embeds"}
+        with TemporaryDirectory() as directory:
+            store["cache_dir"] = directory
+            args = _CacheArgsNamespace({})
+            accelerator = _CacheAcceleratorStub()
+            default = dict(store, id="default-store", default=True)
+            config, backend, prefix = service._text_embed_store(source, [source, default, store], {}, args, accelerator)
+            self.assertEqual((backend.type, backend.id, Path(prefix)), ("local", store["id"], Path(directory)))
+            aws = dict(
+                store,
+                type="aws",
+                aws_bucket_name="embeddings",
+                aws_data_prefix="cache/text",
+                aws_endpoint_url="https://storage.example",
+                aws_access_key_id="example",
+                aws_secret_access_key="example",
+            )
+            with patch("simpletuner.helpers.data_backend.builders.aws.S3DataBackend") as create:
+                config, backend, prefix = service._text_embed_store(source, [source, default, aws], {}, args, accelerator)
+            self.assertEqual(prefix, "cache/text")
+            self.assertIs(backend, create.return_value)
+            self.assertEqual(create.call_args.kwargs["bucket_name"], "embeddings")
+            with self.assertRaisesRegex(ValueError, "not found"):
+                service._text_embed_store(source, [source, default], {}, args, accelerator)
+            with self.assertRaisesRegex(ValueError, "writes disabled"):
+                service._text_embed_store(source, [source, dict(store, text_cache_disable=True)], {}, args, accelerator)
+
+    def test_text_store_accepts_normalized_role_and_enforces_training_write_policy(self):
+        import json
+        from pathlib import Path
+
+        from simpletuner.helpers.data_backend.factory import init_backend_config
+
+        service = CacheJobService()
+        accelerator = _CacheAcceleratorStub()
+        source = {"id": "source", "type": "local"}
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "plan.json"
+            store_config = {
+                "id": "embeddings",
+                "type": "local",
+                "dataset_type": " TEXT_EMBEDS ",
+                "cache_dir": directory,
+                "text_cache_disable": "false",
+                "text_cache_encode_only": "false",
+            }
+            path.write_text(json.dumps([source, store_config]))
+            loaded = json.loads(path.read_text())
+
+            for args in (_CacheArgsNamespace({}), _CacheArgsNamespace({"text_cache_disable": True})):
+                disabled = init_backend_config(loaded[1], args, accelerator)["config"]["text_cache_disable"]
+                if disabled:
+                    with self.assertRaisesRegex(ValueError, "writes disabled"):
+                        service._text_embed_store(loaded[0], loaded, {}, args, accelerator)
+                else:
+                    config, store, prefix = service._text_embed_store(loaded[0], loaded, {}, args, accelerator)
+                    self.assertEqual((config["id"], store.id, Path(prefix)), ("embeddings", "embeddings", Path(directory)))
+
     def test_job_streams_accepted_samples_without_inventory_discovery(self):
         from simpletuner.helpers.models.common import TextEmbedCacheKey
         from simpletuner.helpers.training.state_tracker import StateTracker
 
         service = CacheJobService(broadcast_fn=MagicMock())
-        metadata = SimpleNamespace(
+        metadata = _LegacyPreparationMetadata(
             read_only=False,
             read_cache=lambda: {"1.0": ["accepted.jpg", "also-accepted.jpg"]},
             get_metadata_by_filepath=lambda ref: {},
         )
-        data_backend = SimpleNamespace(id="stream-test")
+        inventory = MagicMock()
+        inventory.read.side_effect = AssertionError("source file inventory")
+        data_backend = SimpleNamespace(id="stream-test", source_files=inventory)
         model = SimpleNamespace(
             text_encoders=[],
             tokenizers=[],
             load_text_encoder=MagicMock(),
             load_text_tokenizer=MagicMock(),
             text_embed_cache_key=lambda: TextEmbedCacheKey.CAPTION,
+            requires_text_embed_image_context=lambda: True,
         )
         captured = []
+        active_dataset = object()
 
         def consume(records, *, batch_size, progress_callback):
+            self.assertIs(StateTracker.get_dataset("stream-test"), active_dataset)
+            self.assertNotIn("stream-test", StateTracker._pending_dataset_configs)
             self.assertEqual(batch_size, 2)
             self.assertNotIsInstance(records, list)
             progress_callback(0)
             for index, record in enumerate(records, 1):
+                self.assertIs(record["metadata"]["dataset_bindings"]["stream-test"], runtime)
                 captured.append(record)
                 progress_callback(index)
             return len(captured)
@@ -361,32 +678,46 @@ class TestStreamingTextPreparation(unittest.TestCase):
             text_encoder_batch_size=1,
             encode_dropout_caption=MagicMock(),
             precompute_embeddings=consume,
+            close=MagicMock(),
         )
         job = CacheJob(job_id="stream-job", dataset_id="stream-test", cache_type="text_embeds")
         with TemporaryDirectory() as cache_dir:
             config = {"id": "stream-test", "caption_strategy": "filename", "cache_dir_text": cache_dir}
+            runtime = DatasetRuntime(config["id"], data_backend, metadata, config)
             with (
+                patch.object(StateTracker, "datasets", {"stream-test": active_dataset}),
                 patch.object(service, "_load_model", return_value=model),
-                patch.object(
-                    service, "_create_data_backend_and_metadata", return_value=(None, data_backend, metadata, None)
-                ),
+                patch.object(service, "_create_dataset_runtime", return_value=runtime),
                 patch.object(service, "_cleanup_gpu"),
                 patch("simpletuner.helpers.caching.text_embeds.TextEmbeddingCache", return_value=cache),
                 patch("simpletuner.helpers.data_backend.factory.move_text_encoders"),
-                patch.object(StateTracker, "get_image_files", side_effect=AssertionError("global inventory")),
             ):
                 service._execute_text_embed_cache(job, config, {"model_family": "test"})
         self.assertEqual([record["prompt"] for record in captured], ["accepted", "also-accepted"])
         self.assertEqual((job.current, job.total), (2, 2))
+        cache.close.assert_called_once_with()
 
     def test_standalone_preparation_rejects_rank_local_training_buckets(self):
-        records = CacheJobService._iter_prompt_records(None, {"id": "dataset"}, None, SimpleNamespace(read_only=True))
-        with self.assertRaisesRegex(ValueError, "unsplit dataset metadata"):
+        records = CacheJobService._iter_prompt_records(
+            None,
+            DatasetRuntime(
+                "dataset",
+                None,
+                _LegacyPreparationMetadata(
+                    read_only=True,
+                    cache_file="missing.json",
+                    data_backend=Mock(open_read_stream=Mock(side_effect=FileNotFoundError)),
+                ),
+                {},
+            ),
+        )
+        with self.assertRaisesRegex(ValueError, "publish accepted membership"):
             next(records)
 
     def test_standalone_preparation_requires_an_accepted_sample_view(self):
         records = CacheJobService._iter_prompt_records(
-            None, {"id": "dataset"}, None, SimpleNamespace(read_only=False, read_cache=lambda: {})
+            None,
+            DatasetRuntime("dataset", None, _LegacyPreparationMetadata(read_only=False, read_cache=lambda: {}), {}),
         )
         with self.assertRaisesRegex(ValueError, "scan the dataset"):
             next(records)

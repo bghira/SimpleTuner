@@ -244,6 +244,59 @@ class TestDistillationCacheFactory(unittest.TestCase):
             self.assertTrue(hasattr(backend_entry["distillation_cache"], "write_tensor"))
 
 
+class TestDistillationArtifactTraversal(unittest.TestCase):
+    def test_one_store_inventory_serves_writes_and_round_robin_reads(self):
+        from simpletuner.helpers.caching.distillation import DistillationCache
+
+        store = MagicMock(type="aws")
+        first = "artifacts/pair_00000.pt"
+        third = "artifacts/pair_00002.pt"
+        last = "artifacts/pair_00003.pt"
+        store.iter_file_keys.return_value = iter([third, first, first])
+        store.torch_load.side_effect = lambda key: key
+        cache = DistillationCache("pairs", store, "artifacts")
+
+        self.assertEqual(cache.next_artifact_name(), "pair_00003.pt")
+        self.assertEqual(cache.write_tensor("pair_00003", "data"), last)
+        store.torch_save.assert_called_once_with("data", last)
+        self.assertEqual(cache.list_cached_pairs(), [first, third, last])
+        self.assertEqual([cache.load_next_pair()[1] for _ in range(4)], [first, third, last, first])
+        store.iter_file_keys.assert_called_once_with(["pt"], "artifacts")
+
+        store.iter_file_keys.return_value = iter([third])
+        cache.discover_all_files()
+        self.assertEqual(cache.load_next_pair(), (third, third))
+
+    def test_replay_restores_each_store_and_the_cycle_between_stores(self):
+        from simpletuner.helpers.caching.distillation import DistillationArtifactCycle, DistillationCache
+
+        def cycle(*, changed=False):
+            caches = []
+            paths = (("a/0.pt", "a/1.pt", "a/2.pt"), (), ("c/0.pt", "c/1.pt"))
+            for label, keys in zip("abc", paths, strict=True):
+                store = MagicMock(type="aws")
+                store.iter_file_keys.return_value = iter((*keys, "c/new.pt") if changed and label == "c" else keys)
+                store.torch_load.side_effect = lambda key: {"value": key}
+                caches.append(DistillationCache(label, store, label, distillation_type="perflow"))
+            return DistillationArtifactCycle(caches)
+
+        original = cycle()
+        self.assertEqual([original.next_entry()["value"] for _ in range(3)], ["a/0.pt", "c/0.pt", "a/1.pt"])
+        with tempfile.TemporaryDirectory() as directory:
+            original.save_checkpoint(directory, rank=1, world_size=2)
+            expected = [original.next_entry() for _ in range(7)]
+            resumed = cycle()
+            resumed.load_checkpoint(directory, rank=1, world_size=2)
+            self.assertEqual([resumed.next_entry() for _ in range(7)], expected)
+            with self.assertRaisesRegex(ValueError, "artifact inventory"):
+                cycle(changed=True).load_checkpoint(directory, rank=1, world_size=2)
+            with self.assertRaisesRegex(ValueError, "configured traversal"):
+                cycle().load_checkpoint(directory, rank=1, world_size=3)
+            legacy = cycle()
+            legacy.load_checkpoint(directory, rank=0, world_size=2)
+            self.assertEqual(legacy.next_entry()["value"], "a/0.pt")
+
+
 class TestRunDistillationCacheGeneration(unittest.TestCase):
     def test_runs_provider_for_matching_cache(self):
         distiller = MagicMock(spec=DistillationBase)
@@ -252,20 +305,13 @@ class TestRunDistillationCacheGeneration(unittest.TestCase):
         provider = MagicMock()
         distiller.get_ode_generator_provider.return_value = provider
 
-        cache = MagicMock()
-        backend_map = {
-            "ode-cache-1": {
-                "distillation_type": "self_forcing",
-                "distillation_cache": cache,
-                "config": {"distillation_type": "self_forcing"},
-            }
-        }
-
-        with patch("simpletuner.helpers.data_backend.factory.StateTracker") as mock_state_tracker:
-            mock_state_tracker.get_data_backends.return_value = backend_map
-            run_distillation_cache_generation(distiller)
+        cache = MagicMock(distillation_type="self_forcing", config={"distillation_type": "self_forcing"})
+        other = MagicMock(distillation_type="other")
+        cycle = run_distillation_cache_generation(distiller, (other, cache))
 
         provider.generate.assert_called_once_with(cache, backend_config={"distillation_type": "self_forcing"})
+        self.assertEqual(cycle.caches, (cache,))
+        distiller.bind_artifact_cycle.assert_called_once_with(cycle)
 
     def test_raises_when_required_cache_missing(self):
         distiller = MagicMock(spec=DistillationBase)
@@ -273,15 +319,5 @@ class TestRunDistillationCacheGeneration(unittest.TestCase):
         distiller.get_required_distillation_cache_type.return_value = "expected"
         distiller.get_ode_generator_provider.return_value = MagicMock()
 
-        backend_map = {
-            "ode-cache-1": {
-                "distillation_type": "other",
-                "distillation_cache": MagicMock(),
-                "config": {},
-            }
-        }
-
-        with patch("simpletuner.helpers.data_backend.factory.StateTracker") as mock_state_tracker:
-            mock_state_tracker.get_data_backends.return_value = backend_map
-            with self.assertRaises(ValueError):
-                run_distillation_cache_generation(distiller)
+        with self.assertRaisesRegex(ValueError, "no matching distillation_cache"):
+            run_distillation_cache_generation(distiller, (MagicMock(distillation_type="other"),))

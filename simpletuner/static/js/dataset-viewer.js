@@ -10,14 +10,18 @@ window.datasetViewerComponent = function () {
         // Viewer state
         datasets: [],
         loading: false,
+        _summaryRequest: 0,
         expandedDataset: null,
         selectedBucket: null,
         thumbnails: [],
         loadingThumbnails: false,
         thumbnailOffset: 0,
         thumbnailLimit: 24,
+        _thumbnailRequest: 0,
         selectedFile: null,
+        selectedFileDatasetId: null,
         loadingFileDetail: false,
+        _fileRequest: 0,
         previewOriginal: null,
         previewIntermediary: null,
         previewCropped: null,
@@ -36,6 +40,13 @@ window.datasetViewerComponent = function () {
         scanProgress: { dataset_id: '', current: 0, total: 0 },
         _scanHandler: null,
         _queueHandler: null,
+        _scanJobId: null,
+        _scanQueueId: null,
+        _scanQueueIndex: -1,
+        _scanPlanScope: null,
+        _scanRequest: 0,
+        _scanStatusVersion: 0,
+        _scanStarting: false,
 
         // Stage 3-5 state
         captionStatus: {},
@@ -45,6 +56,8 @@ window.datasetViewerComponent = function () {
         // Conditioning pair viewer state
         conditioningPairs: null,
         loadingPairs: false,
+        conditioningPairSelection: null,
+        _pairsRequest: 0,
         pairsOffset: 0,
         pairsLimit: 6,
 
@@ -69,6 +82,11 @@ window.datasetViewerComponent = function () {
         cacheProgress: { dataset_id: '', cache_type: '', stage: '', current: 0, total: 0 },
         cacheCapabilities: { text_embeds: false, vae: false, conditioning_types: [] },
         _cacheHandler: null,
+        _cacheJobId: null,
+        _cacheRequest: 0,
+        _cacheStatusVersion: 0,
+        _cacheStarting: false,
+        _cacheReconnectHandler: null,
 
         init() {
             this._restoreNavState();
@@ -81,6 +99,9 @@ window.datasetViewerComponent = function () {
         },
 
         destroy() {
+            this._cacheRequest++;
+            this._scanRequest++;
+            this._summaryRequest++;
             this._teardownSSEListener();
             this._teardownConfigListener();
         },
@@ -133,12 +154,21 @@ window.datasetViewerComponent = function () {
                 const data = this._parseSSEDetail(event);
                 if (data) this._handleCacheEvent(data);
             };
+            this._cacheReconnectHandler = () => {
+                this._checkActiveCacheJob();
+                this._checkActiveScan();
+            };
+            window.addEventListener('sse:connected', this._cacheReconnectHandler);
             window.addEventListener('sse:dataset_scan', this._scanHandler);
             window.addEventListener('sse:dataset_scan_queue', this._queueHandler);
             window.addEventListener('sse:dataset_cache', this._cacheHandler);
         },
 
         _teardownSSEListener() {
+            if (this._cacheReconnectHandler) {
+                window.removeEventListener('sse:connected', this._cacheReconnectHandler);
+                this._cacheReconnectHandler = null;
+            }
             if (this._scanHandler) {
                 window.removeEventListener('sse:dataset_scan', this._scanHandler);
                 this._scanHandler = null;
@@ -158,12 +188,21 @@ window.datasetViewerComponent = function () {
                 this.expandedDataset = null;
                 this.selectedBucket = null;
                 this.thumbnails = [];
-                this.selectedFile = null;
+                this.closeFileDetail();
                 this.conditioningPairs = null;
                 this.captionStatus = {};
                 this.filterReport = {};
                 this.datasetGraph = null;
-                this._destroyBboxCanvas();
+                this._cacheRequest++;
+                this._cacheJobId = null;
+                this._cacheStarting = false;
+                this.caching = false;
+                this.cacheError = '';
+                this.cacheCapabilities = { text_embeds: false, vae: false, conditioning_types: [] };
+                this._scanRequest++;
+                this._scanStarting = false;
+                this._scanPlanScope = null;
+                this._clearScanProgress();
                 this.loadAllSummaries();
                 this._checkActiveScan();
                 this._checkActiveCacheJob();
@@ -174,6 +213,7 @@ window.datasetViewerComponent = function () {
             this._viewerTabHandler = () => {
                 this.loadAllSummaries();
                 this._checkActiveScan();
+                this._checkActiveCacheJob();
             };
             window.addEventListener('viewer-tab-activated', this._viewerTabHandler);
         },
@@ -191,71 +231,78 @@ window.datasetViewerComponent = function () {
         },
 
         _handleScanEvent(data) {
-            if (data.status === 'running') {
+            if (data.plan_scope !== this._scanPlanScope) return;
+            if (this._scanQueueId ? data.queue_id !== this._scanQueueId : data.job_id !== this._scanJobId) return;
+            if (this._scanQueueId) {
+                if (data.queue_index < this._scanQueueIndex) return;
+                this._scanQueueIndex = data.queue_index;
+            }
+            this._scanStatusVersion++;
+            if (['pending', 'running', 'cancelling'].includes(data.status)) {
                 this.scanning = true;
                 this.scanProgress = {
+                    status: data.status,
                     dataset_id: data.dataset_id || this.scanProgress.dataset_id,
                     current: data.current || 0,
                     total: data.total || 0,
                 };
-            } else if (data.status === 'completed') {
-                this.scanning = false;
-                this.scanProgress = { dataset_id: '', current: 0, total: 0 };
-                this._refreshDatasetSummary(data.dataset_id);
-            } else if (data.status === 'failed' || data.status === 'cancelled') {
-                this.scanning = false;
-                this.scanProgress = { dataset_id: '', current: 0, total: 0 };
-                if (data.error) {
-                    console.error('Scan failed for', data.dataset_id, ':', data.error);
-                    if (window.showToast) {
-                        window.showToast('Scan failed: ' + data.error, 'error');
-                    }
-                }
+                return;
             }
+            if (!this._scanQueueId) this._clearScanProgress();
+            if (data.status === 'completed') this._refreshDatasetSummary(data.dataset_id);
+            if (data.status === 'failed' && data.error) window.showToast?.('Scan failed: ' + data.error, 'error');
         },
 
         _handleQueueEvent(data) {
-            if (data.completed >= data.total) {
-                this.scanning = false;
-                this.scanProgress = { dataset_id: '', current: 0, total: 0 };
+            if (data.queue_id !== this._scanQueueId || data.plan_scope !== this._scanPlanScope) return;
+            this._scanStatusVersion++;
+            if (data.active === false) {
+                this._clearScanProgress();
                 this.loadAllSummaries();
             }
         },
 
+        _clearScanProgress() {
+            this._scanJobId = null;
+            this._scanQueueId = null;
+            this._scanQueueIndex = -1;
+            this.scanning = false;
+            this.scanProgress = { dataset_id: '', current: 0, total: 0 };
+        },
+
         _handleCacheEvent(data) {
-            if (data.status === 'loading_model' || data.status === 'running') {
+            if (!data.job_id || data.job_id !== this._cacheJobId) return;
+            this._cacheStatusVersion++;
+            if (['pending', 'loading_model', 'running', 'cancelling'].includes(data.status)) {
                 this.caching = true;
-                this.cacheError = '';
                 this.cacheProgress = {
-                    dataset_id: data.dataset_id || this.cacheProgress.dataset_id,
-                    cache_type: data.cache_type || this.cacheProgress.cache_type,
+                    dataset_id: data.dataset_id,
+                    cache_type: data.cache_type,
+                    status: data.status,
                     stage: data.stage || '',
-                    current: data.current || 0,
-                    total: data.total || 0,
+                    current: data.current ?? 0,
+                    total: data.total ?? 0,
                 };
-            } else if (data.status === 'completed') {
-                this.caching = false;
-                this.cacheError = '';
-                this.cacheProgress = { dataset_id: '', cache_type: '', stage: '', current: 0, total: 0 };
-                if (window.showToast) {
-                    const label = (data.cache_type || '').replace(/_/g, ' ');
-                    window.showToast('Cache job completed: ' + label, 'success');
-                }
-            } else if (data.status === 'failed' || data.status === 'cancelled') {
-                this.caching = false;
-                this.cacheProgress = { dataset_id: '', cache_type: '', stage: '', current: 0, total: 0 };
-                this.cacheError = data.error || '';
-                if (data.error && window.showToast) {
-                    window.showToast('Cache job failed: ' + data.error, 'error');
-                }
+                return;
+            }
+            this._cacheJobId = null;
+            this.caching = false;
+            this.cacheError = data.status === 'failed' ? data.error || 'Cache job failed' : '';
+            if (data.status === 'completed') {
+                const label = (data.cache_type || '').replace(/_/g, ' ');
+                window.showToast?.('Cache job completed: ' + label, 'success');
+            } else if (this.cacheError) {
+                window.showToast?.('Cache job failed: ' + this.cacheError, 'error');
             }
         },
 
         async _refreshDatasetSummary(datasetId) {
+            const request = this._summaryRequest;
             try {
                 const resp = await fetch('/api/datasets/viewer/summary?dataset_id=' + encodeURIComponent(datasetId));
                 if (!resp.ok) return;
                 const summary = await resp.json();
+                if (request !== this._summaryRequest) return;
                 const idx = this.datasets.findIndex(d => d.dataset_id === datasetId);
                 if (idx >= 0) {
                     this.datasets[idx] = summary;
@@ -268,47 +315,48 @@ window.datasetViewerComponent = function () {
         // --- Scan operations ---
 
         async _checkActiveScan() {
+            if (this._scanStarting) return;
+            const request = this._scanRequest;
+            const version = this._scanStatusVersion;
+            const jobId = this._scanJobId;
+            const queueId = this._scanQueueId;
+            const endpoint = queueId ? '/queue-status?queue_id=' + encodeURIComponent(queueId)
+                : jobId ? '/status?job_id=' + encodeURIComponent(jobId) : '/active';
             try {
-                const resp = await fetch('/api/datasets/scan/active');
+                const resp = await fetch('/api/datasets/scan' + endpoint);
+                if (request !== this._scanRequest || version !== this._scanStatusVersion) return;
+                if ((queueId || jobId) && resp.status === 404) {
+                    this._clearScanProgress();
+                    return;
+                }
                 if (!resp.ok) return;
                 const data = await resp.json();
-                if (data.active) {
+                if (request !== this._scanRequest || version !== this._scanStatusVersion) return;
+                if (queueId) {
+                    this._handleQueueEvent(data);
+                    if (!data.active) return;
                     this.scanning = true;
-                    this.scanProgress = {
-                        dataset_id: data.dataset_id || '',
-                        current: data.current || 0,
-                        total: data.total || 0,
-                    };
+                    const job = Object.values(data.datasets)[data.current_index];
+                    if (job) this._handleScanEvent(job);
+                } else if (!jobId) {
+                    this._scanPlanScope = data.plan_scope;
+                    if (!data.active) return;
+                    this._scanJobId = data.job_id;
+                    this._scanQueueId = data.queue_id;
+                    this._handleScanEvent(data);
+                } else {
+                    this._handleScanEvent(data);
                 }
             } catch (e) { /* ignore */ }
         },
 
         async scanDataset(datasetId, { forceRescan = false, clearVaeCache = false, clearConditioningCache = false } = {}) {
-            this.scanning = true;
-            this.scanProgress = { dataset_id: datasetId, current: 0, total: 0 };
-            try {
-                const resp = await fetch('/api/datasets/scan', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        dataset_id: datasetId,
-                        force_rescan: forceRescan,
-                        clear_vae_cache: clearVaeCache,
-                        clear_conditioning_cache: clearConditioningCache,
-                    }),
-                });
-                if (!resp.ok) {
-                    const err = await resp.json().catch(() => ({ detail: 'Unknown error' }));
-                    throw new Error(err.detail || 'Scan request failed');
-                }
-                // Progress updates arrive via SSE
-            } catch (err) {
-                console.error('Error starting scan:', err);
-                this.scanning = false;
-                if (window.showToast) {
-                    window.showToast(err.message, 'error');
-                }
-            }
+            await this._startScan('', datasetId, {
+                dataset_id: datasetId,
+                force_rescan: forceRescan,
+                clear_vae_cache: clearVaeCache,
+                clear_conditioning_cache: clearConditioningCache,
+            });
         },
 
         showForceScanDialog(datasetId) {
@@ -334,124 +382,152 @@ window.datasetViewerComponent = function () {
         },
 
         async scanAll() {
+            await this._startScan('/all', 'all', {});
+        },
+
+        async _startScan(endpoint, datasetId, payload) {
+            const request = ++this._scanRequest;
+            this._scanStarting = true;
             this.scanning = true;
-            this.scanProgress = { dataset_id: 'all', current: 0, total: 0 };
+            this.scanProgress = { dataset_id: datasetId, status: 'pending', current: 0, total: 0 };
             try {
-                const resp = await fetch('/api/datasets/scan/all', {
+                const resp = await fetch('/api/datasets/scan' + endpoint, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({}),
+                    body: JSON.stringify({ ...payload, plan_scope: this._scanPlanScope }),
                 });
-                if (!resp.ok) {
-                    const err = await resp.json().catch(() => ({ detail: 'Unknown error' }));
-                    throw new Error(err.detail || 'Scan all request failed');
-                }
+                const data = await resp.json();
+                if (request !== this._scanRequest) return;
+                if (!resp.ok) throw new Error(data.detail || 'Scan request failed');
+                this._scanPlanScope = data.plan_scope;
+                this._scanJobId = data.job_id || null;
+                this._scanQueueId = data.queue_id || null;
             } catch (err) {
-                console.error('Error starting scan all:', err);
-                this.scanning = false;
-                if (window.showToast) {
-                    window.showToast(err.message, 'error');
+                if (request !== this._scanRequest) return;
+                this._clearScanProgress();
+                window.showToast?.(err.message, 'error');
+            } finally {
+                if (request === this._scanRequest) {
+                    this._scanStarting = false;
+                    await this._checkActiveScan();
                 }
             }
         },
 
         async cancelScan() {
+            const request = this._scanRequest;
+            const params = this._scanQueueId ? { queue_id: this._scanQueueId } : { job_id: this._scanJobId };
+            if (!this._scanQueueId && !this._scanJobId) return;
             try {
-                await fetch('/api/datasets/scan/cancel', { method: 'POST' });
-                this.scanning = false;
-                this.scanProgress = { dataset_id: '', current: 0, total: 0 };
+                const resp = await fetch('/api/datasets/scan/cancel?' + new URLSearchParams(params), { method: 'POST' });
+                if (!resp.ok) throw new Error('Cancel request failed');
+                if (request === this._scanRequest) await this._checkActiveScan();
             } catch (err) {
-                console.error('Error cancelling scan:', err);
+                if (request === this._scanRequest) window.showToast?.(err.message, 'error');
             }
         },
 
         // --- Cache operations ---
 
         async loadCacheCapabilities() {
+            const request = this._cacheRequest;
             try {
                 const resp = await fetch('/api/datasets/cache/capabilities');
                 if (!resp.ok) return;
-                this.cacheCapabilities = await resp.json();
+                const capabilities = await resp.json();
+                if (request === this._cacheRequest) this.cacheCapabilities = capabilities;
             } catch (e) { /* ignore */ }
         },
 
         async _checkActiveCacheJob() {
+            if (this._cacheStarting) return;
+            const request = this._cacheRequest;
+            const version = this._cacheStatusVersion;
+            const jobId = this._cacheJobId;
+            const endpoint = jobId ? '/status?job_id=' + encodeURIComponent(jobId) : '/active';
             try {
-                const resp = await fetch('/api/datasets/cache/active');
+                const resp = await fetch('/api/datasets/cache' + endpoint);
+                if (request !== this._cacheRequest || version !== this._cacheStatusVersion) return;
+                if (jobId && resp.status === 404) {
+                    this._cacheJobId = null;
+                    this.caching = false;
+                    return;
+                }
                 if (!resp.ok) return;
                 const data = await resp.json();
-                if (data.active) {
-                    this.caching = true;
-                    this.cacheProgress = {
-                        dataset_id: data.dataset_id || '',
-                        cache_type: data.cache_type || '',
-                        stage: data.stage || '',
-                        current: data.current || 0,
-                        total: data.total || 0,
-                    };
+                if (request !== this._cacheRequest || version !== this._cacheStatusVersion) return;
+                if (jobId || data.active) {
+                    this._cacheJobId = data.job_id;
+                    this._handleCacheEvent(data);
                 }
             } catch (e) { /* ignore */ }
         },
 
         async startCacheJob(datasetId, cacheType) {
+            const request = ++this._cacheRequest;
+            this._cacheStarting = true;
             this.caching = true;
             this.cacheError = '';
-            this.cacheProgress = { dataset_id: datasetId, cache_type: cacheType, stage: 'Starting...', current: 0, total: 0 };
+            this.cacheProgress = {
+                dataset_id: datasetId, cache_type: cacheType, stage: 'Starting...', current: 0, total: 0,
+            };
             try {
                 const resp = await fetch('/api/datasets/cache/start', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ dataset_id: datasetId, cache_type: cacheType }),
+                    body: JSON.stringify({
+                        dataset_id: datasetId,
+                        cache_type: cacheType,
+                        plan_scope: this.cacheCapabilities.plan_scope,
+                    }),
                 });
-                if (!resp.ok) {
-                    const err = await resp.json().catch(() => ({ detail: 'Unknown error' }));
-                    throw new Error(err.detail || 'Cache request failed');
-                }
+                const data = await resp.json();
+                if (request !== this._cacheRequest) return;
+                if (!resp.ok) throw new Error(data.detail || 'Cache request failed');
+                this._cacheJobId = data.job_id;
             } catch (err) {
-                console.error('Error starting cache job:', err);
+                if (request !== this._cacheRequest) return;
                 this.cacheError = err.message || 'Cache request failed';
                 this.caching = false;
-                this.cacheProgress = { dataset_id: '', cache_type: '', stage: '', current: 0, total: 0 };
-                if (window.showToast) {
-                    window.showToast(this.cacheError, 'error');
+                window.showToast?.(this.cacheError, 'error');
+            } finally {
+                if (request === this._cacheRequest) {
+                    this._cacheStarting = false;
+                    await this._checkActiveCacheJob();
                 }
             }
         },
 
         async cancelCacheJob() {
+            const jobId = this._cacheJobId;
+            if (!jobId) return;
             try {
-                const resp = await fetch('/api/datasets/cache/cancel', { method: 'POST' });
-                if (!resp.ok) {
-                    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-                    throw new Error(err.detail || 'Cancel request failed');
-                }
-                const data = await resp.json().catch(() => ({}));
-                if (data.cancelled) {
-                    this.caching = false;
-                    this.cacheProgress = { dataset_id: '', cache_type: '', stage: '', current: 0, total: 0 };
-                } else if (window.showToast) {
-                    window.showToast('No active cache job to cancel', 'warning');
-                }
+                const resp = await fetch('/api/datasets/cache/cancel?job_id=' + encodeURIComponent(jobId), { method: 'POST' });
+                const data = await resp.json();
+                if (jobId !== this._cacheJobId) return;
+                if (!resp.ok) throw new Error(data.detail || 'Cancel request failed');
+                if (data.cancelled) await this._checkActiveCacheJob();
             } catch (err) {
-                console.error('Error cancelling cache job:', err);
-                if (window.showToast) {
-                    window.showToast('Failed to cancel cache job: ' + err.message, 'error');
-                }
+                if (jobId === this._cacheJobId) window.showToast?.(err.message, 'error');
             }
         },
 
         // --- Viewer operations ---
 
         async loadAllSummaries() {
+            const request = ++this._summaryRequest;
             this.loading = true;
             try {
                 const resp = await fetch('/api/datasets/viewer/summaries');
+                if (request !== this._summaryRequest) return;
                 if (!resp.ok) {
                     console.error('Failed to load dataset summaries:', resp.status);
                     this.datasets = [];
                     return;
                 }
-                this.datasets = await resp.json();
+                const summaries = await resp.json();
+                if (request !== this._summaryRequest) return;
+                this.datasets = summaries;
 
                 // Load supplementary data for cached datasets in parallel
                 const fetchPromises = [];
@@ -463,6 +539,7 @@ window.datasetViewerComponent = function () {
                 }
                 fetchPromises.push(this._loadGraph());
                 await Promise.allSettled(fetchPromises);
+                if (request !== this._summaryRequest) return;
 
                 // Restore pending bucket selection from sessionStorage
                 if (this._pendingBucketKey && this.expandedDataset) {
@@ -478,90 +555,144 @@ window.datasetViewerComponent = function () {
                     this._pendingBucketKey = null;
                 }
             } catch (err) {
+                if (request !== this._summaryRequest) return;
                 console.error('Error loading dataset summaries:', err);
                 this.datasets = [];
             } finally {
-                this.loading = false;
+                if (request === this._summaryRequest) this.loading = false;
             }
         },
 
         async _loadCaptionStatus(datasetId) {
+            const request = this._summaryRequest;
             try {
                 const resp = await fetch('/api/datasets/viewer/caption-status?dataset_id=' + encodeURIComponent(datasetId));
                 if (resp.ok) {
-                    this.captionStatus[datasetId] = await resp.json();
+                    const status = await resp.json();
+                    if (request === this._summaryRequest) this.captionStatus[datasetId] = status;
                 }
             } catch (e) { /* silently fail */ }
         },
 
         async _loadFilterReport(datasetId) {
+            const request = this._summaryRequest;
             try {
                 const resp = await fetch('/api/datasets/viewer/filtered?dataset_id=' + encodeURIComponent(datasetId) + '&limit=0');
                 if (resp.ok) {
-                    this.filterReport[datasetId] = await resp.json();
+                    const report = await resp.json();
+                    if (request === this._summaryRequest) this.filterReport[datasetId] = report;
                 }
             } catch (e) { /* silently fail */ }
         },
 
         async _loadGraph() {
+            const request = this._summaryRequest;
             try {
                 const resp = await fetch('/api/datasets/viewer/graph');
                 if (resp.ok) {
-                    this.datasetGraph = await resp.json();
+                    const graph = await resp.json();
+                    if (request === this._summaryRequest) this.datasetGraph = graph;
                 }
             } catch (e) { /* silently fail */ }
         },
 
-        async loadConditioningPairs(sourceId, conditioningId) {
+        async selectConditioningPair(sourceId, conditioningId) {
+            this.conditioningPairSelection = {
+                sourceId,
+                conditioningId,
+                sourceRevision: this.datasets.find(d => d.dataset_id === sourceId)?.view_revision,
+                conditioningRevision: this.datasets.find(d => d.dataset_id === conditioningId)?.view_revision,
+            };
+            this.pairsOffset = 0;
+            await this.loadConditioningPairs();
+        },
+
+        async loadConditioningPairs() {
+            const selection = this.conditioningPairSelection;
+            if (!selection) return;
+            const request = ++this._pairsRequest;
             this.loadingPairs = true;
             this.conditioningPairs = null;
             try {
                 const params = new URLSearchParams({
-                    source_id: sourceId,
-                    conditioning_id: conditioningId,
+                    source_id: selection.sourceId,
+                    conditioning_id: selection.conditioningId,
                     limit: String(this.pairsLimit),
                     offset: String(this.pairsOffset),
                 });
+                if (selection.sourceRevision) params.set('source_view_revision', selection.sourceRevision);
+                if (selection.conditioningRevision) params.set('conditioning_view_revision', selection.conditioningRevision);
                 const resp = await fetch('/api/datasets/viewer/conditioning-pairs?' + params);
-                if (resp.ok) {
-                    this.conditioningPairs = await resp.json();
+                if (resp.status === 409) {
+                    if (request !== this._pairsRequest) return;
+                    this._clearConditioningPairs();
+                    const clearedRequest = this._pairsRequest;
+                    await Promise.all([
+                        this._refreshDatasetSummary(selection.sourceId),
+                        this._refreshDatasetSummary(selection.conditioningId),
+                    ]);
+                    if (clearedRequest === this._pairsRequest) {
+                        window.showToast?.('The dataset changed. Select the conditioning link again.', 'info');
+                    }
+                } else if (resp.ok) {
+                    const page = await resp.json();
+                    if (request === this._pairsRequest) {
+                        this.conditioningPairs = page;
+                        selection.sourceRevision = page.source_view_revision ?? selection.sourceRevision;
+                        selection.conditioningRevision = page.conditioning_view_revision ?? selection.conditioningRevision;
+                    }
                 }
             } catch (e) {
-                console.error('Error loading conditioning pairs:', e);
+                if (request === this._pairsRequest) console.error('Error loading conditioning pairs:', e);
             } finally {
-                this.loadingPairs = false;
+                if (request === this._pairsRequest) this.loadingPairs = false;
             }
         },
 
-        async pairsNextPage(sourceId, conditioningId) {
+        async pairsNextPage() {
             if (!this.conditioningPairs) return;
-            if (this.pairsOffset + this.pairsLimit >= this.conditioningPairs.total_pairs) return;
+            if (this.pairsOffset + this.pairsLimit >= (this.conditioningPairs.source_total ?? this.conditioningPairs.total_pairs)) return;
             this.pairsOffset += this.pairsLimit;
-            await this.loadConditioningPairs(sourceId, conditioningId);
+            await this.loadConditioningPairs();
         },
 
-        async pairsPrevPage(sourceId, conditioningId) {
+        async pairsPrevPage() {
             if (this.pairsOffset <= 0) return;
             this.pairsOffset = Math.max(0, this.pairsOffset - this.pairsLimit);
-            await this.loadConditioningPairs(sourceId, conditioningId);
+            await this.loadConditioningPairs();
+        },
+
+        _clearConditioningPairs() {
+            this._pairsRequest++;
+            this.loadingPairs = false;
+            this.conditioningPairs = null;
+            this.conditioningPairSelection = null;
+            this.pairsOffset = 0;
         },
 
         toggleDataset(datasetId) {
             this.expandedDataset = this.expandedDataset === datasetId ? null : datasetId;
+            this._clearBucketSelection();
+            this.closeFileDetail();
+            this._clearConditioningPairs();
+            this._saveNavState();
+        },
+
+        _clearBucketSelection() {
+            this._thumbnailRequest++;
+            this.loadingThumbnails = false;
             this.selectedBucket = null;
             this.thumbnails = [];
-            this.conditioningPairs = null;
-            this.pairsOffset = 0;
-            this._saveNavState();
+            this.thumbnailOffset = 0;
         },
 
         async selectBucket(datasetId, bucket) {
             if (this.selectedBucket?.key === bucket.key && this.expandedDataset === datasetId) {
-                this.selectedBucket = null;
-                this.thumbnails = [];
+                this._clearBucketSelection();
                 this._saveNavState();
                 return;
             }
+            this.thumbnails = [];
             this.selectedBucket = bucket;
             this.thumbnailOffset = 0;
             this._saveNavState();
@@ -570,6 +701,11 @@ window.datasetViewerComponent = function () {
 
         async loadBucketThumbnails(datasetId) {
             if (!this.selectedBucket) return;
+            const request = ++this._thumbnailRequest;
+            const revision = this.datasets.find(ds => ds.dataset_id === datasetId)?.view_revision;
+            const isCurrent = () => request === this._thumbnailRequest;
+            const isCurrentRevision = () =>
+                revision === this.datasets.find(ds => ds.dataset_id === datasetId)?.view_revision;
             this.loadingThumbnails = true;
             try {
                 const params = new URLSearchParams({
@@ -578,18 +714,38 @@ window.datasetViewerComponent = function () {
                     limit: String(this.thumbnailLimit),
                     offset: String(this.thumbnailOffset),
                 });
+                if (revision) params.set('view_revision', revision);
                 const resp = await fetch('/api/datasets/viewer/thumbnails?' + params);
+                if (!isCurrent()) return;
+                if (resp.status === 409 || !isCurrentRevision()) {
+                    await this._refreshStaleView(datasetId);
+                    return;
+                }
                 if (!resp.ok) {
                     console.error('Failed to load thumbnails:', resp.status);
                     this.thumbnails = [];
                     return;
                 }
-                this.thumbnails = await resp.json();
+                const thumbnails = await resp.json();
+                if (isCurrent() && isCurrentRevision()) this.thumbnails = thumbnails;
             } catch (err) {
-                console.error('Error loading thumbnails:', err);
-                this.thumbnails = [];
+                if (isCurrent()) {
+                    console.error('Error loading thumbnails:', err);
+                    this.thumbnails = [];
+                }
             } finally {
-                this.loadingThumbnails = false;
+                if (isCurrent()) this.loadingThumbnails = false;
+            }
+        },
+
+        async _refreshStaleView(datasetId) {
+            if (this.expandedDataset === datasetId) {
+                this._clearBucketSelection();
+                this._saveNavState();
+            }
+            await this._refreshDatasetSummary(datasetId);
+            if (this.expandedDataset === datasetId && !this.selectedBucket) {
+                window.showToast?.('The dataset changed. Select a bucket to browse its current contents.', 'info');
             }
         },
 
@@ -606,11 +762,16 @@ window.datasetViewerComponent = function () {
             await this.loadBucketThumbnails(datasetId);
         },
 
-        async showFileDetail(datasetId, filePath) {
+        async showFileDetail(datasetId, filePath, viewRevision) {
+            const request = ++this._fileRequest;
             this._destroyBboxCanvas();
             this.loadingFileDetail = true;
             this.loadingPreview = true;
             this.selectedFile = { path: filePath };
+            this.selectedFileDatasetId = datasetId;
+            this.savingCrop = false;
+            this.rebuildingMetadata = false;
+            this.deletingVaeCache = false;
             this.previewOriginal = null;
             this.previewIntermediary = null;
             this.previewCropped = null;
@@ -622,26 +783,39 @@ window.datasetViewerComponent = function () {
                 dataset_id: datasetId,
                 file_path: filePath,
             });
+            const ds = this.datasets.find(d => d.dataset_id === datasetId);
+            const expectedRevision = viewRevision ?? ds?.view_revision;
+            if (expectedRevision) params.set('view_revision', expectedRevision);
+            let staleView = false;
+            const readDetail = response => {
+                staleView ||= response.status === 409;
+                return response.ok ? response.json() : null;
+            };
 
             // Load metadata and preview in parallel
             const fetches = [
-                fetch('/api/datasets/viewer/file-metadata?' + params).then(r => r.ok ? r.json() : null),
-                fetch('/api/datasets/viewer/preview?' + params).then(r => r.ok ? r.json() : null),
+                fetch('/api/datasets/viewer/file-metadata?' + params).then(readDetail),
+                fetch('/api/datasets/viewer/preview?' + params).then(readDetail),
             ];
 
             // Also fetch conditioning match if this dataset has conditioning
-            const ds = this.datasets.find(d => d.dataset_id === datasetId);
             const hasConditioning = (ds?.conditioning_data?.length > 0) ||
                                     (ds?.conditioning_generators?.length > 0);
             if (hasConditioning) {
                 this.loadingConditioningMatch = true;
                 fetches.push(
-                    fetch('/api/datasets/viewer/conditioning-match?' + params)
-                        .then(r => r.ok ? r.json() : null)
+                    fetch('/api/datasets/viewer/conditioning-match?' + params).then(readDetail)
                 );
             }
 
             const results = await Promise.allSettled(fetches);
+            if (request !== this._fileRequest) return;
+            const currentRevision = this.datasets.find(d => d.dataset_id === datasetId)?.view_revision;
+            if (staleView || currentRevision !== ds?.view_revision) {
+                this.closeFileDetail();
+                await this._refreshStaleView(datasetId);
+                return;
+            }
 
             if (results[0].status === 'fulfilled' && results[0].value) {
                 this.selectedFile = results[0].value;
@@ -665,7 +839,9 @@ window.datasetViewerComponent = function () {
 
             // Initialize bbox canvas if entities exist
             if (this.selectedFile?.bbox_entities?.length > 0) {
-                this.$nextTick(() => this._initBboxCanvas());
+                this.$nextTick(() => {
+                    if (request === this._fileRequest) this._initBboxCanvas();
+                });
             }
         },
 
@@ -721,7 +897,7 @@ window.datasetViewerComponent = function () {
         // --- Crop dragging ---
 
         onCropMouseDown(e) {
-            if (!this.cropOverlay || !this._intermediaryImgEl) return;
+            if (!this.selectedFile?.metadata_editable || !this.cropOverlay || !this._intermediaryImgEl) return;
             e.preventDefault();
             this.cropDragging = true;
             this.cropDragStart = {
@@ -776,8 +952,12 @@ window.datasetViewerComponent = function () {
         },
 
         closeFileDetail() {
+            this._fileRequest++;
             this._destroyBboxCanvas();
+            this.loadingFileDetail = false;
+            this.loadingPreview = false;
             this.selectedFile = null;
+            this.selectedFileDatasetId = null;
             this.previewOriginal = null;
             this.previewIntermediary = null;
             this.previewCropped = null;
@@ -799,6 +979,7 @@ window.datasetViewerComponent = function () {
             this.bboxCanvas = new BboxCanvas(container, {
                 width: w,
                 height: h,
+                readOnly: !f.metadata_editable,
                 onChange: () => {
                     this.bboxModified = true;
                 },
@@ -824,73 +1005,68 @@ window.datasetViewerComponent = function () {
             this.savingBbox = false;
         },
 
+        async _writeSelectedFile(action, method, fields = {}) {
+            const request = this._fileRequest;
+            const datasetId = this.selectedFileDatasetId;
+            const file = this.selectedFile;
+            if (!file?.metadata_editable) return null;
+            const response = await fetch('/api/datasets/viewer/' + action, {
+                method,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    dataset_id: datasetId,
+                    file_path: file.path,
+                    view_revision: file.view_revision,
+                    metadata_revision: file.metadata_revision,
+                    ...fields,
+                }),
+            });
+            if (request !== this._fileRequest) return null;
+            if (response.status === 409) {
+                this.closeFileDetail();
+                await this._refreshStaleView(datasetId);
+                return null;
+            }
+            const data = await response.json().catch(() => null);
+            if (request !== this._fileRequest) return null;
+            if (!response.ok) throw new Error(data?.detail || 'File action failed');
+            if (data?.metadata_revision) file.metadata_revision = data.metadata_revision;
+            return data;
+        },
+
         async saveBboxEntities() {
-            const f = this.selectedFile;
-            if (!f || !this.bboxCanvas || !this.expandedDataset) return;
+            if (!this.selectedFile || !this.bboxCanvas) return;
+            const request = this._fileRequest;
             this.savingBbox = true;
             try {
-                const entities = this.bboxCanvas.getBoxes();
-                const resp = await fetch('/api/datasets/viewer/bbox-entities', {
-                    method: 'PATCH',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        dataset_id: this.expandedDataset,
-                        file_path: f.path,
-                        bbox_entities: entities.length > 0 ? entities : null,
-                    }),
-                });
-                if (!resp.ok) {
-                    const err = await resp.json().catch(() => ({ detail: 'Unknown error' }));
-                    throw new Error(err.detail || 'Save failed');
-                }
-                this.selectedFile.bbox_entities = entities.length > 0 ? entities : null;
+                const boxes = this.bboxCanvas.getBoxes();
+                const entities = boxes.length > 0 ? boxes : null;
+                if (!await this._writeSelectedFile('bbox-entities', 'PATCH', { bbox_entities: entities })) return;
+                this.selectedFile.bbox_entities = entities;
                 this.bboxModified = false;
-                if (window.showToast) {
-                    window.showToast('Bounding boxes saved', 'success');
-                }
+                window.showToast?.('Bounding boxes saved', 'success');
             } catch (err) {
-                console.error('Error saving bbox entities:', err);
-                if (window.showToast) {
-                    window.showToast(err.message, 'error');
-                }
+                if (request === this._fileRequest) window.showToast?.(err.message, 'error');
             } finally {
-                this.savingBbox = false;
+                if (request === this._fileRequest) this.savingBbox = false;
             }
         },
 
         async saveCropCoordinates() {
-            const f = this.selectedFile;
-            if (!f || !f.crop_coordinates || !this.expandedDataset) return;
+            const coordinates = this.selectedFile?.crop_coordinates;
+            if (!coordinates) return;
+            const request = this._fileRequest;
             this.savingCrop = true;
             try {
-                const resp = await fetch('/api/datasets/viewer/crop-coordinates', {
-                    method: 'PATCH',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        dataset_id: this.expandedDataset,
-                        file_path: f.path,
-                        crop_coordinates: f.crop_coordinates,
-                    }),
-                });
-                if (!resp.ok) {
-                    const err = await resp.json().catch(() => ({ detail: 'Unknown error' }));
-                    throw new Error(err.detail || 'Save failed');
-                }
-                const data = await resp.json();
-                if (data.cropped) {
-                    this.previewCropped = data.cropped;
-                }
+                const data = await this._writeSelectedFile('crop-coordinates', 'PATCH', { crop_coordinates: coordinates });
+                if (!data) return;
+                if (data.cropped) this.previewCropped = data.cropped;
                 this.cropModified = false;
-                if (window.showToast) {
-                    window.showToast('Crop coordinates saved', 'success');
-                }
+                window.showToast?.('Crop coordinates saved', 'success');
             } catch (err) {
-                console.error('Error saving crop coordinates:', err);
-                if (window.showToast) {
-                    window.showToast(err.message, 'error');
-                }
+                if (request === this._fileRequest) window.showToast?.(err.message, 'error');
             } finally {
-                this.savingCrop = false;
+                if (request === this._fileRequest) this.savingCrop = false;
             }
         },
 
@@ -900,94 +1076,39 @@ window.datasetViewerComponent = function () {
         deletingVaeCache: false,
 
         async rebuildFileMetadata() {
-            const f = this.selectedFile;
-            if (!f || !this.expandedDataset) return;
+            const file = this.selectedFile;
+            if (!file) return;
+            const datasetId = this.selectedFileDatasetId;
+            const request = this._fileRequest;
             this.rebuildingMetadata = true;
             try {
-                const resp = await fetch('/api/datasets/viewer/rebuild-metadata', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        dataset_id: this.expandedDataset,
-                        file_path: f.path,
-                    }),
-                });
-                if (!resp.ok) {
-                    const err = await resp.json().catch(() => ({ detail: 'Unknown error' }));
-                    throw new Error(err.detail || 'Rebuild failed');
-                }
-                const data = await resp.json();
-                if (data.metadata) {
-                    // Update the selected file with the new metadata
-                    const m = data.metadata;
-                    if (m.target_size) f.target_size = m.target_size;
-                    if (m.intermediary_size) f.intermediary_size = m.intermediary_size;
-                    if (m.crop_coordinates) f.crop_coordinates = m.crop_coordinates;
-                    if (m.aspect_ratio != null) f.aspect_ratio = m.aspect_ratio;
-                    // Recompute overlay and re-fetch previews
-                    this._computeCropOverlay();
-                    this.cropModified = false;
-                    // Refresh the preview images with updated metadata
-                    const params = new URLSearchParams({
-                        dataset_id: this.expandedDataset,
-                        file_path: f.path,
-                    });
-                    const pvResp = await fetch('/api/datasets/viewer/preview?' + params);
-                    if (pvResp.ok) {
-                        const pv = await pvResp.json();
-                        this.previewOriginal = pv.original || null;
-                        this.previewIntermediary = pv.intermediary || null;
-                        this.previewCropped = pv.cropped || null;
-                    }
-                }
-                if (window.showToast) {
-                    window.showToast('Metadata rebuilt successfully', 'success');
-                }
+                const data = await this._writeSelectedFile('rebuild-metadata', 'POST');
+                if (!data) return;
+                window.showToast?.('Metadata rebuilt successfully', 'success');
+                await this.showFileDetail(datasetId, file.path, data.view_revision ?? file.view_revision);
             } catch (err) {
-                console.error('Error rebuilding metadata:', err);
-                if (window.showToast) {
-                    window.showToast(err.message, 'error');
-                }
+                if (request === this._fileRequest) window.showToast?.(err.message, 'error');
             } finally {
-                this.rebuildingMetadata = false;
+                if (request === this._fileRequest) this.rebuildingMetadata = false;
             }
         },
 
         async deleteVaeCacheFile() {
-            const f = this.selectedFile;
-            if (!f || !this.expandedDataset) return;
+            if (!this.selectedFile) return;
+            const request = this._fileRequest;
             this.deletingVaeCache = true;
             try {
-                const resp = await fetch('/api/datasets/viewer/delete-vae-cache', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        dataset_id: this.expandedDataset,
-                        file_path: f.path,
-                    }),
-                });
-                if (!resp.ok) {
-                    const err = await resp.json().catch(() => ({ detail: 'Unknown error' }));
-                    throw new Error(err.detail || 'Delete failed');
-                }
-                const data = await resp.json();
+                const data = await this._writeSelectedFile('delete-vae-cache', 'POST');
+                if (!data) return;
                 if (data.deleted) {
-                    if (window.showToast) {
-                        window.showToast('VAE cache file deleted', 'success');
-                    }
+                    window.showToast?.('VAE cache file deleted', 'success');
                 } else {
-                    const reason = data.error || 'File not found';
-                    if (window.showToast) {
-                        window.showToast('VAE cache: ' + reason, 'warning');
-                    }
+                    window.showToast?.('VAE cache: ' + (data.error || 'File not found'), 'warning');
                 }
             } catch (err) {
-                console.error('Error deleting VAE cache file:', err);
-                if (window.showToast) {
-                    window.showToast(err.message, 'error');
-                }
+                if (request === this._fileRequest) window.showToast?.(err.message, 'error');
             } finally {
-                this.deletingVaeCache = false;
+                if (request === this._fileRequest) this.deletingVaeCache = false;
             }
         },
     };

@@ -240,6 +240,7 @@ base_deps = [
     "fastapi[standard]>=0.115.0",
     "sse-starlette>=1.6.5",
     "atomicwrites>=1.4.1",
+    "ijson>=3.3.0",
     "beautifulsoup4>=4.12.3",
     "prodigy-plus-schedule-free>=1.9.2",
     "tokenizers>=0.21.0",
@@ -257,7 +258,7 @@ base_deps = [
     "aiohttp>=3.9.0",
     "httpx>=0.28.0",
     "psutil>=5.9.0",
-    "webshart>=0.8.0",
+    "webshart>=0.9.1",
 ]
 
 # Nightly CUDA extras contain direct URLs that PyPI rejects, so only include them

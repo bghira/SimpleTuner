@@ -1,4 +1,3 @@
-import os
 import unittest
 from io import BytesIO
 from unittest.mock import MagicMock, patch
@@ -208,7 +207,7 @@ class TestWebhookHandler(unittest.TestCase):
         self.assertFalse(kwargs.get("verify", True))
 
     @patch("requests.post")
-    @patch.dict(os.environ, {"SIMPLETUNER_SSL_NO_VERIFY": "true"})
+    @patch.dict("os.environ", {"SIMPLETUNER_SSL_NO_VERIFY": "true"})
     def test_ssl_verification_disabled_via_env(self, mock_post):
         """Test that SSL verification can be disabled via environment variable"""
         config = {"webhook_type": "raw", "callback_url": "https://example.com/webhook", "log_level": "info"}

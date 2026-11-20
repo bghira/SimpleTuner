@@ -95,6 +95,14 @@
                             <div class="form-check mt-4">
                                 <input class="form-check-input"
                                        type="checkbox"
+                                       :id="`text-cache-encode-only-${datasetSafeId(dataset)}`"
+                                       x-model="dataset.text_cache_encode_only"
+                                       @change="markAsUnsaved()">
+                                <label class="form-check-label" :for="`text-cache-encode-only-${datasetSafeId(dataset)}`">Encode every training batch online</label>
+                            </div>
+                            <div class="form-check mt-4">
+                                <input class="form-check-input"
+                                       type="checkbox"
                                        :id="`text-cache-disable-${datasetSafeId(dataset)}`"
                                        x-model="dataset.text_cache_disable"
                                        @change="markAsUnsaved()">

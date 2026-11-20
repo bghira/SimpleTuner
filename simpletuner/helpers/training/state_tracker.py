@@ -4,8 +4,12 @@ import json
 import logging
 import os
 import time
+from contextlib import ExitStack
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.distillation.requirements import EMPTY_PROFILE, DistillerRequirementProfile
@@ -41,22 +45,16 @@ class StateTracker:
     epoch_micro_step = 0
     epoch = 1
 
-    ## Caches
-    all_image_files = {}
-    all_vae_cache_files = {}
-    all_text_cache_files = {}
-    all_conditioning_image_embed_files = {}
-    all_distillation_cache_files = {}
-    all_caption_files = {}
-
     ## Backend entities for retrieval
     default_text_embed_cache = None
+    _dataset_resources = ExitStack()
     _is_sdxl_refiner = False
     accelerator = None
-    data_backends = {}
-    parquet_databases = {}
+    _pending_dataset_configs = {}
+    datasets: dict[str, "DatasetRuntime"] = {}
     # A list of backend IDs to exhaust.
     exhausted_backends = []
+    consumed_dataset_mixer = None
     # A dict of backend IDs to the number of times they have been repeated.
     repeats = {}
     # The images we'll use for upscaling at validation time. Stored at startup.
@@ -69,9 +67,6 @@ class StateTracker:
     aspect_resolution_map = {}
     distillation_method: Optional[str] = None
     distiller_profile: DistillerRequirementProfile = EMPTY_PROFILE
-
-    # Per-backend grounding image embed caches (keyed by data_backend_id)
-    _grounding_image_embed_caches: dict = {}
 
     # for schedulefree
     last_lr = 0.0
@@ -110,6 +105,9 @@ class StateTracker:
             if data_backend_id:
                 data_backend_id_suffix = f"_{data_backend_id}"
             cache_path = Path(cls.args.output_dir) / f"{cache_name}{data_backend_id_suffix}.json"
+            if cache_name == "all_image_files":
+                cache_path.unlink(missing_ok=True)
+                continue
             if not cache_path.exists():
                 continue
 
@@ -207,60 +205,6 @@ class StateTracker:
         return cls._is_sdxl_refiner
 
     @classmethod
-    def set_parquet_database(cls, data_backend_id: str, parquet_database: tuple):
-        """parquet_database is a tuple (dataframe, filename_column, caption_column, fallback_caption_column)"""
-        cls.parquet_databases[data_backend_id] = parquet_database
-
-    @classmethod
-    def get_parquet_database(cls, data_backend_id: str):
-        return cls.parquet_databases.get(data_backend_id, (None, None, None, None))
-
-    @classmethod
-    def set_image_files(cls, raw_file_list: list, data_backend_id: str):
-        if data_backend_id not in cls.all_image_files or cls.all_image_files[data_backend_id] is None:
-            cls.all_image_files[data_backend_id] = {}
-        else:
-            cls.all_image_files[data_backend_id].clear()
-        for subdirectory_list in raw_file_list:
-            _, _, files = subdirectory_list
-            for image in files:
-                cls.all_image_files[data_backend_id][image] = False
-        cls._save_to_disk(
-            "all_image_files_{}".format(data_backend_id),
-            cls.all_image_files[data_backend_id],
-        )
-        logger.debug(f"set_image_files found {len(cls.all_image_files[data_backend_id])} samples.")
-        bucket_report = cls.data_backends.get(data_backend_id, {}).get("bucket_report")
-        if bucket_report:
-            bucket_report.record_stage(
-                "file_discovery",
-                sample_count=len(cls.all_image_files[data_backend_id]),
-                directories=len(raw_file_list),
-            )
-        return cls.all_image_files[data_backend_id]
-
-    @classmethod
-    def get_image_files(cls, data_backend_id: str, retry_limit: int = 0):
-        if data_backend_id in cls.all_image_files and cls.all_image_files[data_backend_id] is None:
-            # we should probaby try to reload it from disk if it failed earlier.
-            logger.debug(
-                f"(rank={os.environ.get('RANK')}) Clearing out invalid pre-loaded cache entry for {data_backend_id}"
-            )
-            del cls.all_image_files[data_backend_id]
-        if data_backend_id not in cls.all_image_files:
-            logger.debug(f"(rank={os.environ.get('RANK')}) Attempting to load from disk: {data_backend_id}")
-            cls.all_image_files[data_backend_id] = cls._load_from_disk(
-                "all_image_files_{}".format(data_backend_id), retry_limit=retry_limit
-            )
-            logger.debug(
-                f"(rank={os.environ.get('RANK')}) Completed load from disk: {data_backend_id}: {type(cls.all_image_files[data_backend_id])}"
-            )
-        logger.debug(
-            f"(rank={os.environ.get('RANK')}) Returning {type(cls.all_image_files[data_backend_id])} for {data_backend_id}"
-        )
-        return cls.all_image_files[data_backend_id]
-
-    @classmethod
     def get_global_resume_step(cls):
         return cls.global_resume_step
 
@@ -311,6 +255,7 @@ class StateTracker:
         cls.set_global_step(training_state.get("global_step", 0))
         cls.set_epoch_step(training_state.get("epoch_step", 0))
         cls.set_epoch(training_state.get("epoch", 1))
+        cls.consumed_dataset_mixer = training_state.get("dataset_mixer")
         cls.set_exhausted_backends(training_state.get("exhausted_backends", []))
         cls.init_repeats(training_state.get("repeats", {}))
         logging.debug(f"Training state loaded: {cls.get_training_state()}")
@@ -324,6 +269,10 @@ class StateTracker:
             "exhausted_backends": cls.exhausted_backends,
             "repeats": cls.repeats,
         }
+        if cls.consumed_dataset_mixer is not None:
+            training_state["dataset_mixer"] = cls.consumed_dataset_mixer
+            training_state["exhausted_backends"] = cls.consumed_dataset_mixer["exhausted_backends"]
+            training_state["repeats"] = {}
         logger.debug(f"Saving training state: {training_state}")
         with open(state_path, "w") as f:
             json.dump(training_state, f)
@@ -629,147 +578,6 @@ class StateTracker:
         return {k: v.copy() for k, v in cls.dataset_schedule.items()}
 
     @classmethod
-    def set_vae_cache_files(cls, raw_file_list: list, data_backend_id: str):
-        if cls.all_vae_cache_files.get(data_backend_id) is not None:
-            cls.all_vae_cache_files[data_backend_id].clear()
-        else:
-            cls.all_vae_cache_files[data_backend_id] = {}
-        for entry in raw_file_list or []:
-            if isinstance(entry, (str, Path)):
-                files = [str(entry)]
-            else:
-                _, _, files = entry
-            for image in files:
-                cls.all_vae_cache_files[data_backend_id][str(image)] = False
-        cls._save_to_disk(
-            "all_vae_cache_files_{}".format(data_backend_id),
-            cls.all_vae_cache_files[data_backend_id],
-        )
-        logger.debug(f"set_vae_cache_files found {len(cls.all_vae_cache_files[data_backend_id])} images.")
-
-    @classmethod
-    def get_vae_cache_files(cls: list, data_backend_id: str, retry_limit: int = 0):
-        if data_backend_id not in cls.all_vae_cache_files or cls.all_vae_cache_files.get(data_backend_id) is None:
-            cls.all_vae_cache_files[data_backend_id] = cls._load_from_disk("all_vae_cache_files_{}".format(data_backend_id))
-        return cls.all_vae_cache_files[data_backend_id] or {}
-
-    @classmethod
-    def set_conditioning_image_embed_files(cls, raw_file_list: list, data_backend_id: str):
-        raw_file_list = raw_file_list or []
-        if cls.all_conditioning_image_embed_files.get(data_backend_id) is not None:
-            cls.all_conditioning_image_embed_files[data_backend_id].clear()
-        else:
-            cls.all_conditioning_image_embed_files[data_backend_id] = {}
-        for subdirectory_list in raw_file_list:
-            if isinstance(subdirectory_list, (list, tuple)) and len(subdirectory_list) == 3:
-                _, _, files = subdirectory_list
-            else:
-                files = subdirectory_list if isinstance(subdirectory_list, list) else [subdirectory_list]
-            for embed_path in files:
-                cls.all_conditioning_image_embed_files[data_backend_id][embed_path] = False
-        cls._save_to_disk(
-            f"all_conditioning_image_embed_files_{data_backend_id}",
-            cls.all_conditioning_image_embed_files[data_backend_id],
-        )
-
-    @classmethod
-    def get_conditioning_image_embed_files(cls, data_backend_id: str, retry_limit: int = 0):
-        if (
-            data_backend_id not in cls.all_conditioning_image_embed_files
-            or cls.all_conditioning_image_embed_files.get(data_backend_id) is None
-        ):
-            cls.all_conditioning_image_embed_files[data_backend_id] = cls._load_from_disk(
-                f"all_conditioning_image_embed_files_{data_backend_id}", retry_limit=retry_limit
-            )
-        return cls.all_conditioning_image_embed_files[data_backend_id] or {}
-
-    @classmethod
-    def set_distillation_cache_files(cls, raw_file_list: list, data_backend_id: str):
-        if cls.all_distillation_cache_files.get(data_backend_id) is not None:
-            cls.all_distillation_cache_files[data_backend_id].clear()
-        else:
-            cls.all_distillation_cache_files[data_backend_id] = {}
-        for subdirectory_list in raw_file_list:
-            _, _, files = subdirectory_list
-            for artifact_path in files:
-                cls.all_distillation_cache_files[data_backend_id][artifact_path] = False
-        cls._save_to_disk(
-            f"all_distillation_cache_files_{data_backend_id}",
-            cls.all_distillation_cache_files[data_backend_id],
-        )
-
-    @classmethod
-    def get_distillation_cache_files(cls, data_backend_id: str, retry_limit: int = 0):
-        if (
-            data_backend_id not in cls.all_distillation_cache_files
-            or cls.all_distillation_cache_files.get(data_backend_id) is None
-        ):
-            cls.all_distillation_cache_files[data_backend_id] = cls._load_from_disk(
-                f"all_distillation_cache_files_{data_backend_id}", retry_limit=retry_limit
-            )
-        return cls.all_distillation_cache_files.get(data_backend_id) or {}
-
-    @classmethod
-    def set_text_cache_files(cls, raw_file_list: list, data_backend_id: str):
-        if cls.all_text_cache_files[data_backend_id] is not None:
-            cls.all_text_cache_files[data_backend_id].clear()
-        else:
-            cls.all_text_cache_files[data_backend_id] = {}
-        for subdirectory_list in raw_file_list:
-            _, _, files = subdirectory_list
-            for text_embed_path in files:
-                cls.all_text_cache_files[data_backend_id][text_embed_path] = False
-        # we only want to save to disk for local master process
-        if not cls.accelerator.is_local_main_process:
-            return
-        cls._save_to_disk(
-            "all_text_cache_files_{}".format(data_backend_id),
-            cls.all_text_cache_files[data_backend_id],
-        )
-        logger.debug(f"set_text_cache_files found {len(cls.all_text_cache_files[data_backend_id])} images.")
-
-    @classmethod
-    def get_text_cache_files(cls: list, data_backend_id: str, retry_limit: int = 0):
-        if data_backend_id not in cls.all_text_cache_files:
-            cls.all_text_cache_files[data_backend_id] = cls._load_from_disk(
-                "all_text_cache_files_{}".format(data_backend_id),
-                retry_limit=retry_limit,
-            )
-        return cls.all_text_cache_files[data_backend_id]
-
-    @classmethod
-    def set_caption_files(cls, raw_file_list: list, data_backend_id: str):
-        if data_backend_id not in cls.all_caption_files or cls.all_caption_files.get(data_backend_id) is None:
-            cls.all_caption_files[data_backend_id] = {}
-        else:
-            cls.all_caption_files[data_backend_id].clear()
-
-        for subdirectory_list in raw_file_list or []:
-            _, _, files = subdirectory_list
-            for caption_path in files:
-                cls.all_caption_files[data_backend_id][caption_path] = False
-
-        cls._save_to_disk(
-            f"all_caption_files_{data_backend_id}",
-            cls.all_caption_files[data_backend_id],
-        )
-        return cls.all_caption_files[data_backend_id]
-
-    @classmethod
-    def get_caption_files(cls, data_backend_id: str, retry_limit: int = 0):
-        if data_backend_id in cls.all_caption_files and cls.all_caption_files[data_backend_id] is None:
-            cls.all_caption_files[data_backend_id] = cls._load_from_disk(
-                f"all_caption_files_{data_backend_id}",
-                retry_limit=retry_limit,
-            )
-        elif data_backend_id not in cls.all_caption_files:
-            cls.all_caption_files[data_backend_id] = cls._load_from_disk(
-                f"all_caption_files_{data_backend_id}",
-                retry_limit=retry_limit,
-            )
-        return cls.all_caption_files.get(data_backend_id, {})
-
-    @classmethod
     def get_validation_sample_images(cls):
         return cls.validation_sample_images
 
@@ -778,102 +586,55 @@ class StateTracker:
         cls.validation_sample_images = validation_sample_images
 
     @classmethod
-    def register_data_backend(cls, data_backend):
-        cls.data_backends[data_backend["id"]] = data_backend
+    def register_dataset(cls, dataset: "DatasetRuntime"):
+        cls.datasets[dataset.id] = dataset
+        cls._pending_dataset_configs.pop(dataset.id, None)
 
     @classmethod
-    def get_data_backend(cls, id: str):
-        return cls.data_backends[id]
+    def get_dataset(cls, dataset_id: str) -> "DatasetRuntime":
+        return cls.datasets[dataset_id]
+
+    @classmethod
+    def get_datasets(cls, *dataset_types) -> dict[str, "DatasetRuntime"]:
+        if not dataset_types:
+            return dict(cls.datasets)
+        allowed = {ensure_dataset_type(value) for value in dataset_types}
+        return {
+            dataset_id: dataset
+            for dataset_id, dataset in cls.datasets.items()
+            if ensure_dataset_type(dataset.config["dataset_type"]) in allowed
+        }
 
     @classmethod
     def get_dataset_size(cls, data_backend_id: str):
-        if "sampler" in cls.data_backends[data_backend_id]:
-            return len(cls.data_backends[data_backend_id]["sampler"])
-        return 0
-
-    @classmethod
-    def set_conditioning_datasets(cls, data_backend_id: str, conditioning_backend_ids: list[str]):
-        cls.data_backends[data_backend_id]["conditioning_data"] = [cls.data_backends[x] for x in conditioning_backend_ids]
-
-    @classmethod
-    def get_conditioning_datasets(cls, data_backend_id: str) -> list[dict]:
-        return cls.data_backends[data_backend_id].get("conditioning_data", [])
-
-    @classmethod
-    def set_grounding_image_embed_cache(cls, data_backend_id: str, cache):
-        cls._grounding_image_embed_caches[data_backend_id] = cache
-
-    @classmethod
-    def get_grounding_image_embed_cache(cls, data_backend_id: str):
-        return cls._grounding_image_embed_caches.get(data_backend_id)
-
-    @classmethod
-    def set_s2v_datasets(cls, data_backend_id: str, s2v_backend_ids: list[str]):
-        """Link audio datasets for S2V (Speech-to-Video) training."""
-        cls.data_backends[data_backend_id]["s2v_data"] = [cls.data_backends[x] for x in s2v_backend_ids]
-
-    @classmethod
-    def get_s2v_datasets(cls, data_backend_id: str) -> list[dict]:
-        """Get linked S2V audio datasets for a video dataset."""
-        return cls.data_backends[data_backend_id].get("s2v_data", [])
-
-    @classmethod
-    def get_s2v_mappings(cls) -> list[tuple[str, str]]:
-        """Get all S2V dataset mappings (video_dataset_id, audio_dataset_id)."""
-        s2v_mappings = []
-        for data_backend_id, data_backend in cls.data_backends.items():
-            s2v = data_backend.get("s2v_data", [])
-            s2v_mappings.extend((data_backend_id, x["id"]) for x in s2v)
-        return s2v_mappings
+        dataset = cls.datasets.get(data_backend_id)
+        return dataset.training_batch_count() if dataset is not None and dataset.training_dataloader is not None else 0
 
     @classmethod
     def get_data_backend_config(cls, data_backend_id: str):
-        return cls.data_backends.get(data_backend_id, {}).get("config", {})
+        dataset = cls.datasets.get(data_backend_id)
+        return dataset.config if dataset is not None else cls._pending_dataset_configs.get(data_backend_id, {})
 
     @classmethod
     def set_data_backend_config(cls, data_backend_id: str, config: dict):
-        if data_backend_id not in cls.data_backends:
-            cls.data_backends[data_backend_id] = {}
-        cls.data_backends[data_backend_id]["config"] = config
+        dataset = cls.datasets.get(data_backend_id)
+        if dataset is not None:
+            dataset.config = config
+        else:
+            cls._pending_dataset_configs[data_backend_id] = config
 
     @classmethod
-    def attach_bucket_report(cls, data_backend_id: str, bucket_report) -> None:
-        if data_backend_id not in cls.data_backends:
-            cls.data_backends[data_backend_id] = {}
-        cls.data_backends[data_backend_id]["bucket_report"] = bucket_report
-
-    @classmethod
-    def get_conditioning_mappings(cls) -> list[tuple[str, str]]:
-        conditioning_mappings = []
-        for data_backend_id, data_backend in cls.data_backends.items():
-            conds = data_backend.get("conditioning_data", [])
-            conditioning_mappings.extend((data_backend_id, x["id"]) for x in conds)
-        return conditioning_mappings
+    def own_dataset_resource(cls, resource):
+        cls._dataset_resources.callback(resource.close)
 
     @classmethod
     def clear_data_backends(cls):
-        cls.data_backends = {}
+        cls.consumed_dataset_mixer = None
+        cls._pending_dataset_configs = {}
+        cls.datasets = {}
         cls.dataset_schedule = {}
-
-    @classmethod
-    def get_data_backends(
-        cls,
-        _type: object = DatasetType.IMAGE,
-        _types: object = (DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.CAPTION, DatasetType.AUDIO),
-    ):
-        target_type = ensure_dataset_type(_type, default=DatasetType.IMAGE)
-        allowed_types = set()
-        if isinstance(_types, (list, tuple, set)):
-            allowed_types = {ensure_dataset_type(value, default=DatasetType.IMAGE) for value in _types}
-        elif _types is not None:
-            allowed_types = {ensure_dataset_type(_types, default=DatasetType.IMAGE)}
-
-        output = {}
-        for backend_id, backend in dict(cls.data_backends).items():
-            backend_type = ensure_dataset_type(backend.get("dataset_type"), default=DatasetType.IMAGE)
-            if backend_type == target_type or (allowed_types and backend_type in allowed_types):
-                output[backend_id] = backend
-        return output
+        cls.default_text_embed_cache = None
+        cls._dataset_resources.close()
 
     @classmethod
     def set_accelerator(cls, accelerator):
@@ -945,26 +706,14 @@ class StateTracker:
         return cls.distillation_method
 
     @classmethod
-    def get_vaecache(cls, id: str):
-        return cls.data_backends[id].get("vaecache", None)
-
-    @classmethod
     def any_vae_cache_uses_ondemand(cls) -> bool:
-        for data_backend in cls.data_backends.values():
-            vae_cache = data_backend.get("vaecache") if isinstance(data_backend, dict) else None
-            if vae_cache is not None and getattr(vae_cache, "vae_cache_ondemand", False):
-                return True
-        return False
+        return any(getattr(dataset.vae_cache, "vae_cache_ondemand", False) for dataset in cls.datasets.values())
 
     @classmethod
     def any_text_cache_uses_ondemand(cls) -> bool:
-        caches = [
-            data_backend.get("text_embed_cache")
-            for data_backend in cls.data_backends.values()
-            if isinstance(data_backend, dict)
-        ]
-        caches.append(cls.default_text_embed_cache)
-        return any(cache is not None and getattr(cache, "text_cache_ondemand", False) for cache in caches)
+        return getattr(cls.default_text_embed_cache, "text_cache_ondemand", False) or any(
+            getattr(dataset.text_embed_cache, "text_cache_ondemand", False) for dataset in cls.datasets.values()
+        )
 
     @classmethod
     def set_default_text_embed_cache(cls, default_text_embed_cache):
@@ -975,24 +724,17 @@ class StateTracker:
         return cls.default_text_embed_cache
 
     @classmethod
-    def get_embedcache(cls, data_backend_id: str):
-        return cls.data_backends[data_backend_id]["text_embed_cache"]
-
-    @classmethod
     def get_metadata_by_filepath(
         cls,
         filepath,
         data_backend_id: str,
         search_dataset_types: list = ["image", "video", "conditioning"],
     ):
-        for _, data_backend in cls.get_data_backends(_types=search_dataset_types).items():
-            if "metadata_backend" not in data_backend:
-                continue
-            if data_backend_id != data_backend["metadata_backend"].id:
-                continue
-            metadata = data_backend["metadata_backend"].get_metadata_by_filepath(filepath)
-            if metadata is not None:
-                return metadata
+        dataset = cls.datasets.get(data_backend_id)
+        if dataset is not None:
+            if dataset.config["dataset_type"] in search_dataset_types or dataset.config["dataset_type"] == DatasetType.IMAGE:
+                return dataset.metadata_backend.get_metadata_by_filepath(filepath)
+            return None
         return None
 
     @classmethod
@@ -1019,9 +761,6 @@ class StateTracker:
 
     @classmethod
     def load_aspect_resolution_map(cls, dataloader_resolution: float, retry_limit: int = 0):
-        if dataloader_resolution not in cls.aspect_resolution_map:
-            cls.aspect_resolution_map = {dataloader_resolution: {}}
-
         cls.aspect_resolution_map[dataloader_resolution] = (
             cls._load_from_disk(
                 f"aspect_resolution_map-{dataloader_resolution}",

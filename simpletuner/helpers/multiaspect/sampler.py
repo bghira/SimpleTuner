@@ -2,16 +2,17 @@ import bisect
 import logging
 import os
 import random
+from collections import Counter
 
-import numpy as np
 import torch
 from accelerate.logging import get_logger
-from PIL import Image
 
-from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime, DatasetValidationSample
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.metadata.backends.base import get_cp_aware_dp_info
+from simpletuner.helpers.metadata.preparation import DatasetReadView
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
+from simpletuner.helpers.multiaspect.progress import LegacySamplerProgress
 from simpletuner.helpers.multiaspect.state import BucketStateManager
 from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
 from simpletuner.helpers.training.multi_process import rank_info
@@ -55,6 +56,9 @@ class _UnseenOccurrenceIndex:
 
 
 class MultiAspectSampler(torch.utils.data.Sampler):
+    epoch_provider = None
+    _legacy_progress = None
+
     def __init__(
         self,
         dataset_runtime: DatasetRuntime,
@@ -68,7 +72,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         resolution_type: str = "pixel",
         conditioning_type: str = None,
         is_regularisation_data: bool = False,
-        source_dataset_id: str = None,
+        track_consumed: bool = False,
     ):
         self.dataset_runtime = dataset_runtime
         self.id = dataset_runtime.id
@@ -93,8 +97,10 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"),
         )
 
-        self._val_cursor = 0
-        self._val_master_list = []
+        self.epoch_provider = dataset_runtime.epoch_provider
+        self.training_cursor = None
+        self.consumed_state = None
+        self.validation_cursor = dataset_runtime.open_validation()
         self.conditioning_type = conditioning_type
         self.is_regularisation_data = is_regularisation_data
 
@@ -109,7 +115,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 "reference_loose",
             ]:
                 raise ValueError(f"Unknown conditioning image type: {conditioning_type}")
-        self.source_dataset_id = source_dataset_id
         self.current_bucket = None
         self.current_epoch = 1
         self.batch_size = batch_size
@@ -126,15 +131,127 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.disable_multiline_split = dataset_runtime.config["disable_multiline_split"]
         self.exhausted_buckets = []
         self._unseen_indices = {}
-        self.buckets = self.load_buckets()
+        self.buckets = self.load_buckets() if self.epoch_provider is None else []
         self.state_manager = BucketStateManager(self.id)
-        self._val_master_list = sorted(sum(self.metadata_backend.aspect_ratio_bucket_indices.values(), []))
+        if track_consumed and self.epoch_provider is None:
+            self._legacy_repeat = 0
+            self._legacy_progress = LegacySamplerProgress(self.metadata_backend.seen_images, self._legacy_state(0))
+
+    @property
+    def tracks_consumed_batches(self):
+        return self._legacy_progress is not None
+
+    def start_training_epoch(self, epoch):
+        if self.current_epoch != epoch:
+            self.current_epoch = epoch
+            self._legacy_repeat = 0
+            self.current_bucket = None
+            self.buckets = self.load_buckets()
+            self.exhausted_buckets = []
+            self.metadata_backend.seen_images = {}
+            self._unseen_indices.clear()
+            self._legacy_progress.reset(self.metadata_backend.seen_images, self._legacy_state(0))
+
+    def _legacy_state(self, position):
+        return {
+            "position": position,
+            "repeat": self._legacy_repeat,
+            "current_epoch": self.current_epoch,
+            "current_bucket": self.current_bucket,
+            "buckets": list(self.buckets),
+            "exhausted_buckets": list(self.exhausted_buckets),
+        }
+
+    def _legacy_layout(self):
+        args = StateTracker.get_args()
+        parallel = getattr(self.accelerator, "parallelism_config", None)
+        return {
+            "batch_size": self.batch_size,
+            "seed": getattr(args, "seed", None),
+            "accumulation": getattr(args, "gradient_accumulation_steps", 1),
+            "data_parallel": list(get_cp_aware_dp_info(self.accelerator)),
+            "world_size": self.accelerator.num_processes,
+            "parallelism": [getattr(parallel, key, 1) for key in ("dp_replicate_size", "dp_shard_size", "tp_size")],
+            "occurrence_revision": self.dataset_runtime.occurrence_revision(args),
+        }
+
+    def fetched_state(self):
+        return self._legacy_progress.fetched
+
+    def start_native_epoch(self, epoch):
+        if self.current_epoch != epoch or (self.consumed_state and self.consumed_state["layout"]["epoch"] != epoch):
+            if self.training_cursor is not None:
+                self.training_cursor.close()
+                self.training_cursor = None
+            self.consumed_state = None
+            self.current_epoch = epoch
+
+    def _open_training_cursor(self):
+        if self.training_cursor is None:
+            spec = self.epoch_provider.epoch_spec(
+                self.current_epoch,
+                self.batch_size,
+                occurrence_revision=self.dataset_runtime.occurrence_revision(StateTracker.get_args()),
+            )
+            self.training_cursor = self.dataset_runtime.open_epoch(spec)
+            if self.consumed_state is None:
+                self.consumed_state = self.training_cursor.state_dict()
+        return self.training_cursor
+
+    def _iterate_native(self):
+        cursor = self._open_training_cursor()
+        while True:
+            try:
+                bucket, refs = cursor.next_batch()
+            except StopIteration:
+                cursor.close()
+                self.training_cursor = None
+                self.current_epoch += 1
+                raise MultiDatasetExhausted()
+            state = cursor.state_dict()
+            spec = cursor.spec
+            rng = random.Random(f"{self.id}:{spec.seed}:{spec.epoch}:{spec.dp_rank}:{cursor.position}")
+            view = DatasetReadView(state["view"], spec.epoch, spec.seed, getattr(cursor, "partition", None))
+            records = self._validate_and_yield_images_from_samples(refs, bucket, rng=rng, view=view)
+            records[0]["dataset_continuation"] = state
+            records[0]["dataset_read_view"] = view
+            records[0]["caption_dropout_seed"] = rng.getrandbits(64)
+            yield tuple(self.connect_s2v_samples(self.connect_conditioning_samples(records, rng=rng, view=view)))
+
+    def close(self):
+        self.validation_cursor.close()
+        if self.training_cursor is not None:
+            self.training_cursor.close()
+            self.training_cursor = None
+
+    def reset_evaluation(self):
+        if self.epoch_provider is None:
+            self._reset_buckets(raise_exhaustion_signal=False)
+            return
+        if self.training_cursor is not None:
+            self.training_cursor.close()
+            self.training_cursor = None
+        self.current_epoch = 1
+        self.consumed_state = None
+
+    def acknowledge_batch(self, continuation):
+        if self.tracks_consumed_batches:
+            self._legacy_progress.acknowledge(continuation)
+        else:
+            self.consumed_state = continuation
 
     def save_state(self, state_path: str):
         """
         This method should be called when the accelerator save hook is called,
          so that the state is correctly restored with a given checkpoint.
         """
+        if self.epoch_provider is not None:
+            if self.consumed_state is None:
+                self._open_training_cursor()
+            self.state_manager.save_state(
+                {"native_epoch": self.consumed_state, "validation": self.validation_cursor.state_dict()}, state_path
+            )
+            return
         effective_dp_size, dp_rank, _cp_size = get_cp_aware_dp_info(self.accelerator)
         state = {
             "aspect_ratio_bucket_indices": self.metadata_backend.aspect_ratio_bucket_indices,
@@ -147,7 +264,25 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             "dp_size": effective_dp_size,
             "dp_rank": dp_rank,
         }
-        self.state_manager.save_state(state, state_path)
+        if self.tracks_consumed_batches:
+            progress = self._legacy_progress
+            with progress.checkpoint_seen() as seen:
+                state.update(
+                    {
+                        key: progress.consumed[key]
+                        for key in ("current_epoch", "current_bucket", "buckets", "exhausted_buckets")
+                    }
+                )
+                state["seen_images"] = seen
+                state["legacy_cursor"] = {
+                    "version": 1,
+                    "layout": self._legacy_layout(),
+                    "position": progress.consumed["position"],
+                    "repeat": progress.consumed["repeat"],
+                }
+                self.state_manager.save_state(state, state_path)
+        else:
+            self.state_manager.save_state(state, state_path)
 
     def _saved_schedule_is_restorable(self, previous_state: dict, state_path: str) -> bool:
         """A saved schedule is one rank's shard of the dataset.
@@ -190,6 +325,38 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         except Exception as e:
             raise e
 
+        if self.epoch_provider is not None:
+            saved = previous_state.get("native_epoch")
+            if not isinstance(saved, dict):
+                raise ValueError("Provider-managed sampling requires a matching native checkpoint.")
+            self.current_epoch = saved["layout"]["epoch"]
+            if self.training_cursor is not None:
+                self.training_cursor.close()
+                self.training_cursor = None
+            self._open_training_cursor().load_state_dict(saved)
+            self.consumed_state = saved
+            self.validation_cursor.load_state_dict(previous_state.get("validation"))
+            return
+        if "native_epoch" in previous_state:
+            raise ValueError("Restoring a provider-managed checkpoint requires the same sampling policy.")
+        legacy_cursor = previous_state.get("legacy_cursor")
+        if legacy_cursor is not None:
+            if (
+                not self.tracks_consumed_batches
+                or not isinstance(legacy_cursor, dict)
+                or legacy_cursor.get("version") != 1
+                or legacy_cursor.get("layout") != self._legacy_layout()
+                or previous_state.get("aspect_ratio_bucket_indices") != self.metadata_backend.aspect_ratio_bucket_indices
+            ):
+                raise ValueError("Legacy consumed checkpoint requires unchanged prefetch, dataset, schedule and layout.")
+            position, repeat = legacy_cursor.get("position"), legacy_cursor.get("repeat")
+            if (
+                type(position) is not int
+                or position < 0
+                or type(repeat) is not int
+                or not 0 <= repeat <= self._legacy_repeats()
+            ):
+                raise ValueError("Invalid legacy consumed checkpoint position or repeat.")
         saved_batch_size = previous_state.get("batch_size")
         if "batch_size" in previous_state and saved_batch_size != self.batch_size:
             _allow = os.environ.get("SIMPLETUNER_ALLOW_MODIFYING_BSZ", "").lower() in (
@@ -211,9 +378,13 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         # Checkpoints contain the rank-local schedule. Restore it before seen
         # state so legacy boolean flags can be expanded to all occurrences.
         saved_schedule = previous_state.get("aspect_ratio_bucket_indices")
-        if isinstance(saved_schedule, dict) and self._saved_schedule_is_restorable(previous_state, state_path):
+        if (
+            legacy_cursor is None
+            and isinstance(saved_schedule, dict)
+            and self._saved_schedule_is_restorable(previous_state, state_path)
+        ):
             self.metadata_backend.aspect_ratio_bucket_indices = saved_schedule
-            self._val_master_list = sorted(sum(saved_schedule.values(), []))
+            self.validation_cursor.close()
         self.buckets = [str(bucket) for bucket in previous_state.get("buckets", self.load_buckets())]
         if "current_bucket" in previous_state:
             self.current_bucket = previous_state["current_bucket"]
@@ -228,18 +399,29 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             self.current_epoch = previous_state["current_epoch"]
         # Merge seen_images into self.state_manager.seen_images Manager.dict:
         if "seen_images" in previous_state:
-            self.logger.info(f"Previous checkpoint had {len(previous_state['seen_images'])} seen {self.sample_type_strs}.")
+            seen = previous_state["seen_images"]
+            self.logger.info(f"Previous checkpoint had {len(seen)} seen {self.sample_type_strs}.")
+            legacy_seen = {ref for ref, value in seen.items() if value is True}
             occurrence_counts = {}
-            for images in self.metadata_backend.aspect_ratio_bucket_indices.values():
-                for image_path in images:
-                    occurrence_counts[image_path] = occurrence_counts.get(image_path, 0) + 1
-            normalized_seen = {
-                image_path: ((occurrence_counts.get(image_path, True) if value else 0) if isinstance(value, bool) else value)
-                for image_path, value in previous_state["seen_images"].items()
-            }
+            if legacy_seen:
+                occurrence_counts = Counter(
+                    ref
+                    for images in self.metadata_backend.aspect_ratio_bucket_indices.values()
+                    for ref in images
+                    if ref in legacy_seen
+                )
             self.metadata_backend.seen_images.clear()
-            self.metadata_backend.seen_images.update(normalized_seen)
+            self.metadata_backend.seen_images.update(
+                (ref, occurrence_counts.get(ref, True) if value is True else 0 if value is False else value)
+                for ref, value in seen.items()
+            )
             self._unseen_indices = {}
+        if legacy_cursor is None:
+            # Older checkpoints record fetched legacy progress and have no consumed frontier.
+            self._legacy_progress = None
+        else:
+            self._legacy_repeat = repeat
+            self._legacy_progress.reset(self.metadata_backend.seen_images, self._legacy_state(position))
 
     def load_buckets(self):
         return list(self.metadata_backend.aspect_ratio_bucket_indices.keys())
@@ -251,62 +433,64 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         Args:
             batch_size (int): Number of images to return.
         Returns:
-            list: a list of tuples(validation_shortname, validation_prompt, validation_sample)
+            list[DatasetValidationSample]: input images and the dataset view used to prepare them
         """
         results = []
-        seen_paths = set()
-
-        # Don't try to get more images than we have
-        available_count = len(self._val_master_list)
-        actual_batch_size = min(batch_size, available_count)
-
-        if actual_batch_size < batch_size:
-            self.logger.warning(
-                f"Requested {batch_size} validation images but only {available_count} available. "
-                f"Returning {actual_batch_size} unique images."
-            )
-
-        for img_idx in range(actual_batch_size):
-            image_path = self._yield_sequential_image()
-
-            # Skip if we've already seen this path (in case of wraparound)
-            if image_path in seen_paths:
-                continue
-
-            seen_paths.add(image_path)
-
-            image_data = self.data_backend.read_image(image_path)
-            image_metadata = self.dataset_runtime.read_samples([image_path])[0]
+        positions = {}
+        for position, ref in enumerate(self.validation_cursor.next_refs(batch_size)):
+            positions.setdefault(ref, position)
+        if not positions:
+            return results
+        revision = self.validation_cursor.state_dict()["view"] if self.dataset_runtime.uses_native_schedule else None
+        view = DatasetReadView(revision) if revision is not None else self.dataset_runtime.published_read_view()
+        records = self.dataset_runtime.read_samples(list(positions), fields=("metadata", "image"), view=view)
+        prepared = []
+        caption_paths = []
+        caption_dataset = self.dataset_runtime.source_dataset or self.dataset_runtime
+        for image_metadata in records:
+            image_path = image_metadata["image_path"]
             training_sample = TrainingSample(
-                image=image_data,
+                image=image_metadata.pop("image"),
                 data_backend_id=self.id,
                 image_metadata=image_metadata,
                 image_path=image_path,
                 model=self.model,
+                data_backend_config=self.dataset_runtime.config,
             )
             training_sample.prepare()
-            validation_shortname = f"{self.id}_{img_idx}"
-            caption_dataset = self.dataset_runtime
-            caption_path = image_path
-            if self.source_dataset_id is not None:
-                caption_path = training_sample.training_sample_path(training_dataset_id=self.source_dataset_id)
-                caption_dataset = StateTracker.get_data_backend(self.source_dataset_id)["dataset_runtime"]
-            validation_prompt = caption_dataset.resolve_caption(caption_path)
+            caption_paths.append(
+                image_path
+                if caption_dataset is self.dataset_runtime
+                else training_sample.training_sample_path(
+                    caption_dataset.id, training_dataset=caption_dataset, conditioning_dataset=self.dataset_runtime
+                )
+            )
+            prepared.append((image_path, training_sample.image))
+        for (image_path, image), validation_prompt in zip(
+            prepared, caption_dataset.resolve_captions(caption_paths), strict=True
+        ):
+            validation_shortname = f"{self.id}_{positions[image_path]}"
             if type(validation_prompt) == list:
                 self.debug_log(f"Selecting random prompt from list: {validation_prompt}")
-                validation_prompt = random.choice(validation_prompt)
+                if revision is not None:
+                    selector = random.Random(f"{self.id}:{revision}:{image_path}")
+                    validation_prompt = selector.choice(validation_prompt)
+                else:
+                    validation_prompt = random.choice(validation_prompt)
             results.append(
-                (
-                    validation_shortname,
-                    validation_prompt,
-                    image_path,
-                    training_sample.image,
+                DatasetValidationSample(
+                    shortname=validation_shortname,
+                    prompt=validation_prompt,
+                    ref=image_path,
+                    image=image,
+                    dataset_id=self.id,
+                    view=view,
                 )
             )
 
         return results
 
-    def _yield_n_from_exhausted_bucket(self, n: int, bucket: str):
+    def _yield_n_from_exhausted_bucket(self, n: int, bucket: str, *, rng=random):
         """
         when a bucket is exhausted, and we have to populate the remainder of the batch,
         we shall use this quick and dirty method to retrieve n samples from the exhausted bucket.
@@ -321,24 +505,10 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             to_grab = min(n, len(available_images), (n - len(samples)))
             if to_grab == 0:
                 break
-            samples.extend(random.sample(available_images, k=to_grab))
+            samples.extend(rng.sample(available_images, k=to_grab))
 
-        to_yield = self._validate_and_yield_images_from_samples(samples, bucket)
+        to_yield = self._validate_and_yield_images_from_samples(samples, bucket, rng=rng)
         return to_yield
-
-    def _yield_sequential_image(self):
-        """
-        Always return the *next* image in a fixed list, wrapping around when
-        we reach the end.  Nothing is random, so the same N calls → same N
-        paths every run.
-        """
-        if self._val_cursor >= len(self._val_master_list):
-            self._val_cursor = 0
-            if len(self._val_master_list) == 0:
-                raise MultiDatasetExhausted("No validation images available. Please check your dataset.")
-        path = self._val_master_list[self._val_cursor]
-        self._val_cursor = (self._val_cursor + 1) % len(self._val_master_list)
-        return path
 
     def _yield_random_image(self):
         bucket = random.choice(self.buckets)
@@ -396,7 +566,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             return self.buckets.index(bucket_name)
         raise ValueError(f"Bucket name {bucket_name} not found in buckets: {self.buckets}")
 
-    def _reset_buckets(self, raise_exhaustion_signal: bool = True):
+    def _reset_buckets(self, raise_exhaustion_signal: bool = True, *, rng=random):
         if len(self.metadata_backend.seen_images) == 0 and len(self._get_unseen_images()) == 0:
             bucket_report = getattr(self.metadata_backend, "bucket_report", None)
             if bucket_report:
@@ -417,12 +587,15 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             self.logger.info(f"Resetting seen {self.sample_type_str} list and refreshing buckets. State before reset:")
             self.log_state()
         # All buckets are exhausted, so we will move onto the next epoch.
-        self.current_epoch += 1
+        if self.tracks_consumed_batches:
+            self.metadata_backend.seen_images = {}
+        else:
+            self.current_epoch += 1
+            self.metadata_backend.reset_seen_images()
         self.exhausted_buckets = []
         self.buckets = self.load_buckets()
-        self.metadata_backend.reset_seen_images()
         self._unseen_indices = {}
-        self.change_bucket()
+        self.change_bucket(rng=rng)
         if raise_exhaustion_signal:
             raise MultiDatasetExhausted()
 
@@ -523,7 +696,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.debug_log(f"Bucket {bucket} has sufficient ({len(bucket_images)}) images.")
         return False
 
-    def _get_next_bucket(self):
+    def _get_next_bucket(self, *, rng=random):
         """
         Get the next bucket excluding the exhausted ones.
         If all buckets are exhausted, first reset the seen {self.sample_type_strs} and exhausted buckets.
@@ -531,7 +704,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         available_buckets = [bucket for bucket in self.buckets if bucket not in self.exhausted_buckets]
         if not available_buckets:
             # Raise MultiDatasetExhausted
-            self._reset_buckets()
+            self._reset_buckets(rng=rng)
 
         if len(self.exhausted_buckets) > 0:
             self.debug_log(f"exhausted buckets: {self.exhausted_buckets}")
@@ -542,18 +715,18 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         else:
             self.current_bucket = 0
         if self.buckets[self.current_bucket] not in available_buckets:
-            random_bucket = random.choice(available_buckets)
+            random_bucket = rng.choice(available_buckets)
             self.current_bucket = available_buckets.index(random_bucket)
 
         next_bucket = available_buckets[self.current_bucket]
         return next_bucket
 
-    def change_bucket(self):
+    def change_bucket(self, *, rng=random):
         """
         Change the current bucket to a new one and exclude exhausted buckets from consideration.
         During _get_next_bucket(), if all buckets are exhausted, reset the exhausted list and seen {self.sample_type_strs}.
         """
-        next_bucket = self._get_next_bucket()
+        next_bucket = self._get_next_bucket(rng=rng)
         # Resolve to an integer index in self.buckets for downstream indexing.
         if next_bucket in self.buckets:
             self.current_bucket = self.buckets.index(next_bucket)
@@ -577,123 +750,28 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             f"Bucket {bucket} is empty or doesn't have enough samples for a full batch. Removing from bucket list. {len(self.buckets)} remain."
         )
 
-    @staticmethod
-    def _positive_int(value):
-        try:
-            value = int(value)
-        except (TypeError, ValueError):
-            return None
-        return value if value > 0 else None
-
-    def _configured_max_samples(self, data_backend_config):
-        configured_max_samples = self._positive_int(data_backend_config.get("max_num_samples"))
-        if configured_max_samples is not None:
-            return configured_max_samples
-        return self._positive_int(getattr(self.metadata_backend, "max_num_samples", None))
-
-    def _bucket_report_total(self, stage: str):
-        bucket_report = getattr(self.metadata_backend, "bucket_report", None)
-        bucket_summaries = getattr(bucket_report, "bucket_summaries", None)
-        if not isinstance(bucket_summaries, dict):
-            return None
-        summary = bucket_summaries.get(stage)
-        if not isinstance(summary, dict):
-            return None
-        return self._positive_int(summary.get("total_samples"))
-
-    def _model_card_sample_count(self, data_backend_config):
-        configured_max_samples = self._configured_max_samples(data_backend_config)
-        report_total = self._bucket_report_total("post_refresh")
-        if report_total is not None:
-            total_sample_count = report_total
-            approximate = False
-        else:
-            total_sample_count = sum(len(indices) for indices in self.metadata_backend.aspect_ratio_bucket_indices.values())
-            effective_dp_size, _dp_rank, _cp_size = get_cp_aware_dp_info(self.accelerator)
-            approximate = effective_dp_size > 1
-            if approximate:
-                total_sample_count *= effective_dp_size
-
-        if configured_max_samples is not None:
-            total_sample_count = min(total_sample_count, configured_max_samples)
-            approximate = False
-        return f"~{total_sample_count}" if approximate else total_sample_count
-
-    def log_state(self, show_rank: bool = True, alt_stats: bool = False):
-        # self.debug_log(
-        #     f'Active Buckets: {", ".join(self.convert_to_human_readable(float(b), self.metadata_backend.aspect_ratio_bucket_indices[b], self.resolution) for b in self.buckets)}'
-        # )
-        # self.debug_log(
-        #     f'Exhausted Buckets: {", ".join(self.convert_to_human_readable(float(b), self.metadata_backend.aspect_ratio_bucket_indices.get(b, "N/A"), self.resolution) for b in self.exhausted_buckets)}'
-        # )
-        if alt_stats:
-            # Return an overview instead of a snapshot.
-            # Eg. return totals, and not "as it is now"
-            data_backend_config = StateTracker.get_data_backend_config(self.id)
-            total_image_count = self._model_card_sample_count(data_backend_config)
-            printed_state = [f"- Repeats: {data_backend_config.get('repeats', 0)}"]
-            printed_state.append(f"- Total number of {self.sample_type_strs}: {total_image_count}")
-            printed_state.append(f"- Total number of aspect buckets: {len(self.buckets)}")
-            schedule_state = StateTracker.get_dataset_schedule(self.id) or {}
-            start_epoch = schedule_state.get("start_epoch", 1)
-            start_step = schedule_state.get("start_step", 0)
-            reached = schedule_state.get("reached", False)
-            reached_epoch = schedule_state.get("reached_at_epoch")
-            reached_step = schedule_state.get("reached_at_step")
-            if start_epoch > 1 or start_step > 0 or not reached:
-                status = "not reached"
-                if reached:
-                    epoch_str = reached_epoch if reached_epoch is not None else "?"
-                    step_str = reached_step if reached_step is not None else "?"
-                    status = f"reached at epoch {epoch_str}, step {step_str}"
-                printed_state.append(f"- Schedule: start_epoch={start_epoch}, start_step={start_step} ({status})")
-            if self.sample_type_strs == "images":
-                printed_state.append(
-                    f"- Resolution: {self.resolution} {'megapixels' if self.resolution_type == 'area' else 'px'}"
-                )
-                printed_state.append(f"- Cropped: {data_backend_config.get('crop')}")
-                printed_state.append(
-                    f"- Crop style: {'None' if not data_backend_config.get('crop') else data_backend_config.get('crop_style')}"
-                )
-                printed_state.append(
-                    f"- Crop aspect: {'None' if not data_backend_config.get('crop') else data_backend_config.get('crop_aspect')}"
-                )
-            elif self.sample_type_strs == "videos":
-                video_config = data_backend_config.get("video") or {}
-                target_frame_count = data_backend_config.get("frames_per_video") or video_config.get("num_frames")
-                fps = data_backend_config.get("fps") or video_config.get("fps")
-                printed_state.append(
-                    f"- Target frame count: {target_frame_count if target_frame_count is not None else 'unknown'}"
-                )
-                printed_state.append(f"- FPS: {fps if fps is not None else 'unknown'}")
-            elif self.sample_type_strs == "audio":
-                sample_rate = data_backend_config.get("sample_rate") or data_backend_config.get("audio_sample_rate")
-                target_len = data_backend_config.get("sample_size") or data_backend_config.get("audio_samples")
-                printed_state.append(f"- Sample rate: {sample_rate if sample_rate is not None else 'unknown'}")
-                printed_state.append(f"- Target samples: {target_len if target_len is not None else 'unknown'}")
-            printed_state.append(f"- Used for regularisation data: {'Yes' if self.is_regularisation_data else 'No'}")
-            if self.conditioning_type:
-                printed_state.append(f"- Conditioning type: {self.conditioning_type}")
-            printed_state = "\n".join(printed_state) + "\n"
-        else:
-            # Return a snapshot of the current state during training.
-            printed_state = (
-                f"\n{self.rank_info if show_rank else ''}    -> Number of seen {self.sample_type_strs}: {len(self.metadata_backend.seen_images)}"
-                f"\n{self.rank_info if show_rank else ''}    -> Number of unseen {self.sample_type_strs}: {len(self._get_unseen_images())}"
-                f"\n{self.rank_info if show_rank else ''}    -> Current Bucket: {self.current_bucket}"
-                f"\n{self.rank_info if show_rank else ''}    -> {len(self.buckets)} Buckets: {self.buckets}"
-                f"\n{self.rank_info if show_rank else ''}    -> {len(self.exhausted_buckets)} Exhausted Buckets: {self.exhausted_buckets}"
-            )
+    def log_state(self, show_rank: bool = True):
+        if self.epoch_provider is not None:
+            desc = self.dataset_runtime.describe()
+            overview = f"Dataset {self.id}: {desc.accepted_samples} accepted samples, {len(self)} batches per rank."
+            self.logger.info(overview)
+            return overview
+        printed_state = (
+            f"\n{self.rank_info if show_rank else ''}    -> Number of seen {self.sample_type_strs}: {len(self.metadata_backend.seen_images)}"
+            f"\n{self.rank_info if show_rank else ''}    -> Number of unseen {self.sample_type_strs}: {len(self._get_unseen_images())}"
+            f"\n{self.rank_info if show_rank else ''}    -> Current Bucket: {self.current_bucket}"
+            f"\n{self.rank_info if show_rank else ''}    -> {len(self.buckets)} Buckets: {self.buckets}"
+            f"\n{self.rank_info if show_rank else ''}    -> {len(self.exhausted_buckets)} Exhausted Buckets: {self.exhausted_buckets}"
+        )
         self.logger.info(printed_state)
-
         return printed_state
 
-    def _validate_and_yield_images_from_samples(self, samples, bucket):
+    def _validate_and_yield_images_from_samples(self, samples, bucket, *, rng=random, view=None):
         """
         Validate and yield images from given samples. Return a list of valid image paths.
         """
-        to_yield = []
-        for image_metadata in self.dataset_runtime.read_samples(samples):
+        records = self.dataset_runtime.read_samples(samples, view=view)
+        for image_metadata in records:
             image_path = image_metadata["image_path"]
             requires_crop = (
                 StateTracker.get_args().model_family
@@ -708,86 +786,20 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             )
             if requires_crop and "crop_coordinates" not in image_metadata:
                 raise Exception(f"An image was discovered ({image_path}) that did not have its metadata: {image_metadata}")
-            instance_prompt = self.dataset_runtime.resolve_caption(image_path)
+        for image_metadata, instance_prompt in zip(records, self.dataset_runtime.resolve_captions(samples), strict=True):
             if type(instance_prompt) == list:
-                instance_prompt = random.choice(instance_prompt)
+                instance_prompt = rng.choice(instance_prompt)
                 self.debug_log(f"Selecting random prompt from list: {instance_prompt}")
             image_metadata["instance_prompt_text"] = instance_prompt
 
-            to_yield.append(image_metadata)
-        return to_yield
+        return records
 
     def _clear_batch_accumulator(self):
         self.batch_accumulator = []
 
-    def get_conditioning_sample(self, original_sample_path: str) -> TrainingSample | None:
-        """
-        Given an original dataset sample path, return a TrainingSample
-        """
-        conditioning_dir = self.metadata_backend.instance_data_dir
-        if os.path.isabs(original_sample_path):
-            full_path = original_sample_path
-            conditioning_dir_abs = os.path.abspath(conditioning_dir) if conditioning_dir is not None else None
-            if self.source_dataset_id is not None:
-                source_backend = StateTracker.get_data_backend(self.source_dataset_id)
-                source_dir = source_backend["config"]["instance_data_dir"]
-                source_dir_abs = os.path.abspath(source_dir)
-                if full_path.startswith(source_dir_abs):
-                    full_path = full_path.replace(source_dir_abs, conditioning_dir_abs, 1)
-            if conditioning_dir_abs is not None and not full_path.startswith(conditioning_dir_abs):
-                full_path = os.path.join(conditioning_dir_abs, os.path.basename(full_path))
-        else:
-            sample_path = original_sample_path.lstrip("/")
-            if conditioning_dir not in sample_path:
-                full_path = os.path.join(conditioning_dir, sample_path)
-            else:
-                full_path = sample_path
-        conditioning_config = StateTracker.get_data_backend_config(self.id).get("conditioning_config") or {}
-        if conditioning_config.get("type") == "i2v_first_frame":
-            full_path = os.path.splitext(full_path)[0] + ".png"
-        try:
-            conditioning_sample_data = self.data_backend.read_image(full_path)
-        except Exception as e:
-            self.logger.error(f"Could not fetch conditioning sample: {e}")
-            return None
-        if conditioning_sample_data is None:
-            self.debug_log(f"Could not fetch conditioning sample from {full_path}.")
-            return None
-
-        conditioning_sample_metadata = self.dataset_runtime.read_samples([full_path])[0]
-        conditioning_sample = TrainingSample(
-            image=conditioning_sample_data,
-            data_backend_id=self.id,
-            image_metadata=conditioning_sample_metadata,
-            image_path=full_path,
-            conditioning_type=self.conditioning_type,
-            model=self.model,
-        )
-
-        sample_image = conditioning_sample.image
-        if isinstance(sample_image, np.ndarray) and sample_image.ndim >= 4:
-            conditioning_sample.image = sample_image[0]
-        elif isinstance(sample_image, list) and len(sample_image) > 0:
-            conditioning_sample.image = sample_image[0]
-        if isinstance(conditioning_sample.image, np.ndarray) and conditioning_sample.image.ndim == 3:
-            conditioning_sample.image = Image.fromarray(conditioning_sample.image.astype(np.uint8))
-        # Use the magic prompt handler to retrieve the captions.
-        caption_dataset = self.dataset_runtime
-        caption_path = full_path
-        if self.source_dataset_id is not None and self.caption_strategy is None:
-            caption_path = conditioning_sample.training_sample_path(training_dataset_id=self.source_dataset_id)
-            caption_dataset = StateTracker.get_data_backend(self.source_dataset_id)["dataset_runtime"]
-        instance_prompt = caption_dataset.resolve_caption(caption_path)
-        if type(instance_prompt) == list:
-            instance_prompt = random.choice(instance_prompt)
-            self.debug_log(f"Selecting random prompt from list: {instance_prompt}")
-        conditioning_sample.set_caption(instance_prompt)
-
-        return conditioning_sample
-
-    def connect_conditioning_samples(self, samples: tuple):
+    def connect_conditioning_samples(self, samples: tuple, *, rng=None, view=None):
         # Locate the conditioning data
-        conditioning_datasets = StateTracker.get_conditioning_datasets(self.id)
+        conditioning_datasets = self.dataset_runtime.conditioning_datasets
         if not len(conditioning_datasets):
             return samples
 
@@ -802,31 +814,37 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
         outputs = list(samples)
 
+        def read_pair(dataset, sample_path, source_path):
+            return dataset.read_conditioning_sample(
+                sample_path, source=self.dataset_runtime, source_ref=source_path, source_view=view, model=self.model, rng=rng
+            )
+
         if sampling_mode == "random" and len(conditioning_datasets) > 1:
             # Random mode: select one conditioning dataset per training sample
             for sample in samples:
-                sample_path: str = sample["image_path"]
-                if self.metadata_backend.instance_data_dir is not None and self.metadata_backend.instance_data_dir != "":
-                    sample_path = sample_path.split(self.metadata_backend.instance_data_dir)[-1].lstrip("/")
+                sample_path = self.dataset_runtime.pairing_key(sample["image_path"])
 
                 # Deterministic selection based on hash of image path and current epoch
                 # This ensures the same image gets the same conditioning dataset within an epoch
                 # but different datasets across epochs
-                path_hash = hash(f"{sample_path}_{self.current_epoch}")
-                selected_idx = path_hash % len(conditioning_datasets)
+                if rng is None or self.tracks_consumed_batches:
+                    selected_idx = random.Random(f"{self.id}:{self.current_epoch}:{sample_path}").randrange(
+                        len(conditioning_datasets)
+                    )
+                else:
+                    selected_idx = rng.randrange(len(conditioning_datasets))
                 selected_dataset = conditioning_datasets[selected_idx]
-                sampler = selected_dataset["sampler"]
 
                 self.debug_log(
-                    f"Selected conditioning dataset {selected_dataset['id']} "
+                    f"Selected conditioning dataset {selected_dataset.id} "
                     f"for sample {sample_path} (epoch {self.current_epoch})"
                 )
 
                 # Get the conditioning sample from the selected dataset
-                conditioning_sample = sampler.get_conditioning_sample(sample_path)
+                conditioning_sample = read_pair(selected_dataset, sample_path, sample["image_path"])
                 if conditioning_sample is not None:
                     # Tag the sample with which dataset it came from for debugging
-                    conditioning_sample._source_dataset_id = selected_dataset["id"]
+                    conditioning_sample._source_dataset_id = selected_dataset.id
                     outputs.append(conditioning_sample)
                 else:
                     # Try other datasets if the selected one doesn't have this sample
@@ -835,14 +853,13 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                         if fallback_idx == selected_idx:
                             continue  # Skip the one we already tried
 
-                        fallback_sampler = fallback_dataset["sampler"]
-                        conditioning_sample = fallback_sampler.get_conditioning_sample(sample_path)
+                        conditioning_sample = read_pair(fallback_dataset, sample_path, sample["image_path"])
                         if conditioning_sample is not None:
                             self.logger.warning(
-                                f"Sample {sample_path} not found in {selected_dataset['id']}, "
-                                f"using fallback from {fallback_dataset['id']}"
+                                f"Sample {sample_path} not found in {selected_dataset.id}, "
+                                f"using fallback from {fallback_dataset.id}"
                             )
-                            conditioning_sample._source_dataset_id = fallback_dataset["id"]
+                            conditioning_sample._source_dataset_id = fallback_dataset.id
                             outputs.append(conditioning_sample)
                             found = True
                             break
@@ -857,25 +874,22 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             missing_samples = []
 
             for dataset in conditioning_datasets:
-                sampler = dataset["sampler"]
                 dataset_samples_added = 0
 
                 for sample in samples:
-                    sample_path: str = sample["image_path"]
-                    if self.metadata_backend.instance_data_dir is not None and self.metadata_backend.instance_data_dir != "":
-                        sample_path = sample_path.split(self.metadata_backend.instance_data_dir)[-1].lstrip("/")
+                    sample_path = self.dataset_runtime.pairing_key(sample["image_path"])
 
-                    conditioning_sample = sampler.get_conditioning_sample(sample_path)
+                    conditioning_sample = read_pair(dataset, sample_path, sample["image_path"])
                     if conditioning_sample is not None:
                         # Tag the sample with which dataset it came from
-                        conditioning_sample._source_dataset_id = dataset["id"]
+                        conditioning_sample._source_dataset_id = dataset.id
                         outputs.append(conditioning_sample)
                         dataset_samples_added += 1
                     else:
-                        missing_samples.append((sample_path, dataset["id"]))
+                        missing_samples.append((sample_path, dataset.id))
 
                 self.debug_log(
-                    f"Added {dataset_samples_added}/{len(samples)} conditioning samples " f"from dataset {dataset['id']}"
+                    f"Added {dataset_samples_added}/{len(samples)} conditioning samples " f"from dataset {dataset.id}"
                 )
 
             # Report missing samples in batch if there are any
@@ -904,21 +918,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         return tuple(outputs)
 
     def connect_s2v_samples(self, samples: tuple):
-        """
-        Connect S2V audio samples to video samples.
-
-        For S2V (Speech-to-Video) models, this method looks up audio files
-        from s2v_datasets that match video file paths by base filename
-        (without extension), and adds the audio paths to each sample's metadata.
-
-        When an S2V dataset has `source_from_video: True`, the audio is extracted
-        from the video file itself, so the video path is used directly as the audio path.
-        """
-        s2v_datasets = StateTracker.get_s2v_datasets(self.id)
-        if not s2v_datasets:
+        """Attach the linked audio reference to each video occurrence."""
+        if not self.dataset_runtime.audio_datasets:
             return samples
-
-        from pathlib import Path
 
         outputs = []
         for sample in samples:
@@ -931,45 +933,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 outputs.append(sample)
                 continue
 
-            # Extract base filename without extension
-            video_stem = Path(video_path).stem
-
-            # Look through s2v_datasets for matching audio file
-            audio_path = None
-            audio_backend_id = None
-            for s2v_dataset in s2v_datasets:
-                s2v_config = s2v_dataset.get("config", {})
-                audio_config = s2v_config.get("audio", {})
-
-                # Check if audio is extracted from video files
-                if audio_config.get("source_from_video", False):
-                    metadata_backend = s2v_dataset.get("metadata_backend")
-                    if metadata_backend is not None:
-                        metadata = metadata_backend.get_metadata_by_filepath(video_path)
-                        if metadata is None:
-                            self.debug_log(f"No matching audio found for video: {video_path}")
-                            continue
-                    # Audio comes from the video file itself
-                    audio_path = video_path
-                    audio_backend_id = s2v_dataset.get("id")
-                    break
-
-                # Original matching logic - look for separate audio files
-                audio_root = s2v_config.get("instance_data_dir")
-                if not audio_root:
-                    continue
-
-                # Try common audio extensions
-                audio_backend = s2v_dataset.get("data_backend")
-                for ext in [".wav", ".mp3", ".flac", ".ogg", ".m4a"]:
-                    candidate = os.path.join(audio_root, f"{video_stem}{ext}")
-                    exists = audio_backend.exists(candidate) if audio_backend is not None else Path(candidate).exists()
-                    if exists:
-                        audio_path = candidate
-                        audio_backend_id = s2v_dataset.get("id")
-                        break
-                if audio_path:
-                    break
+            pairing = self.dataset_runtime.resolve_s2v_audio(video_path)
+            audio_dataset, audio_path = pairing if pairing is not None else (None, None)
+            audio_backend_id = audio_dataset.id if audio_dataset is not None else None
 
             # Add audio path to sample metadata
             if isinstance(sample, dict):
@@ -994,6 +960,38 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         """
         Iterate over the sampler to yield image paths in batches.
         """
+        if self.epoch_provider is not None:
+            yield from self._iterate_native()
+        elif self.tracks_consumed_batches:
+            yield from self._iterate_resumable()
+        else:
+            yield from self._iterate_legacy()
+
+    def _legacy_repeats(self):
+        return max(0, self.dataset_runtime.config.get("repeats", 0) or 0)
+
+    def _iterate_resumable(self):
+        progress = self._legacy_progress
+        seed = getattr(StateTracker.get_args(), "seed", 0) or 0
+        _, rank, _ = get_cp_aware_dp_info(self.accelerator)
+        repeats = self._legacy_repeats()
+        while True:
+            with progress.lock:
+                rng = random.Random(
+                    f"{self.id}:{seed}:{self.current_epoch}:{rank}:{self._legacy_repeat}:{progress.fetched['position']}"
+                )
+                try:
+                    batch = next(self._iterate_legacy(rng=rng))
+                except MultiDatasetExhausted:
+                    if self._legacy_repeat >= repeats:
+                        raise
+                    self._legacy_repeat += 1
+                    continue
+                refs = [record["image_path"] for record in batch[: self.batch_size]]
+                progress.record(self.metadata_backend.seen_images, self._legacy_state(0), refs)
+            yield batch
+
+    def _iterate_legacy(self, *, rng=random):
         # Debug: Track bucket state at iteration start
         if self.buckets:
             first_bucket = self.buckets[0]
@@ -1015,10 +1013,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             self.logger.warning(f"__iter__ called but self.buckets is EMPTY!")
 
         self._clear_batch_accumulator()  # Initialize an empty list to accumulate images for a batch
-        self.change_bucket()
+        self.change_bucket(rng=rng)
         while True:
-            all_buckets_exhausted = True  # Initial assumption
-
             # Loop through all buckets to find one with sufficient images
             for _ in range(len(self.buckets)):
                 self._clear_batch_accumulator()
@@ -1026,28 +1022,33 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 self.debug_log(
                     f"From {len(self.buckets)} buckets, selected {self.buckets[self.current_bucket]} ({self.buckets[self.current_bucket]}) -> {len(available_images)} available images, and our accumulator has {len(self.batch_accumulator)} images ready for yielding."
                 )
-                if len(available_images) > 0:
-                    all_buckets_exhausted = False  # Found a non-exhausted bucket
+                if available_images:
                     break
-                else:
-                    # Current bucket doesn't have enough images, try the next bucket
-                    self.move_to_exhausted()
-                    self.change_bucket()
+                self.move_to_exhausted()
+                self.change_bucket(rng=rng)
+            else:
+                self._reset_buckets(rng=rng)
+
             while len(available_images) > 0:
                 if len(available_images) < self.batch_size:
                     need_image_count = self.batch_size - len(available_images)
                     self.debug_log(
                         f"Bucket {self.buckets[self.current_bucket]} has {len(available_images)} available images, but we need {need_image_count} more."
                     )
-                    to_yield = self._yield_n_from_exhausted_bucket(need_image_count, self.buckets[self.current_bucket])
+                    to_yield = self._yield_n_from_exhausted_bucket(
+                        need_image_count, self.buckets[self.current_bucket], rng=rng
+                    )
                     # add the available images
                     to_yield.extend(
-                        self._validate_and_yield_images_from_samples(available_images, self.buckets[self.current_bucket])
+                        self._validate_and_yield_images_from_samples(
+                            available_images, self.buckets[self.current_bucket], rng=rng
+                        )
                     )
                 else:
-                    all_buckets_exhausted = False  # Found a non-exhausted bucket
-                    samples = random.sample(available_images, k=min(len(available_images), self.batch_size))
-                    to_yield = self._validate_and_yield_images_from_samples(samples, self.buckets[self.current_bucket])
+                    samples = rng.sample(available_images, k=min(len(available_images), self.batch_size))
+                    to_yield = self._validate_and_yield_images_from_samples(
+                        samples, self.buckets[self.current_bucket], rng=rng
+                    )
                 self.debug_log(f"Building batch with {len(self.batch_accumulator)} samples.")
                 if len(self.batch_accumulator) < self.batch_size:
                     remaining_entries_needed = self.batch_size - len(self.batch_accumulator)
@@ -1067,12 +1068,16 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     self.metadata_backend.mark_batch_as_seen(yielded_paths)
                     self._consume_unseen_occurrences(yielded_paths)
                     # if applicable, we'll append TrainingSample(s) to the end for conditioning inputs.
-                    final_yield = self.connect_conditioning_samples(final_yield)
+                    if self.tracks_consumed_batches:
+                        final_yield[0]["caption_dropout_seed"] = rng.getrandbits(64)
+                        final_yield = self.connect_conditioning_samples(final_yield, rng=rng)
+                    else:
+                        final_yield = self.connect_conditioning_samples(final_yield)
                     # if applicable, connect S2V audio paths for speech-to-video models.
                     final_yield = self.connect_s2v_samples(final_yield)
                     yield tuple(final_yield)
                     # Change bucket after a full batch is yielded
-                    self.change_bucket()
+                    self.change_bucket(rng=rng)
                     # Break out of the while loop:
                     break
 
@@ -1082,37 +1087,18 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     f"Bucket {self.buckets[self.current_bucket]} now has {len(available_images)} available images after yielding."
                 )
 
-            # Handle exhausted bucket
-            if len(available_images) < self.batch_size:
-                self.debug_log(
-                    f"Bucket {self.buckets[self.current_bucket]} is now exhausted and sleepy, and we have to move it to the sleepy list before changing buckets."
-                )
-                self.move_to_exhausted()
-                self.change_bucket()
-
-            # Check if all buckets are exhausted
-            if all_buckets_exhausted:
-                # If all buckets are exhausted, reset the seen {self.sample_type_strs} and refresh buckets
-                self.logger.warning(
-                    "All buckets exhausted - since this is happening now, most likely you have chronically-underfilled buckets."
-                )
-                # Resetting buckets raises MultiDatasetExhausted
-                self._reset_buckets()
-
     def __len__(self):
-        backend_config = StateTracker.get_data_backend_config(self.id)
-        repeats = backend_config.get("repeats", 0)
-        # We need at least a multiplier of 1. Repeats is the number of extra sample steps.
-        multiplier = repeats + 1 if repeats > 0 else 1
-
-        total_samples = (
-            sum(len(indices) for indices in self.metadata_backend.aspect_ratio_bucket_indices.values()) * multiplier
+        if self.epoch_provider is not None:
+            spec = self.epoch_provider.epoch_spec(self.current_epoch, self.batch_size)
+            count = self.epoch_provider.scheduled_batches(spec)
+            if count is None:
+                return self.metadata_backend.runtime_args.max_train_steps * spec.accumulation
+            return count
+        batches_per_pass = sum(
+            (len(indices) + self.batch_size - 1) // self.batch_size
+            for indices in self.metadata_backend.aspect_ratio_bucket_indices.values()
         )
-
-        # Calculate the total number of full batches
-        total_batches = (total_samples + (self.batch_size - 1)) // self.batch_size
-
-        return total_batches
+        return batches_per_pass * (1 + self._legacy_repeats())
 
     @staticmethod
     def convert_to_human_readable(aspect_ratio_float: float, bucket: iter, resolution: int = 1024):

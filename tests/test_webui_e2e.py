@@ -9,7 +9,7 @@ from io import BytesIO
 
 import requests
 from PIL import Image
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import StaleElementReferenceException, TimeoutException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support import expected_conditions as EC
@@ -1955,6 +1955,544 @@ class DatasetManagementTestCase(_TrainerPageMixin, WebUITestCase):
         self.for_each_browser("test_add_and_remove_dataset", scenario)
 
 
+class DatasetViewerRevisionTestCase(_TrainerPageMixin, WebUITestCase):
+    MAX_BROWSERS = 1
+
+    def test_viewer_ignores_delayed_summaries_from_the_previous_environment(self) -> None:
+        self.seed_defaults()
+
+        def scenario(driver, _browser):
+            trainer = self._trainer_page(driver)
+            trainer.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer.switch_to_datasets_tab()
+            trainer.wait_for_tab("datasets")
+            wait = WebDriverWait(driver, 15)
+            wait.until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, "//button[contains(@class,'dataset-subtab-btn') and contains(.,'Viewer')]")
+                )
+            ).click()
+            result = driver.execute_async_script(
+                """
+                const done = arguments[0];
+                const view = Alpine.$data(document.querySelector('[x-data="datasetViewerComponent()"]'));
+                const originalFetch = window.fetch;
+                const response = data => new Response(JSON.stringify(data));
+                let resolveOld;
+                let pending = true;
+                window.fetch = (url, options) => {
+                    const path = new URL(url, window.location.origin).pathname;
+                    if (path.endsWith('/viewer/summaries')) {
+                        if (pending) {
+                            pending = false;
+                            return new Promise(resolve => { resolveOld = resolve; });
+                        }
+                        return Promise.resolve(response([{dataset_id: 'new-plan', has_cache: false}]));
+                    }
+                    if (path.endsWith('/viewer/graph')) return Promise.resolve(response(null));
+                    return originalFetch(url, options);
+                };
+                const old = view.loadAllSummaries();
+                window.dispatchEvent(new CustomEvent('environment-changed'));
+                (async () => {
+                    const deadline = Date.now() + 5000;
+                    while (view.loading && Date.now() < deadline)
+                        await new Promise(resolve => setTimeout(resolve, 20));
+                    resolveOld(response([{dataset_id: 'old-plan', has_cache: false}]));
+                    await old;
+                    done(view.datasets.map(dataset => dataset.dataset_id));
+                })();
+                """
+            )
+            self.assertEqual(result, ["new-plan"])
+
+        self.for_each_browser("test_viewer_ignores_delayed_summaries_from_the_previous_environment", scenario)
+
+    def test_scan_progress_ignores_stale_events_and_waits_for_worker_shutdown(self) -> None:
+        self.seed_defaults()
+
+        def scenario(driver, _browser):
+            trainer = self._trainer_page(driver)
+            trainer.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer.switch_to_datasets_tab()
+            trainer.wait_for_tab("datasets")
+            wait = WebDriverWait(driver, 15)
+            wait.until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, "//button[contains(@class,'dataset-subtab-btn') and contains(.,'Viewer')]")
+                )
+            ).click()
+            driver.execute_async_script(
+                """
+                const done = arguments[0];
+                const view = Alpine.$data(document.querySelector('[x-data="datasetViewerComponent()"]'));
+                window.scanFixture = {
+                    active: true, plan_scope: 'current-plan', job_id: 'current-job', dataset_id: 'photos',
+                    status: 'running', current: 2, total: 10,
+                };
+                const originalFetch = window.fetch;
+                window.fetch = (url, options) => {
+                    const target = new URL(url, window.location.origin);
+                    const response = body => Promise.resolve(new Response(JSON.stringify(body)));
+                    if (target.pathname.endsWith('/scan/active') || target.pathname.endsWith('/scan/status'))
+                        return response(window.scanFixture);
+                    if (target.pathname.endsWith('/scan/cancel')) {
+                        window.cancelledScan = target.searchParams.get('job_id');
+                        window.scanFixture = {...window.scanFixture, status: 'cancelling'};
+                        return response({cancelled: true});
+                    }
+                    return originalFetch(url, options);
+                };
+                view._checkActiveScan().then(done);
+                """
+            )
+            cancel = (By.CSS_SELECTOR, "button[aria-label='Cancel dataset scan']")
+            button = wait.until(EC.element_to_be_clickable(cancel))
+            driver.execute_script(
+                """
+                for (const overrides of [{job_id: 'previous-job'}, {plan_scope: 'previous-plan'}]) {
+                    window.dispatchEvent(new CustomEvent('sse:dataset_scan', {
+                        detail: {...window.scanFixture, ...overrides, status: 'completed'},
+                    }));
+                }
+                """
+            )
+            self.assertTrue(button.is_displayed())
+            button.click()
+            wait.until(lambda d: not d.find_element(*cancel).is_enabled())
+            self.assertTrue(button.is_displayed())
+            self.assertEqual(driver.execute_script("return window.cancelledScan;"), "current-job")
+            driver.execute_script(
+                """
+                window.scanFixture = {...window.scanFixture, status: 'cancelled'};
+                window.dispatchEvent(new CustomEvent('sse:connected'));
+                """
+            )
+            wait.until(EC.invisibility_of_element_located(cancel))
+
+        self.for_each_browser("test_scan_progress_ignores_stale_events_and_waits_for_worker_shutdown", scenario)
+
+    def test_text_cache_actions_follow_each_datasets_saved_store(self) -> None:
+        root = self.home_path / "cache-capabilities"
+        root.mkdir()
+        plan = []
+        for name in ("cached", "online"):
+            plan.extend(
+                [
+                    {"id": name, "type": "local", "instance_data_dir": str(root), "text_embeds": name + "-store"},
+                    {
+                        "id": name + "-store",
+                        "type": "local",
+                        "dataset_type": "text_embeds",
+                        "cache_dir": str(root / name),
+                        "text_cache_encode_only": name == "online",
+                    },
+                ]
+            )
+            (root / f"aspect_ratio_bucket_indices_{name}.json").write_text(
+                json.dumps({"aspect_ratio_bucket_indices": {"square": ["image.jpg"]}})
+            )
+        (self.config_dir / "default" / "multidatabackend.json").write_text(json.dumps(plan))
+        self.seed_defaults()
+
+        def scenario(driver, _browser):
+            trainer = self._trainer_page(driver)
+            trainer.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer.switch_to_datasets_tab()
+            trainer.wait_for_tab("datasets")
+            wait = WebDriverWait(driver, 15)
+            wait.until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, "//button[contains(@class,'dataset-subtab-btn') and contains(.,'Viewer')]")
+                )
+            ).click()
+            for dataset_id, enabled in (("online", False), ("cached", True)):
+                card = f"//div[contains(@class,'viewer-dataset-card')][div[contains(@class,'viewer-card-header')]//span[normalize-space(.)='{dataset_id}']]"
+                wait.until(
+                    EC.element_to_be_clickable((By.XPATH, card + "/div[contains(@class,'viewer-card-header')]"))
+                ).click()
+                button = wait.until(
+                    EC.visibility_of_element_located((By.XPATH, card + "//button[contains(., 'Text Embeds')]"))
+                )
+                wait.until(lambda _d: button.is_enabled() == enabled)
+                if not enabled:
+                    self.assertIn("Encode-only", button.get_attribute("title"))
+            status = driver.execute_async_script(
+                """
+                const done = arguments[0];
+                fetch('/api/datasets/cache/start', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({dataset_id: 'online', cache_type: 'text_embeds'}),
+                }).then(response => done(response.status)).catch(error => done(String(error)));
+                """
+            )
+            self.assertEqual(status, 422)
+
+        self.for_each_browser("test_text_cache_actions_follow_each_datasets_saved_store", scenario)
+
+    def test_cache_progress_stays_bound_to_the_active_job_until_shutdown(self) -> None:
+        self.seed_defaults()
+
+        def scenario(driver, _browser):
+            trainer = self._trainer_page(driver)
+            trainer.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer.switch_to_datasets_tab()
+            trainer.wait_for_tab("datasets")
+            wait = WebDriverWait(driver, 15)
+            wait.until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, "//button[contains(@class,'dataset-subtab-btn') and contains(.,'Viewer')]")
+                )
+            ).click()
+            driver.execute_async_script(
+                """
+                const done = arguments[0];
+                const view = Alpine.$data(document.querySelector('[x-data="datasetViewerComponent()"]'));
+                window.cacheFixture = {
+                    active: true, job_id: 'active-job', dataset_id: 'images', cache_type: 'vae',
+                    status: 'running', stage: 'Preparing latents', current: 3, total: 10,
+                };
+                const originalFetch = window.fetch;
+                window.fetch = (url, options) => {
+                    const target = new URL(url, window.location.origin);
+                    const response = body => Promise.resolve(new Response(JSON.stringify(body)));
+                    if (target.pathname.endsWith('/cache/active')) return response(window.cacheFixture);
+                    if (target.pathname.endsWith('/cache/status')) return response(window.cacheFixture);
+                    if (target.pathname.endsWith('/cache/cancel')) {
+                        window.cancelledJob = target.searchParams.get('job_id');
+                        window.cacheFixture = {...window.cacheFixture, status: 'cancelling', stage: 'Cancelling'};
+                        return response({cancelled: true});
+                    }
+                    return originalFetch(url, options);
+                };
+                view._checkActiveCacheJob().then(done);
+                """
+            )
+            cancel = (By.CSS_SELECTOR, "button[aria-label='Cancel cache preparation']")
+            button = wait.until(EC.element_to_be_clickable(cancel))
+            driver.execute_script(
+                """
+                window.dispatchEvent(new CustomEvent('sse:dataset_cache', {
+                    detail: {job_id: 'old-job', status: 'completed'},
+                }));
+                """
+            )
+            self.assertTrue(button.is_displayed())
+            button.click()
+            wait.until(lambda d: not d.find_element(*cancel).is_enabled())
+            self.assertTrue(button.is_displayed())
+            self.assertEqual(driver.execute_script("return window.cancelledJob;"), "active-job")
+            driver.execute_script(
+                """
+                window.cacheFixture = {...window.cacheFixture, status: 'cancelled'};
+                window.dispatchEvent(new CustomEvent('sse:connected'));
+                """
+            )
+            wait.until(EC.invisibility_of_element_located(cancel))
+
+        self.for_each_browser("test_cache_progress_stays_bound_to_the_active_job_until_shutdown", scenario)
+
+    def test_delayed_thumbnail_response_does_not_change_another_dataset(self) -> None:
+        root = self.home_path / "viewer-race"
+        root.mkdir()
+        datasets = []
+        for name in ("first", "second"):
+            datasets.append({"type": "local", "id": name, "dataset_type": "image", "instance_data_dir": str(root)})
+            (root / f"aspect_ratio_bucket_indices_{name}.json").write_text(
+                json.dumps({"aspect_ratio_bucket_indices": {"square": [f"{name}.jpg"]}})
+            )
+        (self.config_dir / "default" / "multidatabackend.json").write_text(json.dumps(datasets))
+        self.seed_defaults()
+
+        def scenario(driver, _browser):
+            trainer = self._trainer_page(driver)
+            trainer.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer.switch_to_datasets_tab()
+            trainer.wait_for_tab("datasets")
+            wait = WebDriverWait(driver, 15)
+            wait.until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, "//button[contains(@class,'dataset-subtab-btn') and contains(.,'Viewer')]")
+                )
+            ).click()
+            wait.until(lambda d: len(d.find_elements(By.CSS_SELECTOR, ".viewer-card-header")) == 2)
+            for status in (409, 200):
+                driver.execute_script(
+                    """
+                    const view = Alpine.$data(document.querySelector('[x-data="datasetViewerComponent()"]'));
+                    const originalFetch = window.fetch;
+                    window.fetch = (url, options) => {
+                        const target = new URL(url, window.location.origin);
+                        if (target.pathname.endsWith('/thumbnails') && target.searchParams.get('dataset_id') === 'first') {
+                            window.fetch = originalFetch;
+                            return new Promise(resolve => {
+                                window.releaseFirstRequest = () => resolve(new Response(
+                                    '[{"path":"old.jpg","filename":"old.jpg"}]',
+                                    {status: arguments[0], headers: {'Content-Type': 'application/json'}}
+                                ));
+                            });
+                        }
+                        return originalFetch(url, options);
+                    };
+                    view.toggleDataset('first');
+                    window.firstRequest = view.selectBucket('first', view.datasets[0].buckets[0]);
+                    view.toggleDataset('second');
+                    view.selectBucket('second', view.datasets[1].buckets[0]);
+                    """,
+                    status,
+                )
+                selectors = (By.CSS_SELECTOR, ".viewer-thumbnail-label")
+                wait.until(lambda d: any(label.text == "second.jpg" for label in d.find_elements(*selectors)))
+                driver.execute_async_script(
+                    """
+                    const done = arguments[0];
+                    window.releaseFirstRequest();
+                    window.firstRequest.then(done);
+                    """
+                )
+                self.assertEqual([label.text for label in driver.find_elements(*selectors) if label.text], ["second.jpg"])
+                self.assertEqual(len(driver.find_elements(By.CSS_SELECTOR, ".viewer-bucket-btn.active")), 1)
+
+        self.for_each_browser("test_delayed_thumbnail_response_does_not_change_another_dataset", scenario)
+
+    def test_conditioning_pairs_keep_the_selected_link_and_view(self) -> None:
+        root = self.home_path / "viewer-pairs"
+        root.mkdir()
+        datasets = [
+            {"type": "local", "id": "source", "conditioning_data": ["first", "second"]},
+            {"type": "local", "id": "first", "dataset_type": "conditioning"},
+            {"type": "local", "id": "second", "dataset_type": "conditioning"},
+        ]
+        for config in datasets:
+            config["instance_data_dir"] = str(root)
+            (root / f"aspect_ratio_bucket_indices_{config['id']}.json").write_text(
+                json.dumps({"aspect_ratio_bucket_indices": {"square": ["image.jpg"]}})
+            )
+        (self.config_dir / "default" / "multidatabackend.json").write_text(json.dumps(datasets))
+        self.seed_defaults()
+
+        def scenario(driver, _browser):
+            trainer = self._trainer_page(driver)
+            trainer.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer.switch_to_datasets_tab()
+            trainer.wait_for_tab("datasets")
+            wait = WebDriverWait(driver, 15, ignored_exceptions=(StaleElementReferenceException,))
+            wait.until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, "//button[contains(@class,'dataset-subtab-btn') and contains(.,'Viewer')]")
+                )
+            ).click()
+            wait.until(lambda d: len(d.find_elements(By.CSS_SELECTOR, ".viewer-card-header")) == 3)
+            self.dismiss_onboarding(driver)
+            wait.until(EC.invisibility_of_element_located((By.CSS_SELECTOR, ".onboarding-overlay")))
+
+            def click_when_visible(locator):
+                def click(driver):
+                    element = EC.element_to_be_clickable(locator)(driver)
+                    if not element:
+                        return False
+                    driver.execute_script("arguments[0].click();", element)
+                    return True
+
+                wait.until(click)
+
+            viewer_card = "//div[contains(@class,'viewer-dataset-card')][div[contains(@class,'viewer-card-header')]//span[normalize-space(.)='source']]"
+            click_when_visible((By.XPATH, viewer_card + "/div[contains(@class,'viewer-card-header')]"))
+            driver.execute_script(
+                """
+                window.pairRequests = [];
+                const originalFetch = window.fetch;
+                window.fetch = (url, options) => {
+                    const target = new URL(url, window.location.origin);
+                    const response = body => new Response(JSON.stringify(body), {
+                        headers: {'Content-Type': 'application/json'},
+                    });
+                    if (target.pathname.endsWith('/conditioning-pairs')) {
+                        const query = Object.fromEntries(target.searchParams);
+                        window.pairRequests.push(query);
+                        if (query.conditioning_id === 'first') {
+                            return new Promise(resolve => {
+                                window.releaseFirstPair = () => resolve(new Response('{}', {status: 409}));
+                            });
+                        }
+                        return Promise.resolve(response({
+                            source_total: 12,
+                            source_view_revision: 'source-view',
+                            conditioning_view_revision: 'second-view',
+                            pairs: [{source_path: 'source.jpg', conditioning_path: 'page-' + query.offset + '.jpg'}],
+                        }));
+                    }
+                    if (target.pathname.endsWith('/file-metadata') || target.pathname.endsWith('/preview')) {
+                        window.detailQuery = Object.fromEntries(target.searchParams);
+                        return Promise.resolve(response({
+                            path: window.detailQuery.file_path,
+                            found: true,
+                            metadata_editable: window.detailQuery.dataset_id !== 'first',
+                            metadata_revision: 'file-revision',
+                            view_revision: window.detailQuery.view_revision,
+                        }));
+                    }
+                    if (target.pathname.endsWith('/rebuild-metadata')) {
+                        window.rebuildRequest = JSON.parse(options.body);
+                        return new Promise(resolve => {
+                            window.releaseRebuild = () => resolve(response({rebuilt: true}));
+                        });
+                    }
+                    return originalFetch(url, options);
+                };
+                for (const name of ['first', 'second']) {
+                    const buttons = arguments[0].querySelectorAll('.viewer-bucket-btn');
+                    [...buttons].find(button => button.textContent.trim() === name).click();
+                }
+                """,
+                wait.until(EC.presence_of_element_located((By.XPATH, viewer_card))),
+            )
+            self.assertEqual(
+                driver.execute_script("return window.pairRequests.map(p => p.conditioning_id);"), ["first", "second"]
+            )
+            next_page = viewer_card + "//button[@aria-label='Next conditioning pairs']"
+            click_when_visible((By.XPATH, next_page))
+            second_detail = (
+                By.XPATH,
+                viewer_card + "//*[contains(@class,'viewer-pair-thumb') and contains(.,'page-6.jpg')]",
+            )
+            wait.until(EC.element_to_be_clickable(second_detail))
+            driver.execute_async_script("window.releaseFirstPair(); setTimeout(arguments[0], 30);")
+            click_when_visible(second_detail)
+            requests = driver.execute_script("return window.pairRequests;")
+            self.assertEqual([entry["conditioning_id"] for entry in requests], ["first", "second", "second"])
+            self.assertEqual(requests[-1]["offset"], "6")
+            self.assertEqual(requests[-1]["source_view_revision"], "source-view")
+            self.assertEqual(requests[-1]["conditioning_view_revision"], "second-view")
+            self.assertEqual(
+                driver.execute_script("return window.detailQuery;"),
+                {"dataset_id": "second", "file_path": "page-6.jpg", "view_revision": "second-view"},
+            )
+            click_when_visible((By.XPATH, "//button[@type='button' and contains(., 'Rebuild Metadata')]"))
+            self.assertEqual(
+                driver.execute_script("return window.rebuildRequest;"),
+                {
+                    "dataset_id": "second",
+                    "file_path": "page-6.jpg",
+                    "view_revision": "second-view",
+                    "metadata_revision": "file-revision",
+                },
+            )
+            self.assertEqual(
+                driver.execute_async_script(
+                    """
+                    const done = arguments[0];
+                    const view = Alpine.$data(document.querySelector('[x-data="datasetViewerComponent()"]'));
+                    view.showFileDetail('first', 'other.jpg').then(() => {
+                        window.releaseRebuild();
+                        setTimeout(() => done(view.selectedFile?.path), 30);
+                    }).catch(error => done(String(error)));
+                    """
+                ),
+                "other.jpg",
+            )
+            self.assertEqual(driver.execute_script("return window.detailQuery.file_path;"), "other.jpg")
+            self.assertTrue(
+                wait.until(EC.invisibility_of_element_located((By.XPATH, "//button[contains(., 'Rebuild Metadata')]")))
+            )
+
+        self.for_each_browser("test_conditioning_pairs_keep_the_selected_link_and_view", scenario)
+
+    def test_replaced_view_refreshes_bucket_choices_from_bucket_and_file(self) -> None:
+        from simpletuner.helpers.metadata.backends.webshart_membership import write_membership
+
+        root = self.home_path / "viewer-data"
+        root.mkdir(exist_ok=True)
+        source = root / "source"
+        source.mkdir()
+        config = {
+            "type": "webshart",
+            "id": "indexed",
+            "dataset_type": "image",
+            "conditioning_data": ["reference"],
+            "caption_strategy": "textfile",
+            "webshart": {"source": str(source), "cache_dir": str(root), "format": "parquet", "manifest": "dataset.json"},
+        }
+        (self.config_dir / "default" / "multidatabackend.json").write_text(json.dumps([config]))
+        publication = root / "aspect_ratio_bucket_indices_source_0123456789abcdef_indexed.json"
+        properties = {"config": config, "geometry_format": "sqlite-v1", "physical_rows": 3}
+        write_membership(publication, {"square": ["partial"]}, {**properties, "scan_in_progress": True})
+        self.seed_defaults()
+
+        def scenario(driver, _browser):
+            trainer = self._trainer_page(driver)
+            trainer.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer.switch_to_datasets_tab()
+            trainer.wait_for_tab("datasets")
+            wait = WebDriverWait(driver, 15)
+            wait.until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, "//button[contains(@class,'dataset-subtab-btn') and contains(.,'Viewer')]")
+                )
+            ).click()
+            status = (By.CSS_SELECTOR, ".viewer-preparation-status")
+            wait.until(EC.text_to_be_present_in_element(status, "Scan incomplete"))
+            self.assertFalse(
+                any(element.is_displayed() for element in driver.find_elements(By.CSS_SELECTOR, ".viewer-bucket-btn"))
+            )
+            write_membership(publication, {"square": ["old"]}, properties)
+            driver.execute_async_script(
+                """
+                const viewer = Alpine.$data(document.querySelector('[x-data="datasetViewerComponent()"]'));
+                viewer.loadAllSummaries().then(arguments[0]);
+                """
+            )
+            wait.until(EC.text_to_be_present_in_element(status, "Cached"))
+            wait.until(
+                EC.text_to_be_present_in_element((By.CSS_SELECTOR, ".viewer-prepared-count"), "1 accepted / 3 source rows")
+            )
+            wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, ".viewer-card-header"))).click()
+            wait.until(lambda d: "Unavailable" in d.find_element(By.CSS_SELECTOR, ".viewer-dataset-card").text)
+            bucket_selector = (By.CSS_SELECTOR, ".viewer-bucket-list .viewer-bucket-btn")
+            bucket = wait.until(EC.element_to_be_clickable(bucket_selector))
+            self.assertIn("square", bucket.text)
+            write_membership(publication, {"wide": ["new"]}, properties)
+            bucket.click()
+            wait.until(lambda d: "wide" in d.find_element(By.CSS_SELECTOR, ".viewer-bucket-list").text)
+            self.assertFalse(driver.find_elements(By.CSS_SELECTOR, ".viewer-bucket-btn.active"))
+
+            wait.until(EC.element_to_be_clickable(bucket_selector)).click()
+            thumbnail = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, ".viewer-thumbnail-item")))
+            self.assertIn("new", thumbnail.text)
+            write_membership(publication, {"portrait": ["latest"]}, properties)
+            driver.execute_script(
+                """
+                const originalFetch = window.fetch;
+                window.fetch = (url, options) => {
+                    const target = new URL(url, window.location.origin);
+                    if (target.pathname.endsWith('/file-metadata') || target.pathname.endsWith('/preview')) {
+                        return Promise.resolve(new Response('{}', {status: 200}));
+                    }
+                    if (target.pathname.endsWith('/conditioning-match')) {
+                        window.fetch = originalFetch;
+                        window.matchRevision = target.searchParams.get('view_revision');
+                        return Promise.resolve(new Response('{}', {status: 409}));
+                    }
+                    return originalFetch(url, options);
+                };
+                """
+            )
+            thumbnail.click()
+            wait.until(lambda d: "portrait" in d.find_element(By.CSS_SELECTOR, ".viewer-bucket-list").text)
+            self.assertFalse(driver.find_elements(By.CSS_SELECTOR, ".viewer-bucket-btn.active"))
+            self.assertTrue(driver.execute_script("return Boolean(window.matchRevision);"))
+
+        self.for_each_browser("test_replaced_view_refreshes_bucket_choices_from_bucket_and_file", scenario)
+
+
 class DatasetCaptioningTabSmokeTestCase(_TrainerPageMixin, WebUITestCase):
     """Dataset Captioning sub-tab should initialize without Alpine wiring errors."""
 
@@ -1972,7 +2510,8 @@ class DatasetCaptioningTabSmokeTestCase(_TrainerPageMixin, WebUITestCase):
                         "type": "local",
                         "dataset_type": "image",
                         "instance_data_dir": str(dataset_dir),
-                    }
+                    },
+                    {"id": "remote-caption-smoke", "type": "webshart", "dataset_type": "image", "source": "s3://images"},
                 ]
             ),
             encoding="utf-8",
@@ -2013,6 +2552,20 @@ class DatasetCaptioningTabSmokeTestCase(_TrainerPageMixin, WebUITestCase):
                 WebDriverWait(driver, 10).until(captioning_panel_ready),
                 "Captioning sub-tab did not initialize",
             )
+            dataset_options = driver.execute_async_script(
+                """
+                const done = arguments[0];
+                const root = document.querySelector('[x-data="datasetCaptioningComponent()"]');
+                const component = Alpine.$data(root);
+                component.capabilities.eligible_dataset_ids = ['caption-smoke'];
+                component.selectedDatasetId = 'remote-caption-smoke';
+                component.loadDatasets().then(() => done({
+                    options: component.datasets.map(dataset => dataset.dataset_id),
+                    selected: component.selectedDatasetId,
+                })).catch(error => done({error: error.message}));
+                """
+            )
+            self.assertEqual(dataset_options, {"options": ["caption-smoke"], "selected": "caption-smoke"})
 
             raw_buttons = [
                 button
@@ -2226,6 +2779,85 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
 
     MAX_BROWSERS = 1
 
+    def test_s3_text_cache_listing_saves_and_stays_bound_across_tabs(self) -> None:
+        self.seed_defaults()
+        config_path = self.config_dir / "default" / "multidatabackend.json"
+        config_path.write_text(
+            json.dumps(
+                [
+                    {"id": "images", "type": "local", "dataset_type": "image", "instance_data_dir": str(self.home_path)},
+                    {
+                        "id": "text-aws",
+                        "type": "aws",
+                        "dataset_type": "text_embeds",
+                        "default": True,
+                        "aws_bucket_name": "text-embeddings",
+                        "aws_data_prefix": "embeddings/",
+                        "aws_region_name": "us-east-1",
+                    },
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+            datasets_tab = DatasetsTab(driver, base_url=self.base_url)
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.switch_to_datasets_tab()
+            trainer_page.wait_for_tab("datasets")
+            driver.execute_script(
+                """
+                document.querySelector('#datasets-tab-content .hero-dismiss-btn')?.click();
+                const toggle = document.querySelector('[data-dataset-id="text-aws"] .list-item-toggle');
+                if (toggle.getAttribute('aria-expanded') !== 'true') toggle.click();
+                """
+            )
+
+            def open_tab(tab):
+                driver.execute_script(
+                    """
+                    const item = document.querySelector('[data-dataset-id="text-aws"]').closest('.dataset-list-item-wrapper');
+                    [...item.querySelectorAll('button')].find(button => button.textContent.trim() === arguments[0]).click();
+                    """,
+                    tab,
+                )
+
+            def visible_listing_control(d):
+                return next(
+                    (element for element in d.find_elements(By.ID, "text-cache-listing-text-aws") if element.is_displayed()),
+                    False,
+                )
+
+            def dirty(expected):
+                return WebDriverWait(driver, 5).until(
+                    lambda d: d.execute_script(
+                        "return Alpine.store('trainer').hasUnsavedChanges === arguments[0];", expected
+                    )
+                )
+
+            open_tab("Storage")
+            driver.execute_script("Alpine.store('trainer').hasUnsavedChanges = false;")
+            control = WebDriverWait(driver, 10).until(visible_listing_control)
+            self.assertFalse(control.is_selected())
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", control)
+            control.click()
+            dirty(True)
+            datasets_tab.save_datasets()
+            dirty(False)
+            saved = next(entry for entry in json.loads(config_path.read_text()) if entry["id"] == "text-aws")
+            self.assertIs(saved.get("text_cache_use_listing"), True)
+            open_tab("Basic")
+            open_tab("Storage")
+            control = WebDriverWait(driver, 10).until(visible_listing_control)
+            self.assertTrue(control.is_selected())
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", control)
+            control.click()
+            dirty(True)
+
+        self.for_each_browser("test_s3_text_cache_listing_saves_and_stays_bound_across_tabs", scenario)
+
     def test_webshart_caption_keys_edit_and_save(self) -> None:
         self.seed_defaults()
         config_path = self.config_dir / "default" / "multidatabackend.json"
@@ -2310,9 +2942,81 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
 
         self.for_each_browser("test_webshart_caption_keys_edit_and_save", scenario)
 
+    def test_audio_relationship_settings_survive_a_form_edit(self) -> None:
+        self.seed_defaults()
+        config_path = self.config_dir / "default" / "multidatabackend.json"
+        training_config = config_path.with_name("config.json")
+        settings = json.loads(training_config.read_text())
+        settings.update({"--model_family": "wan_s2v", "--model_flavour": "s2v-14b-2.2"})
+        training_config.write_text(json.dumps(settings))
+        source = {
+            "id": "video",
+            "type": "local",
+            "dataset_type": "video",
+            "instance_data_dir": str(self.home_path),
+            "s2v_datasets": ["embedded", "sidecars"],
+            "audio": {"auto_split": False, "sample_rate": 16000},
+        }
+        embedded = {
+            "id": "embedded",
+            "type": "local",
+            "dataset_type": "audio",
+            "instance_data_dir": str(self.home_path),
+            "source_dataset_id": "video",
+            "audio": {"source_from_video": True, "allow_zero_audio": False, "sample_rate": 16000},
+        }
+        sidecars = {
+            "id": "sidecars",
+            "type": "local",
+            "dataset_type": "audio",
+            "instance_data_dir": str(self.home_path),
+            "audio": {"sample_rate": 22050, "sidecar_match": "relative_path"},
+        }
+        config_path.write_text(json.dumps([source, embedded, sidecars]))
+
+        def scenario(driver, _browser):
+            trainer = self._trainer_page(driver)
+            trainer.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer.switch_to_datasets_tab()
+            trainer.wait_for_tab("datasets")
+            wait = WebDriverWait(driver, 10)
+            driver.execute_script(
+                """
+                document.querySelector('#datasets-tab-content .hero-dismiss-btn')?.click();
+                document.querySelector('[data-dataset-id="sidecars"] .list-item-toggle').click();
+                const sidecars = document.querySelector('[data-dataset-id="sidecars"]').closest('.dataset-list-item-wrapper');
+                [...sidecars.querySelectorAll('button')].find(button => button.textContent.trim() === 'Audio').click();
+                """
+            )
+            selector = (By.CSS_SELECTOR, ".dataset-list-item-expanded .audio-sidecar-match")
+            field = wait.until(
+                lambda d: next((element for element in d.find_elements(*selector) if element.is_displayed()), False)
+            )
+            self.assertEqual(Select(field).first_selected_option.get_attribute("value"), "relative_path")
+            Select(field).select_by_value("stem")
+            wait.until(lambda d: d.execute_script("return Alpine.store('trainer').hasUnsavedChanges === true;"))
+            DatasetsTab(driver, base_url=self.base_url).save_datasets()
+            self.assertEqual(driver.execute_script("return Alpine.store('trainer').datasetValidationErrors;"), {})
+            saved = {dataset["id"]: dataset for dataset in json.loads(config_path.read_text())}
+            self.assertEqual(saved["embedded"]["source_dataset_id"], "video")
+            self.assertEqual(saved["embedded"]["audio"], embedded["audio"])
+            self.assertEqual(saved["sidecars"]["audio"], {"sample_rate": 22050, "sidecar_match": "stem"})
+            self.assertEqual(saved["video"]["s2v_datasets"], source["s2v_datasets"])
+            self.assertEqual(saved["video"]["audio"], source["audio"])
+
+        self.for_each_browser("test_audio_relationship_settings_survive_a_form_edit", scenario)
+
     def test_webshart_parquet_settings_edit_and_save(self) -> None:
         self.seed_defaults()
         config_path = self.config_dir / "default" / "multidatabackend.json"
+        cache_options = {
+            "cache_dir": "cache/prepared",
+            "metadata_cache_dir": "cache/metadata",
+            "shard_cache_dir": "cache/shards",
+            "shard_cache_gb": 0,
+            "parallel_downloads": 7,
+        }
         config_path.write_text(
             json.dumps(
                 [
@@ -2323,7 +3027,11 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
                         "source": "s3://images",
                         "caption_strategy": "webshart",
                         "metadata_backend": "webshart",
-                        "webshart": {"caption_key": "original"},
+                        "start_epoch": 1,
+                        "start_step": 1,
+                        "end_epoch": 5,
+                        "end_step": 200,
+                        "webshart": {"caption_key": "original", "optimize_captions": True, **cache_options},
                     }
                 ]
             ),
@@ -2354,12 +3062,34 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
                     name,
                 )
 
+            def schedule_field(name):
+                return WebDriverWait(driver, 10).until(
+                    EC.visibility_of_element_located(
+                        (
+                            By.CSS_SELECTOR,
+                            rf'.dataset-list-item-expanded input[x-model\.number\.lazy="editingDataset.{name}"]',
+                        )
+                    )
+                )
+
+            select_tab("Scheduling")
+            for name, value in (("start_epoch", "1"), ("start_step", "1"), ("end_epoch", "5"), ("end_step", "200")):
+                self.assertEqual(schedule_field(name).get_attribute("value"), value)
+            last_step = schedule_field("end_step")
+            last_step.clear()
+            last_step.send_keys("300", Keys.TAB)
             select_tab("Storage")
             selector = (By.CSS_SELECTOR, ".dataset-list-item-expanded .webshart-format")
             field = WebDriverWait(driver, 10).until(
                 lambda d: next((e for e in d.find_elements(*selector) if e.is_displayed()), False)
             )
             driver.execute_script("Alpine.store('trainer').hasUnsavedChanges = false;")
+            policy_selector = (By.CSS_SELECTOR, ".dataset-list-item-expanded .webshart-sampling-policy")
+            policy = WebDriverWait(driver, 10).until(EC.visibility_of_element_located(policy_selector))
+            Select(policy).select_by_value("shard_local")
+            WebDriverWait(driver, 5).until(
+                lambda d: d.execute_script("return Alpine.store('trainer').hasUnsavedChanges === true;")
+            )
             Select(field).select_by_value("parquet")
             manifest = WebDriverWait(driver, 10).until(
                 EC.visibility_of_element_located((By.CSS_SELECTOR, ".dataset-list-item-expanded .webshart-manifest"))
@@ -2384,11 +3114,18 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
             )
             datasets_tab.save_datasets()
             persisted = next(d for d in json.loads(config_path.read_text(encoding="utf-8")) if d["id"] == "webshart-parquet")
+            self.assertTrue(persisted["webshart"]["optimize_captions"])
             self.assertEqual(persisted["webshart"]["format"], "parquet")
+            self.assertEqual(persisted["webshart"]["sampling_policy"], "shard_local")
             self.assertEqual(persisted["webshart"]["manifest"], "combined/dataset.json")
             self.assertEqual(persisted["webshart"]["columns"], {"captions": "caption_text"})
+            for key, value in cache_options.items():
+                self.assertEqual(persisted["webshart"][key], value)
             self.assertEqual(persisted["aws_endpoint_url"], "https://storage.example")
             self.assertEqual(persisted["aws_session_token"], "example-session")
+            self.assertEqual(
+                [persisted[name] for name in ("start_epoch", "start_step", "end_epoch", "end_step")], [1, 1, 5, 300]
+            )
             WebDriverWait(driver, 5).until(
                 lambda d: d.execute_script("return Alpine.store('trainer').hasUnsavedChanges === false;")
             )
@@ -2399,9 +3136,14 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
             driver.execute_script(
                 "const toggle = document.querySelector('[data-dataset-id=\"webshart-parquet\"] .list-item-toggle'); if (toggle.getAttribute('aria-expanded') !== 'true') toggle.click();"
             )
+            select_tab("Scheduling")
+            self.assertEqual(schedule_field("end_step").get_attribute("value"), "300")
             select_tab("Storage")
             field = WebDriverWait(driver, 10).until(
                 lambda d: next((e for e in d.find_elements(*selector) if e.is_displayed()), False)
+            )
+            self.assertEqual(
+                Select(driver.find_element(*policy_selector)).first_selected_option.get_attribute("value"), "shard_local"
             )
             self.assertEqual(field.get_attribute("value"), "parquet")
             endpoint = WebDriverWait(driver, 10).until(
@@ -2417,6 +3159,15 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
                 )
             )
             self.assertEqual(endpoint.get_attribute("value"), "https://storage.example")
+            for key, value in cache_options.items():
+                cache_field = (
+                    driver.find_element(By.CSS_SELECTOR, f'.dataset-list-item-expanded input[x-model$=".webshart.{key}"]')
+                    if isinstance(value, str)
+                    else driver.find_element(
+                        By.CSS_SELECTOR, rf'.dataset-list-item-expanded input[x-model\.number$=".webshart.{key}"]'
+                    )
+                )
+                self.assertEqual(cache_field.get_attribute("value"), str(value))
             field = WebDriverWait(driver, 10).until(
                 lambda d: next((e for e in d.find_elements(*selector) if e.is_displayed()), False)
             )
@@ -2424,6 +3175,12 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
             WebDriverWait(driver, 5).until(
                 lambda d: d.execute_script("return Alpine.store('trainer').hasUnsavedChanges === true;")
             )
+
+            datasets_tab.save_datasets()
+            saved = next(d for d in json.loads(config_path.read_text()) if d["id"] == "webshart-parquet")
+            self.assertTrue(saved["webshart"]["optimize_captions"])
+            self.assertNotIn("manifest", saved["webshart"])
+            self.assertNotIn("columns", saved["webshart"])
 
         self.for_each_browser("test_webshart_parquet_settings_edit_and_save", scenario)
 
@@ -2873,7 +3630,7 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
             )
             self.assertIsInstance(dataset_id, str)
 
-            for field in ("text-cache-ondemand-storage-", "text-cache-disable-storage-"):
+            for field in ("text-cache-ondemand-storage-", "text-cache-disable-storage-", "text-cache-encode-only-storage-"):
                 WebDriverWait(driver, 10).until(
                     lambda d, prefix=field: d.execute_script(
                         "return !!document.getElementById(arguments[0] + arguments[1]);",
@@ -2900,7 +3657,7 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
                     "  ? comp.datasets.find((candidate) => candidate && candidate.id === arguments[0])"
                     "  : null;"
                     "return dataset && dataset.text_cache_ondemand === true"
-                    "  && dataset.text_cache_disable === true"
+                    "  && dataset.text_cache_disable === true && dataset.text_cache_encode_only === true"
                     "  && store && store.hasUnsavedChanges === true;",
                     dataset_id,
                 )

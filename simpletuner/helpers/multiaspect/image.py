@@ -1,5 +1,6 @@
 import logging
 import os
+from dataclasses import dataclass
 from math import sqrt
 from numbers import Real
 
@@ -11,6 +12,12 @@ from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger("MultiaspectImage")
 logger.setLevel(os.environ.get("SIMPLETUNER_IMAGE_PREP_LOG_LEVEL", "INFO"))
+
+
+@dataclass(frozen=True)
+class ImageGeometry:
+    alignment: int
+    rounding: int
 
 
 class MultiaspectImage:
@@ -27,14 +34,14 @@ class MultiaspectImage:
         return result if result > 0 else default
 
     @staticmethod
-    def _get_alignment(default: int = 1) -> int:
-        args = StateTracker.get_args()
+    def _get_alignment(default: int = 1, *, args=None) -> int:
+        args = StateTracker.get_args() if args is None else args
         align = getattr(args, "aspect_bucket_alignment", None) if args is not None else None
         return MultiaspectImage._coerce_positive_int(align, default)
 
     @staticmethod
-    def _get_rounding(default: int) -> int:
-        args = StateTracker.get_args()
+    def _get_rounding(default: int, *, args=None) -> int:
+        args = StateTracker.get_args() if args is None else args
         rounding = getattr(args, "aspect_bucket_rounding", None) if args is not None else None
         if isinstance(rounding, Real):
             rounding = int(rounding)
@@ -48,7 +55,7 @@ class MultiaspectImage:
         return rounding
 
     @staticmethod
-    def limit_canvas_size(width: int, height: int, max_size: int) -> dict:
+    def limit_canvas_size(width: int, height: int, max_size: int, *, geometry: ImageGeometry | None = None) -> dict:
         """
         Limit the canvas size to a maximum value.
         If the canvas size exceeds the maximum, it will be reduced proportionally.
@@ -68,7 +75,7 @@ class MultiaspectImage:
             # If the canvas size is already within limits, return the original dimensions.
             return {"width": width, "height": height, "canvas_size": width * height}
 
-        align = MultiaspectImage._get_alignment()
+        align = geometry.alignment if geometry is not None else MultiaspectImage._get_alignment()
         dims = [("width", width), ("height", height)]
 
         # Sort by size descending
@@ -126,7 +133,9 @@ class MultiaspectImage:
             raise ValueError(f"Unknown resolution type: {resolution_type}")
 
     @staticmethod
-    def calculate_new_size_by_pixel_edge(aspect_ratio: float, resolution: int, original_size: tuple):
+    def calculate_new_size_by_pixel_edge(
+        aspect_ratio: float, resolution: int, original_size: tuple, *, geometry: ImageGeometry | None = None
+    ):
         if type(aspect_ratio) != float:
             raise ValueError(f"Aspect ratio must be a float, not {type(aspect_ratio)}")
         if type(resolution) != int and (type(resolution) != float or int(resolution) != resolution):
@@ -149,8 +158,9 @@ class MultiaspectImage:
             W_target = int(H_target * aspect_ratio)
 
         # Round to nearest multiple
-        W_adjusted = MultiaspectImage._round_to_nearest_multiple(W_target)
-        H_adjusted = MultiaspectImage._round_to_nearest_multiple(H_target)
+        alignment = geometry.alignment if geometry is not None else None
+        W_adjusted = MultiaspectImage._round_to_nearest_multiple(W_target, alignment)
+        H_adjusted = MultiaspectImage._round_to_nearest_multiple(H_target, alignment)
 
         # Calculate intermediary size that maintains ORIGINAL aspect ratio
         # and is large enough to crop to target size
@@ -171,16 +181,19 @@ class MultiaspectImage:
                 H_initial = H_adjusted
                 W_initial = int(H_initial * original_aspect_ratio_raw)
 
-        adjusted_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio((W_adjusted, H_adjusted))
+        adjusted_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio((W_adjusted, H_adjusted), geometry=geometry)
 
         return (W_adjusted, H_adjusted), (W_initial, H_initial), adjusted_aspect_ratio
 
     @staticmethod
-    def calculate_new_size_by_pixel_area(aspect_ratio: float, megapixels: float, original_size: tuple):
+    def calculate_new_size_by_pixel_area(
+        aspect_ratio: float, megapixels: float, original_size: tuple, *, geometry: ImageGeometry | None = None
+    ):
         if type(aspect_ratio) not in [float, np.float64]:
             raise ValueError(f"Aspect ratio must be a float, not {type(aspect_ratio)}")
+        alignment = geometry.alignment if geometry is not None else None
         target_pixel_area = megapixels * 1e6  # Convert megapixels to pixel area, eg. 1.0 mp = 1000000 pixels
-        target_pixel_edge = MultiaspectImage._round_to_nearest_multiple(int(sqrt(target_pixel_area)))
+        target_pixel_edge = MultiaspectImage._round_to_nearest_multiple(int(sqrt(target_pixel_area)), alignment)
         logger.debug(
             f"Converted {megapixels} megapixels to {target_pixel_area} pixels with a square edge of {target_pixel_edge}."
         )
@@ -202,10 +215,10 @@ class MultiaspectImage:
             )
 
         # Calculate the target size. This is what will be cropped-to.
-        W_target = MultiaspectImage._round_to_nearest_multiple(target_pixel_edge * sqrt(aspect_ratio))
-        H_target = MultiaspectImage._round_to_nearest_multiple(target_pixel_edge / sqrt(aspect_ratio))
+        W_target = MultiaspectImage._round_to_nearest_multiple(target_pixel_edge * sqrt(aspect_ratio), alignment)
+        H_target = MultiaspectImage._round_to_nearest_multiple(target_pixel_edge / sqrt(aspect_ratio), alignment)
         calculated_resulting_megapixels = (W_target * H_target) / 1e6
-        target_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio((W_target, H_target))
+        target_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio((W_target, H_target), geometry=geometry)
 
         if not np.isclose(calculated_resulting_megapixels, megapixels, rtol=1e-1):
             logger.debug(
@@ -223,10 +236,12 @@ class MultiaspectImage:
             W_intermediary = int(H_intermediary * original_aspect_ratio_raw)
 
         # retrieve the static mapping.
-        adjusted_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio((W_target, H_target))
-        previously_stored_resolution = StateTracker.get_resolution_by_aspect(
-            dataloader_resolution=megapixels, aspect=adjusted_aspect_ratio
-        )
+        adjusted_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio((W_target, H_target), geometry=geometry)
+        previously_stored_resolution = None
+        if geometry is None:
+            previously_stored_resolution = StateTracker.get_resolution_by_aspect(
+                dataloader_resolution=megapixels, aspect=adjusted_aspect_ratio
+            )
 
         if previously_stored_resolution:
             logger.debug(
@@ -263,7 +278,7 @@ class MultiaspectImage:
             f"\n-> cropped sample will be {calculated_resulting_megapixels} megapixels"
         )
         # Attempt to retrieve previously stored resolution by adjusted aspect ratio
-        if not previously_stored_resolution:
+        if geometry is None and not previously_stored_resolution:
             logger.debug(
                 f"No cached resolution found for aspect ratio {adjusted_aspect_ratio}. Storing {target_resolution}."
             )
@@ -298,7 +313,7 @@ class MultiaspectImage:
         return W_initial, H_initial
 
     @staticmethod
-    def calculate_image_aspect_ratio(image, rounding: int = 2):
+    def calculate_image_aspect_ratio(image, rounding: int = 2, *, geometry: ImageGeometry | None = None):
         """
         Calculate the aspect ratio of an image and round it to a specified precision.
 
@@ -308,7 +323,7 @@ class MultiaspectImage:
         Returns:
             float: The rounded aspect ratio of the image.
         """
-        to_round = MultiaspectImage._get_rounding(rounding)
+        to_round = geometry.rounding if geometry is not None else MultiaspectImage._get_rounding(rounding)
         if isinstance(image, Image.Image):
             # An actual image was passed in.
             width, height = image.size

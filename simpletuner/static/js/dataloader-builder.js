@@ -267,7 +267,8 @@
             const booleanFields = ['crop', 'disabled', 'default', 'prepend_instance_prompt',
                                  'only_instance_prompt', 'vae_cache_clear_each_epoch',
                                  'vae_cache_ondemand', 'vae_cache_disable',
-                                 'text_cache_ondemand', 'text_cache_disable',
+                                 'text_cache_ondemand', 'text_cache_disable', 'text_cache_encode_only',
+                                 'text_cache_use_listing',
                                  'hash_filenames', 'preserve_data_backend_cache',
                                  'is_regularisation_data'];
 
@@ -419,6 +420,7 @@
                 write_batch_size: 128,
                 text_cache_ondemand: false,
                 text_cache_disable: false,
+                text_cache_encode_only: false,
                 disabled: false
             },
             image_embeds: {

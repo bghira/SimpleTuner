@@ -33,13 +33,13 @@ sudo nano /etc/exports
 ファイル末尾に次を追加します（`slave_ip` はスレーブの実 IP に置換）:
 
 ```
-/home/ubuntu/simpletuner/output slave_ip(rw,sync,no_subtree_check)
+~/simpletuner/output slave_ip(rw,sync,no_subtree_check)
 ```
 
 *複数スレーブやサブネット全体を許可する場合は次を使用できます:*
 
 ```
-/home/ubuntu/simpletuner/output subnet_ip/24(rw,sync,no_subtree_check)
+~/simpletuner/output subnet_ip/24(rw,sync,no_subtree_check)
 ```
 
 **3. 共有ディレクトリをエクスポート**
@@ -76,7 +76,7 @@ sudo apt install nfs-common
 ディレクトリが存在することを確認します（通常はセットアップにより既に存在します）:
 
 ```bash
-sudo mkdir -p /home/ubuntu/simpletuner/output
+sudo mkdir -p ~/simpletuner/output
 ```
 
 *注記:* 既存データがある場合はバックアップしてください。マウントすると既存内容は見えなくなります。
@@ -86,13 +86,13 @@ sudo mkdir -p /home/ubuntu/simpletuner/output
 マスターの共有ディレクトリをスレーブのローカルディレクトリにマウントします（`master_ip` はマスターの IP に置換）:
 
 ```bash
-sudo mount master_ip:/home/ubuntu/simpletuner/output /home/ubuntu/simpletuner/output
+sudo mount master_ip:~/simpletuner/output ~/simpletuner/output
 ```
 
 **4. マウントを確認**
 
 ```bash
-mount | grep /home/ubuntu/simpletuner/output
+mount | grep ~/simpletuner/output
 ```
 
 **5. 書き込み権限をテスト**
@@ -100,10 +100,10 @@ mount | grep /home/ubuntu/simpletuner/output
 書き込み権限があることを確認するためにテストファイルを作成します:
 
 ```bash
-touch /home/ubuntu/simpletuner/output/test_file_from_slave.txt
+touch ~/simpletuner/output/test_file_from_slave.txt
 ```
 
-その後、マスター側で `/home/ubuntu/simpletuner/output` にファイルが見えることを確認します。
+その後、マスター側で `~/simpletuner/output` にファイルが見えることを確認します。
 
 **6. マウントを永続化**
 
@@ -116,7 +116,7 @@ sudo nano /etc/fstab
 末尾に次の行を追加します:
 
 ```
-master_ip:/home/ubuntu/simpletuner/output /home/ubuntu/simpletuner/output nfs defaults 0 0
+master_ip:~/simpletuner/output ~/simpletuner/output nfs defaults 0 0
 ```
 
 ---
@@ -168,6 +168,12 @@ effective_batch_size = train_batch_size × num_gpus × gradient_accumulation_ste
 4. **自動オーバーサブスクリプション** - `--allow_dataset_oversubscription` を使って repeats を自動調整
 
 `--allow_dataset_oversubscription` フラグ（[OPTIONS.md](OPTIONS.md#--allow_dataset_oversubscription) 参照）は最小必要 repeats を自動計算して適用するため、プロトタイプや小規模データセットの実験に最適です。
+
+音声のみの学習でも、長さ別の各バケットをデータ並列ランクに分配します。同じレプリカ内のコンテキスト並列ランクは担当分を共有します。VAE の準備中にサンプルが学習インデックスから除外された場合は、次のサンプリングの前に保存済みのサンプルを再分配します。
+
+インデックス作成済みの Webshart Parquet キャプチャでネイティブサンプリングを使うと、各ランクは準備済みの採用サンプルのビューを開き、参照をバッチ単位で読み取ります。対応する画像クロップの幾何情報はシャードごとにディスクへキャッシュされます。このキャッシュは利用するランクがアクセスできる場所に置き、ソースオブジェクトとマニフェストを固定してください。チェックポイントから再開するときは、データセットのルール、シード、サンプリングポリシー、ランク数、バッチサイズ、勾配累積設定を揃えます。プリフェッチはバッチを一時保持し、チェックポイントは学習が消費したバッチを記録します。
+
+`shard_local` の対象となる未インデックスの Parquet 画像データセットでは、すべてのデータ並列ランクが隣接する最大 4 シャードの同じウィンドウを処理します。各ランクはグローバルバッチの担当分を受け取ります。ウィンドウの末尾では、勾配累積 1 回分に満たない各アスペクト比バケットの残りのサンプルを破棄します。再開時は保存されたウィンドウを開き、最後に消費したバッチの続きから読み取ります。
 
 ### 画像スキャン/ディスカバリが遅い場合
 
@@ -222,7 +228,7 @@ GPU の計算負荷は増えますが、キャッシュ潜在のストレージ�
 
 ## 🤗 Accelerate での設定
 
-`accelerate config`（`/home/user/.cache/huggingface/accelerate/default_config.yaml`）で SimpleTuner をデプロイする場合、これらの設定は `config/config.env` の内容より優先されます。
+`accelerate config`（`~/.cache/huggingface/accelerate/default_config.yaml`）で SimpleTuner をデプロイする場合、これらの設定は `config/config.env` の内容より優先されます。
 
 DeepSpeed を含まない Accelerate の default_config 例:
 

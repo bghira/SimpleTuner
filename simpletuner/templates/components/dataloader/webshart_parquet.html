@@ -3,6 +3,12 @@
     <select class="form-select form-select-sm webshart-format" x-model="{{ storage_dataset }}.webshart.format" @change="touchConnectionField({{ storage_dataset }})">
         <option value="tar">Tar</option><option value="parquet">Parquet</option>
     </select>
+    <label class="form-label small mt-2">Training sample order</label>
+    <select class="form-select form-select-sm webshart-sampling-policy" x-model="{{ storage_dataset }}.webshart.sampling_policy" @change="touchConnectionField({{ storage_dataset }})">
+        <option value="">Existing sampler</option>
+        <option value="global">Global shuffle</option>
+        <option value="shard_local">Shard-local shuffle</option>
+    </select>
     <div x-show="{{ storage_dataset }}.webshart.format === 'parquet'" class="mt-2">
         <label class="form-label small">Capture Manifest</label>
         <input class="form-control form-control-sm webshart-manifest" x-model="{{ storage_dataset }}.webshart.manifest" @input="touchConnectionField({{ storage_dataset }})" placeholder="combined/dataset.json">
@@ -30,5 +36,35 @@
         <input type="password" class="form-control form-control-sm" x-model="{{ storage_dataset }}.aws_session_token" @input="touchConnectionField({{ storage_dataset }})" autocomplete="off">
         <label class="form-label small mt-2">S3 Concurrent Requests</label>
         <input type="number" class="form-control form-control-sm" x-model.number="{{ storage_dataset }}.aws_max_pool_connections" @input="touchConnectionField({{ storage_dataset }})" min="1" placeholder="32">
+    </div>
+</div>
+
+<div class="row g-2 mt-2">
+    {% for key, label, placeholder in [
+        ('cache_dir', 'Cache Directory', 'cache/webshart/my-dataset'),
+        ('metadata_cache_dir', 'Metadata Cache Directory', ''),
+        ('shard_cache_dir', 'Shard Cache Directory', '')
+    ] %}
+    <div class="col-md-4">
+        <label class="form-label small">{{ label }}</label>
+        <input type="text" class="form-control form-control-sm"
+               x-model="{{ storage_dataset }}.webshart.{{ key }}"
+               @input="touchConnectionField({{ storage_dataset }})"
+               placeholder="{{ placeholder }}">
+    </div>
+    {% endfor %}
+    <div class="col-md-4">
+        <label class="form-label small">Shard Cache GB</label>
+        <input type="number" class="form-control form-control-sm" min="0" step="any"
+               x-model.number="{{ storage_dataset }}.webshart.shard_cache_gb"
+               @input="touchConnectionField({{ storage_dataset }})"
+               placeholder="25">
+    </div>
+    <div class="col-md-4">
+        <label class="form-label small">Parallel Downloads</label>
+        <input type="number" class="form-control form-control-sm" min="1" step="1"
+               x-model.number="{{ storage_dataset }}.webshart.parallel_downloads"
+               @input="touchConnectionField({{ storage_dataset }})"
+               placeholder="4">
     </div>
 </div>

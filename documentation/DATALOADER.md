@@ -73,7 +73,7 @@ Only valid for `dataset_type: "caption"` (singular). This optional object genera
 - `num_inference_steps` (default `40`), `guidance_scale` (default `1.0`), and `seed` (default `0`) configure inference. Qwen Image maps guidance to `true_cfg_scale`; values above one use an empty negative prompt. Validation guidance settings do not override this value.
 - `output_dir` (optional): defaults to `cache_dir/generated-captions/<id>`. Outputs are stored under a recipe fingerprint and reused on restart. The fingerprint includes captions, inference settings, resolved Hub revisions, and local weight file sizes/modification times. Keep local model files immutable while generating. Changing captions, model identity, or inference settings creates a separate cache; changing batch size does not.
 
-Generation uses the base model with adapters disabled and releases only a transformer it loaded for preprocessing. Source captions are not modified. Generation requires a single-process preparation run; multi-process runs with `data_generator` are rejected before caption ingestion. For distributed training, use the generated directories as ordinary `image` datasets with `caption_strategy: "textfile"`, one dataset per resolution, `crop: false`, `resolution_type: "pixel"`, and `resolution` set to that bucket's shorter edge. Plain caption datasets require `dataloader_prefetch=false` to preserve sampler checkpoint position. Changing caption lists, resolution buckets, or dataset topology requires a fresh training run; generation-cache reuse does not make such checkpoint resumes compatible.
+Generation uses the base model with adapters disabled and releases only a transformer it loaded for preprocessing. Source captions are not modified. Generation requires a single-process preparation run; multi-process runs with `data_generator` are rejected before caption ingestion. For distributed training, use the generated directories as ordinary `image` datasets with `caption_strategy: "textfile"`, one dataset per resolution, `crop: false`, `resolution_type: "pixel"`, and `resolution` set to that bucket's shorter edge. Caption datasets support `dataloader_prefetch: true` when every training dataset checkpoints its consumed position. This includes caption datasets, native Webshart schedules, and legacy image, video, and audio samplers that save consumed progress. Changing caption lists, resolution buckets, or dataset topology requires a fresh training run; generation-cache reuse does not make such checkpoint resumes compatible.
 
 For local caption discovery, the generated output directory must be outside the source `instance_data_dir`; overlapping directories are rejected before scanning.
 
@@ -132,6 +132,14 @@ For local caption discovery, the generated output directory must be outside the 
 - **Values:** `true` | `false`
 - **Description:** Skips full text-embedding pre-computation. Existing entries are read from this cache, while missing embeddings are encoded during training or validation and then written to the cache.
 - **Note:** Every image or video dataset assigned to this `text_embeds` backend inherits this behavior. To use different cache behavior for selected source datasets, create another `text_embeds` backend and assign it with the source dataset's `text_embeds` field.
+
+### `text_cache_encode_only`
+
+Set this boolean on a `text_embeds` backend to encode each training batch online. The encoder skips embedding file reads and writes, including existing entries. The default is `false`. To precompute embeddings, use a separate writable Local or AWS text-embedding backend.
+
+### `text_cache_use_listing`
+
+On an AWS `text_embeds` backend, set `text_cache_use_listing` to `true` to index existing objects under the cache prefix before offline preparation. This is useful when the cache is mostly populated. The index streams the listing to a temporary SQLite file in the run output directory. Workers with a shared output directory reuse one index for the store. A direct object lookup checks keys missing from the listing. Keep existing objects under that prefix in place until preparation completes. The default is `false`.
 
 ### `text_cache_disable`
 
@@ -221,6 +229,7 @@ This automatically creates a `my-videos_audio` dataset and links it via `s2v_dat
 |-------|------|---------|-------------|
 | `audio.auto_split` | bool | true | Auto-generate audio dataset from video files. Defaults to true when an `audio` section is present. For S2V-required models, defaults to true even without an `audio` section. |
 | `audio.source_from_video` | bool | false | (Auto-set) Indicates audio is extracted from video |
+| `audio.sidecar_match` | `stem` / `relative_path` | `stem` | Match the video filename stem in the audio root or match its path relative to the video root. Applies to standalone sidecar audio. |
 | `audio.allow_zero_audio` | bool | false | Generate zero-filled audio for videos without audio streams |
 | `audio.audio_only` | bool | false | Compatibility override for audio-only training; all-audio dataset configurations enable it automatically on LTX-2 and MiniMax-H3 |
 | `audio.target_resolution` | int | null | Legacy target resolution override; automatic fake streams use the model family's minimal token geometry |
@@ -838,6 +847,8 @@ In this example, the 512px dataset is used for steps 1-300, then the 1024px data
 - **Warning:** This is destructive and cannot be undone. Use with caution.
 - **Default:** Falls back to the trainer's `--delete_problematic_images` argument (default: `false`).
 
+For native Webshart views, VAE preparation records unreadable samples as exclusions in the prepared view. The source objects stay in R2.
+
 ### `delete_nsfw_images`
 
 - **Values:** `true` | `false`
@@ -924,8 +935,10 @@ See the [Troubleshooting](#troubleshooting-filtered-datasets) section below for 
 
 ### `vae_cache_clear_each_epoch`
 
-- When enabled, all VAE cache objects are deleted from the filesystem at the end of each dataset repeat cycle. This can be resource-intensive for large datasets, but combined with `crop_style=random` and/or `crop_aspect=random` you'll want this enabled to ensure you sample a full range of crops from each image.
-- In fact, this option is **enabled by default** when using random bucketing or crops.
+- Enable this option to rebuild the VAE cache at the start of each subsequent training epoch. With `crop: true` and `crop_style: random`, mutable datasets also refresh their random crops.
+- With this option disabled, training reuses the same crops and cached latents across epochs, including when random cropping is configured. Dataset repeats reuse cached latents within the same epoch in either mode.
+- Native Webshart Parquet image datasets with fixed target shapes and no paired conditioning inputs reuse the prepared view. The provider chooses new crop offsets as rows are read and encodes the corresponding VAE latents on demand. Epoch rollover deletes the previous epoch’s latents from this run’s cache.
+- When a mutable source recrops, conditioning datasets that copy its metadata inherit the new crop coordinates. Their cached latents are refreshed to match.
 
 ### `vae_cache_ondemand`
 
@@ -1119,6 +1132,8 @@ The older nested `filter_func.path.include` / `exclude` / `mode` form is still a
 ### `caption_filter_list`
 
 - **For text embed datasets only.** This may be a JSON list, a path to a txt file, or a path to a JSON document. Filter strings can be simple terms to remove from all captions, or they can be regular expressions. Additionally, sed-style `s/search/replace/` entries may be used to _replace_ strings in the caption rather than simply remove it.
+
+Filter files are read when the text embedding cache opens. Filtered cache keys use the text sent to the encoder. After upgrading, regenerate embeddings for caches configured with caption filters. If you disable filters on a cache populated by an earlier release, regenerate that cache as well.
 
 #### Example filter list
 
@@ -1445,7 +1460,13 @@ For a basic example of how to use a Hugging Face dataset, set `"type": "huggingf
 
 Caption lookups use Webshart's shard metadata cache instead of a dataset-wide SimpleTuner caption map. Legacy SimpleTuner caption JSON files remain on disk and are ignored. Runs using native Webshart captions omit inferred trigger-word statistics from checkpoint metadata.
 
-During VAE cache preparation, Webshart processes all aspect-bucket groups belonging to one shard before moving to the next shard. This reduces repeated shard downloads when the whole-shard cache cannot hold the dataset. Already-cached samples and samples assigned to other ranks are excluded before grouping; training sampler order is unchanged.
+With a native sampling policy, VAE preparation reads the accepted view in bounded, shape-compatible batches and partitions that work independently of the training order. The legacy VAE maintenance pass groups its pending work by shard.
+
+For native Parquet, the prepared membership index records accepted references, counts, and source pins. Reusable image geometry for supported crop policies is stored in Webshart's per-shard transform cache under `webshart.cache_dir`. Image bytes use the source or the separate whole-shard cache. A forced rescan publishes a new prepared revision after the scan succeeds. Replacement content invalidates exclusions for its shard. Reopen the dataset when the source catalogue fingerprint changes.
+
+SimpleTuner leaves automatic Webshart transform eviction disabled. The `.webshart-transforms` directory stores geometry only. A successful forced rescan starts a new cache generation, so repeated rescans can leave older generations on disk. With eligible epoch recrops, the provider reuses the prepared shape and derives the new crop when the sample is read.
+
+Set `text_cache_encode_only: true` on the bound text embedding entry to encode the current batch during training without accessing embedding files. For precomputation, use an independent writable Local or AWS text embedding store and point the image dataset's `text_embeds` field to it.
 
 Captions can be strings, native JSON objects, or mixed lists of both. Objects stay
 intact during caption lookup; each object becomes one JSON text prompt
@@ -1478,14 +1499,19 @@ Webshart datasets load WebDataset-style tar shards through the `webshart` packag
 - `metadata_backend` must be `webshart`; it reads dimensions and captions from Webshart metadata.
 - `caption_strategy` should be `webshart` to train from metadata captions, or `instanceprompt` to ignore stored captions.
 - `webshart.cache_dir` stores SimpleTuner metadata plus Webshart metadata and shard caches. `shard_cache_gb` and `parallel_downloads` are passed to Webshart's shard cache; set `shard_cache_gb` to `0` to disable whole-shard caching and retain indexed range reads.
+- With whole-shard caching enabled for remote Parquet, each backend keeps one cached shard reader open between reads. Allow extra disk space beyond `shard_cache_gb` for concurrent downloads and for shards that active readers still have locked. Webshart writes each download to a temporary file before evicting old shards.
+- Set `webshart.sampling_policy` to `global` to shuffle occurrences across each prepared aspect bucket, or to `shard_local` to keep batches near one another in storage. Shard locality reduces cache churn on remote datasets such as DataComp. Omit the field to use the existing sampler.
+- For a cold Parquet image dataset with `shard_local`, a fixed `max_train_steps`, `data_backend_sampling=uniform`, and on-demand text and latents, SimpleTuner prepares geometry from small shard windows as training reaches them. Text encoding runs on scheduled batches. Incomplete global batches are dropped at each window boundary. Existing prepared indexes, global shuffle, automatic weighting, and offline cache preparation use indexed membership.
+- With a native Webshart sampling policy, `scan_for_errors` checks VAE entries belonging to the prepared view in bounded batches. Set `vae_cache_scan_behaviour` to `recreate` to remove loaded latents with invalid values or spatial dimensions from the configured artifact store. The prepared view is immutable.
+- Indexed preparation writes the accepted membership to disk. Reserve space for the accepted geometry and index. Native VAE and conditioning-image cache keys include source content, prepared geometry and encoder settings. Changing model weights or switching from the legacy sampler can require rebuilding these image artifacts. Caption embedding keys retain their existing format.
 - `webshart.caption_key` optionally selects caption fields: use `"long_caption"` for one key or `["long_caption", "short_caption"]` to collect multiple keys in order. Keys are literal names, checked in the sample’s JSON metadata, then its indexed metadata, then named entries inside their `captions` dictionaries; the first location containing a key wins. String and list values become caption variants, rather than being joined into one prompt. Missing or empty values are ignored; with `caption_strategy: "webshart"`, samples with no selected captions are skipped, even if they have default captions or a `.txt` sidecar. Omitting the option keeps the default caption lookup. JSON sidecars are read when their contents are absent from the index. Caption and bucket caches are separated by the configured selector. In the WebUI’s Webshart settings, enter one key per line. JSON sidecar reads use the configured Webshart shard cache; caption lookup does not decode or materialize image payloads.
 - `webshart_optimize_captions` (alt spelling `webshart_optimise_captions`; also accepted as `optimize_captions`/`optimise_captions` inside the `webshart` block) probes the caption layout at startup and, when captions live in `.txt`/`.json` sidecar tar members rather than the metadata index, folds them into the local Webshart metadata cache once. Without it, sidecar-caption datasets (for example `laion/conceptual-captions-12m-webdataset`) pay one range read per sample every time captions are enumerated — startup, checkpointing, and model card generation. Datasets whose metadata already embeds captions skip the coalescing automatically.
 
 #### Parquet image bytes on S3
 
-Set `webshart.format` to `parquet` to read embedded image bytes from local, Hub, or S3-compatible Parquet shards. S3 sources use `s3://bucket` or `s3://bucket/prefix`; `webshart.manifest` optionally selects a capture descriptor relative to that source. Requires webshart 0.8.0 or later for native S3 and capture-manifest support.
+Set `webshart.format` to `parquet` to read embedded image bytes from local, Hub, or S3-compatible Parquet shards. S3 sources use `s3://bucket` or `s3://bucket/prefix`; `webshart.manifest` optionally selects a capture descriptor relative to that source. SimpleTuner requires Webshart 0.9.1 or later.
 
-`webshart.columns` maps `image`, `captions`, `width`, and `height` to source column names; omitted names use those defaults. Images can be binary columns or structs containing `bytes`. Captured `url_status != "ok"` and empty `stored_bytes` rows are excluded without changing physical row IDs. Missing dimensions are excluded from bucketing. Original URLs are not fetched. A successful capture status does not guarantee that the full image will decode; batch reads skip corrupt images.
+`webshart.columns` maps `image`, `captions`, `width`, and `height` to source column names; omitted names use those defaults. Images can be binary columns or structs containing `bytes`. Captured `url_status != "ok"` and empty `stored_bytes` rows are excluded without changing physical row IDs. Missing dimensions are excluded from bucketing. Original URLs are not fetched. A successful capture status does not guarantee that the full image will decode. On-demand VAE encoding stops training and identifies the unreadable sample. During indexed native VAE preparation, enable `delete_problematic_images` to exclude unreadable samples from the prepared view.
 
 Use the existing top-level `aws_region_name`, `aws_endpoint_url`, `aws_access_key_id`, `aws_secret_access_key`, `aws_session_token`, and `aws_max_pool_connections` settings. The endpoint excludes the bucket; concurrent S3 requests default to 32. Omit keys to use AWS environment variables, web identity, or container/instance roles. Shared profile files are not supported by this native transport. Credentials are omitted from worker representations; export AWS credentials in subprocess environments when needed.
 

@@ -1,0 +1,8 @@
+<label class="form-label small">Sidecar Layout</label>
+<select class="form-select form-select-sm audio-sidecar-match"
+        x-model="{{ audio_dataset }}.audio.sidecar_match"
+        @change="markAsUnsaved()">
+    <option value="">Match filename stem (default)</option>
+    <option value="stem">Match filename stem</option>
+    <option value="relative_path">Match relative path</option>
+</select>

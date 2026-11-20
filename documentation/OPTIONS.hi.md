@@ -2914,13 +2914,9 @@ options:
                         files. This will save substantial disk space, but may
                         slow down the training process
   --aspect_bucket_disable_rebuild [ASPECT_BUCKET_DISABLE_REBUILD]
-                        When using a randomised aspect bucket list, the VAE
-                        and aspect cache are rebuilt on each epoch. With a
-                        large and diverse enough dataset, rebuilding the
-                        aspect list may take a long time, and this may be
-                        undesirable. This option will not override
-                        vae_cache_clear_each_epoch. If both options are
-                        provided, only the VAE cache will be rebuilt
+                        Skip random aspect bucket rebuilding for datasets
+                        with vae_cache_clear_each_epoch enabled. The VAE
+                        cache still refreshes each epoch for those datasets.
   --keep_vae_loaded [KEEP_VAE_LOADED]
                         If set, will keep the VAE loaded in memory. This can
                         reduce disk churn, but consumes VRAM during the
@@ -3195,7 +3191,7 @@ options:
 
 `--distillation_method=assistant_lora` कैप्शन डेटासेट से, अडैप्टर बंद रखकर हर बार बनाए गए बेस मॉडल आउटपुट पर सकारात्मक सहायक अडैप्टर प्रशिक्षित करता है। प्रारंभिक समर्थन Qwen Image 2.1 के लिए है। `distillation_config.assistant_lora` में `num_inference_steps` (40), `resolutions` (`[[1024, 1024]]`, पहले चौड़ाई फिर ऊँचाई, 32 के गुणज) और `seed` (42) हैं। टेक्स्ट एम्बेडिंग पहले कैश होनी चाहिए; अंतिम लेटेंट कैश नहीं होते। [Qwen गाइड](quickstart/QWEN_IMAGE_2-1.hi.md) देखें।
 
-कैप्शन डेटासेट के लिए `dataloader_prefetch: false` आवश्यक है, ताकि चेकपॉइंट कर्सर उपयोग किए गए कैप्शन को दर्शाए। पुनः शुरू करते समय कैप्शन पहचान या पाठ, बैच, दोहराव, शफ़ल, बीज, ग्रेडिएंट संचय या वितरित व्यवस्था में बदलाव स्वीकार नहीं होते। सहायक LoRA के चेकपॉइंट जनरेशन बीज, रिज़ॉल्यूशन सूची या शिक्षक के इन्फरेंस चरणों में बदलाव भी अस्वीकार करते हैं।
+कैप्शन डेटासेट `dataloader_prefetch: true` का समर्थन करते हैं जब सभी प्रशिक्षण डेटासेट चेकपॉइंट में उपयोग किए गए बैचों की स्थिति सहेजते हैं। इसमें कैप्शन डेटासेट, Webshart का नेटिव शेड्यूल और उपयोग किए गए बैचों की स्थिति सहेजने वाले पारंपरिक इमेज, वीडियो और ऑडियो सैम्पलर शामिल हैं। पुनः शुरू करते समय कैप्शन पहचान या पाठ, बैच, दोहराव, शफ़ल, बीज, ग्रेडिएंट संचय या वितरित व्यवस्था में बदलाव स्वीकार नहीं होते। सहायक LoRA के चेकपॉइंट जनरेशन बीज, रिज़ॉल्यूशन सूची या शिक्षक के इन्फरेंस चरणों में बदलाव भी अस्वीकार करते हैं।
 
 Assistant LoRA और AnyFlow, teacher, training और validation variants के लिए Dynamo की प्रति-code compile-cache सीमा अस्थायी रूप से कम से कम 32 करते हैं। उपयोगकर्ता की अधिक सीमा बनी रहती है; बाहर निकलने पर, त्रुटि होने पर भी, मूल सीमा बहाल होती है।
 

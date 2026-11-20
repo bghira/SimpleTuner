@@ -496,6 +496,8 @@ python scripts/generate_s2v_audio.py \
     --strip-audio
 ```
 
+このスクリプトはサブディレクトリも検索します。既定では、動画のファイル名（拡張子なし）に対応する音声を同じ出力ディレクトリに保存します。動画と同じディレクトリ構造で保存するには `--sidecar-match relative_path` を指定し、音声データセットに `audio.sidecar_match: relative_path` を設定します。たとえば `speaker-a/clip.mp4` に対応する音声は `speaker-a/clip.wav` です。2 つの入力の出力先が同じ場合、音声の抽出や削除を始める前に停止します。
+
 スクリプトは:
 - 16kHz モノラル WAV で音声を抽出 (Wav2Vec2 のネイティブサンプルレート)
 - ファイル名を自動的に一致させます (例: `video.mp4` -> `video.wav`)

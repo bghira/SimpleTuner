@@ -33,13 +33,13 @@ sudo nano /etc/exports
 फ़ाइल के अंत में यह लाइन जोड़ें (`slave_ip` को अपने slave मशीन के IP से बदलें):
 
 ```
-/home/ubuntu/simpletuner/output slave_ip(rw,sync,no_subtree_check)
+~/simpletuner/output slave_ip(rw,sync,no_subtree_check)
 ```
 
 *यदि कई slaves या पूरा subnet allow करना हो, तो उपयोग करें:*
 
 ```
-/home/ubuntu/simpletuner/output subnet_ip/24(rw,sync,no_subtree_check)
+~/simpletuner/output subnet_ip/24(rw,sync,no_subtree_check)
 ```
 
 **3. Shared Directory Export करें**
@@ -76,7 +76,7 @@ sudo apt install nfs-common
 सुनिश्चित करें कि डायरेक्टरी मौजूद है (यह आपके setup के अनुसार पहले से होनी चाहिए):
 
 ```bash
-sudo mkdir -p /home/ubuntu/simpletuner/output
+sudo mkdir -p ~/simpletuner/output
 ```
 
 *Note:* यदि डायरेक्टरी में डेटा है, बैकअप लें, क्योंकि mounting से existing contents छिप जाएंगे।
@@ -86,7 +86,7 @@ sudo mkdir -p /home/ubuntu/simpletuner/output
 master की shared डायरेक्टरी को slave की लोकल डायरेक्टरी पर माउंट करें (`master_ip` को master के IP से बदलें):
 
 ```bash
-sudo mount master_ip:/home/ubuntu/simpletuner/output /home/ubuntu/simpletuner/output
+sudo mount master_ip:~/simpletuner/output ~/simpletuner/output
 ```
 
 **4. Mount सत्यापित करें**
@@ -94,7 +94,7 @@ sudo mount master_ip:/home/ubuntu/simpletuner/output /home/ubuntu/simpletuner/ou
 जाँचें कि mount सफल हुआ है:
 
 ```bash
-mount | grep /home/ubuntu/simpletuner/output
+mount | grep ~/simpletuner/output
 ```
 
 **5. Write Access टेस्ट करें**
@@ -102,10 +102,10 @@ mount | grep /home/ubuntu/simpletuner/output
 write permissions की पुष्टि के लिए test file बनाएँ:
 
 ```bash
-touch /home/ubuntu/simpletuner/output/test_file_from_slave.txt
+touch ~/simpletuner/output/test_file_from_slave.txt
 ```
 
-फिर master मशीन पर देखें कि फ़ाइल `/home/ubuntu/simpletuner/output` में दिख रही है या नहीं।
+फिर master मशीन पर देखें कि फ़ाइल `~/simpletuner/output` में दिख रही है या नहीं।
 
 **6. Mount को स्थायी बनाएं**
 
@@ -118,7 +118,7 @@ sudo nano /etc/fstab
 अंत में यह लाइन जोड़ें:
 
 ```
-master_ip:/home/ubuntu/simpletuner/output /home/ubuntu/simpletuner/output nfs defaults 0 0
+master_ip:~/simpletuner/output ~/simpletuner/output nfs defaults 0 0
 ```
 
 ---
@@ -170,6 +170,12 @@ effective_batch_size = train_batch_size × num_gpus × gradient_accumulation_ste
 4. **Automatic oversubscription सक्षम करें** - repeats स्वतः समायोजित करने के लिए `--allow_dataset_oversubscription` उपयोग करें
 
 `--allow_dataset_oversubscription` फ़्लैग ([OPTIONS.md](OPTIONS.md#--allow_dataset_oversubscription) में दस्तावेज़ित) आपके कॉन्फ़िगरेशन के लिए न्यूनतम आवश्यक repeats को स्वतः गणना और लागू करता है, जिससे यह prototyping या छोटे datasets के लिए आदर्श बनता है।
+
+केवल ऑडियो वाले प्रशिक्षण में भी हर अवधि बकेट के नमूने डेटा-पैरेलल रैंक में बाँटे जाते हैं। एक ही रेप्लिका के कॉन्टेक्स्ट-पैरेलल रैंक अपना हिस्सा साझा करते हैं। यदि VAE तैयार करते समय प्रशिक्षण इंडेक्स से नमूने हटते हैं, तो सैंपलिंग से पहले सहेजे गए नमूने फिर से रैंक में बाँटे जाते हैं।
+
+पहले से इंडेक्स किए गए Webshart Parquet कैप्चर में नेटिव सैंपलिंग के साथ हर रैंक तैयार सदस्यता व्यू खोलकर संदर्भों के बैच पढ़ता है। समर्थित इमेज क्रॉप की ज्यामिति डिस्क पर शार्ड के अनुसार कैश होती है। यह कैश ऐसे स्टोरेज पर रखें जिसे संबंधित रैंक खोल सकें। स्रोत ऑब्जेक्ट और मैनिफ़ेस्ट स्थिर रखें। चेकपॉइंट से जारी रखते समय डेटासेट के नियम, सीड, सैंपलिंग नीति, रैंक की संख्या, बैच साइज़ और ग्रेडिएंट अक्युमुलेशन की सेटिंग एक जैसी रखें। प्रीफ़ेच बैचों को बफ़र करता है। चेकपॉइंट उन बैचों को दर्ज करता है जिन्हें प्रशिक्षण ने इस्तेमाल किया।
+
+`shard_local` के लिए योग्य, बिना इंडेक्स वाले Parquet इमेज डेटासेट में सभी डेटा-पैरेलल रैंक एक ही विंडो पढ़ते हैं। हर विंडो में अधिकतम चार आसन्न शार्ड होते हैं और हर रैंक को प्रत्येक ग्लोबल बैच का अपना हिस्सा मिलता है। विंडो के अंत में हर आस्पेक्ट बकेट के वे नमूने छोड़ दिए जाते हैं जिनसे ग्रेडिएंट अक्युमुलेशन का पूरा चक्र नहीं बनता। प्रशिक्षण फिर शुरू करने पर सहेजी गई विंडो खुलती है और आखिरी इस्तेमाल किए गए बैच के बाद से पढ़ाई जारी रहती है।
 
 ### Slow image scan / discovery
 
@@ -224,7 +230,7 @@ Ideally, सभी इमेजेस और embeds किसी cloud storage b
 
 ## 🤗 Accelerate के जरिए कॉन्फ़िगरेशन
 
-जब `accelerate config` (`/home/user/.cache/huggingface/accelerate/default_config.yaml`) का उपयोग करके SimpleTuner चलाते हैं, तो ये विकल्प `config/config.env` की सामग्री पर प्राथमिकता लेते हैं।
+जब `accelerate config` (`~/.cache/huggingface/accelerate/default_config.yaml`) का उपयोग करके SimpleTuner चलाते हैं, तो ये विकल्प `config/config.env` की सामग्री पर प्राथमिकता लेते हैं।
 
 DeepSpeed के बिना Accelerate के लिए एक उदाहरण default_config:
 
