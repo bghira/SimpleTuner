@@ -1643,9 +1643,11 @@ class MetadataBackend:
         num_cpus = 8
         files_split = np.array_split(new_files, num_cpus)
 
-        metadata_updates_queue = Queue()
-        tqdm_queue = Queue()
-        worker_cls = Process if self.runtime_args.enable_multiprocessing else Thread
+        use_multiprocessing = self.runtime_args.enable_multiprocessing
+        queue_cls = Queue if use_multiprocessing else ThreadQueue
+        metadata_updates_queue = queue_cls()
+        tqdm_queue = queue_cls()
+        worker_cls = Process if use_multiprocessing else Thread
         workers = [
             worker_cls(
                 target=self._bucket_worker,
@@ -1655,6 +1657,7 @@ class MetadataBackend:
                     None,  # no bucket updates
                     metadata_updates_queue,
                     None,  # no written files tracking
+                    None,  # filtered files are handled by the worker
                     existing_files_set,
                 ),
             )
@@ -1670,7 +1673,8 @@ class MetadataBackend:
             leave=False,
             ncols=125,
         ) as pbar:
-            while any(worker.is_alive() for worker in workers):
+
+            def drain_updates():
                 while not tqdm_queue.empty():
                     pbar.update(tqdm_queue.get())
 
@@ -1680,8 +1684,11 @@ class MetadataBackend:
                     if type(metadata_update) == dict:
                         self.enqueue_prepared_metadata(metadata_update)
 
-        for worker in workers:
-            worker.join()
+            while any(worker.is_alive() for worker in workers):
+                drain_updates()
+            for worker in workers:
+                worker.join()
+            drain_updates()
 
         self.flush_prepared_metadata()
         self.save_cache(enforce_constraints=True)

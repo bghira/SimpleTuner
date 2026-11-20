@@ -84,6 +84,28 @@ class TestMetadataBackend(unittest.TestCase):
         records = list(self.metadata_backend.get_metadata_batch(["two.jpg", "missing.jpg", "one.jpg", "two.jpg"]))
         self.assertEqual(records, [{"target_size": [64, 64]}, None, {"target_size": [128, 64]}, {"target_size": [64, 64]}])
 
+    def test_scan_for_metadata_records_new_files(self):
+        """A metadata-only scan stores what its workers produce."""
+        new_files = [f"image_{index}.png" for index in range(20)]
+
+        def process(file, buckets, metadata_updates=None, **kwargs):
+            metadata_updates[str(file)] = {"original_size": (512, 256)}
+            return buckets
+
+        StateTracker.set_args(MagicMock(enable_multiprocessing=False))
+        self.metadata_backend.image_metadata = {}
+        with (
+            patch.object(self.metadata_backend, "load_image_metadata"),
+            patch.object(self.metadata_backend, "_discover_new_files", return_value=new_files),
+            patch.object(self.metadata_backend, "_process_for_bucket", side_effect=process),
+            patch.object(self.metadata_backend, "save_image_metadata") as save_image_metadata,
+            patch.object(self.metadata_backend, "save_cache"),
+        ):
+            self.metadata_backend.scan_for_metadata()
+
+        self.assertEqual(sorted(self.metadata_backend.image_metadata), sorted(new_files))
+        save_image_metadata.assert_called_once()
+
     def test_probe_image_dimensions_applies_exif_orientation(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             image_path = Path(tmpdir) / "oriented.jpg"
