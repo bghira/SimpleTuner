@@ -19,6 +19,10 @@ def _configure_rank_local_inductor_cache() -> None:
 
 _configure_rank_local_inductor_cache()
 
+# The CLI and the server set this for their own fast startup and every child inherits it. A trainer
+# that keeps it runs without torch.distributed helpers, so ranks stop broadcasting to each other.
+environ.pop("SIMPLETUNER_SKIP_TORCH", None)
+
 # Import WebhookLogger setup FIRST before creating any loggers
 from simpletuner.helpers.logging import get_logger
 
