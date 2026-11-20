@@ -3031,7 +3031,7 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
                         "start_step": 1,
                         "end_epoch": 5,
                         "end_step": 200,
-                        "webshart": {"caption_key": "original", **cache_options},
+                        "webshart": {"caption_key": "original", "optimize_captions": True, **cache_options},
                     }
                 ]
             ),
@@ -3114,6 +3114,7 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
             )
             datasets_tab.save_datasets()
             persisted = next(d for d in json.loads(config_path.read_text(encoding="utf-8")) if d["id"] == "webshart-parquet")
+            self.assertTrue(persisted["webshart"]["optimize_captions"])
             self.assertEqual(persisted["webshart"]["format"], "parquet")
             self.assertEqual(persisted["webshart"]["sampling_policy"], "shard_local")
             self.assertEqual(persisted["webshart"]["manifest"], "combined/dataset.json")
@@ -3174,6 +3175,12 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
             WebDriverWait(driver, 5).until(
                 lambda d: d.execute_script("return Alpine.store('trainer').hasUnsavedChanges === true;")
             )
+
+            datasets_tab.save_datasets()
+            saved = next(d for d in json.loads(config_path.read_text()) if d["id"] == "webshart-parquet")
+            self.assertTrue(saved["webshart"]["optimize_captions"])
+            self.assertNotIn("manifest", saved["webshart"])
+            self.assertNotIn("columns", saved["webshart"])
 
         self.for_each_browser("test_webshart_parquet_settings_edit_and_save", scenario)
 
