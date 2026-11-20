@@ -65,7 +65,7 @@ from simpletuner.helpers.data_backend.caption_sampler import CaptionSampler
 from simpletuner.helpers.data_backend.csv_url_list import CSVDataBackend
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.data_backend.dataset_types import get_arg_value as _get_arg_value
-from simpletuner.helpers.data_backend.dataset_types import resolve_dataset_train_batch_size
+from simpletuner.helpers.data_backend.dataset_types import resolve_dataset_train_batch_size, selected_dataset_ids
 from simpletuner.helpers.data_backend.filters import resolve_filter_config
 from simpletuner.helpers.data_backend.huggingface import HuggingfaceDatasetsBackend
 from simpletuner.helpers.data_backend.local import LocalDataBackend
@@ -2941,6 +2941,8 @@ class FactoryRegistry:
             skip_bucket_split: If True, skip split_buckets_between_processes (used for audio-only datasets).
         """
         metadata = init_backend["metadata_backend"]
+        eval_ids = selected_dataset_ids(_get_arg_value(self.args, "eval_dataset_id"))
+        skip_bucket_split = skip_bucket_split or init_backend["id"] in eval_ids
         if isinstance(metadata, AlignedConditioningMetadata):
             self._handle_config_versioning(backend, init_backend)
             return
@@ -3035,7 +3037,7 @@ class FactoryRegistry:
                 target=init_backend["dataset_runtime"],
             )
             if skip_bucket_split:
-                info_log(f"(id={init_backend['id']}) Skipping bucket split for audio-only dataset.")
+                info_log(f"(id={init_backend['id']}) Keeping the complete dataset for this rank.")
             elif not getattr(init_backend["metadata_backend"], "read_only", False):
                 init_backend["metadata_backend"].split_buckets_between_processes(
                     gradient_accumulation_steps=self.args.gradient_accumulation_steps,
@@ -3058,7 +3060,7 @@ class FactoryRegistry:
                     )
         else:
             if skip_bucket_split:
-                info_log(f"(id={init_backend['id']}) Skipping bucket split for audio-only dataset.")
+                info_log(f"(id={init_backend['id']}) Keeping the complete dataset for this rank.")
             else:
                 init_backend["metadata_backend"].split_buckets_between_processes(
                     gradient_accumulation_steps=self.args.gradient_accumulation_steps,

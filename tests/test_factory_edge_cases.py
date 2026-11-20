@@ -1970,7 +1970,9 @@ class TestFactoryEdgeCases(unittest.TestCase):
             ("fixed_steps", 100, False, None, False),
             ("oversubscribed_fixed_steps", 100, True, None, True),
             ("epoch_driven", 0, False, None, True),
-            ("separate_validation_dataset", 100, False, "held-out", False),
+            ("separate_validation_dataset", 100, False, "train-held-out", False),
+            ("held_out_by_name", 100, False, "train", None),
+            ("held_out_by_list", 100, False, ["train"], None),
         )
         for name, max_train_steps, allow_oversubscription, eval_dataset_id, expected in cases:
             with self.subTest(name=name):
@@ -1992,6 +1994,9 @@ class TestFactoryEdgeCases(unittest.TestCase):
                     conditioning_type=None,
                 )
 
+                if expected is None:
+                    metadata_backend.split_buckets_between_processes.assert_not_called()
+                    continue
                 metadata_backend.split_buckets_between_processes.assert_called_once_with(
                     gradient_accumulation_steps=factory.args.gradient_accumulation_steps,
                     apply_padding=expected,
