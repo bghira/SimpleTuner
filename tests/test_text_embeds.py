@@ -210,6 +210,25 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
             cache.read_training_batch(["missing"])
         cache.model.encode_text_batch.assert_not_called()
 
+    def test_direct_prompt_batch_returns_cache_misses_on_the_same_device_as_hits(self):
+        cache = _make_cache(TextEmbedCacheKey.CAPTION, text_cache_ondemand=True)
+        cache.accelerator.device = torch.device("meta")
+        cache.model.TEXT_ENCODER_CONFIGURATION = {"text_encoder": {}}
+        cache.model.encode_text_batch = MagicMock(return_value={"prompt_embeds": torch.ones(1, 2)})
+        cache.model.unpack_text_embeddings_from_cache = lambda value: value
+        cache.model.collate_prompt_embeds = lambda rows: {"prompt_embeds": torch.cat([row["prompt_embeds"] for row in rows])}
+        cache.load_from_cache = MagicMock(side_effect=[{"prompt_embeds": torch.zeros(1, 2)}, FileNotFoundError()])
+        cache.save_to_cache = MagicMock()
+
+        mixed = cache.compute_embeddings_for_prompts(["hit", "miss"])
+
+        torch.testing.assert_close(mixed["prompt_embeds"], torch.tensor([[0.0, 0.0], [1.0, 1.0]]))
+        for encode_only, load_from_cache in ((False, False), (True, True)):
+            with self.subTest(encode_only=encode_only, load_from_cache=load_from_cache):
+                cache.text_cache_encode_only = encode_only
+                direct = cache.compute_embeddings_for_prompts(["encode"], load_from_cache=load_from_cache)
+                self.assertEqual(direct["prompt_embeds"].device, cache.accelerator.device)
+
     def test_online_mixed_hits_batch_misses_preserve_context_duplicates_and_read_only(self):
         cache = _make_cache(TextEmbedCacheKey.DATASET_AND_FILENAME, text_cache_disable=True, text_encoder_batch_size=2)
         contexts = [{"image_path": f"{index}.jpg"} for index in range(3)]
