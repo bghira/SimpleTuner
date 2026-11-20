@@ -62,6 +62,7 @@ from simpletuner.helpers.metadata.preparation import (
     DatasetDescription,
     DatasetReadView,
     PreparationView,
+    ValidationCursor,
     bucket_groups_from_events,
 )
 from simpletuner.helpers.multiaspect.image import ImageGeometry, MultiaspectImage
@@ -501,6 +502,8 @@ class WebshartMetadataBackend(MetadataBackend):
         raise ValueError("Missing aspect_ratio_bucket_indices in Webshart bucket metadata.")
 
     def open_validation(self):
+        if not self.native_policy:
+            return ValidationCursor(self.iter_validation_cycles)
         return IndexedValidationCursor(self._open_membership, self._check_publication)
 
     def iter_validation_cycles(self):

@@ -6,7 +6,8 @@ import os
 from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
-from itertools import batched, groupby
+from heapq import nsmallest
+from itertools import batched, chain, groupby, islice
 from operator import itemgetter
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -14,6 +15,60 @@ from typing import Protocol
 
 from atomicwrites import atomic_write
 from filelock import FileLock
+
+
+class BucketValidationCursor:
+    """Page through current bucket membership in path order, including after a rescan."""
+
+    def __init__(self, metadata):
+        self.metadata = metadata
+        self.after = None
+
+    def close(self):
+        self.after = None
+
+    def next_refs(self, limit):
+        if limit <= 0:
+            return []
+        buckets = self.metadata.aspect_ratio_bucket_indices
+        refs = chain.from_iterable(buckets.values())
+        selected = nsmallest(limit, (ref for ref in refs if self.after is None or ref > self.after))
+        if len(selected) < limit and self.after is not None:
+            refs = chain.from_iterable(buckets.values())
+            selected.extend(nsmallest(limit - len(selected), (ref for ref in refs if ref <= self.after)))
+        self.after = selected[-1] if selected else None
+        return selected
+
+
+class ValidationCursor:
+    """Keep validation order and wraparound independent of training progress."""
+
+    def __init__(self, iter_cycles):
+        self.iter_cycles = iter_cycles
+        self.cycles = None
+        self.refs = None
+        self.position = 0
+
+    def close(self):
+        if self.cycles is not None:
+            self.cycles.close()
+        self.cycles = self.refs = None
+        self.position = 0
+
+    def next_refs(self, limit):
+        if limit <= 0:
+            return []
+        if self.cycles is None:
+            self.cycles = self.iter_cycles()
+            self.refs = next(self.cycles)
+        selected = list(islice(self.refs, limit))
+        self.position += len(selected)
+        if len(selected) < limit:
+            remaining = min(self.position, limit) - len(selected)
+            self.refs = next(self.cycles)
+            selected.extend(islice(self.refs, remaining))
+            self.position = remaining
+        return selected
 
 
 @dataclass(frozen=True)

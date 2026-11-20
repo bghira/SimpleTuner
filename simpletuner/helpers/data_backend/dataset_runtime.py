@@ -8,7 +8,7 @@ import random
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
-from itertools import batched, islice
+from itertools import batched
 from typing import Any
 
 import numpy as np
@@ -291,7 +291,7 @@ class DatasetRuntime:
     def open_validation(self):
         if self.uses_native_schedule:
             return self.epoch_provider.open_validation()
-        return ValidationCursor(self.metadata_backend.iter_validation_cycles)
+        return self.metadata_backend.open_validation()
 
     def read_sample_images(self, sample_refs, *, allow_missing=False):
         refs = list(sample_refs)
@@ -561,37 +561,6 @@ class DatasetRuntime:
         with self.metadata_backend.open_preparation_view(worker=worker, workers=workers) as view:
             captions = self.iter_caption_records(view, batch_size=batch_size, on_missing_caption=on_missing_caption)
             yield from builder.records(captions, read_metadata=view.metadata.get_metadata_by_filepath)
-
-
-class ValidationCursor:
-    """Keep validation order and wraparound independent of training progress."""
-
-    def __init__(self, iter_cycles):
-        self.iter_cycles = iter_cycles
-        self.cycles = None
-        self.refs = None
-        self.position = 0
-
-    def close(self):
-        if self.cycles is not None:
-            self.cycles.close()
-        self.cycles = self.refs = None
-        self.position = 0
-
-    def next_refs(self, limit):
-        if limit <= 0:
-            return []
-        if self.cycles is None:
-            self.cycles = self.iter_cycles()
-            self.refs = next(self.cycles)
-        selected = list(islice(self.refs, limit))
-        self.position += len(selected)
-        if len(selected) < limit:
-            remaining = min(self.position, limit) - len(selected)
-            self.refs = next(self.cycles)
-            selected.extend(islice(self.refs, remaining))
-            self.position = remaining
-        return selected
 
 
 def text_embed_request(model, key_type, prompt, metadata, dataset_id, image_path, relative_path):

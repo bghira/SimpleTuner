@@ -25,6 +25,7 @@ from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_d
 from simpletuner.helpers.data_backend.filters import build_dataset_filter
 from simpletuner.helpers.data_backend.runtime.context_parallel_sync import get_cp_info
 from simpletuner.helpers.metadata.preparation import (
+    BucketValidationCursor,
     DatasetDescription,
     DatasetViewChangedError,
     PreparationView,
@@ -1472,10 +1473,8 @@ class MetadataBackend:
     def _source_revision(self):
         return None
 
-    def iter_validation_cycles(self):
-        ordered = sorted(chain.from_iterable(self.aspect_ratio_bucket_indices.values()))
-        while True:
-            yield iter(ordered)
+    def open_validation(self):
+        return BucketValidationCursor(self)
 
     @contextmanager
     def _open_accepted_groups(self):

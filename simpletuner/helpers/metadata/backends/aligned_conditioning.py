@@ -17,7 +17,7 @@ from simpletuner.helpers.metadata.backends.webshart_membership import (
     MembershipPages,
     publish_indexed_membership,
 )
-from simpletuner.helpers.metadata.preparation import DatasetReadView, PreparationView
+from simpletuner.helpers.metadata.preparation import DatasetReadView, PreparationView, ValidationCursor
 from simpletuner.helpers.utils.pathing import canonicalize_data_uri
 
 
@@ -201,6 +201,9 @@ class AlignedConditioningMetadata(MetadataBackend):
                 yield None
             else:
                 yield {**metadata, "training_sample_path": source_ref, "image_path": ref}
+
+    def open_validation(self):
+        return ValidationCursor(self.iter_validation_cycles)
 
     def iter_validation_cycles(self):
         self.describe()

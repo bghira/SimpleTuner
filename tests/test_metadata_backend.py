@@ -106,6 +106,13 @@ class TestMetadataBackend(unittest.TestCase):
         self.assertEqual(sorted(self.metadata_backend.image_metadata), sorted(new_files))
         save_image_metadata.assert_called_once()
 
+    def test_validation_uses_current_membership_between_requests(self):
+        self.metadata_backend.aspect_ratio_bucket_indices = {"1": ["a", "b", "c"]}
+        cursor = self.metadata_backend.open_validation()
+        self.assertEqual(cursor.next_refs(1), ["a"])
+        self.metadata_backend.remove_images(["b"])
+        self.assertEqual(cursor.next_refs(3), ["c", "a"])
+
     def test_probe_image_dimensions_applies_exif_orientation(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             image_path = Path(tmpdir) / "oriented.jpg"
