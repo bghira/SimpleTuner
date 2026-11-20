@@ -1,3 +1,4 @@
+import json
 import unittest
 from contextlib import closing, nullcontext
 from dataclasses import dataclass
@@ -425,8 +426,9 @@ class DatasetRuntimeTests(unittest.TestCase):
                 patch.object(StateTracker, "get_data_backend_config", return_value=config),
                 patch.object(storage, "read", wraps=storage.read) as reads,
             ):
-                metadata = ParquetMetadataBackend(
+                settings = dict(
                     id="images",
+                    runtime_args=SimpleNamespace(only_instance_prompt=False),
                     instance_data_dir=directory,
                     cache_file=str(root / "buckets"),
                     metadata_file=str(root / "geometry"),
@@ -442,12 +444,20 @@ class DatasetRuntimeTests(unittest.TestCase):
                         "fallback_caption_column": "tags",
                     },
                 )
+                metadata = ParquetMetadataBackend(**settings)
                 dataset = DatasetRuntime("images", storage, metadata, config)
                 self.assertEqual(
                     dataset.resolve_captions([str(root / "b/sample.jpg"), str(root / "a/sample.jpg")]),
                     ["fallback", "primary"],
                 )
                 reads.assert_called_once_with(str(table))
+                removed = str(root / "gone.jpg")
+                kept = str(root / "a/sample.jpg")
+                metadata.aspect_ratio_bucket_indices = {"1.0": [kept, removed]}
+                metadata.save_cache()
+                metadata = ParquetMetadataBackend(**settings)
+                self.assertEqual(metadata.read_cache(), {"1.0": [kept]})
+                self.assertEqual(json.loads(metadata.cache_file.read_text())["aspect_ratio_bucket_indices"], {"1.0": [kept]})
 
     def test_config_is_a_snapshot_and_empty_shuffle_config_needs_no_registry(self):
         self.config["caption_shuffle"] = {"enable": False}

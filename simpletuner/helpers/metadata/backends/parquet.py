@@ -133,25 +133,12 @@ class ParquetMetadataBackend(MetadataBackend):
         if self.dataset_config.get("caption_strategy") == "parquet":
             self.validate_caption_columns()
         self.caption_cache = self._extract_captions_to_fast_list()
-        self.missing_captions = self._locate_missing_caption_from_fast_list()
-        if self.missing_captions:
-            logger.warning(f"Missing captions for {len(self.missing_captions)} images: {self.missing_captions}")
-            self._remove_images_with_missing_captions()
-
-    def _remove_images_with_missing_captions(self):
-        # remove items with missing captions from buckets
-        for key in self.aspect_ratio_bucket_indices.keys():
-            len_before = len(self.aspect_ratio_bucket_indices[key])
-            self.aspect_ratio_bucket_indices[key] = [
-                path for path in self.aspect_ratio_bucket_indices[key] if path not in self.missing_captions
-            ]
-            len_after = len(self.aspect_ratio_bucket_indices[key])
-            if len_before != len_after:
-                logger.warning(
-                    f"Removed {len_before - len_after} items from aspect ratio bucket {key} due to missing captions."
-                )
-        self.save_cache(enforce_constraints=True)
-        self.missing_captions = []
+        if self.uses_caption_strategy("parquet"):
+            missing = self._locate_missing_caption_from_fast_list()
+            if missing:
+                logger.warning("Removing %d indexed samples with missing Parquet captions.", len(missing))
+                self.remove_images(missing)
+                self.save_cache(enforce_constraints=True)
 
     def load_parquet_database(self):
         if self.data_backend.exists(self.parquet_path):
@@ -182,31 +169,25 @@ class ParquetMetadataBackend(MetadataBackend):
                 raise ValueError(f"Parquet file {self.parquet_path} does not contain a column named '{name}'.")
             check_column_values(table[name], name, self.parquet_path, self.parquet_config.get("fallback_caption_column"))
 
-    def _locate_missing_caption_from_fast_list(self):
-        missing_captions = []
-        identifier_includes_extension = self.parquet_config.get("identifier_includes_extension", False)
-        # currently we do not do path-based identifiers
-        identifier_includes_path = False
+    def _caption_key(self, path):
+        filename = str(path)
+        roots = self.instance_data_dir
+        for root in roots if isinstance(roots, (list, tuple)) else (roots,):
+            prefix = str(root or "").rstrip("/") + "/"
+            if root and filename.startswith(prefix):
+                filename = filename[len(prefix) :]
+                break
+        if not self.parquet_config.get("identifier_includes_extension", False):
+            filename = os.path.splitext(filename)[0]
+        return filename
 
-        for key in self.aspect_ratio_bucket_indices.keys():
-            for filename in self.aspect_ratio_bucket_indices[key]:
-                # Chop extension if parquet expects no extension
-                if not identifier_includes_extension:
-                    filename = os.path.splitext(filename)[0]
-                if not identifier_includes_path:
-                    instance_data_dirs = self.instance_data_dir
-                    if not isinstance(instance_data_dirs, (list, tuple)):
-                        instance_data_dirs = [instance_data_dirs]
-                    for instance_data_dir in instance_data_dirs:
-                        instance_data_dir = str(instance_data_dir or "")
-                        if instance_data_dir and instance_data_dir in filename:
-                            filename = filename.replace(instance_data_dir, "")
-                            break
-                    if filename.startswith("/"):
-                        filename = filename[1:]
-                if filename not in self.caption_cache:
-                    missing_captions.append(filename)
-        return missing_captions
+    def _locate_missing_caption_from_fast_list(self):
+        return [
+            path
+            for refs in self.aspect_ratio_bucket_indices.values()
+            for path in refs
+            if self._caption_key(path) not in self.caption_cache
+        ]
 
     def _extract_captions_to_fast_list(self):
         # parquet is columnar - dict lookups are faster than repeated column access
@@ -519,6 +500,11 @@ class ParquetMetadataBackend(MetadataBackend):
             if database_row is None:
                 statistics.setdefault("skipped", {}).setdefault("metadata_missing", 0)
                 statistics["skipped"]["metadata_missing"] += 1
+                return aspect_ratio_bucket_indices
+
+            if self.uses_caption_strategy("parquet") and self._caption_key(image_path_str) not in self.caption_cache:
+                skipped = statistics.setdefault("skipped", {})
+                skipped["missing_caption"] = skipped.get("missing_caption", 0) + 1
                 return aspect_ratio_bucket_indices
 
             if self.dataset_type is DatasetType.AUDIO:
