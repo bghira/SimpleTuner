@@ -1451,7 +1451,7 @@ Webshart 数据集通过 `webshart` 包加载 WebDataset 风格的 tar shards。
 
 设置 `webshart.format: "parquet"` 可读取本地、Hub 或 S3 兼容存储中 Parquet 分片内的图像字节。S3 地址为 `s3://bucket` 或 `s3://bucket/prefix`；可选的 `webshart.manifest` 是相对于数据源的捕获描述文件路径。SimpleTuner 需要 Webshart 0.9.1 或更高版本。
 
-`webshart.columns` 将 `image`、`captions`、`width`、`height` 映射到源列名；省略时使用这些默认名称。图像列可以是二进制数据或包含 `bytes` 的结构体。`url_status != "ok"` 或 `stored_bytes` 为空的捕获行会被排除，物理行号保持不变。缺少尺寸的行不参与分桶。不会请求原始 URL；成功捕获仍可能包含损坏图像，批量读取会跳过解码失败的图像。
+`webshart.columns` 将 `image`、`captions`、`width`、`height` 映射到源列名；省略时使用这些默认名称。图像列可以是二进制数据或包含 `bytes` 的结构体。`url_status != "ok"` 或 `stored_bytes` 为空的捕获行会被排除，物理行号保持不变。缺少尺寸的行不参与分桶。不会请求原始 URL；成功捕获仍可能包含损坏图像，按需进行 VAE 编码时，训练会停止并指出无法读取的样本。在使用原生索引进行 VAE 预处理时，启用 `delete_problematic_images` 可从已准备的视图中排除无法读取的样本。
 
 使用现有顶层设置 `aws_region_name`、`aws_endpoint_url`、`aws_access_key_id`、`aws_secret_access_key`、`aws_session_token`、`aws_max_pool_connections`。端点不含桶名，并发 S3 请求默认为 32。省略密钥可使用 AWS 环境变量、Web 身份或容器/实例角色。此原生传输不读取共享配置文件。工作进程表示不包含凭据；需要时在子进程环境中导出 AWS 凭据。
 

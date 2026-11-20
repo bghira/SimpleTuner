@@ -1453,7 +1453,7 @@ Webshart データセットは `webshart` パッケージで WebDataset 形式�
 
 `webshart.format: "parquet"` で、ローカル、Hub、S3 互換ストレージの Parquet に埋め込まれた画像を読み込みます。S3 は `s3://bucket` または `s3://bucket/prefix`。任意の `webshart.manifest` はソースからの相対キャプチャ記述子です。SimpleTuner には Webshart 0.9.1 以降が必要です。
 
-`webshart.columns` は `image`、`captions`、`width`、`height` をソース列名に対応させます。省略時は同名です。画像はバイナリ列または `bytes` を含む構造体です。`url_status != "ok"` や空の `stored_bytes` の行は物理行番号を変えずに除外されます。寸法のない行はバケット対象外です。元 URL は取得しません。取得成功でも破損画像の場合があり、バッチ読み込みはデコード失敗をスキップします。
+`webshart.columns` は `image`、`captions`、`width`、`height` をソース列名に対応させます。省略時は同名です。画像はバイナリ列または `bytes` を含む構造体です。`url_status != "ok"` や空の `stored_bytes` の行は物理行番号を変えずに除外されます。寸法のない行はバケット対象外です。元 URL は取得しません。取得成功でも破損画像の場合があり、オンデマンドの VAE エンコードで読み取れないサンプルがあると、学習は停止し、該当サンプルが表示されます。ネイティブのインデックス付き VAE 前処理では、`delete_problematic_images` を有効にすると、読み取れないサンプルを対象から除外できます。
 
 既存のトップレベル設定 `aws_region_name`、`aws_endpoint_url`、`aws_access_key_id`、`aws_secret_access_key`、`aws_session_token`、`aws_max_pool_connections` を使います。エンドポイントにバケットを含めず、S3 同時リクエスト数は既定で 32 です。キーを省略すると AWS 環境変数、Web ID、コンテナ/インスタンスロールを利用します。共有プロファイルファイルには非対応です。ワーカー表現には認証情報を含めないため、必要なら子プロセス環境に AWS 認証情報を設定してください。
 
