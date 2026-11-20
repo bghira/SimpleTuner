@@ -26,11 +26,7 @@ class BucketStateManager:
         self.id = id
 
     def mangle_state_path(self, state_path):
-        # When saving the state, it goes into the checkpoint dir.
-        # However, we need to save a single state for each data backend.
-        # Thus, we split the state_path from its extension, add self.id to the end of the name, and rejoin:
-        if self.id in os.path.basename(state_path):
-            return state_path
+        # The checkpoint dir holds one state file per data backend, named after the trainer's own state file.
         filename, ext = os.path.splitext(state_path)
         return f"{filename}-{self.id}{ext}"
 
