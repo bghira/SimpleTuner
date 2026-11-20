@@ -13,6 +13,11 @@ from .base import BaseBackendConfig
 logger = logging.getLogger("ImageBackendConfig")
 
 
+def local_instance_data_dir(backend: dict) -> str:
+    root = str(backend.get("instance_data_dir") or "").strip()
+    return (root.rstrip("/") or "/") if root else ""
+
+
 @dataclass
 class ImageBackendConfig(BaseBackendConfig):
 
@@ -121,7 +126,10 @@ class ImageBackendConfig(BaseBackendConfig):
 
         config.disabled = backend_dict.get("disabled", backend_dict.get("disable", False))
 
-        config.instance_data_dir = backend_dict.get("instance_data_dir", backend_dict.get("aws_data_prefix", ""))
+        if config.backend_type == "local":
+            config.instance_data_dir = local_instance_data_dir(backend_dict)
+        else:
+            config.instance_data_dir = backend_dict.get("instance_data_dir", backend_dict.get("aws_data_prefix", ""))
         config.aws_data_prefix = backend_dict.get("aws_data_prefix", "")
 
         config.crop = backend_dict.get("crop", False)

@@ -106,6 +106,7 @@ from simpletuner.helpers.training.state_tracker import StateTracker
 from .builders import build_backend_from_config, create_backend_builder
 from .builders.base import create_metadata_provider
 from .config import ImageBackendConfig, ImageEmbedBackendConfig, TextEmbedBackendConfig, create_backend_config
+from .config.image import local_instance_data_dir
 from .config.relationships import resolve_dataset_relationships
 
 logger = logging.getLogger("DataBackendFactory")
@@ -584,6 +585,8 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         output["config"]["instance_data_dir"] = webshart_config.get(
             "cache_dir", backend.get("cache_dir", os.path.join("cache", "webshart", backend["id"]))
         )
+    elif backend.get("type") == "local":
+        output["config"]["instance_data_dir"] = local_instance_data_dir(backend)
     else:
         output["config"]["instance_data_dir"] = backend.get("instance_data_dir", backend.get("aws_data_prefix", ""))
     # hash_filenames is always enabled and not user-configurable
@@ -1683,12 +1686,9 @@ class FactoryRegistry:
             if backend_type != "local":
                 continue
 
-            # Check instance_data_dir for all local backends
-            instance_data_dir = backend.get("instance_data_dir", backend.get("instance_data_root"))
-            if instance_data_dir and isinstance(instance_data_dir, str):
-                instance_data_dir = instance_data_dir.strip()
-                if instance_data_dir and not os.path.exists(instance_data_dir):
-                    missing_paths.append((backend_id, "instance_data_dir", instance_data_dir))
+            instance_data_dir = local_instance_data_dir(backend)
+            if instance_data_dir and not os.path.exists(instance_data_dir):
+                missing_paths.append((backend_id, "instance_data_dir", instance_data_dir))
 
         if missing_paths:
             error_lines = ["The following dataset directories do not exist:"]
@@ -2760,18 +2760,11 @@ class FactoryRegistry:
             pass
 
         if backend["type"] == "local":
-            raw_instance_dir = backend.get("instance_data_dir", backend.get("instance_data_root"))
-            if raw_instance_dir is None:
-                raise ValueError(
-                    "A local backend requires instance_data_dir be defined and pointing to the image data directory."
-                )
-            instance_dir = str(raw_instance_dir).strip()
+            instance_dir = local_instance_data_dir(backend)
             if not instance_dir:
                 raise ValueError(
                     "A local backend requires instance_data_dir be defined and pointing to the image data directory."
                 )
-            if instance_dir.endswith("/"):
-                instance_dir = instance_dir.rstrip("/")
             init_backend["instance_data_dir"] = instance_dir
             init_backend["bucket_report"].set_instance_data_dir(instance_dir)
         elif backend["type"] == "aws":
