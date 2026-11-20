@@ -199,10 +199,8 @@ class ImageBackendConfig(BaseBackendConfig):
             config.huggingface_auto_load = hf_block.get("auto_load", backend_dict.get("auto_load"))
 
         if config.backend_type == "webshart":
-            webshart_block = backend_dict.get("webshart", {}) or {}
-            sampling_policy = webshart_block.get("sampling_policy")
-            if sampling_policy not in (None, "", "global", "shard_local"):
-                raise ValueError("webshart.sampling_policy must be global or shard_local.")
+            validators.validate_webshart_sampling_policy(backend_dict.get("webshart"))
+            webshart_block = backend_dict.get("webshart") or {}
             config.webshart = webshart_block
             config.webshart_caption_key = webshart_block.get("caption_key")
             validators.validate_webshart_caption_key(config.webshart_caption_key)

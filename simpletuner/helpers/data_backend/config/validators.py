@@ -145,6 +145,15 @@ def validate_huggingface_backend_settings(
     return {"metadata_backend": metadata_backend or "huggingface", "caption_strategy": caption_strategy or "huggingface"}
 
 
+def validate_webshart_sampling_policy(webshart) -> None:
+    if webshart is None:
+        return
+    if not isinstance(webshart, dict):
+        raise ValueError("webshart must be an object containing the dataset settings.")
+    if webshart.get("sampling_policy") not in (None, "", "global", "shard_local"):
+        raise ValueError("webshart.sampling_policy must be global or shard_local.")
+
+
 def validate_webshart_caption_key(caption_key) -> None:
     if caption_key is None:
         return

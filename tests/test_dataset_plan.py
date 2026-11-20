@@ -274,6 +274,22 @@ class DatasetSchedulingValidationTest(unittest.TestCase):
     def _collect_by_field(self, validations, field):
         return [message for message in validations if message.field == field]
 
+    def test_webshart_plan_and_training_validate_the_same_sampling_policy(self):
+        from simpletuner.helpers.data_backend.config.image import ImageBackendConfig
+
+        for policy in (None, "", "global", "shard_local", "shard_locl", False):
+            with self.subTest(policy=policy):
+                dataset = dict(id="images", type="webshart", dataset_type="image", source="capture")
+                dataset["webshart"] = {"sampling_policy": policy}
+                errors = self._collect_by_field(compute_validations([dataset]), "images.webshart.sampling_policy")
+                if policy in (False, "shard_locl"):
+                    with self.assertRaises(ValueError) as failure:
+                        ImageBackendConfig.from_dict(dataset, {})
+                    self.assertEqual([(error.level, error.message) for error in errors], [("error", str(failure.exception))])
+                else:
+                    self.assertEqual(errors, [])
+                    ImageBackendConfig.from_dict(dataset, {})
+
     def test_immediate_dataset_passes_validation(self):
         """Single immediate dataset should pass scheduling validation."""
         datasets = self._base_datasets()
