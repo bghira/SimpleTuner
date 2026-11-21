@@ -307,7 +307,7 @@ class CPUBouncingFp8Linear(CPUBouncingLinear):
         if self.bias is not None:
             self.bias.is_ramtorch = True
 
-    def _apply(self, fn):
+    def _apply(self, fn, recurse=True):
         # Scaled FP8 storage must remain FP8/FP32 on CPU. Only the ephemeral
         # dequantized weight follows the activation dtype on the target device.
         return self
@@ -385,7 +385,7 @@ class CPUBouncingEmbedding(nn.Module):
         else:
             self.embed_scale = None
 
-    def _apply(self, fn):
+    def _apply(self, fn, recurse=True):
         """Override _apply to allow dtype changes but prevent device moves."""
         dummy = torch.tensor(0.0, device="cpu", dtype=self.weight.dtype)
         result = fn(dummy)
@@ -495,7 +495,7 @@ class CPUBouncingConv2d(nn.Module):
         else:
             self.register_parameter("bias", None)
 
-    def _apply(self, fn):
+    def _apply(self, fn, recurse=True):
         dummy = torch.tensor(0.0, device="cpu", dtype=self.weight.dtype)
         result = fn(dummy)
         if result.dtype != dummy.dtype:
@@ -604,7 +604,7 @@ class CPUBouncingConv3d(nn.Module):
         else:
             self.register_parameter("bias", None)
 
-    def _apply(self, fn):
+    def _apply(self, fn, recurse=True):
         dummy = torch.tensor(0.0, device="cpu", dtype=self.weight.dtype)
         result = fn(dummy)
         if result.dtype != dummy.dtype:
@@ -683,7 +683,7 @@ class CPUBouncingLayerNorm(nn.Module):
             self.register_parameter("weight", None)
             self.register_parameter("bias", None)
 
-    def _apply(self, fn):
+    def _apply(self, fn, recurse=True):
         dummy_dtype = self.weight.dtype if self.weight is not None else torch.float32
         dummy = torch.tensor(0.0, device="cpu", dtype=dummy_dtype)
         result = fn(dummy)
@@ -773,7 +773,7 @@ class CPUBouncingRMSNorm(nn.Module):
             self.register_parameter("weight", None)
             self.register_parameter("bias", None)
 
-    def _apply(self, fn):
+    def _apply(self, fn, recurse=True):
         dummy_dtype = self.weight.dtype if self.weight is not None else torch.float32
         dummy = torch.tensor(0.0, device="cpu", dtype=dummy_dtype)
         result = fn(dummy)

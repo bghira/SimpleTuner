@@ -26,6 +26,44 @@ class _SimpleModel(nn.Module):
 
 
 class RamTorchUtilsTests(unittest.TestCase):
+    def test_to_empty_preserves_ramtorch_cpu_weights(self):
+        from simpletuner.helpers.ramtorch.modules.linear import CPUBouncingLinear
+        from simpletuner.helpers.ramtorch_extensions import (
+            CPUBouncingConv2d,
+            CPUBouncingConv3d,
+            CPUBouncingEmbedding,
+            CPUBouncingFp8Linear,
+            CPUBouncingLayerNorm,
+            CPUBouncingRMSNorm,
+        )
+
+        with patch.object(torch.Tensor, "pin_memory", lambda tensor: tensor):
+            layers = (
+                CPUBouncingEmbedding(4, 2),
+                CPUBouncingLinear(2, 2),
+                CPUBouncingConv2d(2, 2, 1),
+                CPUBouncingConv3d(2, 2, 1),
+                CPUBouncingLayerNorm(2),
+                CPUBouncingRMSNorm(2),
+                CPUBouncingFp8Linear(
+                    2,
+                    2,
+                    weight=torch.zeros(2, 2, dtype=torch.float8_e4m3fn),
+                    weight_scale=torch.ones(2),
+                    bias=None,
+                    device="cuda",
+                ),
+            )
+
+        for layer in layers:
+            with self.subTest(layer=type(layer).__name__):
+                weight = layer.weight
+                saved = weight.float().clone()
+                self.assertIs(layer.to_empty(device="meta", recurse=False), layer)
+                self.assertIs(layer.weight, weight)
+                self.assertEqual(layer.weight.device.type, "cpu")
+                torch.testing.assert_close(layer.weight.float(), saved)
+
     def _build_stub_imports(self, replace_all_fn):
         return {
             "Linear": _StubLinear,
