@@ -572,6 +572,48 @@ class MageFlowModelTests(unittest.TestCase):
 
         self.assertEqual(output.shape, (1, 4, 4))
 
+    def test_regional_compilation_only_compiles_transformer_blocks(self):
+        from accelerate.utils import DynamoBackend, TorchDynamoPlugin
+
+        torch._dynamo.reset()
+        self.addCleanup(torch._dynamo.reset)
+        transformer = _tiny_transformer(depth=2).train()
+        inputs = {
+            "img": torch.randn(1, 4, 4),
+            "txt": torch.randn(1, 3, 8),
+            "timesteps": torch.tensor([0.5]),
+            "img_shapes": [[(1, 2, 2)]],
+            "img_cu_seqlens": torch.tensor([0, 4], dtype=torch.int32),
+            "txt_cu_seqlens": torch.tensor([0, 3], dtype=torch.int32),
+        }
+        expected = transformer(**inputs)
+        expected.square().mean().backward()
+        gradients = {name: param.grad.clone() for name, param in transformer.named_parameters() if param.grad is not None}
+        transformer.zero_grad(set_to_none=True)
+
+        model_cls = _mageflow_class()
+        model = model_cls.__new__(model_cls)
+        model.model = transformer
+        model.config = SimpleNamespace(controlnet=False)
+        plugin = TorchDynamoPlugin(backend="eager", use_regional_compilation=True)
+        model.accelerator = SimpleNamespace(
+            state=SimpleNamespace(dynamo_plugin=plugin),
+            unwrap_model=lambda model, **kwargs: model,
+        )
+        with patch("torch.compile", wraps=torch.compile) as compile_model:
+            with model.regional_compilation_context():
+                self.assertEqual(plugin.backend, DynamoBackend.NO)
+
+        compiled = [call.args[0].__self__ for call in compile_model.call_args_list]
+        self.assertEqual(compiled, list(transformer.transformer_blocks))
+        self.assertEqual(plugin.backend, DynamoBackend.EAGER)
+        actual = transformer(**inputs)
+        actual.square().mean().backward()
+        torch.testing.assert_close(actual, expected)
+        for name, param in transformer.named_parameters():
+            if name in gradients:
+                torch.testing.assert_close(param.grad, gradients[name])
+
     def test_model_predict_uses_wrapped_model_for_distributed_training(self):
         model_cls = _mageflow_class()
 
