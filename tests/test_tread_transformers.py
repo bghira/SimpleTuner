@@ -97,6 +97,74 @@ class TestTREADTransformers(unittest.TestCase):
                     # we mainly want to test TREAD integration doesn't break things
                     pass
 
+    def test_flux2_routes_both_streams_with_per_sample_rotary_positions(self):
+        from simpletuner.helpers.models.flux2.transformer import Flux2Transformer2DModel
+
+        model = Flux2Transformer2DModel(
+            in_channels=4,
+            num_layers=1,
+            num_single_layers=2,
+            attention_head_dim=8,
+            num_attention_heads=2,
+            joint_attention_dim=16,
+            timestep_guidance_channels=4,
+            mlp_ratio=2.0,
+            axes_dims_rope=(2, 2, 2, 2),
+        )
+        router = TREADRouter(device="cpu")
+        model.set_router(router, [{"selection_ratio": 2 / 3, "start_layer_idx": 0, "end_layer_idx": -2}])
+
+        image_tokens = torch.randn(2, 6, 4, requires_grad=True)
+        text_tokens = torch.randn(2, 2, 16)
+        image_ids = torch.tensor([[0, 0, i, 0] for i in range(6)])
+        text_ids = torch.tensor([[1, 0, 0, 0], [1, 0, 0, 1]])
+        force_keep = torch.zeros(2, 6, dtype=torch.bool)
+        force_keep[0, [0, 2]] = True
+        force_keep[1, [1, 4]] = True
+
+        block_inputs = []
+
+        def record_inputs(_block, _args, kwargs):
+            block_inputs.append(kwargs)
+
+        for block in (*model.transformer_blocks, *model.single_transformer_blocks):
+            self.addCleanup(block.register_forward_pre_hook(record_inputs, with_kwargs=True).remove)
+
+        with patch.object(router, "end_route", wraps=router.end_route) as end_route:
+            output = model(
+                hidden_states=image_tokens,
+                encoder_hidden_states=text_tokens,
+                timestep=torch.rand(2, 6),
+                img_ids=image_ids,
+                txt_ids=text_ids,
+                guidance=torch.ones(2),
+                force_keep_mask=force_keep,
+            ).sample
+
+        self.assertEqual(output.shape, image_tokens.shape)
+        self.assertEqual(end_route.call_count, 2)
+        double_stream, single_stream, restored_stream = block_inputs
+        self.assertEqual(double_stream["hidden_states"].shape[:2], (2, 2))
+        self.assertEqual(double_stream["encoder_hidden_states"].shape[:2], (2, 2))
+        self.assertEqual(single_stream["hidden_states"].shape[:2], (2, 4))
+        self.assertEqual(restored_stream["hidden_states"].shape[:2], (2, 8))
+
+        image_rope = model.pos_embed(image_ids)
+        text_rope = model.pos_embed(text_ids)
+        for block, restore_call in zip((double_stream, single_stream), end_route.call_args_list):
+            _, mask_info, _ = restore_call.args
+            self.assertTrue(torch.equal(~mask_info.mask, force_keep))
+            for actual, text_table, image_table in zip(block["image_rotary_emb"], text_rope, image_rope):
+                expected = torch.cat((text_table.expand(2, -1, -1), image_table[mask_info.ids_keep]), dim=1)
+                torch.testing.assert_close(actual, expected)
+
+        routed, mask_info, original = end_route.call_args.args
+        expected = original.scatter(1, mask_info.ids_keep.unsqueeze(-1).expand_as(routed), routed)
+        torch.testing.assert_close(restored_stream["hidden_states"][:, 2:], expected)
+
+        output.square().mean().backward()
+        self.assertTrue(torch.isfinite(image_tokens.grad).all())
+
     def test_sd3_tread_integration(self):
         """Test TREAD integration in SD3 transformer."""
         with patch("simpletuner.helpers.models.sd3.transformer.TREADRouter"):
