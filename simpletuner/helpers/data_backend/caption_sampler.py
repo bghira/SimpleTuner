@@ -84,7 +84,7 @@ class CaptionSampler(Sampler):
         progress = self._consumed_state if self.tracks_consumed_batches else self.fetched_state()
         self.state_manager.save_state({**progress, "layout": self._checkpoint_layout()}, state_path)
 
-    def load_states(self, state_path: str) -> None:
+    def load_states(self, state_path: str, *, next_epoch: int | None = None) -> None:
         state = self.state_manager.load_state(state_path)
         if not state:
             raise ValueError(f"Caption sampler '{self.id}' checkpoint state is missing.")
@@ -104,6 +104,11 @@ class CaptionSampler(Sampler):
             or cursor % self.batch_size
         ):
             raise ValueError("Caption sampler checkpoint has an invalid epoch or cursor.")
+        if next_epoch is not None:
+            completed_epoch = next_epoch - 2  # Caption sampler epochs are zero-based.
+            if epoch != completed_epoch and (self.tracks_consumed_batches or epoch != completed_epoch + 1):
+                raise ValueError("Caption sampler checkpoint does not match the completed epoch.")
+            epoch, cursor = completed_epoch + 1, 0
         self.epoch = epoch
         self._cursor = cursor
         self._epoch_entries = None

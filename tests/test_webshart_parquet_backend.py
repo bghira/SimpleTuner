@@ -428,7 +428,15 @@ class TestWebshartParquetBackend(unittest.TestCase):
             "crop_aspect": "square",
             "vae_cache_clear_each_epoch": True,
         }
-        args = SimpleNamespace(seed=5, aspect_bucket_alignment=8, aspect_bucket_rounding=2, disable_bucket_pruning=True)
+        args = SimpleNamespace(
+            seed=5,
+            model_family="sdxl",
+            aspect_bucket_alignment=8,
+            aspect_bucket_rounding=2,
+            disable_bucket_pruning=True,
+            gradient_accumulation_steps=1,
+            max_train_steps=None,
+        )
         accelerator = SimpleNamespace(
             num_processes=1, process_index=0, is_main_process=True, is_local_main_process=True, wait_for_everyone=Mock()
         )
@@ -541,6 +549,28 @@ class TestWebshartParquetBackend(unittest.TestCase):
             torch.testing.assert_close(resumed_cache.encode_images([torch.tensor([-1])], [ref], view=epoch_view)[0], latent)
         self.assertEqual(runtime.describe().view_revision, revision)
         self.assertEqual(runtime.read_page(limit=2), ([ref, other], 2))
+
+        with (
+            closing(MultiAspectSampler(runtime, model=None, accelerator=accelerator, batch_size=1)) as training_sampler,
+            patch.object(StateTracker, "get_args", return_value=args),
+        ):
+            runtime.sampler = training_sampler
+            runtime.start_epoch(1)
+            (first,) = next(iter(training_sampler))
+            runtime.acknowledge_batch(first["dataset_continuation"])
+            checkpoint = str(self.root / "epoch-checkpoint.json")
+            runtime.save_checkpoint(checkpoint)
+
+            runtime.prepare_epoch(2, rebuild_random_aspect=True, gradient_accumulation_steps=1, apply_padding=False)
+            runtime.start_epoch(2)
+            (expected,) = next(iter(training_sampler))
+            runtime.restore_checkpoint(checkpoint, next_epoch=2)
+            runtime.prepare_epoch(2, rebuild_random_aspect=True, gradient_accumulation_steps=1, apply_padding=False)
+            runtime.start_epoch(2, resume_boundary=True)
+            (resumed,) = next(iter(training_sampler))
+            self.assertEqual(resumed["dataset_read_view"].epoch, 2)
+            self.assertEqual(resumed, expected)
+        runtime.sampler = Mock()
 
         image = Image.linear_gradient("L").rotate(90).resize((16, 8)).convert("RGB")
         epoch_with_changed_crop = next(

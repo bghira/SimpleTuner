@@ -42,6 +42,7 @@ class StateTracker:
     global_step = 0
     global_resume_step = None
     epoch_step = 0
+    checkpoint_epoch_boundary = None
     epoch_micro_step = 0
     epoch = 1
 
@@ -252,9 +253,15 @@ class StateTracker:
         except Exception as e:
             logger.error(f"Error loading training state: {e}")
             training_state = {}
+        epoch = training_state.get("epoch", 1)
+        epoch_step = training_state.get("epoch_step", 0)
+        boundary = training_state.get("epoch_boundary")
+        if boundary is not None and (type(boundary) is not int or boundary < 2 or boundary != epoch or epoch_step != 0):
+            raise ValueError("Epoch checkpoint boundary does not match its training state.")
         cls.set_global_step(training_state.get("global_step", 0))
-        cls.set_epoch_step(training_state.get("epoch_step", 0))
-        cls.set_epoch(training_state.get("epoch", 1))
+        cls.set_epoch_step(epoch_step)
+        cls.set_epoch(epoch)
+        cls.checkpoint_epoch_boundary = boundary
         cls.consumed_dataset_mixer = training_state.get("dataset_mixer")
         cls.set_exhausted_backends(training_state.get("exhausted_backends", []))
         cls.init_repeats(training_state.get("repeats", {}))

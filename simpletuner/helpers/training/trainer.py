@@ -88,7 +88,7 @@ from simpletuner.helpers.training.iteration_tracker import IterationTracker
 from simpletuner.helpers.training.local_metrics import LocalMetricsTracker, record_timestep_distribution
 from simpletuner.helpers.training.min_snr_gamma import compute_snr
 from simpletuner.helpers.training.multi_process import _get_rank as get_rank
-from simpletuner.helpers.training.multi_process import broadcast_object_from_main, should_log
+from simpletuner.helpers.training.multi_process import agree_process_failure, broadcast_object_from_main, should_log
 from simpletuner.helpers.training.optimizer_param import (
     cpu_offload_optimizer,
     create_optimizer_with_param_groups,
@@ -5166,8 +5166,17 @@ class Trainer:
             job_id=self.job_id,
         )
         self._emit_event(event)
+        resume_epoch = StateTracker.get_epoch()
+        saved_boundary = StateTracker.checkpoint_epoch_boundary
+        saved_mix = StateTracker.consumed_dataset_mixer
+        # Existing epoch checkpoints saved the prior mixer alongside the next epoch number.
+        previous_mixer_epoch = saved_mix.get("epoch") if isinstance(saved_mix, dict) else None
+        next_epoch = resume_epoch if saved_boundary == resume_epoch or previous_mixer_epoch == resume_epoch - 1 else None
+        self.state["resume_epoch_boundary"] = next_epoch
         for dataset in self._registered_training_datasets().values():
-            dataset.restore_checkpoint(os.path.join(self.config.output_dir, path, self.model_hooks.training_state_path))
+            dataset.restore_checkpoint(
+                os.path.join(checkpoint_dir, self.model_hooks.training_state_path), next_epoch=next_epoch
+            )
         self.state["global_resume_step"] = self.state["global_step"] = StateTracker.get_global_step()
         StateTracker.set_global_resume_step(self.state["global_resume_step"])
         try:
@@ -5695,23 +5704,13 @@ class Trainer:
         return epoch > 0 and epoch % interval == 0
 
     def _write_checkpoint_epoch(self, checkpoint_dir: str, epoch_value: int) -> None:
-        """
-        Update the persisted training_state.json inside the checkpoint with the provided epoch.
-        """
-        training_state_filename = getattr(self.model_hooks, "training_state_path", "training_state.json")
-        training_state_path = os.path.join(checkpoint_dir, training_state_filename)
-        try:
-            training_state = {}
-            if os.path.exists(training_state_path):
-                with open(training_state_path, "r") as f:
-                    training_state = json.load(f) or {}
-            else:
-                training_state = StateTracker.get_training_state()
-            training_state["epoch"] = epoch_value
-            with open(training_state_path, "w") as f:
-                json.dump(training_state, f)
-        except Exception as err:  # pragma: no cover - best-effort persistence
-            logger.warning(f"Failed to write epoch {epoch_value} to {training_state_path}: {err}")
+        """Record an epoch boundary before the checkpoint is published."""
+        training_state_path = Path(checkpoint_dir) / self.model_hooks.training_state_path
+        training_state = json.loads(training_state_path.read_text())
+        training_state.update(epoch=epoch_value, epoch_step=0, epoch_boundary=epoch_value)
+        staged = training_state_path.with_suffix(".epoch.tmp")
+        staged.write_text(json.dumps(training_state))
+        staged.replace(training_state_path)
 
     def _schedule_checkpoint_hub_upload(self, checkpoint_path: str) -> None:
         if not checkpoint_path or self.hub_manager is None or not self.accelerator.is_main_process:
@@ -5746,6 +5745,7 @@ class Trainer:
         *,
         upload_to_hub: bool = False,
         defer_hub_upload: bool = False,
+        next_epoch: int | None = None,
     ):
         if webhook_message:
             self._send_webhook_msg(
@@ -5771,7 +5771,10 @@ class Trainer:
         if self.accelerator.is_main_process:
             self.checkpoint_state_cleanup_temp(self.config.output_dir)
 
-        save_path = self.checkpoint_state_save(self.config.output_dir)
+        if next_epoch is None:
+            save_path = self.checkpoint_state_save(self.config.output_dir)
+        else:
+            save_path = self.checkpoint_state_save(self.config.output_dir, next_epoch=next_epoch)
         if self.accelerator.is_main_process and checkpoint_limit is not None and checkpoint_limit > 0:
             if len(self.checkpoint_state_filter(self.config.output_dir)) > checkpoint_limit:
                 self._drain_hub_upload_futures(wait=True)
@@ -6007,7 +6010,9 @@ class Trainer:
         self.state["current_epoch"] = epoch
         StateTracker.set_epoch(epoch)
 
-        if self.state["first_epoch"] != epoch:
+        resumed_boundary = self.state.get("resume_epoch_boundary") == epoch
+        new_epoch = self.state["first_epoch"] != epoch or resumed_boundary
+        if new_epoch:
             StateTracker.clear_exhausted_buckets()
             datasets = self._training_datasets()
             logger.debug(
@@ -6027,7 +6032,7 @@ class Trainer:
 
         # A resumed epoch may have started before the saved global step.
         current_step = self.state.get("global_step", 0)
-        first_step = None if current_step and self.state["first_epoch"] == epoch else current_step + 1
+        first_step = None if current_step and not new_epoch else current_step + 1
         new_steps_per_epoch = self.get_steps_per_epoch_for_epoch(epoch, first_step=first_step)
         old_steps_per_epoch = getattr(self.config, "num_update_steps_per_epoch", new_steps_per_epoch)
         if new_steps_per_epoch != old_steps_per_epoch:
@@ -6611,7 +6616,7 @@ class Trainer:
 
         check_disk_space_for_config(self.config, self.config.output_dir)
 
-    def checkpoint_state_save(self, output_dir, suffix=None):
+    def checkpoint_state_save(self, output_dir, suffix=None, *, next_epoch: int | None = None):
         self._check_disk_space_before_checkpoint()
         print("\n")
 
@@ -6660,6 +6665,9 @@ class Trainer:
         if distributed_type != DistributedType.NO:
             self.accelerator.wait_for_everyone()
         self.accelerator.save_state(save_path_tmp)
+        if next_epoch is not None:
+            with agree_process_failure("Writing epoch checkpoint boundary", self.accelerator.process_index):
+                self._write_checkpoint_epoch(save_path_tmp, next_epoch)
         if hasattr(self.model, "save_flow_custom_timestep_state"):
             self.model.save_flow_custom_timestep_state(save_path_tmp)
         AttentionBackendController.on_save_checkpoint(
@@ -6936,7 +6944,7 @@ class Trainer:
 
         # Some values that are required to be initialised later.
         step = self.state["global_step"]
-        current_epoch_step = None
+        current_epoch_step = 0 if self.state.get("resume_epoch_boundary") is not None else None
         self.bf = None
         iterator_fn = random_dataloader_iterator
         # Context-parallel batch synchronization: ensures all ranks in a CP group
@@ -6995,7 +7003,7 @@ class Trainer:
             ):
                 raise ValueError("Resumable prefetch requires each training dataset to support consumed checkpoints.")
             for dataset in train_backends.values():
-                dataset.start_epoch(epoch)
+                dataset.start_epoch(epoch, resume_boundary=self.state.get("resume_epoch_boundary") == epoch)
             if resumable:
                 saved = saved_mix if saved_mix and saved_mix["epoch"] == epoch else None
                 accumulated_microbatches = self.accelerator.step % self.config.gradient_accumulation_steps
@@ -7696,9 +7704,8 @@ class Trainer:
                     epoch=epoch,
                     upload_to_hub=epoch_upload_to_hub,
                     defer_hub_upload=epoch_upload_to_hub,
+                    next_epoch=epoch + 1,
                 )
-                if epoch_checkpoint_dir:
-                    self._write_checkpoint_epoch(epoch_checkpoint_dir, epoch + 1)
             if epoch_validation_boundary_reached:
                 self._run_intermediary_validation(step, epoch_end=True)
             if epoch_checkpoint_dir:
