@@ -8,6 +8,10 @@ This document contains notes* on configuring a 4-way 8xH100 cluster for use with
 
 Multi-node training requires by default the use of shared storage between nodes for the `output_dir`
 
+When VAE latents are precomputed, every rank must be able to read every dataset’s `cache_dir_vae`. The default lives under `output_dir`. For a custom path, use shared storage such as NFS or a shared cache backend such as S3 configured through `image_embeds`. With `vae_cache_ondemand`, ranks encode the latents they need during training.
+
+Precomputed text embeddings and conditioning image embeddings also need storage readable by every rank when those caches are enabled.
+
 
 ### Ubuntu NFS example
 

@@ -8,6 +8,10 @@
 
 多节点训练默认需要在节点间共享 `output_dir`。
 
+预计算 VAE 潜变量时，每个 rank 都必须能够读取每个数据集的 `cache_dir_vae`。默认路径位于 `output_dir` 下。使用自定义路径时，请使用 NFS 等共享存储，或通过 `image_embeds` 配置 S3 等共享缓存后端。启用 `vae_cache_ondemand` 后，各 rank 会在训练期间按需编码所需的潜变量。
+
+启用预计算文本嵌入或条件图像嵌入缓存时，也需要使用所有 rank 均可读取的存储。
+
 
 ### Ubuntu NFS 示例
 
