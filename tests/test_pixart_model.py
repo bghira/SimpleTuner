@@ -39,6 +39,42 @@ class PixArtModelTests(unittest.TestCase):
         self.model.crepa_regularizer = SimpleNamespace(enabled=True, block_index=2)
         self.model.unwrap_model = MagicMock(side_effect=lambda model=None, **kwargs: model)
 
+    def test_default_512_flavour_uses_a_full_pipeline_repo_and_the_512_transformer(self):
+        transformer_repo = "PixArt-alpha/PixArt-Sigma-XL-2-512-MS"
+        pipeline_repo = "PixArt-alpha/PixArt-Sigma-XL-2-1024-MS"
+        for path in (None, transformer_repo):
+            with self.subTest(path=path):
+                self.model.config = SimpleNamespace(
+                    model_family="pixart",
+                    model_flavour="600M-512",
+                    pretrained_model_name_or_path=path,
+                    pretrained_transformer_model_name_or_path=None,
+                    pretrained_vae_model_name_or_path=None,
+                    vae_path=None,
+                )
+
+                self.model.setup_model_flavour()
+
+                self.assertEqual(self.model._model_config_path(), pipeline_repo)
+                self.assertEqual(self.model.config.vae_path, pipeline_repo)
+                self.assertEqual(self.model.config.pretrained_transformer_model_name_or_path, transformer_repo)
+
+    def test_512_flavour_preserves_custom_components(self):
+        self.model.config = SimpleNamespace(
+            model_family="pixart",
+            model_flavour="600M-512",
+            pretrained_model_name_or_path="custom/pipeline",
+            pretrained_transformer_model_name_or_path="custom/transformer",
+            pretrained_vae_model_name_or_path="custom/vae",
+            vae_path="custom/vae",
+        )
+
+        self.model.setup_model_flavour()
+
+        self.assertEqual(self.model._model_config_path(), "custom/pipeline")
+        self.assertEqual(self.model.config.vae_path, "custom/vae")
+        self.assertEqual(self.model.config.pretrained_transformer_model_name_or_path, "custom/transformer")
+
     def test_collates_trimmed_text_cache_entries_and_legacy_masks(self):
         from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
 

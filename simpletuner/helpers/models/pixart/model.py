@@ -102,6 +102,16 @@ class PixartSigma(ImageModelFoundation):
         super().__init__(config, accelerator)
         self._validate_xm_support()
 
+    def setup_model_flavour(self):
+        transformer_repo = self.HUGGINGFACE_PATHS["600M-512"]
+        explicit_path = self.config.pretrained_model_name_or_path
+        if explicit_path == transformer_repo or (explicit_path is None and self.config.model_flavour == "600M-512"):
+            # The 512 px release contains only a transformer. The full Sigma pipeline supplies the shared components.
+            self.config.pretrained_model_name_or_path = self.HUGGINGFACE_PATHS["600M-1024"]
+            if self.config.pretrained_transformer_model_name_or_path is None:
+                self.config.pretrained_transformer_model_name_or_path = transformer_repo
+        super().setup_model_flavour()
+
     def controlnet_init(self):
         logger.info("Creating the PixArt Sigma controlnet..")
         from simpletuner.helpers.models.pixart.controlnet import (
