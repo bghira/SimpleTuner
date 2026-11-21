@@ -8,6 +8,10 @@
 
 Multi‑node प्रशिक्षण में डिफ़ॉल्ट रूप से `output_dir` के लिए nodes के बीच shared storage चाहिए।
 
+VAE latents पहले से तैयार किए जाने पर हर rank को सभी datasets का `cache_dir_vae` पढ़ने की सुविधा चाहिए। डिफ़ॉल्ट पथ `output_dir` के अंदर होता है। कस्टम पथ के लिए NFS जैसे shared storage या `image_embeds` के ज़रिए कॉन्फ़िगर किए गए S3 जैसे shared cache backend का उपयोग करें। `vae_cache_ondemand` चालू होने पर हर rank प्रशिक्षण के दौरान अपने लिए ज़रूरी latents बनाता है।
+
+पहले से तैयार text embeddings और conditioning image embeddings की caches चालू होने पर उन्हें भी हर rank के लिए पढ़ने योग्य storage चाहिए।
+
 
 ### Ubuntu NFS उदाहरण
 

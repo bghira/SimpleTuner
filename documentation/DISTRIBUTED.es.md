@@ -8,6 +8,10 @@ Este documento contiene notas* sobre cómo configurar un clúster 4-way de 8xH10
 
 El entrenamiento multi-nodo requiere por defecto el uso de almacenamiento compartido entre nodos para el `output_dir`
 
+Cuando los latentes del VAE se precalculan, todos los ranks deben poder leer el `cache_dir_vae` de cada dataset. Por defecto se guarda dentro de `output_dir`. Si usas una ruta personalizada, emplea almacenamiento compartido como NFS o un backend de caché compartido como S3 configurado mediante `image_embeds`. Con `vae_cache_ondemand`, cada rank codifica durante el entrenamiento los latentes que necesita.
+
+Los embeddings de texto y de imágenes de condicionamiento precalculados también necesitan almacenamiento legible por todos los ranks cuando se habilitan sus cachés.
+
 
 ### Ejemplo NFS en Ubuntu
 
