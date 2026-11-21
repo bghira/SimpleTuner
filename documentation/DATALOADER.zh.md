@@ -1313,6 +1313,7 @@ s/this/will be found and replaced/
   - `caption_column` 是表中包含字幕的列名。此处使用 `cogvlm_caption` 列。对 LAION 数据集则为 TEXT 字段。
   - `width_column` 与 `height_column` 可为包含字符串、整数或单条 Series 数据类型的列，用于表示实际图像尺寸。这可以显著提升数据集准备速度，因为无需访问真实图像即可获知尺寸。
   - `fallback_caption_column` 是可选的备用字幕列名，当主字幕为空时使用。本例使用 `tags` 列。
+  - 空值、NaN 和空白字幕均视为缺失。字幕列表会保留可用条目。如果应用已配置的备用列后仍没有可用字幕，则跳过该行。清单中必须至少有一条可用字幕。
   - `identifier_includes_extension` 当文件名列包含扩展名时应设为 `true`，否则默认扩展名为 `.png`。建议在文件名列中包含扩展名。
 
 > ⚠️ Parquet 支持仅限于读取字幕。你需要用 `{id}.png` 的文件名单独填充图像样本数据源。可参考 [scripts/datasets](/scripts/datasets) 目录中的脚本。

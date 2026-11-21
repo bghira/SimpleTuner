@@ -858,6 +858,16 @@ class TestWebshartParquetBackend(unittest.TestCase):
         )
         self.assertEqual([e["sample_idx"] for e in filtered[0]["buckets"]["2.00"]], [2])
 
+    def test_nan_caption_from_parquet_projection_is_missing(self):
+        source = self.root / "float-captions"
+        source.mkdir()
+        pq.write_table(pa.Table.from_pylist([dict(self.rows[0], captions=float("nan"))]), source / "part.parquet")
+        backend = WebshartDataBackend(
+            None, "float-captions", str(source), format="parquet", cache_dir=str(self.root / "float-cache")
+        )
+        (path,) = backend.list_files()[0][2]
+        self.assertIsNone(backend.get_caption(path))
+
     def test_projected_caption_batch_skips_shard_hydration_and_keeps_physical_order(self):
         if not self.backend.supports_caption_projection:
             self.skipTest("installed Webshart lacks projected row reads")

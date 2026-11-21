@@ -1313,6 +1313,7 @@ Parquet caption strategy आपको अपनी सभी files को उन
   - `caption_column` captions रखने वाले column का नाम है। यहाँ `cogvlm_caption` column का उपयोग किया गया है। LAION datasets में यह TEXT field होगा।
   - `width_column` और `height_column` strings, int, या single‑entry Series जैसे प्रकार वाले columns हो सकते हैं, जो image के वास्तविक dimensions बताते हैं। इससे dataset preparation time बेहतर होता है क्योंकि हमें dimensions खोजने के लिए वास्तविक images access नहीं करनी पड़तीं।
   - `fallback_caption_column` एक वैकल्पिक column नाम है जिसमें fallback captions होते हैं। ये primary caption field खाली होने पर उपयोग होते हैं। यहाँ `tags` column उपयोग किया गया है।
+  - Null, NaN और खाली caption मानों को अनुपलब्ध माना जाता है। सूचियों में उपयोगी captions बने रहते हैं। कॉन्फ़िगर किया गया fallback लगाने के बाद भी जिस पंक्ति में कोई उपयोगी caption नहीं होता, उसे छोड़ दिया जाता है। Manifest में कम से कम एक उपयोगी caption होना चाहिए।
   - `identifier_includes_extension` को `true` सेट करें जब filename column में image extension शामिल हो। अन्यथा extension `.png` मान लिया जाएगा। Table के filename column में extensions शामिल करना अनुशंसित है।
 
 > ⚠️ Parquet support capability केवल captions पढ़ने तक सीमित है। आपको अपनी image samples के लिए अलग से data source populate करना होगा, जहाँ filenames "{id}.png" हों। ideas के लिए [scripts/datasets](/scripts/datasets) डायरेक्टरी के scripts देखें।

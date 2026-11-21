@@ -115,41 +115,23 @@ class TestDataBackendFactory(unittest.TestCase):
             check_column_values(column_data, "test_column", "test_file.parquet")
         self.assertIn("contains only null values", str(context.exception))
 
-    def test_arrays_with_nulls(self):
-        column_data = pd.Series([[1, 2], None, [3, 4]])
-        with self.assertRaises(ValueError) as context:
-            check_column_values(column_data, "test_column", "test_file.parquet")
-        self.assertIn("contains null arrays", str(context.exception))
+    def test_column_skips_missing_rows_and_keeps_partial_lists(self):
+        cases = [
+            (["a", None, "", "  ", float("nan"), pd.NA, "b"], 2),
+            ([["a", None], None, [], ["   "], ["b"]], 2),
+        ]
+        for values, count in cases:
+            with self.subTest(values=values):
+                self.assertEqual(check_column_values(pd.Series(values), "caption", "metadata.parquet"), count)
 
-    def test_empty_arrays(self):
-        column_data = pd.Series([[1, 2], [], [3, 4]])
-        with self.assertRaises(ValueError) as context:
-            check_column_values(column_data, "test_column", "test_file.parquet")
-        self.assertIn("contains empty arrays", str(context.exception))
+    def test_column_rejects_all_empty_lists(self):
+        values = pd.Series([[""], [None], [" "]])
+        with self.assertRaisesRegex(ValueError, "contains no usable captions"):
+            check_column_values(values, "caption", "metadata.parquet")
 
-    def test_null_elements_in_arrays(self):
-        column_data = pd.Series([[1, None], [2, 3], [3, 4]])
-        with self.assertRaises(ValueError) as context:
-            check_column_values(column_data, "test_column", "test_file.parquet")
-        self.assertIn("contains null values within arrays", str(context.exception))
-
-    def test_empty_strings_in_arrays(self):
-        column_data = pd.Series([["", ""], ["", ""], ["", ""]])
-        with self.assertRaises(ValueError) as context:
-            check_column_values(column_data, "test_column", "test_file.parquet")
-        self.assertIn("contains only empty strings within arrays", str(context.exception))
-
-    def test_scalar_strings_with_nulls(self):
-        column_data = pd.Series(["a", None, "b"])
-        with self.assertRaises(ValueError) as context:
-            check_column_values(column_data, "test_column", "test_file.parquet")
-        self.assertIn("contains null values", str(context.exception))
-
-    def test_scalar_strings_with_empty(self):
-        column_data = pd.Series(["a", "", "b"])
-        with self.assertRaises(ValueError) as context:
-            check_column_values(column_data, "test_column", "test_file.parquet")
-        self.assertIn("contains empty strings", str(context.exception))
+    def test_identifier_column_still_rejects_missing_values(self):
+        with self.assertRaisesRegex(ValueError, "contains missing identifiers"):
+            check_column_values(pd.Series(["a", None]), "file", "metadata.parquet", require_complete=True)
 
     def test_with_fallback_caption(self):
         column_data = pd.Series([None, "", [None], [""]])

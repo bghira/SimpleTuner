@@ -48,6 +48,18 @@ class _MinimalHuggingfaceMetadataBackend(HuggingfaceMetadataBackend):
 
 
 class HuggingfaceMetadataBackendTests(unittest.TestCase):
+    def test_null_caption_and_description_do_not_create_training_text(self):
+        backend = HuggingfaceMetadataBackend.__new__(HuggingfaceMetadataBackend)
+        backend.dataset_type = "image"
+        backend.caption_column = "caption"
+        backend.fallback_caption_column = "alternate"
+        backend.description_column = "description"
+
+        self.assertIsNone(backend._extract_caption_from_item({"caption": float("nan"), "description": None}))
+        self.assertEqual(
+            backend._extract_caption_from_item({"caption": float("nan"), "alternate": " usable "}),
+            "usable",
+        )
 
     def test_delete_uses_the_artifact_write_path_and_protects_dataset_samples(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy
 import regex as re
 
+from simpletuner.helpers.metadata.captions import is_missing_caption
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.simpletuner_sdk.server.services.prompt_library_service import PromptLibraryEntry, PromptLibraryService
 
@@ -270,7 +271,7 @@ class PromptHandler:
 
     @staticmethod
     def _caption_payload_values(caption) -> list[str | dict]:
-        if caption is None:
+        if is_missing_caption(caption):
             return []
         if isinstance(caption, bytes):
             caption = caption.decode("utf-8")

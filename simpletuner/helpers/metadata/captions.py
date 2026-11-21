@@ -6,6 +6,9 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
+from pandas import isna
+from pandas.api.types import is_scalar
+
 
 @dataclass
 class CaptionRecord:
@@ -52,6 +55,10 @@ def caption_records_revision(records: Iterable[CaptionRecord]) -> str:
     return digest.hexdigest()
 
 
+def is_missing_caption(value: Any) -> bool:
+    return is_scalar(value) and bool(isna(value))
+
+
 def normalize_caption_text(value: Any) -> str:
     """
     Convert arbitrary input into a clean caption string.
@@ -59,8 +66,8 @@ def normalize_caption_text(value: Any) -> str:
     Empty strings are rejected so downstream components never receive blank prompts.
     """
 
-    if value is None:
-        raise ValueError("Caption text cannot be None.")
+    if is_missing_caption(value):
+        raise ValueError("Caption text cannot be null.")
     if isinstance(value, bytes):
         value = value.decode("utf-8", errors="ignore")
     text = str(value).strip()
@@ -69,4 +76,4 @@ def normalize_caption_text(value: Any) -> str:
     return text
 
 
-__all__ = ["CaptionRecord", "caption_records_revision", "normalize_caption_text"]
+__all__ = ["CaptionRecord", "caption_records_revision", "is_missing_caption", "normalize_caption_text"]
