@@ -45,6 +45,7 @@ from simpletuner.helpers.training.context_parallel_tensors import context_parall
 from simpletuner.helpers.training.gradient_checkpointing_interval import checkpoint_sequential_state
 from simpletuner.helpers.training.offloaded_gradient_checkpointer import activation_offload_context
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
+from simpletuner.helpers.training.tread import MaskInfo
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -56,6 +57,32 @@ def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor, image_tok
         buffer[key] = hidden_states[:, image_tokens_start:, ...]
     else:
         buffer[key] = hidden_states
+
+
+def _apply_rotary_emb(x: torch.Tensor, rotary_emb: tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
+    cos, sin = rotary_emb
+    if cos.ndim == 2:
+        return apply_rotary_emb(x, rotary_emb, sequence_dim=1)
+    cos = cos.to(x.device).unsqueeze(2)
+    sin = sin.to(x.device).unsqueeze(2)
+    real, imag = x.reshape(*x.shape[:-1], -1, 2).unbind(-1)
+    rotated = torch.stack((-imag, real), dim=-1).flatten(3)
+    return (x.float() * cos + rotated.float() * sin).to(x.dtype)
+
+
+def _route_rotary_emb(
+    image_rotary_emb: tuple[torch.Tensor, torch.Tensor],
+    text_rotary_emb: tuple[torch.Tensor, torch.Tensor],
+    mask_info: MaskInfo,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    batch_size = mask_info.ids_keep.shape[0]
+    image_cos, image_sin = image_rotary_emb
+    text_cos, text_sin = text_rotary_emb
+    kept_indices = mask_info.ids_keep
+    return (
+        torch.cat((text_cos.unsqueeze(0).expand(batch_size, -1, -1), image_cos[kept_indices]), dim=1),
+        torch.cat((text_sin.unsqueeze(0).expand(batch_size, -1, -1), image_sin[kept_indices]), dim=1),
+    )
 
 
 @dataclass(frozen=True)
@@ -252,8 +279,8 @@ class Flux2AttnProcessor:
 
         if hidden_states is None:
             if image_rotary_emb is not None:
-                query = apply_rotary_emb(query, image_rotary_emb, sequence_dim=1)
-                key = apply_rotary_emb(key, image_rotary_emb, sequence_dim=1)
+                query = _apply_rotary_emb(query, image_rotary_emb)
+                key = _apply_rotary_emb(key, image_rotary_emb)
 
             publish_attention_max_logits(
                 query,
@@ -432,8 +459,8 @@ class Flux2ParallelSelfAttnProcessor:
 
         if hidden_states is None:
             if image_rotary_emb is not None:
-                query = apply_rotary_emb(query, image_rotary_emb, sequence_dim=1)
-                key = apply_rotary_emb(key, image_rotary_emb, sequence_dim=1)
+                query = _apply_rotary_emb(query, image_rotary_emb)
+                key = _apply_rotary_emb(key, image_rotary_emb)
 
             publish_attention_max_logits(
                 query,
@@ -1058,7 +1085,7 @@ class Flux2Transformer2DModel(
         Args:
             router: TREADRouter instance
             routes: List of route configurations, each containing:
-                - selection_ratio: Fraction of tokens to keep (0.0-1.0)
+                - selection_ratio: Fraction of image tokens to drop (0.0-1.0)
                 - start_layer_idx: First layer to apply routing (can be negative)
                 - end_layer_idx: Last layer to apply routing (can be negative)
         """
@@ -1156,7 +1183,6 @@ class Flux2Transformer2DModel(
                 )
 
         num_txt_tokens = encoder_hidden_states.shape[1]
-        num_img_tokens = hidden_states.shape[1]
 
         # 1. Calculate timestep embedding and modulation parameters
         timestep = timestep.to(hidden_states.dtype) * 1000
@@ -1250,11 +1276,11 @@ class Flux2Transformer2DModel(
             torch.cat([text_rotary_emb[1], image_rotary_emb[1]], dim=0),
         )
 
-        # TREAD state tracking
-        tread_active = False
-        tread_routing_info = None
-        current_pe_img = image_rotary_emb
-        current_pe_txt = text_rotary_emb
+        router = self._tread_router if self.training else None
+        tread_mask_info = None
+        saved_image_tokens = None
+        current_concat_rotary_emb = concat_rotary_emb
+        current_double_mod_img = double_stream_mod_img
 
         num_double = len(self.transformer_blocks)
         combined_blocks = list(self.transformer_blocks) + list(self.single_transformer_blocks)
@@ -1286,7 +1312,6 @@ class Flux2Transformer2DModel(
         # 4. Double Stream Transformer Blocks
         capture_idx = 0
         if use_segmented_checkpointing:
-            current_concat_rotary_emb = concat_rotary_emb
 
             def run_double_block(_idx, block, encoder_hidden_states, hidden_states):
                 return block(
@@ -1324,42 +1349,28 @@ class Flux2Transformer2DModel(
                     checkpointed=checkpoint_this_block,
                 )
 
-            # Check for TREAD routing
-            if self._tread_router is not None and self.training:
+            if router is not None:
                 route = self._get_tread_route_for_layer(global_layer_idx)
 
-                if route is not None and not tread_active:
-                    # Start TREAD routing - route image tokens only (text always kept in double stream)
-                    tread_active = True
-                    # For double stream, force_keep_mask only applies to image tokens
-                    img_force_keep = force_keep_mask  # (B, num_img_tokens) or None
-                    hidden_states, tread_routing_info = self._tread_router.route(
-                        hidden_states,
-                        selection_ratio=route["selection_ratio"],
-                        force_keep_mask=img_force_keep,
+                if route is not None and tread_mask_info is None:
+                    tread_mask_info = router.get_mask(
+                        hidden_states, mask_ratio=route["selection_ratio"], force_keep=force_keep_mask
                     )
-                    # Route image PE alongside tokens
-                    if tread_routing_info is not None:
-                        kept_indices = tread_routing_info["kept_indices"]
-                        # PE is (S, D) not (B, S, D), use first batch's indices
-                        pe_indices = kept_indices[0] if kept_indices.dim() > 1 else kept_indices
-                        current_pe_img = (
-                            image_rotary_emb[0][pe_indices],
-                            image_rotary_emb[1][pe_indices],
+                    saved_image_tokens = hidden_states
+                    hidden_states = router.start_route(hidden_states, tread_mask_info)
+                    current_concat_rotary_emb = _route_rotary_emb(image_rotary_emb, text_rotary_emb, tread_mask_info)
+                    if temb_img.ndim == 3:
+                        current_double_mod_img = tuple(
+                            tuple(router.start_route(param, tread_mask_info) for param in mod)
+                            for mod in double_stream_mod_img
                         )
 
-                elif route is None and tread_active:
-                    # End TREAD routing
-                    hidden_states = self._tread_router.unroute(hidden_states, tread_routing_info, num_img_tokens)
-                    tread_active = False
-                    tread_routing_info = None
-                    current_pe_img = image_rotary_emb
-
-            # Build current RoPE embedding
-            current_concat_rotary_emb = (
-                torch.cat([current_pe_txt[0], current_pe_img[0]], dim=0),
-                torch.cat([current_pe_txt[1], current_pe_img[1]], dim=0),
-            )
+                elif route is None and tread_mask_info is not None:
+                    hidden_states = router.end_route(hidden_states, tread_mask_info, saved_image_tokens)
+                    tread_mask_info = None
+                    saved_image_tokens = None
+                    current_concat_rotary_emb = concat_rotary_emb
+                    current_double_mod_img = double_stream_mod_img
 
             if checkpoint_this_block:
 
@@ -1380,7 +1391,7 @@ class Flux2Transformer2DModel(
                     create_custom_forward(block),
                     hidden_states,
                     encoder_hidden_states,
-                    double_stream_mod_img,
+                    current_double_mod_img,
                     double_stream_mod_txt,
                     current_concat_rotary_emb,
                     joint_attention_kwargs,
@@ -1390,7 +1401,7 @@ class Flux2Transformer2DModel(
                 encoder_hidden_states, hidden_states = block(
                     hidden_states=hidden_states,
                     encoder_hidden_states=encoder_hidden_states,
-                    temb_mod_params_img=double_stream_mod_img,
+                    temb_mod_params_img=current_double_mod_img,
                     temb_mod_params_txt=double_stream_mod_txt,
                     image_rotary_emb=current_concat_rotary_emb,
                     joint_attention_kwargs=joint_attention_kwargs,
@@ -1403,20 +1414,16 @@ class Flux2Transformer2DModel(
             capture_idx += 1
 
         # Unroute before concatenation if still active
-        if tread_active:
-            hidden_states = self._tread_router.unroute(hidden_states, tread_routing_info, num_img_tokens)
-            tread_active = False
-            tread_routing_info = None
+        if tread_mask_info is not None:
+            hidden_states = router.end_route(hidden_states, tread_mask_info, saved_image_tokens)
+            tread_mask_info = None
+            saved_image_tokens = None
 
         # Concatenate text and image streams for single-block inference
         hidden_states = torch.cat([encoder_hidden_states, hidden_states], dim=1)
 
-        # Reset concat PE for single stream
-        concat_rotary_emb = (
-            torch.cat([text_rotary_emb[0], image_rotary_emb[0]], dim=0),
-            torch.cat([text_rotary_emb[1], image_rotary_emb[1]], dim=0),
-        )
         current_concat_pe = concat_rotary_emb
+        current_single_mod = single_stream_mod
 
         # 5. Single Stream Transformer Blocks
         if use_segmented_checkpointing:
@@ -1456,49 +1463,35 @@ class Flux2Transformer2DModel(
                     checkpointed=checkpoint_this_block,
                 )
 
-            # Check for TREAD routing
-            if self._tread_router is not None and self.training:
+            if router is not None:
                 route = self._get_tread_route_for_layer(global_layer_idx)
 
-                if route is not None and not tread_active:
-                    # Start TREAD routing on combined stream
-                    tread_active = True
-                    # For single stream, we need to handle combined txt+img tokens
-                    # Text tokens should always be kept, so prepend ones to force_keep_mask
-                    if force_keep_mask is not None:
-                        batch_size = force_keep_mask.shape[0]
-                        txt_keep = torch.ones(batch_size, num_txt_tokens, dtype=torch.bool, device=force_keep_mask.device)
-                        combined_force_keep = torch.cat([txt_keep, force_keep_mask], dim=1)
-                    else:
-                        # Always keep text tokens even without force_keep_mask
-                        batch_size = hidden_states.shape[0]
-                        combined_force_keep = torch.zeros(
-                            batch_size, num_txt_tokens + num_img_tokens, dtype=torch.bool, device=hidden_states.device
-                        )
-                        combined_force_keep[:, :num_txt_tokens] = True
-
-                    hidden_states, tread_routing_info = self._tread_router.route(
-                        hidden_states,
-                        selection_ratio=route["selection_ratio"],
-                        force_keep_mask=combined_force_keep,
+                if route is not None and tread_mask_info is None:
+                    saved_image_tokens = hidden_states[:, num_txt_tokens:]
+                    tread_mask_info = router.get_mask(
+                        saved_image_tokens, mask_ratio=route["selection_ratio"], force_keep=force_keep_mask
                     )
-                    # Route PE alongside tokens
-                    if tread_routing_info is not None:
-                        kept_indices = tread_routing_info["kept_indices"]
-                        pe_indices = kept_indices[0] if kept_indices.dim() > 1 else kept_indices
-                        current_concat_pe = (
-                            concat_rotary_emb[0][pe_indices],
-                            concat_rotary_emb[1][pe_indices],
+                    routed_image_tokens = router.start_route(saved_image_tokens, tread_mask_info)
+                    hidden_states = torch.cat((hidden_states[:, :num_txt_tokens], routed_image_tokens), dim=1)
+                    current_concat_pe = _route_rotary_emb(image_rotary_emb, text_rotary_emb, tread_mask_info)
+                    if temb_single.ndim == 3:
+                        current_single_mod = tuple(
+                            torch.cat(
+                                (param[:, :num_txt_tokens], router.start_route(param[:, num_txt_tokens:], tread_mask_info)),
+                                dim=1,
+                            )
+                            for param in single_stream_mod
                         )
 
-                elif route is None and tread_active:
-                    # End TREAD routing
-                    hidden_states = self._tread_router.unroute(
-                        hidden_states, tread_routing_info, num_txt_tokens + num_img_tokens
+                elif route is None and tread_mask_info is not None:
+                    restored_image_tokens = router.end_route(
+                        hidden_states[:, num_txt_tokens:], tread_mask_info, saved_image_tokens
                     )
-                    tread_active = False
-                    tread_routing_info = None
+                    hidden_states = torch.cat((hidden_states[:, :num_txt_tokens], restored_image_tokens), dim=1)
+                    tread_mask_info = None
+                    saved_image_tokens = None
                     current_concat_pe = concat_rotary_emb
+                    current_single_mod = single_stream_mod
 
             if checkpoint_this_block:
 
@@ -1519,7 +1512,7 @@ class Flux2Transformer2DModel(
                     create_custom_forward(block),
                     hidden_states,
                     None,
-                    single_stream_mod,
+                    current_single_mod,
                     current_concat_pe,
                     joint_attention_kwargs,
                     use_reentrant=False,
@@ -1528,7 +1521,7 @@ class Flux2Transformer2DModel(
                 hidden_states = block(
                     hidden_states=hidden_states,
                     encoder_hidden_states=None,
-                    temb_mod_params=single_stream_mod,
+                    temb_mod_params=current_single_mod,
                     image_rotary_emb=current_concat_pe,
                     joint_attention_kwargs=joint_attention_kwargs,
                     offload_attention=self.gradient_checkpointing_offload_attention,
@@ -1541,12 +1534,10 @@ class Flux2Transformer2DModel(
             )
             capture_idx += 1
 
-        # Final unroute if still active
-        if tread_active:
-            hidden_states = self._tread_router.unroute(hidden_states, tread_routing_info, num_txt_tokens + num_img_tokens)
-
         # Remove text tokens from concatenated stream
         hidden_states = hidden_states[:, num_txt_tokens:, ...]
+        if tread_mask_info is not None:
+            hidden_states = router.end_route(hidden_states, tread_mask_info, saved_image_tokens)
 
         # 6. Output layers
         if temb_img.ndim == 3:
