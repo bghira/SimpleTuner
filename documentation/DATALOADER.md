@@ -847,7 +847,7 @@ In this example, the 512px dataset is used for steps 1-300, then the 1024px data
 - **Warning:** This is destructive and cannot be undone. Use with caution.
 - **Default:** Falls back to the trainer's `--delete_problematic_images` argument (default: `false`).
 
-For native Webshart, this option records unreadable samples as exclusions in the prepared view. Pixel-space training and on-demand VAE encoding decode the accepted images before training. With precomputed latents, VAE preparation handles the check.
+Native Webshart keeps source shards intact. In streaming Parquet training, the sampler records unreadable rows in the metadata cache for that shard revision and fills their slots from the same aspect bucket. If needed, it repeats a readable row to keep each rank’s batch full. All ranks skip a bucket with no readable rows. Indexed datasets record exclusions during preparation.
 
 ### `delete_nsfw_images`
 

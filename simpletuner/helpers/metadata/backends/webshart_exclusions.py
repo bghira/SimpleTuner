@@ -68,6 +68,28 @@ def read_exclusion_page(publication, header, reason, limit, offset):
         return counts, rows.fetchall()
 
 
+@contextmanager
+def window_exclusion_db(path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with closing(sqlite3.connect(path, timeout=30)) as db, db:
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS exclusions("
+            "shard INTEGER, pin TEXT, ref TEXT, reason TEXT NOT NULL, PRIMARY KEY(shard, pin, ref)) WITHOUT ROWID"
+        )
+        yield db
+
+
+def load_window_exclusions(path, pins):
+    if not path.exists():
+        return set()
+    with window_exclusion_db(path) as db:
+        return {
+            ref
+            for shard, pin in pins.items()
+            for (ref,) in db.execute("SELECT ref FROM exclusions WHERE shard=? AND pin=?", (shard, pin))
+        }
+
+
 class Exclusions:
     def __init__(self, db):
         self.db = db

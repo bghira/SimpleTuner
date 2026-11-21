@@ -13,7 +13,7 @@ from contextlib import ExitStack, closing, contextmanager, nullcontext
 from copy import copy, deepcopy
 from functools import partial
 from hashlib import file_digest, sha256
-from itertools import batched, chain, islice
+from itertools import batched, chain, cycle, islice
 from math import ceil
 from pathlib import Path
 from queue import SimpleQueue
@@ -36,7 +36,9 @@ from simpletuner.helpers.metadata.backends.webshart_epoch import EpochSpec, Webs
 from simpletuner.helpers.metadata.backends.webshart_exclusions import (
     collect_exclusions,
     exclusion_path,
+    load_window_exclusions,
     retain_source_exclusions,
+    window_exclusion_db,
 )
 from simpletuner.helpers.metadata.backends.webshart_geometry import (
     _read_index,
@@ -91,6 +93,8 @@ class _TrainingWindow(NamedTuple):
     buckets: dict[str, list[str]]
     records: dict[str, dict]
     captions: dict[str, CaptionValue]
+    pins: dict[int, str]
+    excluded: set[str]
 
 
 class WebshartMetadataBackend(MetadataBackend):
@@ -431,7 +435,6 @@ class WebshartMetadataBackend(MetadataBackend):
             and getattr(args, "data_backend_sampling", "uniform") != "auto-weighting"
             and self.max_num_samples is None
             and not (config.get("crop") and config.get("crop_style") == "face")
-            and not self.delete_problematic_images
             and not self.delete_unwanted_images
         ):
             return False
@@ -490,9 +493,60 @@ class WebshartMetadataBackend(MetadataBackend):
                 captions.pop(ref, None)
         self._window_transforms.flush()
         revision = sha256(json.dumps([pins, buckets], sort_keys=True).encode()).hexdigest()
-        window = _TrainingWindow(partition, revision, buckets, records, captions)
+        shard_pins = dict(zip(indices, pins, strict=True))
+        excluded = (
+            load_window_exclusions(self.window_exclusions_path, shard_pins) if self.delete_problematic_images else set()
+        )
+        window = _TrainingWindow(partition, revision, buckets, records, captions, shard_pins, excluded)
         self._window_cache = window
         return window
+
+    @property
+    def window_exclusions_path(self):
+        return self.membership_path.with_suffix(".runtime-exclusions.sqlite")
+
+    def read_window_batch(self, partition, bucket, refs):
+        """Replace undecodable occurrences before resolving their captions and conditioning."""
+        window = self._open_training_partition(partition)
+        images = {}
+
+        def read(candidates):
+            requested = [ref for ref in dict.fromkeys(candidates) if ref not in window.excluded]
+            if not requested:
+                return
+            paths, decoded = self.data_backend.read_image_batch(requested)
+            images.update(zip(paths, decoded, strict=True))
+            missing = [ref for ref in requested if ref not in images]
+            if missing:
+                with window_exclusion_db(self.window_exclusions_path) as db:
+                    for ref in missing:
+                        shard = self.data_backend.shard_of(ref)
+                        db.execute(
+                            "INSERT OR IGNORE INTO exclusions VALUES (?,?,?,'decode')", (shard, window.pins[shard], ref)
+                        )
+                window.excluded.update(missing)
+                logger.warning("(id=%s) Excluded unreadable Webshart rows: %s", self.id, missing)
+
+        read(refs)
+        vacancies = sum(ref not in images for ref in refs)
+        if vacancies:
+            members = window.buckets[bucket]
+            start = members.index(refs[-1]) + 1
+            ordered = chain(islice(members, start, None), islice(members, start))
+            candidates = (ref for ref in ordered if ref not in window.excluded and ref not in images)
+            replacements = []
+            while len(replacements) < vacancies:
+                group = list(islice(candidates, vacancies - len(replacements)))
+                if not group:
+                    break
+                read(group)
+                replacements.extend(ref for ref in group if ref in images)
+            if not images:
+                # Every rank has the same bucket and will advance past this occurrence.
+                return [], {}
+            pads = chain(replacements, cycle(images))
+            refs = [ref if ref in images else next(pads) for ref in refs]
+        return refs, images
 
     def _window_buckets(self, partition):
         window = self._open_training_partition(partition)
