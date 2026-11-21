@@ -492,6 +492,7 @@ class WanModelTests(unittest.TestCase):
 
     def test_i2v_conditioning_uses_cached_latents_without_warning(self):
         model = object.__new__(Wan)
+        model._wan_expand_timesteps = False
         model._is_i2v_like_flavour = MagicMock(return_value=False)
         model._extract_conditioning_frames = MagicMock(return_value=(None, None))
         model.get_vae = MagicMock(return_value=SimpleNamespace(config=SimpleNamespace(temperal_downsample=[1, 1])))
@@ -510,6 +511,50 @@ class WanModelTests(unittest.TestCase):
         self.assertTrue(torch.equal(conditioned[:, 20:, :1], clean_latents[:, :, :1]))
         self.assertTrue(torch.all(conditioned[:, 20:, 1:] == 0))
         warning.assert_not_called()
+
+    def test_ti2v_training_preserves_channel_count_and_conditions_only_requested_frames(self):
+        config = SimpleNamespace(
+            model_flavour="ti2v-5b-2.2",
+            pretrained_model_name_or_path=None,
+            pretrained_vae_model_name_or_path=None,
+            vae_path=None,
+            weight_dtype=torch.float32,
+        )
+        with patch.object(Wan, "setup_training_noise_schedule"):
+            model = Wan(config, accelerator=None)
+        model.model = _RecordingWanTransformer()
+        model.model.config = SimpleNamespace(patch_size=(1, 2, 2))
+        vae = SimpleNamespace(config=SimpleNamespace(temperal_downsample=[True, True]))
+        model.get_vae = MagicMock(return_value=vae)
+
+        clean = torch.rand(2, 48, 3, 4, 6)
+        noisy = torch.rand_like(clean)
+        timesteps = torch.tensor([250.0, 750.0])
+        batch = {
+            "noisy_latents": noisy,
+            "latents": clean,
+            "encoder_hidden_states": torch.rand(2, 3, 8),
+            "timesteps": timesteps,
+        }
+
+        with self.subTest(conditioning="text only"):
+            model.model_predict(batch)
+            self.assertTrue(model.supports_crepa_self_flow())
+            torch.testing.assert_close(model.model.last_kwargs["hidden_states"], noisy)
+            torch.testing.assert_close(model.model.last_kwargs["timestep"], timesteps)
+            model.get_vae.assert_not_called()
+
+        with self.subTest(conditioning="cached first frame"):
+            model.model_predict({**batch, "is_i2v_data": True})
+            received = model.model.last_kwargs
+            expected_latents = torch.cat((clean[:, :, :1], noisy[:, :, 1:]), dim=2)
+            torch.testing.assert_close(received["hidden_states"], expected_latents)
+            expected_keep = torch.zeros(2, 18, dtype=torch.bool)
+            expected_keep[:, :6] = True
+            expected_timesteps = timesteps[:, None].masked_fill(expected_keep, 0)
+            torch.testing.assert_close(received["timestep"], expected_timesteps)
+            torch.testing.assert_close(received["force_keep_mask"], expected_keep)
+            model.get_vae.assert_not_called()
 
     def test_model_predict_forwards_anyflow_r_timestep(self):
         model = object.__new__(Wan)

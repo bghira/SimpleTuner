@@ -238,7 +238,7 @@ def add_first_frame_conditioning_v22(
         mode="bilinear",
         align_corners=False,
     ).unsqueeze(2)
-    encoded = vae.encode(first_frame_up.to(device=device, dtype=dtype)).latent_dist.sample().to(dtype)
+    encoded = vae.encode(first_frame_up.to(device=device, dtype=vae.dtype)).latent_dist.sample().to(dtype)
 
     mean = torch.tensor(vae.config.latents_mean).view(1, -1, 1, 1, 1).to(device=device, dtype=dtype)
     std = 1.0 / torch.tensor(vae.config.latents_std).view(1, -1, 1, 1, 1).to(device=device, dtype=dtype)
@@ -261,7 +261,7 @@ def add_first_frame_conditioning_v22(
             mode="bilinear",
             align_corners=False,
         ).unsqueeze(2)
-        last_encoded = vae.encode(last_frame_up.to(device=device, dtype=dtype)).latent_dist.sample().to(dtype)
+        last_encoded = vae.encode(last_frame_up.to(device=device, dtype=vae.dtype)).latent_dist.sample().to(dtype)
         last_encoded = (last_encoded - mean) * std
         latent[:, :, -last_encoded.shape[2] :] = last_encoded
         mask[:, :, -last_encoded.shape[2] :] = 0.0
@@ -633,7 +633,6 @@ class Wan(VideoModelFoundation):
         self._wan_warned_missing_i2v_conditioning = False
         if not hasattr(self.config, "wan_force_2_1_time_embedding"):
             self.config.wan_force_2_1_time_embedding = False
-        self._wan_expand_timesteps = False
         self._validate_xm_support()
 
     def _wan_xm_batch_major_lists(self, values: dict, batch_size: int) -> dict:
@@ -780,20 +779,6 @@ class Wan(VideoModelFoundation):
         force_keep = mask_tokens < 0.5
         return force_keep.flatten(1)
 
-    def _build_expand_timesteps(self, base_timesteps: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
-        transformer = self.unwrap_model(self.model) if getattr(self, "model", None) is not None else None
-        if transformer is None or not hasattr(transformer, "config"):
-            return base_timesteps
-        patch_size = getattr(transformer.config, "patch_size", (1, 2, 2))
-        t_step = max(int(patch_size[0]), 1)
-        h_step = max(int(patch_size[1]), 1)
-        w_step = max(int(patch_size[2]), 1)
-        mask_tokens = mask[:, :, ::t_step, ::h_step, ::w_step]
-        mask_tokens = mask_tokens.squeeze(1)
-        base = base_timesteps.to(mask_tokens.device, dtype=mask_tokens.dtype).view(-1, 1, 1, 1)
-        expanded = (mask_tokens * base).flatten(1)
-        return expanded.to(device=base_timesteps.device, dtype=base_timesteps.dtype)
-
     def _wan_prepare_vae_encode_inputs(self, vae, samples: torch.Tensor) -> tuple[torch.Tensor, bool]:
         if not torch.is_tensor(samples) or samples.ndim != 5:
             return samples, False
@@ -869,75 +854,67 @@ class Wan(VideoModelFoundation):
         if not (self._is_i2v_like_flavour() or is_i2v_batch):
             return
         first_frame, last_frame = self._extract_conditioning_frames(prepared_batch)
-        if first_frame is None:
-            clean_latents = prepared_batch.get("latents")
-            if torch.is_tensor(clean_latents):
-                transformer_kwargs["hidden_states"] = add_first_frame_latent_conditioning(
-                    transformer_kwargs["hidden_states"],
-                    clean_latents,
-                    self.get_vae(),
-                )
-            elif is_i2v_batch and not getattr(self, "_wan_warned_missing_i2v_conditioning", False) and should_log():
-                logger.warning(
-                    "Wan I2V conditioning data was requested but no conditioning frames were provided. "
-                    "Ensure your dataset supplies conditioning images when training I2V flavours."
-                )
-                self._wan_warned_missing_i2v_conditioning = True
-            return
-        elif getattr(self, "_wan_warned_missing_i2v_conditioning", False):
-            self._wan_warned_missing_i2v_conditioning = False
-
+        expand_timesteps = self._wan_expand_timesteps
         latent_tensor = transformer_kwargs.get("hidden_states")
         if latent_tensor is None:
             return
 
-        latent_device = latent_tensor.device
-        latent_dtype = latent_tensor.dtype
+        if first_frame is None:
+            if expand_timesteps and not is_i2v_batch:
+                return
+            clean_latents = prepared_batch.get("latents")
+            if not torch.is_tensor(clean_latents):
+                if is_i2v_batch and not self._wan_warned_missing_i2v_conditioning and should_log():
+                    logger.warning(
+                        "Wan I2V conditioning data was requested but no conditioning frames were provided. "
+                        "Ensure your dataset supplies conditioning images when training I2V flavours."
+                    )
+                    self._wan_warned_missing_i2v_conditioning = True
+                return
+            if not expand_timesteps:
+                transformer_kwargs["hidden_states"] = add_first_frame_latent_conditioning(
+                    latent_tensor, clean_latents, self.get_vae()
+                )
+                return
 
-        vae = self.get_vae()
-        if vae is None:
-            return
-        try:
-            vae_param = next(vae.parameters())
-            if vae_param.device != latent_device:
+            conditioned_latent = latent_tensor.clone()
+            conditioned_latent[:, :, :1] = clean_latents[:, :, :1].to(latent_tensor)
+            mask = torch.ones_like(latent_tensor[:, :1], dtype=torch.bool)
+            mask[:, :, :1] = False
+        else:
+            self._wan_warned_missing_i2v_conditioning = False
+            vae = self.get_vae()
+            if vae is None:
+                return
+            latent_device = latent_tensor.device
+            vae_param = next(vae.parameters(), None)
+            if vae_param is not None and vae_param.device != latent_device:
                 vae.to(latent_device)
-        except StopIteration:
-            pass
 
-        def _prepare_frame(frame: torch.Tensor) -> torch.Tensor:
-            if frame.device != latent_device or frame.dtype != vae.dtype:
-                return frame.to(device=latent_device, dtype=vae.dtype)
-            return frame
+            first_frame = first_frame.to(device=latent_device, dtype=vae.dtype).detach()
+            if last_frame is not None:
+                last_frame = last_frame.to(device=latent_device, dtype=vae.dtype).detach()
 
-        first_frame_prepared = _prepare_frame(first_frame).detach()
-        last_frame_prepared = None
-        if self._uses_last_frame_conditioning() and last_frame is not None:
-            last_frame_prepared = _prepare_frame(last_frame).detach()
+            if not expand_timesteps:
+                transformer_kwargs["hidden_states"] = add_first_frame_conditioning(latent_tensor, first_frame, vae)
+                return
 
-        expand_timesteps = bool(self._wan_expand_timesteps)
-        with torch.no_grad():
-            if expand_timesteps:
-                conditioned_latent, mask = add_first_frame_conditioning_v22(
-                    latent_tensor,
-                    first_frame_prepared,
-                    vae,
-                    last_frame=last_frame_prepared,
-                )
-                transformer_kwargs["hidden_states"] = conditioned_latent.to(dtype=latent_dtype)
-                base_timesteps = prepared_batch["timesteps"]
-                expanded_timesteps = self._build_expand_timesteps(base_timesteps, mask)
-                transformer_kwargs["timestep"] = expanded_timesteps
-                force_keep = self._mask_to_force_keep(mask)
-                if force_keep is not None:
-                    existing = transformer_kwargs.get("force_keep_mask")
-                    transformer_kwargs["force_keep_mask"] = force_keep if existing is None else (existing | force_keep)
-            else:
-                conditioned_latent = add_first_frame_conditioning(
-                    latent_tensor,
-                    first_frame_prepared,
-                    vae,
-                )
-                transformer_kwargs["hidden_states"] = conditioned_latent.to(dtype=latent_dtype)
+            conditioned_latent, mask = add_first_frame_conditioning_v22(
+                latent_tensor, first_frame, vae, last_frame=last_frame
+            )
+
+        transformer_kwargs["hidden_states"] = conditioned_latent
+        force_keep = self._mask_to_force_keep(mask)
+        if force_keep is not None:
+            timesteps = transformer_kwargs["timestep"]
+            if timesteps.ndim == 1:
+                timesteps = timesteps[:, None]
+            transformer_kwargs["timestep"] = timesteps.masked_fill(force_keep.to(timesteps.device), 0)
+            timestep_sign = transformer_kwargs.get("timestep_sign")
+            if timestep_sign is not None and timestep_sign.ndim == 1:
+                transformer_kwargs["timestep_sign"] = timestep_sign[:, None].expand_as(force_keep).contiguous()
+            existing = transformer_kwargs.get("force_keep_mask")
+            transformer_kwargs["force_keep_mask"] = force_keep if existing is None else (existing | force_keep)
 
     def _get_conditioning_image_embedder(self):
         pipeline = self.pipelines.get(PipelineTypes.IMG2VIDEO)
