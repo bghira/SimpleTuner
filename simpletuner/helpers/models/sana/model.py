@@ -3,7 +3,7 @@ import os
 import random
 
 import torch
-from diffusers import AutoencoderDC, FlowMatchEulerDiscreteScheduler
+from diffusers import AutoencoderDC, DPMSolverMultistepScheduler, FlowMatchEulerDiscreteScheduler
 from diffusers.pipelines import SanaPipeline
 from diffusers.training_utils import compute_loss_weighting_for_sd3
 from transformers import Gemma2Model, GemmaTokenizerFast
@@ -84,6 +84,14 @@ class Sana(ImageModelFoundation):
 
     def requires_special_scheduler_setup(self) -> bool:
         return True
+
+    def _load_scheduler_for_pipeline(self, pipeline_type: str):
+        return DPMSolverMultistepScheduler.from_pretrained(
+            self._model_config_path(),
+            subfolder="scheduler",
+            revision=self.config.revision,
+            local_files_only=getattr(self.config, "local_files_only", False),
+        )
 
     def _format_text_embedding(self, text_embedding: torch.Tensor):
         """

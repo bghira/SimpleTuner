@@ -3,7 +3,7 @@ import os
 from typing import Optional
 
 import torch
-from diffusers import FlowMatchEulerDiscreteScheduler
+from diffusers import DPMSolverMultistepScheduler, FlowMatchEulerDiscreteScheduler
 from diffusers.models import AutoencoderKLWan
 from diffusers.training_utils import compute_loss_weighting_for_sd3
 from transformers import Gemma2Model, GemmaTokenizerFast
@@ -80,6 +80,14 @@ class SanaVideo(VideoModelFoundation):
 
     def requires_special_scheduler_setup(self) -> bool:
         return True
+
+    def _load_scheduler_for_pipeline(self, pipeline_type: str):
+        return DPMSolverMultistepScheduler.from_pretrained(
+            self._model_config_path(),
+            subfolder="scheduler",
+            revision=self.config.revision,
+            local_files_only=getattr(self.config, "local_files_only", False),
+        )
 
     @classmethod
     def adjust_video_frames(cls, num_frames: int) -> int:
