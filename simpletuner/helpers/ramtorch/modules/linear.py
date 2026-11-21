@@ -890,7 +890,7 @@ class CPUBouncingLinear(nn.Module):
                 bound = 1 / fan_in**0.5
                 nn.init.uniform_(self.bias, -bound, bound)
 
-    def _apply(self, fn):
+    def _apply(self, fn, recurse=True):
         """
         Override _apply to allow dtype changes but prevent device moves.
         """
