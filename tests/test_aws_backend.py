@@ -154,6 +154,27 @@ class TestS3PrefixHandling(unittest.TestCase):
             backend.open_read_stream("buckets.json")
         backend.client.get_object.assert_called_once()
 
+    def test_versioned_metadata_uses_conditional_s3_writes(self):
+        backend = S3DataBackend.__new__(S3DataBackend)
+        backend.bucket_name = "datasets"
+        backend.read_retry_limit = 1
+        backend.client = Mock()
+        backend.client.get_object.return_value = {"Body": BytesIO(b"old index"), "ETag": '"old"'}
+        backend.client.put_object.return_value = {"ETag": '"new"'}
+
+        index, version = backend.read_with_version("buckets.json")
+        self.assertEqual((index, version), (b"old index", '"old"'))
+        self.assertEqual(backend.write_if_version("buckets.json", b"next index", expected_version=version), '"new"')
+        backend.client.put_object.assert_called_once_with(
+            Bucket="datasets", Key="buckets.json", Body=b"next index", IfMatch='"old"'
+        )
+
+        backend.client.put_object.reset_mock()
+        backend.write_if_version("buckets.json", b"first index", expected_version=None)
+        backend.client.put_object.assert_called_once_with(
+            Bucket="datasets", Key="buckets.json", Body=b"first index", IfNoneMatch="*"
+        )
+
     def test_normalise_s3_prefixes_accepts_string_or_list(self):
         self.assertEqual(normalise_s3_prefixes("train/"), ("train/",))
         self.assertEqual(normalise_s3_prefixes(["train/", "reg/"]), ("train/", "reg/"))

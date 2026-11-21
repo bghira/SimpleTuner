@@ -427,7 +427,7 @@ class DatasetViewerService:
 
         for search_dir in search_dirs:
             candidate = search_dir / filename
-            if candidate.is_file():
+            if candidate.is_file() or (file_type == "metadata" and candidate.with_suffix(".transforms").is_dir()):
                 return candidate
 
         # Fallback: glob under instance_data_dir and cache/
@@ -446,6 +446,9 @@ class DatasetViewerService:
         """Load and parse a cache JSON file."""
         with open(cache_path, "r") as f:
             return json.load(f)
+
+    def _legacy_metadata_publication(self, dataset_config, cache_path):
+        return LegacyMetadataPublication(cache_path, self._find_cache_file(dataset_config, "indices"))
 
     def _coerce_display_name(self, value: Any) -> Optional[str]:
         """Normalise a candidate dataset label to a readable display name."""
@@ -727,8 +730,8 @@ class DatasetViewerService:
                 if cache_path is None:
                     return None
                 try:
-                    meta, metadata_revision = LegacyMetadataPublication(cache_path).read(file_path)
-                except (json.JSONDecodeError, OSError):
+                    meta, metadata_revision = self._legacy_metadata_publication(dataset_config, cache_path).read(file_path)
+                except (ijson.JSONError, json.JSONDecodeError, OSError):
                     return None
         if meta is None:
             return None
@@ -782,8 +785,10 @@ class DatasetViewerService:
         if cache_path is None:
             return None
         try:
-            return LegacyMetadataPublication(cache_path).edit(path, update, expected_revision=metadata_revision)
-        except (json.JSONDecodeError, FileNotFoundError):
+            return self._legacy_metadata_publication(config, cache_path).edit(
+                path, update, expected_revision=metadata_revision
+            )
+        except (ijson.JSONError, json.JSONDecodeError, FileNotFoundError):
             return None
 
     def update_crop_coordinates(
@@ -919,8 +924,8 @@ class DatasetViewerService:
         if metadata is None:
             return {"deleted": False, "cache_path": None, "error": "Metadata entry not found"}
         try:
-            record, revision = LegacyMetadataPublication(metadata).read(file_path)
-        except (FileNotFoundError, json.JSONDecodeError):
+            record, revision = self._legacy_metadata_publication(dataset_config, metadata).read(file_path)
+        except (ijson.JSONError, FileNotFoundError, json.JSONDecodeError):
             return {"deleted": False, "cache_path": None, "error": "Metadata entry not found"}
         if metadata_revision is not None and revision != metadata_revision:
             raise DatasetViewChangedError("The metadata changed. Reopen the file before deleting its latent.")
@@ -1636,11 +1641,6 @@ class DatasetViewerService:
         if cache_path is None:
             return FilteredFilesReport(dataset_id=dataset_id)
 
-        try:
-            all_metadata = self._load_cache(cache_path)
-        except (json.JSONDecodeError, OSError):
-            return FilteredFilesReport(dataset_id=dataset_id)
-
         # Get the set of files that ARE in buckets (accepted)
         indices_path = self._find_cache_file(dataset_config, "indices")
         accepted_files: set = set()
@@ -1650,7 +1650,12 @@ class DatasetViewerService:
                 for bucket_files in indices_data.get("aspect_ratio_bucket_indices", {}).values():
                     accepted_files.update(bucket_files)
             except (json.JSONDecodeError, OSError):
-                pass
+                indices_path = None
+
+        try:
+            all_metadata = LegacyMetadataPublication(cache_path, indices_path).read_records(excluded=accepted_files)
+        except (ijson.JSONError, json.JSONDecodeError, OSError):
+            return FilteredFilesReport(dataset_id=dataset_id)
 
         # Filter rules from config
         min_size = dataset_config.get("minimum_image_size")

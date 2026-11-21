@@ -14,6 +14,7 @@ from simpletuner.helpers.data_backend.filters import filter_file_list
 from simpletuner.helpers.image_manipulation.load import load_image, load_video
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
+from simpletuner.helpers.metadata.backends.legacy_geometry import SQLiteGeometryMetadata
 from simpletuner.helpers.training import audio_file_extensions, image_file_extensions, video_file_extensions
 from simpletuner.helpers.training.multi_process import should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -35,7 +36,7 @@ def _is_ffprobe_available() -> bool:
     return _ffprobe_available
 
 
-class DiscoveryMetadataBackend(MetadataBackend):
+class DiscoveryMetadataBackend(SQLiteGeometryMetadata, MetadataBackend):
     def __init__(
         self,
         id: str,
@@ -324,14 +325,18 @@ class DiscoveryMetadataBackend(MetadataBackend):
         # Query our DataBackend to see whether the cache file exists.
         logger.debug(f"Checking for cache file: {self.cache_file}")
         if self.data_backend.exists(self.cache_file):
+            version = None
             try:
                 # Use our DataBackend to actually read the cache file.
                 logger.debug("Pulling cache file from storage")
-                cache_data_raw = self.data_backend.read(self.cache_file)
+                cache_data_raw, version = self._read_bucket_document()
                 cache_data = json.loads(cache_data_raw)
             except Exception as e:
+                if self._transform_recipe is not None:
+                    raise
                 logger.warning(f"Error loading aspect bucket cache, creating new one: {e}")
                 cache_data = {}
+            self._adopt_transform_recipe(cache_data, version)
             self.aspect_ratio_bucket_indices = cache_data.get("aspect_ratio_bucket_indices", {})
             if set_config:
                 self.config = cache_data.get("config", {})
@@ -345,6 +350,8 @@ class DiscoveryMetadataBackend(MetadataBackend):
         """
         Save cache data to file.
         """
+        if self._rebuilding_transforms and not enforce_constraints:
+            return
         # Prune any buckets that have fewer samples than batch_size
         if enforce_constraints:
             self._enforce_min_bucket_size()
@@ -366,22 +373,12 @@ class DiscoveryMetadataBackend(MetadataBackend):
         if self.filtering_statistics is not None:
             cache_data["filtering_statistics"] = self.filtering_statistics
         logger.debug(f"save_cache has config to write: {cache_data['config']}")
-        cache_data_str = json.dumps(cache_data)
-        # Use our DataBackend to write the cache file.
-        self.data_backend.write(self.cache_file, cache_data_str)
+        self._publish_bucket_cache(cache_data)
 
-    def load_image_metadata(self):
-        """Load image metadata from a JSON file."""
-        self.image_metadata = {}
-        self.image_metadata_loaded = False
-        if self.data_backend.exists(self.metadata_file):
-            cache_data_raw = self.data_backend.read(self.metadata_file)
-            self.image_metadata = json.loads(cache_data_raw)
-            self.image_metadata_loaded = True
-
-    def save_image_metadata(self):
-        """Save image metadata to a JSON file."""
-        self.data_backend.write(self.metadata_file, json.dumps(self.image_metadata))
+    def compute_aspect_ratio_bucket_indices(self, ignore_existing_cache: bool = False, progress_callback=None):
+        ignore_existing_cache = self._needs_geometry_rebuild(ignore_existing_cache)
+        with self._replace_geometry(ignore_existing_cache):
+            super().compute_aspect_ratio_bucket_indices(ignore_existing_cache, progress_callback)
 
     def _process_for_bucket(
         self,

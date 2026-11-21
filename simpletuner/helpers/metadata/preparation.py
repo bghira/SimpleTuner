@@ -16,6 +16,8 @@ from typing import Protocol
 from atomicwrites import atomic_write
 from filelock import FileLock
 
+from simpletuner.helpers.metadata.transform_store import GEOMETRY_FIELDS, DatasetTransformStore, transform_recipe_directory
+
 
 class BucketValidationCursor:
     """Page through current bucket membership in path order, including after a rescan."""
@@ -101,37 +103,87 @@ class LegacyMetadataEdit:
 class LegacyMetadataPublication:
     """A file-backed metadata view with serialized, atomic file edits."""
 
-    def __init__(self, path):
+    def __init__(self, path, indices_path=None):
         self.path = Path(path)
+        self.indices_path = indices_path
 
     @staticmethod
-    def _revision(stat):
+    def _revision(stat, transforms=None):
         version = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
+        if transforms is not None:
+            stored = transforms.path.stat()
+            version += (stored.st_dev, stored.st_ino, stored.st_size, stored.st_mtime_ns)
         return hashlib.sha256(repr(version).encode()).hexdigest()
 
+    def _transform_store(self):
+        if self.indices_path is None:
+            return None
+        import ijson
+
+        with self.indices_path.open("rb") as source:
+            for prefix, event, recipe in ijson.parse(source):
+                if prefix == "transform_recipe" and event == "string":
+                    return DatasetTransformStore(transform_recipe_directory(self.path, recipe))
+                if prefix == "aspect_ratio_bucket_indices" and event == "start_map":
+                    break
+        return None
+
     def _read_snapshot(self):
-        with self.path.open(encoding="utf-8") as source:
-            return json.load(source), self._revision(os.fstat(source.fileno()))
+        transforms = self._transform_store()
+        path = self.path if transforms is None else transforms.measurements_path
+        with path.open(encoding="utf-8") as source:
+            return json.load(source), transforms, self._revision(os.fstat(source.fileno()), transforms)
+
+    @staticmethod
+    def _merge_transform(records, sample_ref, transforms):
+        measured = records.get(sample_ref)
+        if measured is None or transforms is None:
+            return measured
+        return {**measured, **transforms.get(sample_ref, {})}
 
     def read(self, sample_ref):
-        records, revision = self._read_snapshot()
-        return records.get(sample_ref), revision
+        records, transforms, revision = self._read_snapshot()
+        return self._merge_transform(records, sample_ref, transforms), revision
+
+    def read_records(self, *, excluded=()):
+        records, transforms, _ = self._read_snapshot()
+        if transforms is not None:
+            refs = (path for path, record in records.items() if path not in excluded and isinstance(record, dict))
+            for paths in batched(refs, 2048):
+                for path, geometry in zip(paths, transforms.read_batch(paths)):
+                    if geometry is not None:
+                        records[path].update(geometry)
+        return records
 
     def edit(self, sample_ref, update, *, expected_revision=None):
         with FileLock(str(self.path) + ".lock"):
-            records, revision = self._read_snapshot()
+            records, transforms, revision = self._read_snapshot()
             if expected_revision is not None and expected_revision != revision:
                 raise DatasetViewChangedError("The metadata changed. Reopen the file before editing it.")
-            if sample_ref not in records or (record := update(records[sample_ref])) is None:
+            previous = self._merge_transform(records, sample_ref, transforms)
+            if previous is None or (record := update(previous.copy())) is None:
                 return None
-            records[sample_ref] = record
-            with atomic_write(self.path, overwrite=True, encoding="utf-8") as output:
-                json.dump(records, output)
-                output.flush()
-                published_revision = self._revision(os.fstat(output.fileno()))
-                if self._revision(self.path.stat()) != revision:
-                    raise DatasetViewChangedError("The metadata changed. Reopen the file before editing it.")
-            return LegacyMetadataEdit(record, published_revision)
+            if transforms is None:
+                records[sample_ref] = record
+                self._write_snapshot(records, revision, transforms)
+            else:
+                measured = {key: value for key, value in record.items() if key not in GEOMETRY_FIELDS}
+                geometry = {key: value for key, value in record.items() if key in GEOMETRY_FIELDS}
+                if measured != records[sample_ref]:
+                    records[sample_ref] = measured
+                    self._write_snapshot(records, revision, transforms)
+                if geometry != transforms.get(sample_ref, {}):
+                    transforms[sample_ref] = geometry
+            path = self.path if transforms is None else transforms.measurements_path
+            return LegacyMetadataEdit(record, self._revision(path.stat(), transforms))
+
+    def _write_snapshot(self, records, revision, transforms):
+        path = self.path if transforms is None else transforms.measurements_path
+        with atomic_write(path, overwrite=True, encoding="utf-8") as output:
+            json.dump(records, output)
+            output.flush()
+            if self._revision(path.stat(), transforms) != revision:
+                raise DatasetViewChangedError("The metadata changed. Reopen the file before editing it.")
 
 
 @dataclass(frozen=True)

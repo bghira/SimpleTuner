@@ -14,6 +14,7 @@ from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.data_backend.filters import filter_file_list
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
+from simpletuner.helpers.metadata.backends.legacy_geometry import SQLiteGeometryMetadata
 from simpletuner.helpers.metadata.captions import is_missing_caption
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
 from simpletuner.helpers.training import audio_file_extensions, image_file_extensions, video_file_extensions
@@ -62,7 +63,7 @@ def check_column_values(column_data, column_name, parquet_path, fallback_caption
     return usable_count
 
 
-class ParquetMetadataBackend(MetadataBackend):
+class ParquetMetadataBackend(SQLiteGeometryMetadata, MetadataBackend):
     def __init__(
         self,
         id: str,
@@ -132,7 +133,8 @@ class ParquetMetadataBackend(MetadataBackend):
             if missing:
                 logger.warning("Removing %d indexed samples with missing Parquet captions.", len(missing))
                 self.remove_images(missing)
-                self.save_cache(enforce_constraints=True)
+                if not self.uses_remote_transform_store or self.accelerator.is_main_process:
+                    self.save_cache(enforce_constraints=True)
 
     def load_parquet_database(self):
         if self.data_backend.exists(self.parquet_path):
@@ -281,25 +283,32 @@ class ParquetMetadataBackend(MetadataBackend):
 
     def reload_cache(self, set_config: bool = True):
         if self.data_backend.exists(self.cache_file):
+            version = None
             try:
-                cache_data_raw = self.data_backend.read(self.cache_file)
+                cache_data_raw, version = self._read_bucket_document()
                 cache_data = json.loads(cache_data_raw)
             except Exception as e:
+                if self._transform_recipe is not None:
+                    raise
                 logger.warning(f"Error loading aspect ratio bucket cache, creating new one: {e}")
                 cache_data = {}
+            self._adopt_transform_recipe(cache_data, version)
             self.aspect_ratio_bucket_indices = cache_data.get("aspect_ratio_bucket_indices", {})
             if set_config:
                 self.config = cache_data.get("config", {})
             # Load filtering statistics if present
             self.filtering_statistics = cache_data.get("filtering_statistics")
-            try:
-                self.load_image_metadata()
-            except Exception as e:
-                logger.warning(f"Error loading parquet metadata cache, continuing with empty metadata: {e}")
+            if self._transform_recipe is None:
+                try:
+                    self.load_image_metadata()
+                except Exception as e:
+                    logger.warning(f"Error loading parquet metadata cache, continuing with empty metadata: {e}")
         else:
             logger.warning("No cache file found, starting a fresh one.")
 
     def save_cache(self, enforce_constraints: bool = False):
+        if self._rebuilding_transforms and not enforce_constraints:
+            return
         if enforce_constraints:
             self._enforce_min_bucket_size()
         self._enforce_min_aspect_ratio()
@@ -318,21 +327,14 @@ class ParquetMetadataBackend(MetadataBackend):
         # Include filtering statistics if available
         if self.filtering_statistics is not None:
             cache_data["filtering_statistics"] = self.filtering_statistics
-        cache_data_str = json.dumps(cache_data)
-        self.data_backend.write(self.cache_file, cache_data_str)
-
-    def load_image_metadata(self):
-        self.image_metadata = {}
-        self.image_metadata_loaded = False
-        if self.data_backend.exists(self.metadata_file):
-            raw = self.data_backend.read(self.metadata_file)
-            self.image_metadata = json.loads(raw)
-            self.image_metadata_loaded = True
-
-    def save_image_metadata(self):
-        self.data_backend.write(self.metadata_file, json.dumps(self.image_metadata))
+        self._publish_bucket_cache(cache_data)
 
     def compute_aspect_ratio_bucket_indices(self, ignore_existing_cache: bool = False, progress_callback=None):
+        ignore_existing_cache = self._needs_geometry_rebuild(ignore_existing_cache)
+        with self._replace_geometry(ignore_existing_cache):
+            self._compute_aspect_ratio_bucket_indices(ignore_existing_cache, progress_callback)
+
+    def _compute_aspect_ratio_bucket_indices(self, ignore_existing_cache, progress_callback):
         # build buckets from parquet metadata without loading actual files
         new_files = self._discover_new_files(ignore_existing_cache=ignore_existing_cache)
         existing_files_set = set().union(*self.aspect_ratio_bucket_indices.values())
