@@ -3410,8 +3410,13 @@ class FactoryRegistry:
         caption_strategy = init_backend["config"].get("caption_strategy")
         skip_file_discovery = backend.get("skip_file_discovery", "")
         args_skip = getattr(self.args, "skip_file_discovery", "")
+        conditioning_for_image_context = (
+            _backend_dataset_type(backend) is DatasetType.CONDITIONING
+            and getattr(self.model, "requires_text_embed_image_context", lambda: False)()
+        )
         if (
             conditioning_type != "mask"
+            and not conditioning_for_image_context
             and "text" not in args_skip
             and "text" not in skip_file_discovery
             and caption_strategy is not None
