@@ -3141,7 +3141,8 @@ class FactoryRegistry:
 
         metadata_backend_config = getattr(init_backend["metadata_backend"], "config", None)
         if isinstance(metadata_backend_config, dict):
-            for key in runtime_mutable_keys:
+            # Keep the defaults and frame counts resolved by init_backend_config.
+            for key in (*runtime_mutable_keys, "video"):
                 if key in init_backend["config"]:
                     metadata_backend_config[key] = init_backend["config"][key]
                 else:
@@ -3151,7 +3152,6 @@ class FactoryRegistry:
             "conditioning_data",
             "conditioning",
             "data_transforms",
-            "video",
             "s2v_datasets",
             "_s2v_audio_autoinjected",
         )

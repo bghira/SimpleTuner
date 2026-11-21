@@ -1,7 +1,8 @@
 import unittest
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
-from simpletuner.helpers.data_backend.factory import init_backend_config
+from simpletuner.helpers.data_backend.factory import FactoryRegistry, init_backend_config
 
 
 class TestLTXVideo2FrameValidation(unittest.TestCase):
@@ -92,6 +93,27 @@ class TestLTXVideo2FrameValidation(unittest.TestCase):
         self.assertEqual(result["dataset_type"], "conditioning")
         self.assertEqual(result["config"]["video"]["num_frames"], 17)
         self.assertEqual(result["config"]["video"]["min_frames"], 17)
+
+    @patch("simpletuner.helpers.data_backend.factory.print_bucket_info")
+    @patch("simpletuner.helpers.data_backend.factory.StateTracker.set_data_backend_config")
+    def test_config_versioning_preserves_resolved_video_settings(self, set_backend_config, _print_bucket_info):
+        factory = FactoryRegistry.__new__(FactoryRegistry)
+        factory.args = SimpleNamespace(override_dataset_config=False)
+        args = {"model_family": "ltxvideo2", "model_flavour": "dev", "framerate": 25}
+
+        for settings, expected_frames in (({"video": {"num_frames": 48, "min_frames": 48}}, 41), ({}, 121)):
+            with self.subTest(settings=settings):
+                backend = {"id": "ltx2-video", "dataset_type": "video", **settings}
+                result = init_backend_config(backend, args, accelerator=None)
+                result["metadata_backend"] = MagicMock(config={"video": {"num_frames": 48, "min_frames": 48}})
+                result["metadata_backend"].__len__.return_value = 1
+
+                factory._handle_config_versioning(backend, result)
+
+                video = {"num_frames": expected_frames, "min_frames": expected_frames, "is_i2v": True}
+                self.assertEqual(result["config"]["video"], video)
+                self.assertEqual(result["metadata_backend"].config["video"], video)
+                self.assertEqual(set_backend_config.call_args.args[1]["video"], video)
 
 
 if __name__ == "__main__":
