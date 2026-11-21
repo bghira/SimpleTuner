@@ -115,12 +115,8 @@ class TREADRouter:
         return MaskInfo(mask, ids_keep, ids_mask, ids_shuffle, ids_restore)
 
     def start_route(self, x: torch.Tensor, info: MaskInfo) -> torch.Tensor:
-        """
-        Permute tokens so the kept ones come first, then truncate.
-        """
-        # x: (B,S,D)
-        x_shuf = torch.take_along_dim(x, info.ids_shuffle.unsqueeze(-1).expand_as(x), dim=1)
-        return x_shuf[:, : info.ids_keep.size(1), :]
+        """Gather the kept tokens in routing order."""
+        return torch.take_along_dim(x, info.ids_keep.unsqueeze(-1), dim=1)
 
     def end_route(
         self,
@@ -136,24 +132,12 @@ class TREADRouter:
         representations back in (recommended for training).  Otherwise we
         fill them with `mask_token`.
         """
-        B, S = info.mask.shape
-        D = routed_x.shape[2]
-
-        # Create buffer for all tokens in shuffled order
-        x_shuf = torch.empty(B, S, D, device=routed_x.device, dtype=routed_x.dtype)
-        x_shuf[:, : routed_x.size(1), :] = routed_x
-
-        if original_x is not None:
-            # put original skipped tokens back behind the kept ones
-            orig_shuf = torch.take_along_dim(
-                original_x,
-                info.ids_shuffle.unsqueeze(-1).expand_as(original_x),
-                dim=1,
-            )
-            x_shuf[:, routed_x.size(1) :, :] = orig_shuf[:, routed_x.size(1) :, :]
+        if original_x is None:
+            restored = routed_x.new_full((*info.mask.shape, routed_x.shape[2]), mask_token)
         else:
-            x_shuf[:, routed_x.size(1) :, :].fill_(mask_token)
+            restored = original_x.to(
+                device=routed_x.device, dtype=routed_x.dtype, copy=True, memory_format=torch.contiguous_format
+            )
 
-        # Undo the permutation
-        x_full = torch.take_along_dim(x_shuf, info.ids_restore.unsqueeze(-1).expand_as(x_shuf), dim=1)
-        return x_full
+        routed_indices = info.ids_shuffle[:, : routed_x.size(1)].unsqueeze(-1).expand_as(routed_x)
+        return restored.scatter_(1, routed_indices, routed_x)

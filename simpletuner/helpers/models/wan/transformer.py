@@ -39,7 +39,7 @@ from simpletuner.helpers.training.gradient_checkpointing_interval import checkpo
 from simpletuner.helpers.training.grounding.gligen_layers import apply_grounding_fuser
 from simpletuner.helpers.training.offloaded_gradient_checkpointer import activation_offload_context
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
-from simpletuner.helpers.training.tread import TREADRouter
+from simpletuner.helpers.training.tread import MaskInfo, TREADRouter
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -885,29 +885,9 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
             block.set_chunk_feed_forward(chunk_size, dim)
 
     @staticmethod
-    def _route_rope(rope, info, keep_len: int, batch: int):
-        """
-        Apply the router's (ids_shuffle → slice) transform to rotary embeddings.
-        Adapted for Wan's rotary embedding format which encodes 3D position (T,H,W).
-
-        Note: Wan's rotary embeddings encode temporal, height, and width positions
-        separately in different dimensions of the embedding. When routing, we maintain
-        the correspondence between tokens and their 3D positional encoding.
-        """
-
-        # rope is a tensor of shape (1, 1, S, D) for Wan
-        # where S = t_tokens * h_tokens * w_tokens
-        def _route_one(r: torch.Tensor) -> torch.Tensor:
-            # Remove the batch dimensions temporarily
-            r_squeeze = r.squeeze(0).squeeze(0)  # (S, D)
-            # Expand to batch size
-            rB = r_squeeze.unsqueeze(0).expand(batch, -1, -1)  # (B, S, D)
-            # Apply shuffle - this maintains the token-position correspondence
-            shuf = torch.take_along_dim(rB, info.ids_shuffle.unsqueeze(-1).expand_as(rB), dim=1)
-            # Keep only the selected tokens and add back the extra dimension
-            return shuf[:, :keep_len, :].unsqueeze(1)  # (B, 1, keep_len, D)
-
-        return _route_one(rope)
+    def _route_rope(rope: torch.Tensor, info: MaskInfo) -> torch.Tensor:
+        """Gather rotary positions in the same order as the routed video tokens."""
+        return torch.take_along_dim(rope, info.ids_keep[:, None, :, None], dim=2)
 
     def forward(
         self,
@@ -1089,18 +1069,13 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
                         mask_ratio=mask_ratio,
                         force_keep=force_keep_mask,
                     )
-                    saved_tokens = hidden_states.clone()
+                    saved_tokens = hidden_states
                     hidden_states = router.start_route(hidden_states, tread_mask_info)
                     routing_now = True
 
                     # Route the rotary embeddings to match the selected video tokens
                     # This preserves the 3D positional information for kept tokens
-                    current_rope = self._route_rope(
-                        rotary_emb,
-                        tread_mask_info,
-                        keep_len=hidden_states.size(1),
-                        batch=hidden_states.size(0),
-                    )
+                    current_rope = self._route_rope(rotary_emb, tread_mask_info)
 
                 # Skip layers if specified
                 if skip_layers is not None and i in skip_layers:
@@ -1196,6 +1171,7 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
                     )
                     routing_now = False
                     route_ptr += 1
+                    saved_tokens = None
                     current_rope = rotary_emb
 
                 if output_hidden_states and (hidden_state_layer is None or i == hidden_state_layer):

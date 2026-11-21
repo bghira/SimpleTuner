@@ -9,6 +9,27 @@ os.environ["SIMPLETUNER_LOG_LEVEL"] = "CRITICAL"
 from simpletuner.helpers.training.tread import TREADRouter
 
 
+class TestTREADRouter(unittest.TestCase):
+    def test_routed_storage_only_contains_kept_tokens(self):
+        router = TREADRouter(device="cpu")
+        original = torch.arange(36, dtype=torch.float32).reshape(2, 6, 3).requires_grad_()
+        info = router.get_mask(original, mask_ratio=0.5)
+        routed = router.start_route(original, info)
+
+        expected = torch.stack([original[index, keep] for index, keep in enumerate(info.ids_keep)])
+        torch.testing.assert_close(routed, expected)
+        self.assertEqual(routed.untyped_storage().nbytes(), routed.numel() * routed.element_size())
+
+        dropped = info.mask.unsqueeze(-1)
+        restored = router.end_route(routed * 2, info, original_x=original)
+        torch.testing.assert_close(restored, torch.where(dropped, original, original * 2))
+        restored.sum().backward()
+        torch.testing.assert_close(original.grad, torch.where(dropped, 1.0, 2.0).expand_as(original))
+
+        masked = router.end_route(routed, info, mask_token=-1)
+        torch.testing.assert_close(masked, original.masked_fill(dropped, -1))
+
+
 class TestTREADTransformers(unittest.TestCase):
     """Test TREAD support added to transformer models."""
 
