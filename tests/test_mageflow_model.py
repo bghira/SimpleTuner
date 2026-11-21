@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import torch
+from transformers.cache_utils import DynamicCache
 from transformers.modeling_outputs import BaseModelOutputWithPast
 
 from simpletuner.helpers.acceleration import AccelerationBackend
@@ -46,11 +47,13 @@ def _mageflow_class():
 
 
 class MageFlowModelTests(unittest.TestCase):
-    def test_text_encoder_output_modes_preserve_model_rope_deltas(self):
+    def test_text_encoder_output_modes_preserve_cache_and_rope_deltas(self):
         hidden = torch.randn(1, 3, 8)
         rope_deltas = torch.tensor([[2]])
+        cache = DynamicCache()
         backbone_output = BaseModelOutputWithPast(
             last_hidden_state=hidden,
+            past_key_values=cache,
             hidden_states=(hidden,),
             attentions=(torch.ones(1, 1, 3, 3),),
         )
@@ -77,6 +80,8 @@ class MageFlowModelTests(unittest.TestCase):
                     torch.testing.assert_close(result, model.lm_head(hidden))
                     continue
                 self.assertIsInstance(result, Qwen3VLModelOutput)
+                self.assertIs(result.past_key_values, cache)
+                self.assertIs(result["past_key_values"], cache)
                 self.assertIs(result.rope_deltas, rope_deltas)
                 self.assertIs(result.attentions, backbone_output.attentions)
                 if mode == "full":
