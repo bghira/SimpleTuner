@@ -4,6 +4,7 @@ import random
 from typing import Optional
 
 import torch
+from diffusers import FlowMatchEulerDiscreteScheduler
 from diffusers.pipelines import LTXPipeline
 from transformers import AutoTokenizer, T5EncoderModel
 
@@ -227,6 +228,14 @@ class LTXVideo(VideoModelFoundation):
 
     def requires_special_scheduler_setup(self) -> bool:
         return True
+
+    def _load_scheduler_for_pipeline(self, pipeline_type: str):
+        return FlowMatchEulerDiscreteScheduler.from_pretrained(
+            self._model_config_path(),
+            subfolder="scheduler",
+            revision=self.config.revision,
+            local_files_only=getattr(self.config, "local_files_only", False),
+        )
 
     def _format_text_embedding(self, text_embedding: torch.Tensor):
         """
