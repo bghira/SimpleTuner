@@ -228,20 +228,46 @@ class TestACEStepModel(unittest.TestCase):
     def test_embed_v15_lyrics_batch_preserves_integer_attention_mask(self):
         embedding_layer = torch.nn.Embedding(8, 4)
         self.model.text_encoders = [SimpleNamespace(embed_tokens=embedding_layer)]
-        self.model.tokenizers = [
-            MagicMock(
-                return_value=SimpleNamespace(
-                    input_ids=torch.tensor([[1, 2, 0]], dtype=torch.long),
-                    attention_mask=torch.tensor([[1, 1, 0]], dtype=torch.long),
-                )
+        self.model.tokenizer_1 = MagicMock(
+            return_value=SimpleNamespace(
+                input_ids=torch.tensor([[1, 2, 0]], dtype=torch.long),
+                attention_mask=torch.tensor([[1, 1, 0]], dtype=torch.long),
             )
-        ]
+        )
 
         lyric_hidden_states, attention_mask = self.model._embed_v15_lyrics_batch(["verse"])
 
         self.assertEqual(lyric_hidden_states.dtype, torch.float32)
         self.assertEqual(attention_mask.dtype, torch.long)
         self.assertTrue(torch.equal(attention_mask, torch.tensor([[1, 1, 0]], dtype=torch.long)))
+
+    def test_v15_lyrics_embedding_survives_preprocessing_unload(self):
+        self.model._v15_layout = {"variant_path": "dummy"}
+        text_encoder = torch.nn.Module()
+        text_encoder.embed_tokens = torch.nn.Embedding(8, 4)
+        text_encoder.layers = torch.nn.Linear(4, 4)
+        tokenizer = MagicMock(
+            return_value=SimpleNamespace(
+                input_ids=torch.tensor([[1, 2, 0]], dtype=torch.long),
+                attention_mask=torch.tensor([[1, 1, 0]], dtype=torch.long),
+            )
+        )
+        self.model.text_encoder_1 = text_encoder
+        self.model.text_encoders = [text_encoder]
+        self.model.tokenizer_1 = tokenizer
+        self.model.tokenizers = [tokenizer]
+        expected_embeddings, expected_mask = self.model._embed_v15_lyrics_batch(["verse"])
+
+        self.model.unload_text_encoder()
+        embeddings, mask = self.model._embed_v15_lyrics_batch(["verse"])
+
+        self.assertIsNone(self.model.text_encoders)
+        self.assertIsNone(self.model.text_encoder_1)
+        self.assertIsNone(self.model.tokenizers)
+        self.assertTrue(text_encoder.layers.weight.is_meta)
+        self.assertTrue(torch.equal(embeddings, expected_embeddings))
+        self.assertTrue(torch.equal(mask, expected_mask))
+        self.assertFalse(embeddings.requires_grad)
 
     def test_encode_prompts_moves_text_encoder_when_only_parameter_device_is_available(self):
         class DummyTextEncoder:

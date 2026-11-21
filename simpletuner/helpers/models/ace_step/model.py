@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -261,6 +262,7 @@ class ACEStep(AudioModelFoundation):
         self._checkpoint_base: Optional[str] = None
         self._v15_layout: Optional[Dict[str, str]] = None
         self._v15_layout_probe_base: Optional[str] = None
+        self._v15_lyric_embedding_layer: Optional[torch.nn.Module] = None
         self.silence_latent: Optional[torch.Tensor] = None
         self.v15_condition_model_dtype = getattr(self.config, "weight_dtype", torch.float32)
 
@@ -496,6 +498,8 @@ class ACEStep(AudioModelFoundation):
         return self.V15_SFT_GEN_PROMPT.format(self.V15_DEFAULT_DIT_INSTRUCTION, prompt or "", metas_str)
 
     def _get_v15_text_embedding_layer(self):
+        if self._v15_lyric_embedding_layer is not None:
+            return self._v15_lyric_embedding_layer
         text_encoder = self.text_encoders[0]
         embedding_layer = getattr(text_encoder, "embed_tokens", None)
         if embedding_layer is None and hasattr(text_encoder, "model"):
@@ -538,9 +542,8 @@ class ACEStep(AudioModelFoundation):
     def _embed_v15_lyrics_batch(self, lyrics_list: List[Optional[str]]) -> tuple[torch.Tensor, torch.Tensor]:
         if not lyrics_list:
             lyrics_list = [""]
-        tokenizer = self.tokenizers[0]
         embedding_layer = self._get_v15_text_embedding_layer()
-        tokenized = tokenizer(
+        tokenized = self.tokenizer_1(
             [lyrics or "" for lyrics in lyrics_list],
             padding="max_length",
             max_length=512,
@@ -790,6 +793,7 @@ class ACEStep(AudioModelFoundation):
         base_path = self._resolve_checkpoint_base()
         v15_layout = self._resolve_v15_layout(base_path)
         if v15_layout is not None:
+            self._v15_lyric_embedding_layer = None
             logger.info("Loading ACE-Step v1.5 text encoder from %s", v15_layout["tokenizer_path"])
             text_encoder = self._load_v15_hf_component(
                 AutoModel,
@@ -820,6 +824,20 @@ class ACEStep(AudioModelFoundation):
 
         self.text_encoders = [text_encoder]
         self.text_encoder_1 = text_encoder
+
+    def unload_text_encoder(self):
+        if self._is_v15_layout_active() and self.text_encoders:
+            # Batch preparation still embeds lyrics after cached caption encoding is finished.
+            embedding_layer = self._get_v15_text_embedding_layer()
+            self._v15_lyric_embedding_layer = deepcopy(embedding_layer.to("cpu")).requires_grad_(False)
+        super().unload_text_encoder()
+        if self._v15_lyric_embedding_layer is not None:
+            self._v15_lyric_embedding_layer.to(self.accelerator.device)
+
+    def unload(self):
+        super().unload()
+        self._v15_lyric_embedding_layer = None
+        self.tokenizer_1 = None
 
     def load_vae(self, move_to_device: bool = True):
         """
