@@ -956,6 +956,8 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     if args.cache_dir is None or args.cache_dir == "":
         args.cache_dir = os.path.join(args.output_dir, "cache")
 
+    is_deepfloyd = args.model_family == "deepfloyd"
+
     if args.maximum_image_size is not None and not args.target_downsample_size:
         raise ValueError("When providing --maximum_image_size, you must also provide a value for --target_downsample_size.")
     if (
@@ -967,7 +969,12 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         raise ValueError(
             f"When using --resolution_type=area, --maximum_image_size must be less than 5 megapixels. You may have accidentally entered {args.maximum_image_size} pixels, instead of megapixels."
         )
-    elif args.maximum_image_size is not None and args.resolution_type == "pixel" and args.maximum_image_size < 512:
+    elif (
+        args.maximum_image_size is not None
+        and args.resolution_type == "pixel"
+        and args.maximum_image_size < 512
+        and not is_deepfloyd
+    ):
         raise ValueError(
             f"When using --resolution_type=pixel, --maximum_image_size must be at least 512 pixels. You may have accidentally entered {args.maximum_image_size} megapixels, instead of pixels."
         )
@@ -980,7 +987,12 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         raise ValueError(
             f"When using --resolution_type=area, --target_downsample_size must be less than 5 megapixels. You may have accidentally entered {args.target_downsample_size} pixels, instead of megapixels."
         )
-    elif args.target_downsample_size is not None and args.resolution_type == "pixel" and args.target_downsample_size < 512:
+    elif (
+        args.target_downsample_size is not None
+        and args.resolution_type == "pixel"
+        and args.target_downsample_size < 512
+        and not is_deepfloyd
+    ):
         raise ValueError(
             f"When using --resolution_type=pixel, --target_downsample_size must be at least 512 pixels. You may have accidentally entered {args.target_downsample_size} megapixels, instead of pixels."
         )
@@ -1026,7 +1038,7 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         # currently these are the only models we have using the SDXL VAE.
         and args.model_family not in ["sdxl", "pixart_sigma", "kolors"]
         and "sdxl" in args.pretrained_vae_model_name_or_path
-        and "deepfloyd" not in args.model_type
+        and not is_deepfloyd
     ):
         warning_log(
             f"The VAE model {args.pretrained_vae_model_name_or_path} is not compatible. Please use a compatible VAE to eliminate this warning. The baked-in VAE will be used, instead."
@@ -1035,12 +1047,12 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     if args.pretrained_vae_model_name_or_path == "" or args.pretrained_vae_model_name_or_path == "''":
         args.pretrained_vae_model_name_or_path = None
 
-    if "deepfloyd" not in args.model_type:
+    if not is_deepfloyd:
         info_log(f"VAE Model: {args.pretrained_vae_model_name_or_path or args.pretrained_model_name_or_path}")
         info_log(f"Default VAE Cache location: {args.cache_dir_vae}")
         info_log(f"Text Cache location: {args.cache_dir_text}")
 
-    elif "deepfloyd" in args.model_type:
+    else:
         deepfloyd_pixel_alignment = 8
         if args.aspect_bucket_alignment != deepfloyd_pixel_alignment:
             warning_log(
@@ -1048,7 +1060,7 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             )
             args.aspect_bucket_alignment = deepfloyd_pixel_alignment
 
-    if "deepfloyd-stage2" in args.model_type and args.resolution < 256:
+    if is_deepfloyd and (args.model_flavour or "").startswith("ii-") and args.resolution < 256:
         warning_log("DeepFloyd Stage II requires a resolution of at least 256. Setting to 256.")
         args.resolution = 256
         args.aspect_bucket_alignment = 64
@@ -1072,7 +1084,7 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     if (
         (validation_resolution_is_digit or validation_resolution_is_float)
         and int(args.validation_resolution) < 128
-        and "deepfloyd" not in args.model_type
+        and not is_deepfloyd
     ):
         # Convert from megapixels to pixels:
         log_msg = f"It seems that --validation_resolution was given in megapixels ({args.validation_resolution}). Converting to pixel measurement:"

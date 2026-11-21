@@ -59,7 +59,7 @@ def validate_image_size_constraints(
     maximum_image_size: Optional[Union[int, float]],
     target_downsample_size: Optional[Union[int, float]],
     resolution_type: str,
-    model_type: str,
+    model_family: str,
     backend_id: str,
 ) -> None:
     if maximum_image_size and not target_downsample_size:
@@ -77,7 +77,7 @@ def validate_image_size_constraints(
             raise ValueError(
                 f"(id={backend_id}) maximum_image_size must be less than 20 megapixels when resolution_type is 'area'."
             )
-        elif resolution_type == "pixel" and maximum_image_size < 512 and "deepfloyd" not in model_type:
+        elif resolution_type == "pixel" and maximum_image_size < 512 and model_family != "deepfloyd":
             raise ValueError(
                 f"(id={backend_id}) maximum_image_size must be at least 512 pixels when resolution_type is 'pixel'."
             )
@@ -92,7 +92,7 @@ def validate_image_size_constraints(
             raise ValueError(
                 f"(id={backend_id}) target_downsample_size must be less than 20 megapixels when resolution_type is 'area'."
             )
-        elif resolution_type == "pixel" and target_downsample_size < 512 and "deepfloyd" not in model_type:
+        elif resolution_type == "pixel" and target_downsample_size < 512 and model_family != "deepfloyd":
             raise ValueError(
                 f"(id={backend_id}) target_downsample_size must be at least 512 pixels when resolution_type is 'pixel'."
             )

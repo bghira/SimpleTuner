@@ -1741,8 +1741,6 @@ class MetadataBackend:
 
     def handle_vae_cache_inconsistencies(self, vae_cache, vae_cache_behavior: str):
         """handle vae cache inconsistencies with bucket indices"""
-        if "deepfloyd" in self.runtime_args.model_type:
-            return
         if vae_cache_behavior not in ["sync", "recreate"]:
             raise ValueError("Invalid VAE cache behavior specified.")
         logger.info("Scanning VAE cache for inconsistencies with aspect buckets...")

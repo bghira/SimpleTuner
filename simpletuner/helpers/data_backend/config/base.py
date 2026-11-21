@@ -83,7 +83,7 @@ class BaseBackendConfig(ABC):
             self.maximum_image_size
             and self.resolution_type == "pixel"
             and self.maximum_image_size < 512
-            and "deepfloyd" not in args.get("model_type", "")
+            and args.get("model_family") != "deepfloyd"
         ):
             raise ValueError(
                 f"When a data backend is configured to use `'resolution_type':pixel`, `maximum_image_size` must be at least 512 pixels. You may have accidentally entered {self.maximum_image_size} megapixels, instead of pixels."
@@ -102,7 +102,7 @@ class BaseBackendConfig(ABC):
             self.target_downsample_size
             and self.resolution_type == "pixel"
             and self.target_downsample_size < 512
-            and "deepfloyd" not in args.get("model_type", "")
+            and args.get("model_family") != "deepfloyd"
         ):
             raise ValueError(
                 f"When a data backend is configured to use `'resolution_type':pixel`, `target_downsample_size` must be at least 512 pixels. You may have accidentally entered {self.target_downsample_size} megapixels, instead of pixels."
