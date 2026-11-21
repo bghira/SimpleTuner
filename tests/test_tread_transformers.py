@@ -10,6 +10,20 @@ from simpletuner.helpers.training.tread import TREADRouter
 
 
 class TestTREADRouter(unittest.TestCase):
+    def test_random_routing_skips_importance_and_preserves_seeded_mask(self):
+        seed = 9
+        router = TREADRouter(seed=seed, device="cpu")
+        forced = torch.zeros(2, 6, dtype=torch.bool)
+        forced[0, 4] = True
+        forced[1, 2] = True
+        hidden_states = torch.arange(36, dtype=torch.bfloat16).reshape(2, 6, 3)
+        noise = torch.rand((2, 6), dtype=hidden_states.dtype, generator=torch.Generator().manual_seed(seed))
+
+        with patch.object(router, "_importance", side_effect=AssertionError("random routing should only use noise")):
+            info = router.get_mask(hidden_states, mask_ratio=0.5, force_keep=forced)
+
+        torch.testing.assert_close(info.ids_keep, noise.masked_fill(forced, -1).argsort(dim=1)[:, :3])
+
     def test_routed_storage_only_contains_kept_tokens(self):
         router = TREADRouter(device="cpu")
         original = torch.arange(36, dtype=torch.float32).reshape(2, 6, 3).requires_grad_()

@@ -86,18 +86,13 @@ class TREADRouter:
         # ---------------------------------------------------------------------
         # 2) importance + randomness mix
         # ---------------------------------------------------------------------
-        score = self._importance(x)  # in [0,1]
-        if inverse:
-            score = 1.0 - score
-
-        noise = torch.rand(
-            score.shape,
-            dtype=score.dtype,
-            device=score.device,
-            generator=self.generator,
-        )
-
-        mix = (1.0 - l1_reg) * noise + l1_reg * score  # convex combination
+        noise_dtype = x.real.dtype if x.is_floating_point() or x.is_complex() else torch.get_default_dtype()
+        mix = torch.rand((B, S), dtype=noise_dtype, device=x.device, generator=self.generator)
+        if l1_reg != 0.0:
+            score = self._importance(x)
+            if inverse:
+                score = 1.0 - score
+            mix = (1.0 - l1_reg) * mix + l1_reg * score
         mix = mix.masked_fill(force_keep, -1.0)  # force‑keep ⇒ lowest rank
 
         # ---------------------------------------------------------------------

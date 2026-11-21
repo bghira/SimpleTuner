@@ -162,11 +162,21 @@ def add_first_frame_conditioning(
     return conditioned_latent
 
 
+def _vae_temporal_scale_factor(vae: AutoencoderKLWan | None) -> int:
+    vae_config = getattr(vae, "config", None)
+    temporal_downsample = getattr(vae_config, "temperal_downsample", None)
+    if temporal_downsample is None:
+        temporal_downsample = getattr(vae, "temperal_downsample", None)
+    return 2 ** sum(temporal_downsample) if temporal_downsample is not None else 4
+
+
 @torch.no_grad()
 def add_first_frame_latent_conditioning(
     latent_model_input: torch.Tensor,
     clean_latents: torch.Tensor,
-    vae: AutoencoderKLWan,
+    vae: AutoencoderKLWan | None = None,
+    *,
+    vae_scale_factor_temporal: int | None = None,
 ):
     """
     Adds Wan 2.1 I2V conditioning from already-cached clean latents when the
@@ -174,11 +184,8 @@ def add_first_frame_latent_conditioning(
     """
     device = latent_model_input.device
     dtype = latent_model_input.dtype
-    vae_config = getattr(vae, "config", None)
-    temporal_downsample = getattr(vae_config, "temperal_downsample", None)
-    if temporal_downsample is None:
-        temporal_downsample = getattr(vae, "temperal_downsample", None)
-    vae_scale_factor_temporal = 2 ** sum(temporal_downsample) if temporal_downsample is not None else 4
+    if vae_scale_factor_temporal is None:
+        vae_scale_factor_temporal = _vae_temporal_scale_factor(vae)
 
     batch, _, num_latent_frames, latent_height, latent_width = latent_model_input.shape
     num_frames = (num_latent_frames - 1) * vae_scale_factor_temporal + 1
@@ -279,6 +286,7 @@ class Wan(VideoModelFoundation):
     ATTENTION_KWARG_NAME = "attention_kwargs"
     AUTOENCODER_CLASS = AutoencoderKLWan
     LATENT_CHANNEL_COUNT = 16
+    _vae_scale_factor_temporal = 4
     _TAE_SPEC_21 = VideoTAESpec(filename="taew2_1.pth", description="Wan 2.1 / 2.2 14B VAE")
     _TAE_SPEC_22 = VideoTAESpec(filename="taew2_2.pth", description="Wan 2.2 5B VAE", patch_size=2, latent_channels=48)
     DEFAULT_NOISE_SCHEDULER = "unipc"
@@ -873,7 +881,7 @@ class Wan(VideoModelFoundation):
                 return
             if not expand_timesteps:
                 transformer_kwargs["hidden_states"] = add_first_frame_latent_conditioning(
-                    latent_tensor, clean_latents, self.get_vae()
+                    latent_tensor, clean_latents, vae_scale_factor_temporal=self._vae_scale_factor_temporal
                 )
                 return
 
@@ -998,6 +1006,10 @@ class Wan(VideoModelFoundation):
         super().post_model_load_setup()
         self._apply_time_embedding_override(getattr(self, "model", None))
         self._patch_condition_embedder(getattr(self, "model", None))
+
+    def post_vae_load_setup(self):
+        super().post_vae_load_setup()
+        self._vae_scale_factor_temporal = _vae_temporal_scale_factor(self.vae)
 
     def _should_load_other_stage(self) -> bool:
         stage_info = self._wan_stage_info()
