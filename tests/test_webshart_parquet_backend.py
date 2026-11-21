@@ -133,6 +133,92 @@ class TestWebshartParquetBackend(unittest.TestCase):
                 ]
                 self.assertEqual(active, [stage["id"]])
 
+    def test_streaming_decode_exclusions_keep_ranks_and_resume_aligned(self):
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+        from simpletuner.helpers.metadata.preparation import TrainingPreparation
+        from simpletuner.helpers.multiaspect.sampler import MultiAspectSampler
+        from simpletuner.helpers.training.state_tracker import StateTracker
+        from simpletuner.simpletuner_sdk.server.services.cache_job_service import _CacheAcceleratorStub, _CacheArgsNamespace
+
+        # Two ranks, one unreadable local batch, then a whole unreadable window.
+        good = self.rows[0]
+        bad = {**good, "captions": "broken", "image": {"bytes": b"broken", "path": None}}
+        self.rows = [bad, bad, good, {**good, "captions": "last"}]
+        pq.write_table(pa.Table.from_pylist(self.rows), self.source / "part.parquet")
+        pq.write_table(pa.Table.from_pylist([bad] * 4), self.source / "z.parquet")
+        pq.write_table(pa.Table.from_pylist([good] * 4), self.source / "zz.parquet")
+        self._publish_capture_manifest()
+        args = _CacheArgsNamespace(
+            dict(
+                output_dir=str(self.root),
+                seed=19,
+                gradient_accumulation_steps=1,
+                max_train_steps=20,
+                delete_problematic_images=True,
+            )
+        )
+        config = dict(
+            id="capture",
+            type="webshart",
+            source=str(self.source),
+            webshart=dict(
+                format="parquet", manifest="capture.json", cache_dir=str(self.root / "cache"), sampling_policy="shard_local"
+            ),
+            resolution=64,
+            resolution_type="pixel",
+            caption_strategy="webshart",
+            crop=False,
+        )
+        online = TrainingPreparation(online_text=True, ondemand_latents=True, requires_complete_view=False)
+        positions = []
+        for rank in (0, 1, 0):
+            reopened = bool(positions)
+            with closing(DatasetRuntime.from_config(config, args, _CacheAcceleratorStub(device="cpu"))) as runtime:
+                metadata = runtime.metadata_backend
+                metadata.window_shards = 1
+                self.assertTrue(metadata.delete_problematic_images)
+                self.assertTrue(runtime.prepare_for_training(online))
+                spec = replace(metadata.epoch_spec(1, 2), dp_size=2, dp_rank=rank)
+                with closing(runtime.open_epoch(spec)) as cursor:
+                    sampler = object.__new__(MultiAspectSampler)
+                    sampler.id, sampler.dataset_type = "capture", "image"
+                    sampler.dataset_runtime, sampler.epoch_provider = runtime, metadata
+                    sampler._open_training_cursor = lambda: cursor
+                    if positions and rank == 0:
+                        cursor.load_state_dict(positions[0])
+                    with (
+                        patch.object(StateTracker, "get_args", return_value=SimpleNamespace(model_family="hdit_plus")),
+                        patch.object(
+                            runtime.data_backend, "read_image_batch", wraps=runtime.data_backend.read_image_batch
+                        ) as read,
+                    ):
+                        batches = sampler._iterate_native()
+                        if not positions or rank == 1:
+                            first = next(batches)
+                            self.assertEqual([record["instance_prompt_text"] for record in first], ["first", "last"])
+                            self.assertTrue(all(record["decoded_training_image"].size == (16, 8) for record in first))
+                            positions.append(first[0]["dataset_continuation"])
+                        last = next(batches)
+                        self.assertEqual(len(last), 2)
+                        self.assertTrue(all(runtime.data_backend.shard_of(record["image_path"]) == 2 for record in last))
+                        self.assertEqual(last[0]["dataset_continuation"]["position"], 3)
+                        if reopened:
+                            self.assertFalse(
+                                any(
+                                    runtime.data_backend.shard_of(ref) == 1
+                                    for call in read.call_args_list
+                                    for ref in call.args[0]
+                                )
+                            )
+                with closing(sqlite3.connect(metadata.window_exclusions_path)) as db:
+                    self.assertEqual(db.execute("SELECT count(*) FROM exclusions WHERE reason='decode'").fetchone(), (6,))
+                with patch.object(runtime.data_backend, "read_image_batch", side_effect=TimeoutError("shard fetch")):
+                    window = metadata._open_training_partition(2)
+                    bucket, refs = next(iter(window.buckets.items()))
+                    with self.assertRaisesRegex(TimeoutError, "shard fetch"):
+                        metadata.read_window_batch(2, bucket, refs)
+        self.assertEqual(positions[0]["window_revision"], positions[1]["window_revision"])
+
     def test_online_training_opens_one_shard_window_and_resumes_the_consumed_batch(self):
         from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
         from simpletuner.helpers.metadata.preparation import DatasetReadView, TrainingPreparation
@@ -985,7 +1071,7 @@ class TestWebshartParquetBackend(unittest.TestCase):
         self.assertEqual(len(keys), 1)
         self.assertEqual(len(images), 1)
 
-    def test_pixel_training_excludes_unreadable_native_rows_when_requested(self):
+    def test_indexed_pixel_training_excludes_unreadable_native_rows_when_requested(self):
         from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
         from simpletuner.helpers.metadata.preparation import TrainingPreparation
@@ -1020,7 +1106,7 @@ class TestWebshartParquetBackend(unittest.TestCase):
             "crop": False,
             "delete_problematic_images": True,
         }
-        prep = TrainingPreparation(online_text=True, ondemand_latents=True, requires_complete_view=False)
+        prep = TrainingPreparation(online_text=True, ondemand_latents=True, requires_complete_view=True)
         with (
             closing(DatasetRuntime.from_config(config, args, accelerator)) as runtime,
             patch.object(StateTracker, "get_args", return_value=args),

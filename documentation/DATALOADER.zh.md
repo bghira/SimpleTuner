@@ -844,7 +844,7 @@ effective_batch_size = 数据集 train_batch_size × num_gpus × gradient_accumu
 - **警告:** 此操作不可恢复，请谨慎使用。
 - **默认值:** 回退到训练器的 `--delete_problematic_images` 参数（默认：`false`）。
 
-对于原生 Webshart，此选项将无法读取的样本记录为已准备视图中的排除项。像素空间训练和按需 VAE 编码会在训练前解码已接受的图像。预计算潜变量时，由 VAE 预处理执行检查。
+原生 Webshart 保留源分片。流式 Parquet 训练时，采样器将无法解码的行按分片版本记入元数据缓存，并用同一宽高比分桶中的行补齐空位。必要时会重复使用可读行，以保证各进程的批次大小一致。如果整个分桶都不可读，所有进程都会跳过它。索引数据集在准备阶段记录排除项。
 
 ### `delete_nsfw_images`
 

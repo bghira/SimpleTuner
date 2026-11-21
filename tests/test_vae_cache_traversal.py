@@ -161,6 +161,11 @@ class TestVaeCacheTraversal(unittest.TestCase):
         cache.cache_data_backend.read_cached_tensors.assert_called_once_with(["vae/first.pt", "vae/warm.pt", "vae/last.pt"])
         cache.cache_data_backend.write_batch.assert_not_called()
         cache._read_from_storage_concurrently.assert_called_once_with(["first", "last"], hide_errors=True)
+        cache._read_from_storage_concurrently.reset_mock()
+        actual = cache.encode_images([None] * 3, ["first", "warm", "last"], decoded_images={"first": 1, "last": 3})
+        self.assertEqual([value.item() for value in actual], [1, 42, 3])
+        cache._process_images_in_batch.assert_called_with(["first", "last"], [1, 3], disable_queue=True, view=None)
+        cache._read_from_storage_concurrently.assert_not_called()
 
     def test_latent_cache_samples_by_artifact_key_without_advancing_training_rng(self):
         cache = VAECache.__new__(VAECache)

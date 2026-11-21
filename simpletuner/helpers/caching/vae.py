@@ -1202,7 +1202,7 @@ class VAECache(WebhookMixin):
             return distribution.sample(generator=generators)
         return distribution.sample()
 
-    def _load_or_encode_latents(self, images, filepaths, cache_paths, *, view=None):
+    def _load_or_encode_latents(self, images, filepaths, cache_paths, *, view=None, decoded_images=None):
         latents = list(self.cache_data_backend.read_cached_tensors(cache_paths))
         missing = [index for index, (_, latent) in enumerate(zip(cache_paths, latents, strict=True)) if latent is None]
         if not missing:
@@ -1211,8 +1211,11 @@ class VAECache(WebhookMixin):
         pixels = [(images[i], filepaths[i], None, False) for i in missing if images[i] is not None]
         image_refs = [filepaths[i] for i in missing if images[i] is None]
         if image_refs:
-            payloads = self._read_from_storage_concurrently(image_refs, hide_errors=True)
-            image_data = list(ordered_sample_payloads(self.id, image_refs, payloads))
+            if decoded_images is None:
+                payloads = self._read_from_storage_concurrently(image_refs, hide_errors=True)
+                image_data = list(ordered_sample_payloads(self.id, image_refs, payloads))
+            else:
+                image_data = [decoded_images[ref] for ref in image_refs]
             pixels.extend(self._process_images_in_batch(image_refs, image_data, disable_queue=True, view=view))
         encoded = self._encode_images_in_batch(image_pixel_values=pixels, disable_queue=True, view=view) or []
         written = self._write_latents_in_batch(encoded)
@@ -1222,7 +1225,7 @@ class VAECache(WebhookMixin):
             latents[index] = latent
         return latents
 
-    def encode_images(self, images, filepaths, load_from_cache=True, *, view=None):
+    def encode_images(self, images, filepaths, load_from_cache=True, *, view=None, decoded_images=None):
         # images must be same dimension
         # if load_from_cache=True and entry not found, throws exception
         batch_size = len(images)
@@ -1231,7 +1234,7 @@ class VAECache(WebhookMixin):
 
         full_filenames = [self.generate_vae_cache_filename(filepath, view=view)[0] for filepath in filepaths]
         if load_from_cache and self.vae_cache_ondemand:
-            return self._load_or_encode_latents(images, filepaths, full_filenames, view=view)
+            return self._load_or_encode_latents(images, filepaths, full_filenames, view=view, decoded_images=decoded_images)
 
         uncached_image_indices = [
             i

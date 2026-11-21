@@ -845,7 +845,7 @@ Neste exemplo, o dataset de 512px é usado para steps 1-300, então o dataset de
 - **Aviso:** Isso é destrutivo e não pode ser desfeito. Use com cuidado.
 - **Padrão:** Usa o argumento do trainer `--delete_problematic_images` (padrão: `false`).
 
-No Webshart nativo, esta opção registra amostras ilegíveis como exclusões na visualização preparada. O treinamento no espaço de pixels e a codificação sob demanda pelo VAE decodificam as imagens aceitas antes do treinamento. Com latentes pré-computados, a preparação do VAE faz essa verificação.
+O Webshart nativo preserva os fragmentos de origem. No treinamento por streaming com Parquet, o amostrador registra as linhas ilegíveis no cache de metadados para a revisão do fragmento e preenche as vagas com linhas do mesmo grupo de proporção. Se necessário, repete uma linha legível para completar o lote de cada processo. Todos os processos pulam grupos sem linhas legíveis. Em conjuntos indexados, as exclusões são registradas durante a preparação.
 
 ### `delete_nsfw_images`
 

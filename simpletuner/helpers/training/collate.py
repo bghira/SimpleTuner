@@ -183,13 +183,15 @@ def fetch_latent(fp, data_backend_id: str, vae_cache, view=None):
     return latent
 
 
-def pixel_batch(filepaths, data_backend_id: str, model, *, dataset=None, view=None):
+def pixel_batch(filepaths, data_backend_id: str, model, *, dataset=None, view=None, decoded_images=None):
     """Stack normalised pixel tensors for models without an autoencoder."""
     if dataset is None:
         dataset = StateTracker.get_dataset(data_backend_id)
     pixels = []
-    for record in dataset.read_samples(filepaths, fields=("image", "metadata"), view=view):
-        image = record.pop("image")
+    fields = ("image", "metadata") if decoded_images is None else ("metadata",)
+    records = dataset.read_samples(filepaths, fields=fields, view=view)
+    for record in records:
+        image = record.pop("image") if decoded_images is None else decoded_images[record["image_path"]]
         sample = TrainingSample(
             image=image,
             image_path=record["image_path"],
@@ -258,11 +260,12 @@ def conditioning_pixels(pairs, *, dataset, model, view=None):
     return torch.stack(pixels).to(memory_format=torch.contiguous_format).float()
 
 
-def compute_latents(filepaths, data_backend_id: str, model, *, vae_cache=None, dataset=None, view=None):
+def compute_latents(filepaths, data_backend_id: str, model, *, vae_cache=None, dataset=None, view=None, decoded_images=None):
     # Use a thread pool to fetch latents concurrently
     try:
+        extra = {"decoded_images": decoded_images} if decoded_images is not None else {}
         if getattr(model, "AUTOENCODER_CLASS", None) is None:
-            return pixel_batch(filepaths, data_backend_id, model, dataset=dataset, view=view)
+            return pixel_batch(filepaths, data_backend_id, model, dataset=dataset, view=view, **extra)
         if vae_cache is None:
             if dataset is None:
                 dataset = StateTracker.get_dataset(data_backend_id)
@@ -270,7 +273,7 @@ def compute_latents(filepaths, data_backend_id: str, model, *, vae_cache=None, d
         if vae_cache is None:
             raise ValueError(f"Dataset {data_backend_id} has no VAE cache for this batch.")
         if getattr(vae_cache, "vae_cache_ondemand", False):
-            latents = vae_cache.encode_images([None] * len(filepaths), filepaths, view=view)
+            latents = vae_cache.encode_images([None] * len(filepaths), filepaths, view=view, **extra)
         else:
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 latents = list(
@@ -590,7 +593,12 @@ def collate_fn(batch, *, dataset=None):
 
     debug_log("Compute latents")
     view = examples[0].get("dataset_read_view")
-    batch_data = compute_latents(filepaths, batch_backend_id, model, vae_cache=dataset.vae_cache, dataset=dataset, view=view)
+    inputs = {}
+    if "decoded_training_image" in examples[0]:
+        inputs["decoded_images"] = {record["image_path"]: record.pop("decoded_training_image") for record in examples}
+    batch_data = compute_latents(
+        filepaths, batch_backend_id, model, vae_cache=dataset.vae_cache, dataset=dataset, view=view, **inputs
+    )
     latent_metadata = None
     if isinstance(batch_data[0], dict):
         latent_metadata = []

@@ -723,7 +723,7 @@ class WebshartDataBackend(BaseDataBackend):
                 **({"metadata_fields": ()} if self.supports_caption_projection else {}),
             )
             available_keys, output_images = [], []
-            for filepath, sample in zip(filepaths, samples):
+            for filepath, sample in zip(filepaths, samples, strict=True):
                 if sample.data is None:
                     continue
                 try:
