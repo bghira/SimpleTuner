@@ -4045,15 +4045,16 @@ class FactoryRegistry:
 
         self._create_dataset_and_sampler(backend, init_backend, conditioning_type)
 
-        text_precompute_cleanup = getattr(self.model, "after_text_embed_cache_precompute", None)
-        try:
-            self._process_text_embeddings(backend, init_backend, conditioning_type)
-        finally:
-            if callable(text_precompute_cleanup):
-                text_precompute_cleanup()
-
         if backend.get("auto_generated", False):
+            # The source dataset prepares captions with their linked conditioning images.
             self._handle_auto_generated_dataset(init_backend)
+        else:
+            text_precompute_cleanup = getattr(self.model, "after_text_embed_cache_precompute", None)
+            try:
+                self._process_text_embeddings(backend, init_backend, conditioning_type)
+            finally:
+                if callable(text_precompute_cleanup):
+                    text_precompute_cleanup()
 
         if getattr(self.model, "AUTOENCODER_CLASS", None) is not None and conditioning_type not in [
             "mask",

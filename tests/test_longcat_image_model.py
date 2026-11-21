@@ -1,8 +1,13 @@
 import unittest
+from contextlib import ExitStack
+from functools import partial
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import torch
+from PIL import Image, ImageDraw
 
 from simpletuner.helpers.models.longcat_image.model import LongCatImage
 from simpletuner.helpers.models.longcat_image.pipeline import LongCatImagePipeline
@@ -56,6 +61,105 @@ class LongCatImageModelTests(unittest.TestCase):
         )
 
         self.assertIsNone(pipeline.image_encoder)
+
+    def test_text_precompute_reads_generated_canny_for_target_caption(self):
+        from accelerate import Accelerator
+
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+        from simpletuner.helpers.data_generation.conditioning import DataGenerator
+        from simpletuner.helpers.training.state_tracker import StateTracker
+        from simpletuner.simpletuner_sdk.server.services.dataset_scan_service import _ScanArgsNamespace
+
+        with TemporaryDirectory() as directory, ExitStack() as resources:
+            root = Path(directory)
+            targets = root / "targets"
+            targets.mkdir()
+            target = Image.new("RGB", (96, 64), "red")
+            ImageDraw.Draw(target).rectangle((16, 16, 64, 48), fill="white")
+            target.save(targets / "sample.png")
+            args = _ScanArgsNamespace(
+                {
+                    "output_dir": str(root),
+                    "cache_dir": str(root / "cache"),
+                    "cache_dir_text": str(root / "text"),
+                    "resolution": 64,
+                    "aspect_bucket_alignment": 16,
+                    "model_family": "longcat_image",
+                    "max_train_steps": 1,
+                    "skip_file_discovery": "",
+                    "conditioning_multidataset_sampling": "random",
+                    "debug_aspect_buckets": False,
+                    "seed": 0,
+                }
+            )
+            accelerator = Accelerator(cpu=True)
+            self.model._is_edit_flavour = lambda: True
+            self.model.accelerator = accelerator
+            self.model.text_encoders = [torch.nn.Identity()]
+            pipeline = MagicMock()
+            pipeline.encode_prompt.return_value = (torch.zeros(1, 2, 8), torch.zeros(2, 3))
+            self.model.get_pipeline = MagicMock(return_value=pipeline)
+            prepared = []
+
+            def precompute(records, **_kwargs):
+                for record in records:
+                    self.model.encode_text_batch([record["prompt"]], prompt_contexts=[record["metadata"]])
+                    prepared.append(record)
+
+            cache = SimpleNamespace(
+                precompute_embeddings=precompute, text_cache_ondemand=False, read_batch_size=1, text_encoder_batch_size=1
+            )
+            source = {
+                "id": "target",
+                "type": "local",
+                "instance_data_dir": str(targets),
+                "caption_strategy": "instanceprompt",
+                "instance_prompt": "edit the edges",
+                "crop": False,
+                "resolution": 64,
+                "resolution_type": "pixel",
+                "preserve_data_backend_cache": True,
+                "conditioning": {"type": "canny", "conditioning_type": "controlnet", "captions": ["edit the edges"]},
+            }
+            with (
+                patch.object(StateTracker, "args", args),
+                patch.object(StateTracker, "accelerator", accelerator),
+                patch.object(StateTracker, "datasets", {}),
+                patch.object(StateTracker, "_pending_dataset_configs", {}),
+                patch.object(StateTracker, "dataset_schedule", {}),
+                patch.object(StateTracker, "aspect_resolution_map", {}),
+                patch.object(StateTracker, "_dataset_resources", resources),
+                patch("simpletuner.helpers.data_backend.factory.move_text_encoders"),
+                patch(
+                    "simpletuner.helpers.data_generation.DataGenerator", side_effect=partial(DataGenerator, num_workers=0)
+                ) as generate,
+            ):
+                factory = FactoryRegistry(args, accelerator, [], [], self.model)
+                factory.text_embed_backends = {"text": {"text_embed_cache": cache}}
+                factory.default_text_embed_backend_id = "text"
+                with patch.object(factory, "_configure_vae_cache"):
+                    factory.configure_data_backends(factory.process_conditioning_datasets([source]))
+
+            generate.assert_called_once()
+            pipeline.encode_prompt.assert_called_once()
+            (image,), prompts = pipeline.encode_prompt.call_args.args
+            self.assertEqual(prompts, ["edit the edges"])
+            (metadata,) = [record["metadata"] for record in prepared]
+            self.assertEqual(metadata["data_backend_id"], "target")
+            (reference_path,) = metadata["image_paths"]
+            with Image.open(reference_path) as reference:
+                self.assertEqual(image.tobytes(), reference.convert("RGB").tobytes())
+            self.assertNotEqual(image.tobytes(), target.tobytes())
+            context_key = self.model.text_embed_cache_context_key(metadata)
+            self.assertIsNotNone(context_key)
+            self.assertEqual(
+                self.model.text_embed_cache_context_key({**metadata, "conditioning_pixel_values": torch.rand(3, 64, 96)}),
+                context_key,
+            )
+            self.assertNotEqual(
+                self.model.text_embed_cache_context_key({**metadata, "image_paths": ["another-reference.png"]}),
+                context_key,
+            )
 
     def test_prepare_crepa_self_flow_batch_creates_tokenwise_timesteps(self):
         self.model.accelerator = SimpleNamespace(device=torch.device("cpu"))

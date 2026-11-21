@@ -28,7 +28,7 @@ from simpletuner.helpers.models.longcat_image import pack_latents, prepare_pos_i
 from simpletuner.helpers.models.longcat_image.pipeline import LongCatImagePipeline
 from simpletuner.helpers.models.longcat_image.pipeline_edit import LongCatImageEditPipeline
 from simpletuner.helpers.models.longcat_image.transformer import LongCatImageTransformer2DModel
-from simpletuner.helpers.models.prompt_upsampling import load_prompt_images
+from simpletuner.helpers.models.prompt_upsampling import load_prompt_images, prompt_upsampling_context_key
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.models.tae.types import ImageTAESpec
 from simpletuner.helpers.training.multi_process import should_log
@@ -270,6 +270,12 @@ class LongCatImage(ImageModelFoundation):
         if self._is_edit_flavour():
             return TextEmbedCacheKey.DATASET_AND_FILENAME
         return super().text_embed_cache_key()
+
+    def text_embed_cache_context_key(self, metadata: dict, *, prompt=None) -> Optional[str]:
+        if self._is_edit_flavour() and metadata.get("image_paths"):
+            references = {"image_paths": metadata["image_paths"], "data_backend_ids": metadata["data_backend_ids"]}
+            return prompt_upsampling_context_key(references, None, None)
+        return super().text_embed_cache_context_key(metadata, prompt=prompt)
 
     def _create_dummy_image(self):
         from PIL import Image
@@ -517,8 +523,12 @@ class LongCatImage(ImageModelFoundation):
     def _load_prompt_image_from_backend(self, context: dict):
         if not self._is_edit_flavour():
             return None
-        image_path = context.get("image_path")
-        data_backend_id = context.get("data_backend_id")
+        if context.get("image_paths"):
+            image_path = context["image_paths"][0]
+            data_backend_id = context["data_backend_ids"][0]
+        else:
+            image_path = context.get("image_path")
+            data_backend_id = context.get("data_backend_id")
         if not image_path or not data_backend_id:
             return None
         image = load_prompt_images(

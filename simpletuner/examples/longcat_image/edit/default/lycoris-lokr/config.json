@@ -12,7 +12,7 @@
     "lora_rank": 128,
     "lora_type": "lycoris",
     "lr_scheduler": "constant",
-    "lycoris_config": "config/examples/longcat-edit.lycoris-lokr/lycoris_config.json",
+    "lycoris_config": "config/examples/longcat_image/edit/default/lycoris-lokr/lycoris_config.json",
     "max_train_steps": 100,
     "model_family": "longcat_image",
     "model_flavour": "edit",
