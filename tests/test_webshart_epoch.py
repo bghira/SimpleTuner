@@ -8,9 +8,9 @@ from dataclasses import replace
 from itertools import groupby
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-from simpletuner.helpers.metadata.backends.webshart_epoch import EpochSpec, WebshartEpoch
+from simpletuner.helpers.metadata.backends.webshart_epoch import EpochSpec, WebshartEpoch, WindowedWebshartEpoch
 from simpletuner.helpers.metadata.backends.webshart_exclusions import Exclusions, _publish
 from simpletuner.helpers.metadata.backends.webshart_geometry import snapshot_path, stage_geometry
 from simpletuner.helpers.metadata.backends.webshart_membership import (
@@ -58,6 +58,30 @@ def publish_geometry(path, buckets, shard_of, *, shards_per_partition=None):
         },
     )
     return destination
+
+
+class WindowPrefillTests(unittest.TestCase):
+    def test_prefill_resumes_at_first_shard_of_saved_window(self):
+        spec = EpochSpec("data", "shard_local", 42, 1, 1, 1, 0, 1, 0, False, (), sampling_order="sequential")
+
+        def window(index):
+            return str(index), {"bucket": [f"{index}/0", f"{index}/1"]}
+
+        with closing(WindowedWebshartEpoch(spec, "source", "view", 8, window)) as original:
+            for _ in range(7):
+                original.next_batch()
+            saved = original.state_dict()
+            expected = [original.next_batch() for _ in range(3)]
+
+        prefill = Mock()
+        with closing(WindowedWebshartEpoch(spec, "source", "view", 8, window, window_shards=4, prefill=prefill)) as resumed:
+            prefill.advance.assert_not_called()
+            resumed.load_state_dict(saved)
+            prefill.advance.assert_called_once_with(12)
+            self.assertEqual(resumed.state_dict(), saved)
+            self.assertEqual([resumed.next_batch() for _ in range(3)], expected)
+            self.assertEqual(prefill.advance.call_args.args, (16,))
+        prefill.close.assert_called_once()
 
 
 class WebshartEpochTests(unittest.TestCase):

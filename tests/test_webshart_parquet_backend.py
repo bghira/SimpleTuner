@@ -57,6 +57,22 @@ class TestWebshartParquetBackend(unittest.TestCase):
             None, "parquet", str(source), format="parquet", cache_dir=str(self.root / "cache")
         )
 
+    def test_prefill_concurrency_uses_a_separate_reader(self):
+        backend = self.backend
+        backend.source = "s3://capture"
+        foreground = Mock()
+        backend.dataset = foreground
+        background = Mock()
+        with (
+            patch.dict("os.environ", {"SIMPLETUNER_WEBSHART_PREFILL_DOWNLOADS": "16"}),
+            patch.object(backend, "open_refresh_source", return_value=SimpleNamespace(dataset=background)),
+        ):
+            self.assertIs(backend.sequential_prefill(4), background.sequential_prefill.return_value)
+        background.enable_shard_cache.assert_called_once_with(backend.shard_cache_dir, backend.shard_cache_gb, 16)
+        background.sequential_prefill.assert_called_once_with(active_shards=4)
+        self.assertEqual(backend.parallel_downloads, 4)
+        foreground.enable_shard_cache.assert_not_called()
+
     def test_bundled_pixart_plan_prepares_all_three_uncropped_stages(self):
         from simpletuner.cli.examples import copy_example, list_examples
         from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime

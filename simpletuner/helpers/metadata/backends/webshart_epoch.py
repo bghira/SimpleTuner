@@ -317,11 +317,13 @@ class WindowedWebshartEpoch:
 
     version = "shard-window-v1"
 
-    def __init__(self, spec, source, view, partition_count, open_partition):
+    def __init__(self, spec, source, view, partition_count, open_partition, *, window_shards=None, prefill=None):
         self.spec = spec
         self.source = source
         self.view = view
         self.partition_count = partition_count
+        self.prefill = prefill
+        self.window_shards = window_shards
         self.open_partition = open_partition
         self.order_key = _key(spec.seed, spec.epoch, spec.dataset_id, self.version)
         self.global_batch = spec.batch_size * spec.dp_size
@@ -336,6 +338,8 @@ class WindowedWebshartEpoch:
         self.partition = self.window
         if self.spec.sampling_order == "shuffled":
             self.partition = _permute(self.window, self.partition_count, self.order_key)
+        if self.prefill is not None:
+            self.prefill.advance(self.partition * self.window_shards)
         self.revision, buckets = self.open_partition(self.partition)
         self.buckets = sorted(buckets.items())
         self.ends = []
@@ -416,4 +420,6 @@ class WindowedWebshartEpoch:
         self.frontier = (window, batch, self.revision)
 
     def close(self):
+        if self.prefill is not None:
+            self.prefill.close()
         self.buckets = ()
