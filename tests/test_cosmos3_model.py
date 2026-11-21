@@ -396,7 +396,7 @@ class Cosmos3ModelTests(unittest.TestCase):
         from simpletuner.helpers.training.collate import _training_text_request
 
         model = TestableCosmos3Image()
-        dataset = SimpleNamespace(id="train", metadata_backend=SimpleNamespace(instance_data_dir="images"))
+        dataset = SimpleNamespace(id="train", config={}, metadata_backend=SimpleNamespace(instance_data_dir="images"))
         builder = TextRequestBuilder(model, dataset, args=SimpleNamespace(caption_dropout_probability=0.1))
 
         positive, dropout = builder.records(
