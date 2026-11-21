@@ -490,12 +490,15 @@ class WanModelTests(unittest.TestCase):
         self.assertTrue(torch.all(conditioned[:, 16:18, 0] == 1))
         self.assertTrue(torch.all(conditioned[:, 16:18, 1:] == 0))
 
-    def test_i2v_conditioning_uses_cached_latents_without_warning(self):
+    def test_i2v_conditioning_uses_cached_latents_without_reloading_vae(self):
         model = object.__new__(Wan)
         model._wan_expand_timesteps = False
         model._is_i2v_like_flavour = MagicMock(return_value=False)
         model._extract_conditioning_frames = MagicMock(return_value=(None, None))
-        model.get_vae = MagicMock(return_value=SimpleNamespace(config=SimpleNamespace(temperal_downsample=[1, 1])))
+        model.vae = SimpleNamespace(config=SimpleNamespace(temperal_downsample=[True, False]))
+        model.post_vae_load_setup()
+        model.vae = None
+        model.get_vae = MagicMock(side_effect=AssertionError("the cached-latent path must not load a VAE"))
 
         hidden_states = torch.zeros(1, 16, 3, 4, 5)
         clean_latents = torch.arange(1 * 16 * 3 * 4 * 5, dtype=torch.float32).view(1, 16, 3, 4, 5)
@@ -506,10 +509,13 @@ class WanModelTests(unittest.TestCase):
             Wan._apply_i2v_conditioning_to_kwargs(model, prepared_batch, transformer_kwargs)
 
         conditioned = transformer_kwargs["hidden_states"]
-        self.assertEqual(tuple(conditioned.shape), (1, 36, 3, 4, 5))
+        self.assertEqual(tuple(conditioned.shape), (1, 34, 3, 4, 5))
         self.assertTrue(torch.equal(conditioned[:, :16], hidden_states))
-        self.assertTrue(torch.equal(conditioned[:, 20:, :1], clean_latents[:, :, :1]))
-        self.assertTrue(torch.all(conditioned[:, 20:, 1:] == 0))
+        self.assertTrue(torch.all(conditioned[:, 16:18, :1] == 1))
+        self.assertTrue(torch.all(conditioned[:, 16:18, 1:] == 0))
+        self.assertTrue(torch.equal(conditioned[:, 18:, :1], clean_latents[:, :, :1]))
+        self.assertTrue(torch.all(conditioned[:, 18:, 1:] == 0))
+        model.get_vae.assert_not_called()
         warning.assert_not_called()
 
     def test_ti2v_training_preserves_channel_count_and_conditions_only_requested_frames(self):
