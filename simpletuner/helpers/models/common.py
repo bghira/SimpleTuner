@@ -2960,10 +2960,13 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
         for attr_name, text_encoder_config in self.TEXT_ENCODER_CONFIGURATION.items():
             tokenizer_idx += 1
             tokenizer_cls = text_encoder_config.get("tokenizer")
-            tokenizer_kwargs["subfolder"] = self._resolve_text_encoder_subfolder(
-                text_encoder_config,
-                "tokenizer_subfolder",
-                "tokenizer",
+            tokenizer_kwargs["subfolder"] = (
+                self._resolve_text_encoder_subfolder(
+                    text_encoder_config,
+                    "tokenizer_subfolder",
+                    "tokenizer",
+                )
+                or ""
             )
             tokenizer_kwargs["use_fast"] = text_encoder_config.get("use_fast", False)
             tokenizer_kwargs["pretrained_model_name_or_path"] = self._resolve_text_encoder_path(text_encoder_config)

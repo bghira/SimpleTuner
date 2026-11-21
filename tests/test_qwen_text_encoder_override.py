@@ -1,3 +1,4 @@
+import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -110,6 +111,31 @@ class QwenTextEncoderOverrideTests(unittest.TestCase):
             model._resolve_text_encoder_subfolder(first_qwen_config, "subfolder", "text_encoder"),
             "text_encoder",
         )
+
+    def test_longcat_video_loads_tokenizer_at_checkpoint_root(self):
+        from tokenizers import Tokenizer
+        from tokenizers.models import WordLevel
+        from transformers import PreTrainedTokenizerFast
+
+        from simpletuner.helpers.models.longcat_video.model import LongCatVideo
+
+        model = LongCatVideo.__new__(LongCatVideo)
+        model._single_file_component_cache = None
+        model.config = SimpleNamespace(
+            model_family="longcat_video", pretrained_model_name_or_path="meituan-longcat/LongCat-Video", revision=None
+        )
+        tokenizer = PreTrainedTokenizerFast(
+            tokenizer_object=Tokenizer(WordLevel({"[UNK]": 0, "video": 1}, unk_token="[UNK]")), unk_token="[UNK]"
+        )
+        with tempfile.TemporaryDirectory() as checkpoint:
+            tokenizer.save_pretrained(checkpoint)
+            model.TEXT_ENCODER_CONFIGURATION = {
+                "text_encoder": {**LongCatVideo.TEXT_ENCODER_CONFIGURATION["text_encoder"], "path": checkpoint}
+            }
+
+            model.load_text_tokenizer()
+
+        self.assertEqual(model.tokenizers[0].encode("video"), [1])
 
     def test_webui_field_and_cli_parser_include_qwen_override(self):
         from simpletuner.helpers.configuration.cmd_args import get_argument_parser
