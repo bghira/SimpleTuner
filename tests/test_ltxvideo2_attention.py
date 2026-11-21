@@ -1,4 +1,5 @@
 import unittest
+from contextlib import ExitStack
 from unittest.mock import patch
 
 import torch
@@ -172,6 +173,72 @@ class TestLTX2AttentionDispatch(unittest.TestCase):
         prompt_timesteps = ltx2_transformer._ltx2_prompt_timesteps(timesteps, batch_size=2, name="video prompt")
 
         self.assertTrue(torch.equal(prompt_timesteps, torch.tensor([0.1, 0.4])))
+
+
+class TestLTX2Checkpointing(unittest.TestCase):
+    def test_backward_recomputes_the_original_block_and_attention_flags(self):
+        with torch.random.fork_rng(devices=[]):
+            torch.manual_seed(42)
+            model = ltx2_transformer.LTX2VideoTransformer3DModel(
+                in_channels=2,
+                out_channels=2,
+                num_attention_heads=2,
+                attention_head_dim=8,
+                cross_attention_dim=16,
+                audio_in_channels=4,
+                audio_out_channels=4,
+                audio_num_attention_heads=2,
+                audio_attention_head_dim=4,
+                audio_cross_attention_dim=8,
+                num_layers=2,
+                use_prompt_embeddings=False,
+                perturbed_attn=True,
+            )
+            inputs = {
+                "hidden_states": torch.randn(1, 4, 2),
+                "audio_hidden_states": torch.randn(1, 2, 4),
+                "encoder_hidden_states": torch.randn(1, 3, 16),
+                "audio_encoder_hidden_states": torch.randn(1, 3, 8),
+                "timestep": torch.tensor([250.0]),
+                "num_frames": 1,
+                "height": 2,
+                "width": 2,
+                "audio_num_frames": 2,
+                "return_dict": False,
+            }
+        calls = []
+
+        def run():
+            output = model(**inputs)
+            sum(tensor.square().mean() for tensor in output).backward()
+            gradients = {name: param.grad.clone() for name, param in model.named_parameters() if param.grad is not None}
+            return output, gradients
+
+        with ExitStack() as hooks:
+            for index, block in enumerate(model.transformer_blocks):
+                hooks.enter_context(
+                    block.register_forward_pre_hook(
+                        lambda _module, _args, kwargs, index=index: calls.append((index, kwargs["stg_skip_self_attn"])),
+                        with_kwargs=True,
+                    )
+                )
+            for skip in ((), (0,)):
+                with self.subTest(skipped_attention_blocks=skip):
+                    inputs["attention_kwargs"] = {"stg_self_attn_blocks": skip}
+                    model.disable_gradient_checkpointing()
+                    model.zero_grad(set_to_none=True)
+                    calls.clear()
+                    eager_output, eager_gradients = run()
+                    forward_calls = [(0, 0 in skip), (1, 1 in skip)]
+                    self.assertEqual(calls, forward_calls)
+
+                    model.enable_gradient_checkpointing()
+                    model.zero_grad(set_to_none=True)
+                    calls.clear()
+                    checkpoint_output, checkpoint_gradients = run()
+                    self.assertEqual(calls, forward_calls + forward_calls[::-1])
+                    torch.testing.assert_close(checkpoint_output, eager_output, rtol=0, atol=0)
+                    torch.testing.assert_close(checkpoint_gradients, eager_gradients, rtol=0, atol=0)
 
 
 if __name__ == "__main__":

@@ -2858,6 +2858,9 @@ class LTX2VideoTransformer3DModel(
                     audio_rotary_emb,
                     current_ca_video_rotary_emb,
                     audio_cross_attn_rotary_emb,
+                    *,
+                    block=block,
+                    stg_skip_self_attn=block_idx in stg_self_attn_blocks,
                 ):
                     return block(
                         hidden_states,
@@ -2887,7 +2890,7 @@ class LTX2VideoTransformer3DModel(
                         None,
                         None,
                         offload_attention=self.gradient_checkpointing_offload_attention,
-                        stg_skip_self_attn=block_idx in stg_self_attn_blocks,
+                        stg_skip_self_attn=stg_skip_self_attn,
                         attention_masks_prepared=attention_masks_prepared,
                         flash_attention_metadata=flash_attention_metadata,
                     )
