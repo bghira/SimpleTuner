@@ -3,8 +3,14 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import torch
+from diffusers import AutoencoderKL, FlowMatchEulerDiscreteScheduler
+from tokenizers import Tokenizer
+from tokenizers.models import WordLevel
+from transformers import PreTrainedTokenizerFast
 
+from simpletuner.helpers.models.hidream.controlnet import HiDreamControlNetModel, HiDreamControlNetPipeline
 from simpletuner.helpers.models.hidream.model import HiDream
+from simpletuner.helpers.models.hidream.transformer import HiDreamImageTransformer2DModel
 from simpletuner.helpers.training.explorative_modeling import ExplorativeModelingConfig
 
 
@@ -39,6 +45,108 @@ class HiDreamModelTests(unittest.TestCase):
             selection_scope="sample",
             block_size=0,
         )
+
+    def _make_controlnet(self):
+        transformer = HiDreamImageTransformer2DModel(
+            patch_size=2,
+            in_channels=2,
+            num_layers=1,
+            num_single_layers=1,
+            attention_head_dim=8,
+            num_attention_heads=2,
+            caption_channels=[8, 8],
+            text_emb_dim=8,
+            num_routed_experts=0,
+            axes_dims_rope=(2, 2, 4),
+            max_resolution=(8, 8),
+            llama_layers=[0, 1],
+        )
+        transformer.final_layer.linear.reset_parameters()
+        return transformer, HiDreamControlNetModel.from_transformer(transformer)
+
+    def test_controlnet_predict_aligns_residuals_for_rectangular_batch(self):
+        self.model.model, self.model.controlnet = self._make_controlnet()
+        projections = [self.model.controlnet.controlnet_blocks[0], self.model.controlnet.controlnet_single_blocks[0]]
+        with torch.no_grad():
+            for projection in projections:
+                projection.bias.fill_(1)
+
+        residuals = []
+        self.model.controlnet.register_forward_hook(lambda _module, _args, outputs: residuals.extend(outputs))
+        latents = torch.randn(2, 2, 4, 6)
+        batch = {
+            "noisy_latents": latents,
+            "conditioning_latents": torch.randn_like(latents),
+            "timesteps": torch.tensor([250.0, 750.0]),
+            "text_encoder_output": {
+                "t5_prompt_embeds": torch.randn(2, 3, 8),
+                "llama_prompt_embeds": torch.randn(2, 2, 3, 8),
+                "pooled_prompt_embeds": torch.randn(2, 8),
+            },
+        }
+
+        prediction = self.model.controlnet_predict(batch)["model_prediction"]
+
+        self.assertEqual(prediction.shape, latents.shape)
+        for samples in residuals:
+            sample = samples[0]
+            self.assertEqual(sample.shape, (2, self.model.model.max_seq, self.model.model.inner_dim))
+            torch.testing.assert_close(sample[:, :6], torch.ones_like(sample[:, :6]))
+            torch.testing.assert_close(sample[:, 6:], torch.zeros_like(sample[:, 6:]))
+        prediction.square().mean().backward()
+        for projection in projections:
+            self.assertGreater(projection.weight.grad.abs().sum().item(), 0)
+
+    def test_controlnet_pipeline_denoises_rectangular_batch(self):
+        transformer, controlnet = self._make_controlnet()
+        pipeline = HiDreamControlNetPipeline(
+            transformer=transformer.eval(),
+            controlnet=controlnet.eval(),
+            scheduler=FlowMatchEulerDiscreteScheduler(),
+            vae=AutoencoderKL(
+                block_out_channels=(8,),
+                layers_per_block=1,
+                latent_channels=2,
+                norm_num_groups=1,
+                shift_factor=0.0,
+            ).eval(),
+            text_encoder=None,
+            text_encoder_2=None,
+            text_encoder_3=None,
+            text_encoder_4=None,
+            tokenizer=None,
+            tokenizer_2=None,
+            tokenizer_3=None,
+            tokenizer_4=PreTrainedTokenizerFast(tokenizer_object=Tokenizer(WordLevel({"</s>": 0})), eos_token="</s>"),
+        )
+        pipeline.set_progress_bar_config(disable=True)
+        t5 = torch.randn(2, 3, 8)
+        llama = torch.randn(2, 2, 3, 8)
+        pooled = torch.randn(2, 8)
+
+        def check_controlnet_inputs(_module, _args, kwargs):
+            hidden_states = kwargs["hidden_states"]
+            self.assertEqual(hidden_states.shape[-2:], (4, 6))
+            self.assertEqual(hidden_states.shape, kwargs["controlnet_cond"].shape)
+
+        controlnet.register_forward_pre_hook(check_controlnet_inputs, with_kwargs=True)
+        for guidance_scale in (1.0, 3.0):
+            with self.subTest(guidance_scale=guidance_scale):
+                latents = pipeline(
+                    control_image=torch.randn(2, 3, 4, 6),
+                    t5_prompt_embeds=t5,
+                    llama_prompt_embeds=llama,
+                    pooled_prompt_embeds=pooled,
+                    negative_t5_prompt_embeds=torch.zeros_like(t5),
+                    negative_llama_prompt_embeds=torch.zeros_like(llama),
+                    negative_pooled_prompt_embeds=torch.zeros_like(pooled),
+                    guidance_scale=guidance_scale,
+                    num_inference_steps=1,
+                    output_type="latent",
+                ).images
+
+                self.assertEqual(latents.shape, (2, 2, 4, 6))
+                self.assertTrue(torch.isfinite(latents).all())
 
     def test_model_supports_crepa_self_flow(self):
         self.assertTrue(self.model.supports_crepa_self_flow())
