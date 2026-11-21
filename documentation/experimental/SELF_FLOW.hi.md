@@ -22,7 +22,7 @@ SimpleTuner के आसपास के methods से तुलना:
 
 अभी supported families:
 
-- Image / edit: `flux`, `flux2`, `sd3`, `pixart`, `sana`, `qwen_image`, `chroma`, `hidream`, `auraflow`, `lumina2`, `z_image`, `z_image_omni`, `kandinsky5_image`, `longcat_image`, `omnigen`, `ace_step`
+- Image / edit: `flux`, `flux2`, `sd3`, `pixart`, `sana`, `qwen_image`, `chroma`, `hidream`, `auraflow`, `lumina2`, `z_image`, `kandinsky5_image`, `longcat_image`, `omnigen`, `ace_step`
 - Video / multimodal: `wan`, `wan_s2v`, `ltxvideo`, `ltxvideo2`, `sanavideo`, `kandinsky5_video`, `hunyuanvideo`, `longcat_video`, `cosmos`, `anima`
 
 ## Quick setup (WebUI)

@@ -123,7 +123,6 @@ SimpleTuner निम्नलिखित मॉडल families का सम�
 | **Wan Video** | 1.3B-14B | Apache-2.0 | हाँ |
 | **Wan S2V** | 14B | Apache-2.0 | हाँ |
 | **Z-Image** | 6B | Apache-2.0 | हाँ |
-| **Z-Image Omni** | 6B | Apache-2.0 | हाँ |
 | **ZLab I1** | 3B | MIT | हाँ |
 
 *लाइसेंस मान उपलब्ध होने पर SimpleTuner model helpers से लिए गए हैं, और पहले अनिर्दिष्ट entries के लिए upstream model cards/licenses से। `SimpleTuner में निर्दिष्ट नहीं` का अर्थ है कि helper कोई license name नहीं देता और यहां upstream terms का सार नहीं दिया गया है; उपयोग से पहले upstream model card देखें.*

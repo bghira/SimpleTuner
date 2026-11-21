@@ -53,7 +53,6 @@ In the WebUI environment creator and setup wizard, select the model family first
 | Wan Video | 1.3B-14B | [WAN.md](/documentation/quickstart/WAN.md) |
 | Wan S2V | 14B | [WAN_S2V.md](/documentation/quickstart/WAN_S2V.md) |
 | Z-Image | 6B | [ZIMAGE.md](/documentation/quickstart/ZIMAGE.md) |
-| Z-Image Omni | 6B | [ZIMAGE.md](/documentation/quickstart/ZIMAGE.md) |
 | ZLab I1 | 3B | [ZLAB_i1.md](/documentation/quickstart/ZLAB_i1.md) |
 
 ## Feature Compatibility
@@ -106,7 +105,6 @@ The complete compatibility matrix is split by feature area so each table stays r
 | Wan Video | ✓ | ✓ | ✓* | ✗ | ✓ I2V/VACE |
 | Wan S2V | ✓ | ✓ | ✓* | ✗ | ✗ |
 | Z-Image | ✓ | ✓ | ✓* | ✗ | ✗ |
-| Z-Image Omni | ✓ | ✓ | ✓* | ✗ | ✓ opt (Edit) |
 | ZLab I1 | ✓ | ✓ | ✓ | ✗ | ✗ |
 
 </details>
@@ -157,7 +155,6 @@ The complete compatibility matrix is split by feature area so each table stays r
 | Wan Video | int8 optional | bf16 |
 | Wan S2V | int8 optional | bf16 |
 | Z-Image | int8 optional | bf16 |
-| Z-Image Omni | int8 optional | bf16 |
 | ZLab I1 | int8 optional | bf16 |
 
 </details>
@@ -208,7 +205,6 @@ The complete compatibility matrix is split by feature area so each table stays r
 | Wan Video | ✓ | ✓ | ✓ | ✓ |
 | Wan S2V | ✓ | ✓ | ✓ | ✗ |
 | Z-Image | ✓ | ✓ | ✓ | ✓ |
-| Z-Image Omni | ✓ | ✗ | ✗ | ✗ |
 | ZLab I1 | ✓ | ✓ | ✓ | ✗ |
 
 </details>
@@ -261,7 +257,6 @@ MixFlow post-training is available for every `flow matching` row below. See the 
 | Wan Video | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Wan S2V | flow matching | ✓ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Z-Image | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Z-Image Omni | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ |
 | ZLab I1 | flow matching | ✓ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 </details>
@@ -312,7 +307,6 @@ MixFlow post-training is available for every `flow matching` row below. See the 
 | Wan Video | UMT5 | not specified | Wan VAE |
 | Wan S2V | UMT5 | not specified | Wan VAE |
 | Z-Image | Qwen3 4B | 4B | AutoencoderKL |
-| Z-Image Omni | Qwen3 4B | 4B | AutoencoderKL |
 | ZLab I1 | T5Gemma 2B | 2B | AutoencoderKL |
 
 </details>

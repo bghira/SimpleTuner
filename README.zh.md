@@ -123,7 +123,6 @@ SimpleTuner 支持以下模型系列。详细的训练功能支持请参阅[快�
 | **Wan Video** | 1.3B-14B | Apache-2.0 | 是 |
 | **Wan S2V** | 14B | Apache-2.0 | 是 |
 | **Z-Image** | 6B | Apache-2.0 | 是 |
-| **Z-Image Omni** | 6B | Apache-2.0 | 是 |
 | **ZLab I1** | 3B | MIT | 是 |
 
 *许可证值在可用时来自 SimpleTuner 模型 helper，并为此前未指定的条目参考上游模型卡/许可证。`SimpleTuner 中未指定` 表示 helper 未命名许可证，且此处未汇总上游条款；使用前请查看上游模型卡。*

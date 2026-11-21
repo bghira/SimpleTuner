@@ -53,7 +53,6 @@ No criador de ambientes e no assistente de configuração da WebUI, selecione pr
 | Wan Video | 1.3B-14B | [WAN.pt-BR.md](quickstart/WAN.pt-BR.md) |
 | Wan S2V | 14B | [WAN_S2V.pt-BR.md](quickstart/WAN_S2V.pt-BR.md) |
 | Z-Image | 6B | [ZIMAGE.pt-BR.md](quickstart/ZIMAGE.pt-BR.md) |
-| Z-Image Omni | 6B | [ZIMAGE.pt-BR.md](quickstart/ZIMAGE.pt-BR.md) |
 | ZLab I1 | 3B | [ZLAB_i1.pt-BR.md](quickstart/ZLAB_i1.pt-BR.md) |
 
 ## Compatibilidade de recursos
@@ -106,7 +105,6 @@ A matriz completa de compatibilidade é dividida por área de recurso para mante
 | Wan Video | ✓ | ✓ | ✓* | ✗ | ✓ I2V/VACE |
 | Wan S2V | ✓ | ✓ | ✓* | ✗ | ✗ |
 | Z-Image | ✓ | ✓ | ✓* | ✗ | ✗ |
-| Z-Image Omni | ✓ | ✓ | ✓* | ✗ | ✓ opt (Edit) |
 | ZLab I1 | ✓ | ✓ | ✓ | ✗ | ✗ |
 
 </details>
@@ -157,7 +155,6 @@ A matriz completa de compatibilidade é dividida por área de recurso para mante
 | Wan Video | int8 optional | bf16 |
 | Wan S2V | int8 optional | bf16 |
 | Z-Image | int8 optional | bf16 |
-| Z-Image Omni | int8 optional | bf16 |
 | ZLab I1 | int8 optional | bf16 |
 
 </details>
@@ -208,7 +205,6 @@ A matriz completa de compatibilidade é dividida por área de recurso para mante
 | Wan Video | ✓ | ✓ | ✓ | ✓ |
 | Wan S2V | ✓ | ✓ | ✓ | ✗ |
 | Z-Image | ✓ | ✓ | ✓ | ✓ |
-| Z-Image Omni | ✓ | ✗ | ✗ | ✗ |
 | ZLab I1 | ✓ | ✓ | ✓ | ✗ |
 
 </details>
@@ -261,7 +257,6 @@ O pós-treinamento MixFlow está disponível para todas as linhas `flow matching
 | Wan Video | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Wan S2V | flow matching | ✓ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Z-Image | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Z-Image Omni | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ |
 | ZLab I1 | flow matching | ✓ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 </details>
@@ -312,7 +307,6 @@ O pós-treinamento MixFlow está disponível para todas as linhas `flow matching
 | Wan Video | UMT5 | not specified | Wan VAE |
 | Wan S2V | UMT5 | not specified | Wan VAE |
 | Z-Image | Qwen3 4B | 4B | AutoencoderKL |
-| Z-Image Omni | Qwen3 4B | 4B | AutoencoderKL |
 | ZLab I1 | T5Gemma 2B | 2B | AutoencoderKL |
 
 </details>

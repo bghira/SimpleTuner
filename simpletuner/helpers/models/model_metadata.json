@@ -491,16 +491,6 @@
         "name": "Z-Image",
         "prediction_type": "flow_matching"
     },
-    "z_image_omni": {
-        "class_name": "ZImageOmni",
-        "flavour_choices": [
-            "base",
-            "edit"
-        ],
-        "module_path": "simpletuner.helpers.models.z_image_omni.model",
-        "name": "Z-Image Omni",
-        "prediction_type": "flow_matching"
-    },
     "zlab_i1": {
         "class_name": "ZLabI1",
         "flavour_choices": [

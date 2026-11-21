@@ -294,19 +294,15 @@ class TestLTXVideo2AudioLoraTargets(unittest.TestCase):
 class TestFactoryDataSignals(unittest.TestCase):
     """Test capability detection from the dataset plan."""
 
-    def test_z_image_reference_embeds_available_before_dataset_preparation(self):
-        from types import SimpleNamespace
-
+    def test_conditioning_capability_is_bound_before_dataset_preparation(self):
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
-        from simpletuner.helpers.models.z_image_omni.model import ZImageOmni
         from simpletuner.helpers.training.state_tracker import StateTracker
 
         class PreparationReached(Exception):
             pass
 
-        model = ZImageOmni.__new__(ZImageOmni)
-        model.config = SimpleNamespace()
-        self.assertFalse(model.requires_conditioning_image_embeds())
+        model = MockModelFoundation(MagicMock(), MagicMock())
+        self.assertFalse(model._data_has_conditioning)
         factory = FactoryRegistry(MagicMock(), MagicMock(), None, None, model)
         factory.text_embed_backends["text"] = {}
         configs = [
@@ -315,7 +311,7 @@ class TestFactoryDataSignals(unittest.TestCase):
         ]
 
         def check(*_):
-            self.assertTrue(model.requires_conditioning_image_embeds())
+            self.assertTrue(model._data_has_conditioning)
             raise PreparationReached()
 
         with (

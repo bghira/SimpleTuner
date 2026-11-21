@@ -22,7 +22,7 @@ Self-Flow 是一种 CREPA 模式，用同一模型更干净的 EMA 教师视图�
 
 当前支持的家族包括：
 
-- 图像 / 编辑：`flux`, `flux2`, `sd3`, `pixart`, `sana`, `qwen_image`, `chroma`, `hidream`, `auraflow`, `lumina2`, `z_image`, `z_image_omni`, `kandinsky5_image`, `longcat_image`, `omnigen`, `ace_step`
+- 图像 / 编辑：`flux`, `flux2`, `sd3`, `pixart`, `sana`, `qwen_image`, `chroma`, `hidream`, `auraflow`, `lumina2`, `z_image`, `kandinsky5_image`, `longcat_image`, `omnigen`, `ace_step`
 - 视频 / 多模态：`wan`, `wan_s2v`, `ltxvideo`, `ltxvideo2`, `sanavideo`, `kandinsky5_video`, `hunyuanvideo`, `longcat_video`, `cosmos`, `anima`
 
 ## 快速设置（WebUI）

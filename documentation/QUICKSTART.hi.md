@@ -53,7 +53,6 @@ WebUI के एनवायरनमेंट क्रिएटर और स�
 | Wan Video | 1.3B-14B | [WAN.hi.md](quickstart/WAN.hi.md) |
 | Wan S2V | 14B | [WAN_S2V.hi.md](quickstart/WAN_S2V.hi.md) |
 | Z-Image | 6B | [ZIMAGE.hi.md](quickstart/ZIMAGE.hi.md) |
-| Z-Image Omni | 6B | [ZIMAGE.hi.md](quickstart/ZIMAGE.hi.md) |
 | ZLab I1 | 3B | [ZLAB_i1.hi.md](quickstart/ZLAB_i1.hi.md) |
 
 ## फीचर संगतता
@@ -106,7 +105,6 @@ WebUI के एनवायरनमेंट क्रिएटर और स�
 | Wan Video | ✓ | ✓ | ✓* | ✗ | ✓ I2V/VACE |
 | Wan S2V | ✓ | ✓ | ✓* | ✗ | ✗ |
 | Z-Image | ✓ | ✓ | ✓* | ✗ | ✗ |
-| Z-Image Omni | ✓ | ✓ | ✓* | ✗ | ✓ opt (Edit) |
 | ZLab I1 | ✓ | ✓ | ✓ | ✗ | ✗ |
 
 </details>
@@ -157,7 +155,6 @@ WebUI के एनवायरनमेंट क्रिएटर और स�
 | Wan Video | int8 optional | bf16 |
 | Wan S2V | int8 optional | bf16 |
 | Z-Image | int8 optional | bf16 |
-| Z-Image Omni | int8 optional | bf16 |
 | ZLab I1 | int8 optional | bf16 |
 
 </details>
@@ -208,7 +205,6 @@ WebUI के एनवायरनमेंट क्रिएटर और स�
 | Wan Video | ✓ | ✓ | ✓ | ✓ |
 | Wan S2V | ✓ | ✓ | ✓ | ✗ |
 | Z-Image | ✓ | ✓ | ✓ | ✓ |
-| Z-Image Omni | ✓ | ✗ | ✗ | ✗ |
 | ZLab I1 | ✓ | ✓ | ✓ | ✗ |
 
 </details>
@@ -261,7 +257,6 @@ WebUI के एनवायरनमेंट क्रिएटर और स�
 | Wan Video | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Wan S2V | flow matching | ✓ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Z-Image | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Z-Image Omni | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ |
 | ZLab I1 | flow matching | ✓ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 </details>
@@ -312,7 +307,6 @@ WebUI के एनवायरनमेंट क्रिएटर और स�
 | Wan Video | UMT5 | not specified | Wan VAE |
 | Wan S2V | UMT5 | not specified | Wan VAE |
 | Z-Image | Qwen3 4B | 4B | AutoencoderKL |
-| Z-Image Omni | Qwen3 4B | 4B | AutoencoderKL |
 | ZLab I1 | T5Gemma 2B | 2B | AutoencoderKL |
 
 </details>

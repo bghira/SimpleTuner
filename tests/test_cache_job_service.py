@@ -473,12 +473,10 @@ class TestImageArtifactPreparation(unittest.TestCase):
         self.assertIn("writes disabled", job.error)
         load.assert_not_called()
 
-    def test_conditioning_cache_job_binds_z_image_reference_capability(self):
-        from simpletuner.helpers.models.z_image_omni.model import ZImageOmni
+    def test_conditioning_cache_job_routes_qwen_edit_to_reference_dataset(self):
+        from simpletuner.helpers.models.qwen_image.model import QwenImage
 
         service = CacheJobService()
-        model = ZImageOmni.__new__(ZImageOmni)
-        model.config = SimpleNamespace()
         reference = {
             "id": "references",
             "type": "local",
@@ -487,9 +485,11 @@ class TestImageArtifactPreparation(unittest.TestCase):
         }
         source = {"id": "source", "dataset_type": "image", "conditioning_data": "references"}
         runtime = DatasetRuntime("references", Mock(type="local"), Mock(), {**reference, "instance_data_dir": "references"})
-        self.assertFalse(model.requires_conditioning_image_embeds())
         for selected in (source, reference):
             with self.subTest(selected=selected["id"]):
+                model = QwenImage.__new__(QwenImage)
+                model.config = SimpleNamespace(model_flavour="edit-v1")
+                self.assertFalse(model._data_has_conditioning)
                 job = CacheJob("job", selected["id"], "conditioning")
                 with (
                     patch.object(service, "_load_model", return_value=model),
@@ -497,10 +497,10 @@ class TestImageArtifactPreparation(unittest.TestCase):
                     patch.object(service, "_prepare_image_artifacts"),
                     patch("simpletuner.helpers.caching.image_embed.ImageEmbedCache") as cache,
                 ):
-                    service._run_cache_job(job, selected, {"model_family": "z_image_omni"}, [source, reference])
+                    service._run_cache_job(job, selected, {"model_family": "qwen_image"}, [source, reference])
 
                 self.assertEqual(job.status, CacheJobStatus.COMPLETED, job.error)
-                self.assertTrue(model.requires_conditioning_image_embeds())
+                self.assertTrue(model._data_has_conditioning)
                 open_dataset.assert_called_once()
                 self.assertIs(open_dataset.call_args.args[0], reference)
                 self.assertEqual(cache.call_args.kwargs["id"], "references")
