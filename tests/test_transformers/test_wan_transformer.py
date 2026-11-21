@@ -1441,7 +1441,7 @@ class TestWanTransformer3DModel(TransformerBaseTest):
         # Create mock router
         mock_router = Mock()
         mock_mask_info = Mock()
-        mock_mask_info.ids_shuffle = torch.randperm(64).unsqueeze(0).expand(2, -1)
+        mock_mask_info.ids_keep = torch.randperm(64)[:32].unsqueeze(0).expand(2, -1)
         mock_router.get_mask.return_value = mock_mask_info
         mock_router.start_route.return_value = torch.randn(2, 32, 1024)  # Reduced tokens
         mock_router.end_route.return_value = torch.randn(2, 64, 1024)  # Restored tokens
@@ -1471,15 +1471,17 @@ class TestWanTransformer3DModel(TransformerBaseTest):
         # Create test data
         rope = torch.randn(1, 1, 64, 32, dtype=torch.complex64)
         mock_info = Mock()
-        mock_info.ids_shuffle = torch.randperm(64).unsqueeze(0).expand(2, -1)
         keep_len = 32
         batch = 2
+        mock_info.ids_keep = torch.stack([torch.randperm(64)[:keep_len] for _ in range(batch)])
 
-        routed_rope = WanTransformer3DModel._route_rope(rope, mock_info, keep_len, batch)
+        routed_rope = WanTransformer3DModel._route_rope(rope, mock_info)
 
         # Should output batched, reduced rotary embeddings
         expected_shape = (batch, 1, keep_len, 32)
         self.assert_tensor_shape(routed_rope, expected_shape)
+        torch.testing.assert_close(routed_rope[:, 0], rope[0, 0][mock_info.ids_keep])
+        self.assertEqual(routed_rope.untyped_storage().nbytes(), routed_rope.numel() * routed_rope.element_size())
 
     def test_skip_layers_functionality(self):
         """Test skip_layers parameter to skip specific layers."""
