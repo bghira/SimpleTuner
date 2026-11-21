@@ -231,6 +231,12 @@ class Cosmos3Image(Cosmos2Image):
     def use_text_cache_dropout_sentinel(self) -> bool:
         return False
 
+    def should_precompute_dropout_caption(self) -> bool:
+        return False
+
+    def uses_image_context_dropout_caption_cache(self) -> bool:
+        return True
+
     def text_embed_cache_key(self) -> TextEmbedCacheKey:
         return TextEmbedCacheKey.DATASET_AND_FILENAME
 
