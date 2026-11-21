@@ -6,7 +6,11 @@ from unittest.mock import patch
 import torch
 
 from simpletuner.helpers.models.z_image.model import ZImage
-from simpletuner.helpers.models.z_image.quantized_loading import _decode_comfy_quant, _map_zimage_comfy_key_to_diffusers
+from simpletuner.helpers.models.z_image.quantized_loading import (
+    _decode_comfy_quant,
+    _map_zimage_comfy_key_to_diffusers,
+    _wrap_convrot_linear,
+)
 from simpletuner.helpers.models.z_image.transformer import ZImageTransformer2DModel
 
 
@@ -50,6 +54,26 @@ class ZImageTransformerPaddingTests(unittest.TestCase):
         payload = torch.tensor(list(json_bytes), dtype=torch.uint8)
 
         self.assertEqual(_decode_comfy_quant(payload), metadata)
+
+    def test_convrot_wraps_prequantized_linear_with_sdnq_tensor(self):
+        from sdnq.layers import SDNQLinear
+        from sdnq.training.tensor import SDNQTensor
+
+        model = torch.nn.Module()
+        model.layers = torch.nn.Sequential(torch.nn.Linear(4, 2, bias=False, device="meta").requires_grad_(False))
+        weight = torch.tensor([[2, 0, 0, 0], [-4, 0, 0, 0]], dtype=torch.int8)
+        scale = torch.tensor([[0.5], [0.25]], dtype=torch.float16)
+
+        _wrap_convrot_linear(model, "layers.0", weight, scale, result_dtype=torch.float32, hadamard_group_size=4)
+
+        layer = model.layers[0]
+        self.assertIsInstance(layer, SDNQLinear)
+        self.assertIsInstance(layer.weight, SDNQTensor)
+        self.assertFalse(layer.weight.requires_grad)
+        torch.testing.assert_close(layer.weight.weight, weight)
+        torch.testing.assert_close(layer.weight.scale, scale.float())
+        torch.testing.assert_close(layer.weight.dequantize(non_hadamard=True), weight.float() * scale.float())
+        torch.testing.assert_close(layer(torch.ones(1, 4)), torch.tensor([[1.0, -1.0]]))
 
     def test_patchify_handles_zero_padding_len(self):
         model = ZImageTransformer2DModel(

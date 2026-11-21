@@ -181,12 +181,12 @@ def _wrap_convrot_linear(
     )
     module.weight = nn.Parameter(
         SDNQTensor(
-            weight.contiguous(),
-            scale.to(torch.float32).contiguous(),
-            None,
-            None,
-            None,
-            dequantizer,
+            weight=weight.contiguous(),
+            scale=scale.to(torch.float32).contiguous(),
+            zero_point=None,
+            svd_up=None,
+            svd_down=None,
+            sdnq_dequantizer=dequantizer,
         ),
         requires_grad=module.weight.requires_grad,
     )
