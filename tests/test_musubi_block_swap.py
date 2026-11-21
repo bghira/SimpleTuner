@@ -169,6 +169,38 @@ class MusubiBlockSwapTests(unittest.TestCase):
             output = block(torch.randn(2, 4, device=device))
             self.assertEqual(output.device.type, device.type)
 
+    def test_torchao_payload_leaves_move_to_cpu_before_ring_initialization(self):
+        try:
+            from torchao.prototype.quantized_training import int8_weight_only_quantized_training
+            from torchao.quantization import Float8WeightOnlyConfig, quantize_
+        except ImportError as exc:
+            self.skipTest(f"TorchAO quantization is unavailable: {exc}")
+
+        device = self._accelerator_device()
+        for config in (int8_weight_only_quantized_training(), Float8WeightOnlyConfig()):
+            with self.subTest(config=type(config).__name__):
+                block = nn.Sequential(nn.Linear(32, 32, dtype=torch.bfloat16))
+                quantize_(block, config)
+                block[0].weight.requires_grad_(False)
+                block.to(device)
+                bias = block[0].bias
+                weight = block[0].weight
+                leaf_names, _ = weight.__tensor_flatten__()
+                expected = {name: getattr(weight, name).cpu().float() for name in leaf_names}
+                manager = MusubiBlockSwapManager([0], torch.device("cpu"), logging.getLogger(__name__))
+
+                manager.stream_out(block)
+                state = manager._h2d_state(block, torch.device("cpu"))
+
+                self.assertIs(block[0].bias, bias)
+                self.assertEqual(bias.device.type, device.type)
+                self.assertFalse(block[0].weight.requires_grad)
+                self.assertTrue(all(leaf.device.type == "cpu" for leaf in state.cpu_leaves))
+                for name, original in expected.items():
+                    leaf = getattr(block[0].weight, name)
+                    self.assertEqual(leaf.device.type, "cpu")
+                    torch.testing.assert_close(leaf.float(), original)
+
     def test_stream_out_keeps_trainable_params_on_accelerator(self):
         device = self._accelerator_device()
         block = nn.Sequential(nn.Linear(4, 4), nn.SiLU(), nn.Linear(4, 4))

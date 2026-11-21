@@ -45,6 +45,10 @@ def _is_sdnq_tensor(tensor) -> bool:
     )
 
 
+def _is_torchao_tensor(tensor) -> bool:
+    return type(tensor).__module__.startswith("torchao.") and hasattr(tensor, "__tensor_flatten__")
+
+
 def _is_sdnq_module(module: nn.Module) -> bool:
     return type(module).__module__.startswith("sdnq.") or type(module).__name__.startswith("SDNQ")
 
@@ -52,6 +56,9 @@ def _is_sdnq_module(module: nn.Module) -> bool:
 def _tensor_on_device(tensor, device: torch.device) -> bool:
     if not _same_device(tensor.device, device):
         return False
+    if _is_torchao_tensor(tensor):
+        tensor_names, _ = tensor.__tensor_flatten__()
+        return all(_tensor_on_device(getattr(tensor, name), device) for name in tensor_names)
     if not _is_quanto_tensor(tensor):
         if not _is_sdnq_tensor(tensor):
             return True
@@ -84,6 +91,12 @@ def _module_has_sdnq_payload(module: nn.Module) -> bool:
         any(_is_sdnq_module(child) for child in module.modules())
         or any(_is_sdnq_tensor(tensor) for tensor in module.parameters())
         or any(_is_sdnq_tensor(tensor) for tensor in module.buffers())
+    )
+
+
+def _module_has_torchao_tensor(module: nn.Module) -> bool:
+    return any(_is_torchao_tensor(tensor) for tensor in module.parameters()) or any(
+        _is_torchao_tensor(tensor) for tensor in module.buffers()
     )
 
 
@@ -164,6 +177,16 @@ def _move_module_without_swapping_quantized_params(module: nn.Module, device: to
             _move_quanto_tensor_to_device(param, device)
         elif _is_sdnq_tensor(param):
             _move_sdnq_tensor_to_device(param, device)
+        elif _is_torchao_tensor(param):
+            if not _tensor_on_device(param, device):
+                # Setting .data changes the wrapper's device while leaving its payload on the old device.
+                non_blocking = device.type != "cpu"
+                moved = nn.Parameter(
+                    param.to(device, non_blocking=non_blocking, copy=True), requires_grad=param.requires_grad
+                )
+                if param.grad is not None:
+                    moved.grad = param.grad.to(device, non_blocking=non_blocking)
+                torch.utils.swap_tensors(param, moved)
         elif not _same_device(param.device, device):
             param.data = param.data.to(device, non_blocking=True)
         if param.grad is not None and not _same_device(param.grad.device, device):
@@ -178,6 +201,8 @@ def _move_module_without_swapping_quantized_params(module: nn.Module, device: to
             _move_quanto_tensor_to_device(buffer, device)
         elif _is_sdnq_tensor(buffer):
             _move_sdnq_tensor_to_device(buffer, device)
+        elif _is_torchao_tensor(buffer) and not _tensor_on_device(buffer, device):
+            module._buffers[key] = buffer.to(device, non_blocking=device.type != "cpu", copy=True)
         elif not _same_device(buffer.device, device):
             module._buffers[key] = buffer.to(device, non_blocking=True)
 
@@ -541,7 +566,7 @@ class MusubiBlockSwapManager:
                         name=name,
                         parameter=parameter,
                         tree=tree,
-                        replace_parameter=is_quantized_payload,
+                        replace_parameter=is_quantized_payload or _is_torchao_tensor(parameter),
                     )
                 )
             for name, buffer in owner._buffers.items():
@@ -696,7 +721,7 @@ class MusubiBlockSwapManager:
         if _module_on_device(module, device):
             return
         with torch.no_grad():
-            if _module_has_quanto_tensor(module) or _module_has_sdnq_payload(module):
+            if _module_has_quanto_tensor(module) or _module_has_sdnq_payload(module) or _module_has_torchao_tensor(module):
                 _move_module_without_swapping_quantized_params(module, device)
             elif device.type == "cpu" and any(_module_has_trainable_local_state(child) for child in module.modules()):
                 _move_module_without_swapping_quantized_params(module, device)
