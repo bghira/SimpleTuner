@@ -25,6 +25,7 @@ from simpletuner.helpers.data_backend.dataset_types import ensure_dataset_type
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.helpers.metadata.backends.huggingface_transforms import HuggingFaceTransformStore
+from simpletuner.helpers.metadata.captions import is_missing_caption
 from simpletuner.helpers.metadata.preparation import DatasetViewChangedError, PreparationView, ShardedPreparationIndex
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
 from simpletuner.helpers.training import image_file_extensions
@@ -189,65 +190,42 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         return dataset.select_columns(columns) if columns else None
 
     def _extract_caption_from_item(self, item: Dict) -> Optional[Union[str, List[str]]]:
-        caption = None
-        # handle list of caption columns
+        def caption_text(value):
+            if is_missing_caption(value) or not value:
+                return None
+            return str(value).strip() or None
+
         if isinstance(self.caption_column, list):
-            caption_values = []
-            for col in self.caption_column:
-                value = self._get_nested_value(item, col)
-                if value:
-                    caption_values.append(str(value))
-            if caption_values:
-                caption = caption_values
+            caption = [text for col in self.caption_column if (text := caption_text(self._get_nested_value(item, col)))]
         else:
-            # single caption column (might be nested)
-            caption = self._get_nested_value(item, self.caption_column)
-            if caption:
-                caption = str(caption)
+            caption = caption_text(self._get_nested_value(item, self.caption_column))
 
-        # try fallback if no caption found
         if not caption and self.fallback_caption_column:
-            fallback = self._get_nested_value(item, self.fallback_caption_column)
-            if fallback:
-                caption = str(fallback)
+            caption = caption_text(self._get_nested_value(item, self.fallback_caption_column))
 
-        # Audio models often store prompts/lyrics in multiple fields; combine them if no caption yet.
+        # Audio models often store prompts and lyrics in different fields.
         if not caption and _dataset_type_value(self.dataset_type) == "audio":
-            parts = []
-            for field in self.audio_caption_fields or []:
-                value = self._get_nested_value(item, field)
-                if value:
-                    parts.append(str(value).strip())
+            parts = [
+                text
+                for field in self.audio_caption_fields or []
+                if (text := caption_text(self._get_nested_value(item, field)))
+            ]
             if parts:
-                caption = " ".join([p for p in parts if p])
+                caption = " ".join(parts)
             else:
                 audio_value = item.get("audio")
-                sibling_caption = self._read_audio_text_sibling(self._source_path_from_hf_media(audio_value), ".txt")
-                if sibling_caption:
-                    caption = sibling_caption
+                caption = caption_text(self._read_audio_text_sibling(self._source_path_from_hf_media(audio_value), ".txt"))
 
-        # handle description column if specified
         if not caption and self.description_column in item:
-            desc = item.get(self.description_column)
+            desc = item[self.description_column]
             if isinstance(desc, dict):
-                # extract relevant parts from description dict
-                caption_parts = []
-                for key in ["main_subject", "description", "text"]:
-                    if key in desc and desc[key]:
-                        caption_parts.append(str(desc[key]))
-                if caption_parts:
-                    caption = " ".join(caption_parts)
+                caption = " ".join(
+                    text for key in ("main_subject", "description", "text") if (text := caption_text(desc.get(key)))
+                )
             else:
-                caption = str(desc)
+                caption = caption_text(desc)
 
-        # clean up caption
-        if caption:
-            if isinstance(caption, (list, tuple)):
-                caption = [str(c).strip() for c in caption if c]
-            elif isinstance(caption, str):
-                caption = caption.strip()
-
-        return caption if caption else None
+        return caption or None
 
     def _get_nested_value(self, item: Dict, key_path: str) -> Any:
         if "." in key_path:

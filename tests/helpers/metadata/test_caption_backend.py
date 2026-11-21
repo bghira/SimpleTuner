@@ -163,6 +163,26 @@ class TestCaptionMetadataBackend(unittest.TestCase):
         texts = sorted(record.caption_text for record in records)
         self.assertEqual(texts, ["Alt second", "First entry", "Second"])
 
+    def test_parquet_manifest_skips_null_string_cells(self):
+        import pandas as pd
+
+        path = "/manifests/null-captions.parquet"
+        self.backend.write(path, pd.DataFrame({"file": ["valid", "missing"], "caption": ["usable", None]}).to_parquet())
+        backend = CaptionMetadataBackend(
+            id="caption",
+            instance_data_dir=self.instance_dir,
+            cache_file=self.cache_file,
+            metadata_file=self.metadata_file,
+            data_backend=self.backend,
+            accelerator=self.accelerator,
+            batch_size=1,
+            caption_ingest_strategy="parquet",
+            parquet_config={"path": path, "filename_column": "file", "caption_column": "caption"},
+        )
+
+        self.assertEqual(backend.ingest_from_parquet_config(), 1)
+        self.assertEqual([record.caption_text for record in backend.iter_records()], ["usable"])
+
     def test_ingest_from_huggingface_dataset(self):
         dataset = [
             {"prompt": "  Example 1  ", "quality": {"score": 0.9}},

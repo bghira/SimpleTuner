@@ -1313,6 +1313,7 @@ En esta configuración:
   - `caption_column` es el nombre de la columna en la tabla que contiene los captions. En este caso, usamos la columna `cogvlm_caption`. Para datasets LAION, sería el campo TEXT.
   - `width_column` y `height_column` pueden ser una columna que contenga cadenas, int o incluso un tipo Series de una sola entrada, midiendo las dimensiones reales de la imagen. Esto mejora notablemente el tiempo de preparación del dataset, ya que no necesitamos acceder a las imágenes reales para descubrir esta información.
   - `fallback_caption_column` es un nombre opcional de una columna en la tabla que contiene captions de respaldo. Se usan si el campo de caption principal está vacío. En este caso, usamos la columna `tags`.
+  - Los valores nulos, NaN y en blanco se consideran ausentes. Las listas conservan las entradas utilizables. Las filas sin caption usable después de aplicar el respaldo configurado se omiten. El manifiesto debe contener al menos un caption usable.
   - `identifier_includes_extension` debe establecerse en `true` cuando tu columna de nombre de archivo contiene la extensión de imagen. De lo contrario, se asumirá la extensión `.png`. Se recomienda incluir extensiones de archivo en tu columna de nombres.
 
 > ⚠️ La capacidad de soporte de parquet se limita a leer captions. Debes poblar por separado una fuente de datos con tus muestras de imagen usando "{id}.png" como nombre de archivo. Consulta scripts en el directorio [scripts/datasets](/scripts/datasets) para ideas.

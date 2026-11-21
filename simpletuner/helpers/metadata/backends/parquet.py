@@ -14,6 +14,7 @@ from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.data_backend.filters import filter_file_list
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
+from simpletuner.helpers.metadata.captions import is_missing_caption
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
 from simpletuner.helpers.training import audio_file_extensions, image_file_extensions, video_file_extensions
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -32,40 +33,33 @@ except ImportError:
     raise ImportError("Pandas is required for the ParquetMetadataBackend.")
 
 
-def check_column_values(column_data, column_name, parquet_path, fallback_caption_column=False):
+def _clean_caption_value(value):
+    if is_missing_caption(value):
+        return None
+    if isinstance(value, (list, tuple, numpy.ndarray, pd.Series)):
+        return [cleaned for item in value if (cleaned := _clean_caption_value(item))]
+    if isinstance(value, bytes):
+        value = value.decode("utf-8")
+    return value.strip() if isinstance(value, str) else value
+
+
+def check_column_values(column_data, column_name, parquet_path, fallback_caption_column=False, *, require_complete=False):
     non_null_values = column_data.dropna()
     if non_null_values.empty:
+        if fallback_caption_column:
+            return 0
         raise ValueError(f"Parquet file {parquet_path} contains only null values in the '{column_name}' column.")
 
     first_non_null = non_null_values.iloc[0]
-    if isinstance(first_non_null, (list, tuple, numpy.ndarray, pd.Series)):
-        if column_data.isnull().any() and not fallback_caption_column:
-            raise ValueError(f"Parquet file {parquet_path} contains null arrays in the '{column_name}' column.")
-
-        empty_arrays = non_null_values.apply(lambda x: len(x) == 0)
-        if empty_arrays.any() and not fallback_caption_column:
-            raise ValueError(f"Parquet file {parquet_path} contains empty arrays in the '{column_name}' column.")
-
-        null_elements_in_arrays = non_null_values.apply(lambda arr: any(pd.isnull(s) for s in arr))
-        if null_elements_in_arrays.any() and not fallback_caption_column:
-            raise ValueError(
-                f"Parquet file {parquet_path} contains null values within arrays in the '{column_name}' column."
-            )
-
-        empty_strings_in_arrays = non_null_values.apply(lambda arr: any(s == "" for s in arr))
-        if empty_strings_in_arrays.all() and not fallback_caption_column:
-            raise ValueError(
-                f"Parquet file {parquet_path} contains only empty strings within arrays in the '{column_name}' column."
-            )
-
-    elif isinstance(first_non_null, str):
-        if column_data.isnull().any() and not fallback_caption_column:
-            raise ValueError(f"Parquet file {parquet_path} contains null values in the '{column_name}' column.")
-
-        if (column_data == "").any() and not fallback_caption_column:
-            raise ValueError(f"Parquet file {parquet_path} contains empty strings in the '{column_name}' column.")
-    else:
+    if not isinstance(first_non_null, (str, bytes, list, tuple, numpy.ndarray, pd.Series)):
         raise TypeError(f"Unsupported data type in column '{column_name}'. Expected strings or arrays of strings.")
+
+    usable_count = int(non_null_values.map(lambda value: bool(_clean_caption_value(value))).sum())
+    if require_complete and usable_count != len(column_data):
+        raise ValueError(f"Parquet file {parquet_path} contains missing identifiers in the '{column_name}' column.")
+    if not usable_count and not fallback_caption_column:
+        raise ValueError(f"Parquet file {parquet_path} contains no usable captions in the '{column_name}' column.")
+    return usable_count
 
 
 class ParquetMetadataBackend(MetadataBackend):
@@ -161,13 +155,19 @@ class ParquetMetadataBackend(MetadataBackend):
 
     def validate_caption_columns(self):
         table = self.parquet_database
-        check_column_values(pd.Series(table.index, copy=False), table.index.name, self.parquet_path)
+        check_column_values(pd.Series(table.index, copy=False), table.index.name, self.parquet_path, require_complete=True)
         column = self.parquet_config.get("caption_column")
         columns = column if isinstance(column, list) else [column]
+        usable = 0
         for name in columns:
             if name not in table.columns:
                 raise ValueError(f"Parquet file {self.parquet_path} does not contain a column named '{name}'.")
-            check_column_values(table[name], name, self.parquet_path, self.parquet_config.get("fallback_caption_column"))
+            usable += check_column_values(table[name], name, self.parquet_path, fallback_caption_column=True)
+        fallback = self.parquet_config.get("fallback_caption_column")
+        if not usable and fallback in table:
+            usable = int(table[fallback].map(lambda value: bool(_clean_caption_value(value))).sum())
+        if not usable:
+            raise ValueError(f"Parquet file {self.parquet_path} contains no usable captions in the configured columns.")
 
     def _caption_key(self, path):
         filename = str(path)
@@ -209,15 +209,7 @@ class ParquetMetadataBackend(MetadataBackend):
         identifier_includes_extension = self.parquet_config.get("identifier_includes_extension", False)
         captions = {}
 
-        def clean(caption):
-            if pd.api.types.is_scalar(caption) and pd.isna(caption):
-                return None
-            if isinstance(caption, (numpy.ndarray, pd.Series)):
-                return [str(item) for item in caption if not pd.isna(item)]
-            if isinstance(caption, bytes):
-                caption = caption.decode("utf-8")
-            return caption.strip() if isinstance(caption, str) else caption
-
+        missing_count = 0
         for index, row in self.parquet_database.iterrows():
             if filename_column in row:
                 file_id = str(row[filename_column])
@@ -229,20 +221,23 @@ class ParquetMetadataBackend(MetadataBackend):
 
             # Could be list or single str
             if isinstance(caption_column, list):
-                caption = [value for column in caption_column if (value := clean(row.get(column)))]
+                caption = [value for column in caption_column if (value := _clean_caption_value(row.get(column)))]
             else:
-                caption = clean(row.get(caption_column))
+                caption = _clean_caption_value(row.get(caption_column))
             if not caption and fallback_caption_column:
-                caption = clean(row.get(fallback_caption_column))
+                caption = _clean_caption_value(row.get(fallback_caption_column))
             if not caption:
                 for field in caption_field_preferences:
-                    if caption := clean(row.get(field)):
+                    if caption := _clean_caption_value(row.get(field)):
                         break
 
             if not caption:
+                missing_count += 1
                 continue
 
             captions[file_id] = caption
+        if missing_count:
+            logger.warning("(id=%s) Skipping %d manifest rows without captions.", self.id, missing_count)
         return captions
 
     def caption_cache_entry(self, index: str):

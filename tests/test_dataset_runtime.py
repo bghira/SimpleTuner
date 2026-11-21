@@ -426,7 +426,12 @@ class DatasetRuntimeTests(unittest.TestCase):
             root = Path(directory)
             table = root / "metadata.parquet"
             pd.DataFrame(
-                {"file": ["a/sample.jpg", "b/sample.jpg"], "caption": ["primary", None], "tags": ["unused", "fallback"]}
+                {
+                    "file": ["a/sample.jpg", "b/sample.jpg", "null.jpg", "nan.jpg", "empty.jpg", "partial.jpg"],
+                    "caption": ["primary", None, None, float("nan"), " ", None],
+                    "tags": ["unused", "fallback", None, None, None, None],
+                    "alternates": [None, None, None, None, [" ", None], [" retained ", None]],
+                }
             ).to_parquet(table)
             config = {**self.config, "caption_strategy": "parquet", "instance_data_dir": directory}
             accelerator = SimpleNamespace()
@@ -460,6 +465,7 @@ class DatasetRuntimeTests(unittest.TestCase):
                     ["fallback", "primary"],
                 )
                 reads.assert_called_once_with(str(table))
+                self.assertEqual(set(metadata.caption_cache), {"a/sample", "b/sample"})
                 removed = str(root / "gone.jpg")
                 kept = str(root / "a/sample.jpg")
                 metadata.aspect_ratio_bucket_indices = {"1.0": [kept, removed]}
@@ -467,6 +473,9 @@ class DatasetRuntimeTests(unittest.TestCase):
                 metadata = ParquetMetadataBackend(**settings)
                 self.assertEqual(metadata.read_cache(), {"1.0": [kept]})
                 self.assertEqual(json.loads(metadata.cache_file.read_text())["aspect_ratio_bucket_indices"], {"1.0": [kept]})
+                no_fallback = {**settings["parquet_config"], "caption_column": "alternates", "fallback_caption_column": None}
+                metadata = ParquetMetadataBackend(**{**settings, "parquet_config": no_fallback})
+                self.assertEqual(metadata.caption_cache, {"partial": ["retained"]})
 
     def test_config_is_a_snapshot_and_empty_shuffle_config_needs_no_registry(self):
         self.config["caption_shuffle"] = {"enable": False}
