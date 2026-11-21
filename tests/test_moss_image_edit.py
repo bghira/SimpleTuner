@@ -1,6 +1,8 @@
 import copy
 import tempfile
 import unittest
+from contextlib import closing
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -370,6 +372,105 @@ class MOSSImageEditTests(unittest.TestCase):
                 cache.create_hash("target:a", prompt="edit", metadata=first),
             )
         self.assertFalse(self.foundation("sft").requires_conditioning_dataset())
+
+    def test_text_precompute_encodes_only_edit_captions_with_local_references(self):
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+        from simpletuner.helpers.training.state_tracker import StateTracker
+        from simpletuner.simpletuner_sdk.server.services.dataset_scan_service import _ScanArgsNamespace
+
+        for flavour in ("base-edit", "sft-edit"):
+            with self.subTest(flavour=flavour), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                edits, references = root / "edits", root / "references"
+                edits.mkdir()
+                references.mkdir()
+                Image.new("RGB", (96, 64), color="red").save(edits / "sample.png")
+                Image.new("RGB", (96, 64), color="blue").save(references / "sample.png")
+                (edits / "sample.txt").write_text("edit the reference", encoding="utf-8")
+                args = _ScanArgsNamespace(
+                    {
+                        "output_dir": str(root),
+                        "resolution": 64,
+                        "aspect_bucket_alignment": 16,
+                        "model_family": "moss_image",
+                        "caption_dropout_probability": 0.1,
+                    }
+                )
+                accelerator = SimpleNamespace(
+                    device="cpu", num_processes=1, process_index=0, is_main_process=True, is_local_main_process=True
+                )
+                shared = {
+                    "type": "local",
+                    "crop": False,
+                    "resolution": 64,
+                    "resolution_type": "pixel",
+                    "preserve_data_backend_cache": True,
+                }
+                edit_config = {
+                    **shared,
+                    "id": "edits",
+                    "instance_data_dir": str(edits),
+                    "caption_strategy": "textfile",
+                    "conditioning_data": ["references"],
+                }
+                reference_config = {
+                    **shared,
+                    "id": "references",
+                    "instance_data_dir": str(references),
+                    "dataset_type": "conditioning",
+                    "conditioning_type": "reference_loose",
+                    "caption_strategy": "filename",
+                }
+                model = self.foundation(flavour)
+                model.config.tokenizer_max_length = 32
+                model.text_encoders = [torch.nn.Identity()]
+                model.tokenizers = [object()]
+                model._reference_image_processor = object()
+                factory = FactoryRegistry.__new__(FactoryRegistry)
+                factory.model, factory.args, factory.accelerator = model, args, accelerator
+                factory.text_encoders = []
+                factory._deferred_text_embed_datasets = []
+
+                def precompute(records, **_kwargs):
+                    for record in records:
+                        model.encode_text_batch([record["prompt"]], prompt_contexts=[record["metadata"]])
+
+                cache = SimpleNamespace(
+                    precompute_embeddings=precompute, text_cache_ondemand=False, read_batch_size=1, text_encoder_batch_size=1
+                )
+                with (
+                    patch.object(StateTracker, "get_args", return_value=args),
+                    patch.object(StateTracker, "set_data_backend_config"),
+                    patch("simpletuner.helpers.data_backend.factory.move_text_encoders"),
+                    patch(
+                        "simpletuner.helpers.models.moss_image.model.encode_prompts",
+                        return_value=(self.text[:1], self.mask[:1]),
+                    ) as encode,
+                    closing(DatasetRuntime.from_config(edit_config, args, accelerator)) as edits_runtime,
+                    closing(DatasetRuntime.from_config(reference_config, args, accelerator)) as references_runtime,
+                ):
+                    for runtime, config in ((edits_runtime, edit_config), (references_runtime, reference_config)):
+                        runtime.prepare_view()
+                        runtime.text_embed_cache = cache
+                        factory._process_text_embeddings(
+                            config,
+                            {
+                                "id": runtime.id,
+                                "config": runtime.config,
+                                "dataset_runtime": runtime,
+                                "text_embed_cache": cache,
+                            },
+                            config.get("conditioning_type"),
+                        )
+                    encode.assert_not_called()
+                    edits_runtime.conditioning_datasets = (references_runtime,)
+                    factory._process_deferred_text_embeddings()
+
+                self.assertEqual([call.args[2] for call in encode.call_args_list], [["edit the reference"], [""]])
+                for call in encode.call_args_list:
+                    ((image,),) = call.kwargs["reference_images"]
+                    self.assertEqual(image.getpixel((0, 0)), (0, 0, 255))
 
     def test_batch_uses_cached_reference_grids_and_rejects_missing_references(self):
         model = self.foundation()
