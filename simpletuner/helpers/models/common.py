@@ -3423,6 +3423,16 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
         for key in component_keys:
             quant_mapping.setdefault(key, quantization_config)
 
+    def materialize_meta_tensors_after_load(
+        self,
+        model: torch.nn.Module,
+        model_path: str,
+        model_subfolder: str | None,
+        load_kwargs: dict,
+    ) -> bool:
+        """Resolve model-specific checkpoint weights that remain on the meta device."""
+        return False
+
     def load_model(self, move_to_device: bool = True):
         pretrained_load_args = {
             "revision": self.config.revision,
@@ -3524,32 +3534,39 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
 
         def _load_model(load_kwargs: dict):
             with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
-                return loader_fn(
+                self.model = loader_fn(
                     model_path,
                     subfolder=model_subfolder,
                     **load_kwargs,
                 )
+            unwrapped_model = self.unwrap_model(model=self.model)
+            remaining_meta = self._sample_meta_tensor_names(unwrapped_model)
+            if remaining_meta and self.materialize_meta_tensors_after_load(
+                unwrapped_model, model_path, model_subfolder, load_kwargs
+            ):
+                remaining_meta = self._sample_meta_tensor_names(unwrapped_model)
+            return remaining_meta
 
         load_kwargs = dict(pretrained_load_args)
-        self.model = _load_model(load_kwargs)
-        unwrapped_model = self.unwrap_model(model=self.model)
-
-        if self._module_has_meta_tensors(unwrapped_model):
-            if load_kwargs.get("low_cpu_mem_usage", True):
-                sample_meta = ", ".join(self._sample_meta_tensor_names(unwrapped_model)) or "(unknown tensors)"
-                logger.warning(
-                    "Detected meta tensors after loading %s (e.g. %s); disabling low_cpu_mem_usage and retrying.",
-                    model_path,
-                    sample_meta,
-                )
-                load_kwargs["low_cpu_mem_usage"] = False
-                self.model = _load_model(load_kwargs)
-                unwrapped_model = self.unwrap_model(model=self.model)
-            if self._module_has_meta_tensors(unwrapped_model):
-                raise RuntimeError(
-                    f"{self.__class__.__name__} failed to materialize weights for {model_path}. "
-                    "All model parameters remain on the meta device after reload."
-                )
+        remaining_meta = _load_model(load_kwargs)
+        if (
+            remaining_meta
+            and load_kwargs.get("low_cpu_mem_usage", True)
+            and getattr(self.MODEL_CLASS, "_keep_in_fp32_modules", None) is None
+            and all(load_kwargs.get(key) is None for key in ("quantization_config", "device_map", "parallel_config"))
+        ):
+            logger.warning(
+                "Detected meta tensors after loading %s (e.g. %s); disabling low_cpu_mem_usage and retrying.",
+                model_path,
+                ", ".join(remaining_meta),
+            )
+            load_kwargs["low_cpu_mem_usage"] = False
+            remaining_meta = _load_model(load_kwargs)
+        if remaining_meta:
+            raise RuntimeError(
+                f"{self.__class__.__name__} failed to materialize weights for {model_path}. "
+                f"Tensors remaining on the meta device include {', '.join(remaining_meta)}."
+            )
         if (
             self._ramtorch_enabled()
             and not self._ramtorch_base_deferred_until_after_quantization()
