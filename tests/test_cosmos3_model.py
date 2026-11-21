@@ -384,6 +384,33 @@ class Cosmos3ModelTests(unittest.TestCase):
         self.assertFalse(model.use_text_cache_dropout_sentinel())
         self.assertEqual(model.text_embed_cache_key(), TextEmbedCacheKey.DATASET_AND_FILENAME)
 
+    def test_caption_dropout_prepares_and_reads_a_geometry_specific_cache_entry(self):
+        from simpletuner.helpers.data_backend.dataset_runtime import TextRequestBuilder, text_embed_request
+        from simpletuner.helpers.training.collate import _training_text_request
+
+        model = TestableCosmos3Image()
+        dataset = SimpleNamespace(id="train", metadata_backend=SimpleNamespace(instance_data_dir="images"))
+        builder = TextRequestBuilder(model, dataset, args=SimpleNamespace(caption_dropout_probability=0.1))
+
+        positive, dropout = builder.records(
+            [("a robot drummer", "robot.png")], read_metadata=lambda _: {"target_size": (80, 64)}
+        )
+
+        self.assertFalse(model.should_precompute_dropout_caption())
+        self.assertNotEqual(dropout["key"], positive["key"])
+        self.assertEqual(dropout["prompt"], "")
+        metadata = model.text_embed_cache_metadata_for_sample(
+            example={},
+            latent=torch.zeros(16, 1, 4, 5),
+            prompt="",
+            data_backend_id="train",
+            dataset_relative_path="robot.png",
+        )
+        request = text_embed_request(model, model.text_embed_cache_key(), "", metadata, "train", "robot.png", "robot.png")
+        self.assertEqual(request["key"], dropout["key"])
+        cache = object()
+        self.assertEqual(_training_text_request(request, cache, model), (cache, request))
+
     def test_lora_defaults_target_generation_path(self):
         model = TestableCosmos3Image()
 
