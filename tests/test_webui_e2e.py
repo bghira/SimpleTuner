@@ -3103,6 +3103,20 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
                 EC.visibility_of_element_located((By.CSS_SELECTOR, ".dataset-list-item-expanded .webshart-manifest"))
             )
             manifest.send_keys("combined/dataset.json", Keys.TAB)
+            new_cache_paths = {
+                "metadata_cache_dir": "cache/shared-catalogue",
+                "shard_cache_dir": "cache/local-shards",
+            }
+            for key, value in new_cache_paths.items():
+                cache_field = WebDriverWait(driver, 10).until(
+                    EC.visibility_of_element_located(
+                        (By.CSS_SELECTOR, f'.dataset-list-item-expanded input[x-model$=".webshart.{key}"]')
+                    )
+                )
+                self.assertEqual(cache_field.get_attribute("value"), cache_options[key])
+                cache_field.clear()
+                cache_field.send_keys(value, Keys.TAB)
+            expected_cache_options = {**cache_options, **new_cache_paths}
             for model, value in [
                 ("dataset.aws_endpoint_url", "https://storage.example"),
                 ("dataset.aws_session_token", "example-session"),
@@ -3128,7 +3142,7 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
             self.assertEqual(persisted["webshart"]["sampling_order"], "shuffled")
             self.assertEqual(persisted["webshart"]["manifest"], "combined/dataset.json")
             self.assertEqual(persisted["webshart"]["columns"], {"captions": "caption_text"})
-            for key, value in cache_options.items():
+            for key, value in expected_cache_options.items():
                 self.assertEqual(persisted["webshart"][key], value)
             self.assertEqual(persisted["aws_endpoint_url"], "https://storage.example")
             self.assertEqual(persisted["aws_session_token"], "example-session")
@@ -3171,7 +3185,7 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
                 )
             )
             self.assertEqual(endpoint.get_attribute("value"), "https://storage.example")
-            for key, value in cache_options.items():
+            for key, value in expected_cache_options.items():
                 cache_field = (
                     driver.find_element(By.CSS_SELECTOR, f'.dataset-list-item-expanded input[x-model$=".webshart.{key}"]')
                     if isinstance(value, str)

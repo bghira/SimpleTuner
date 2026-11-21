@@ -1441,6 +1441,8 @@ Webshart 数据集通过 `webshart` 包加载 WebDataset 风格的 tar shards。
 - `metadata` 可选，可指向包含 captions 的独立 metadata location。对于 `webshart/conceptual-captions-12m-webdataset-metadata` 这样的 Hugging Face metadata repo，传 repo id 即可；Webshart 会跟随 source shard 的 `data/` 等子目录布局。
 - `metadata_backend` 必须为 `webshart`；`caption_strategy` 应为 `webshart` 或 `instanceprompt`。
 - `webshart.cache_dir` 存储 SimpleTuner metadata 与 Webshart caches。`shard_cache_gb` 和 `parallel_downloads` 会传给 Webshart 的 shard cache；将 `shard_cache_gb` 设为 `0` 可禁用整 shard cache，并保留基于索引的 range reads。
+- `webshart.metadata_cache_dir` 存放分片目录和采集清单索引。默认位于 `webshart.cache_dir` 下的 `metadata_cache`。
+- `webshart.shard_cache_dir` 存放已下载的分片。默认位于 `webshart.cache_dir` 下的 `shard_cache`。
 - 为远程 Parquet 启用整分片缓存时，每个后端在两次读取之间保留一个已缓存分片的读取器。除 `shard_cache_gb` 外，还需为并发下载和仍被读取器锁定的分片预留磁盘空间。Webshart 先将下载内容写入临时文件，再清理旧分片。
 - 将 `webshart.sampling_policy` 设为 `global`，可在每个准备好的宽高比分桶内打乱样本顺序。设为 `shard_local` 时，批次优先从存储位置相近的样本组成，从而减少 DataComp 等远程数据集的分片缓存换入换出。省略此字段可保留现有采样器。
 - 使用 Parquet 分片局部采样时，`webshart.sampling_order` 默认为 `sequential`。此模式按存储顺序访问分片窗口，并在每个宽高比分桶内保留原始行顺序。若要在局部采样中打乱样本，或从引入此选项之前创建的检查点恢复，请设为 `shuffled`。恢复时请保持相同的顺序设置。

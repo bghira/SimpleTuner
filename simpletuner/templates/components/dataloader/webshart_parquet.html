@@ -52,8 +52,8 @@
 <div class="row g-2 mt-2">
     {% for key, label, placeholder in [
         ('cache_dir', 'Cache Directory', 'cache/webshart/my-dataset'),
-        ('metadata_cache_dir', 'Metadata Cache Directory', ''),
-        ('shard_cache_dir', 'Shard Cache Directory', '')
+        ('metadata_cache_dir', 'Metadata Cache Directory', 'metadata_cache under Cache Directory'),
+        ('shard_cache_dir', 'Shard Cache Directory', 'shard_cache under Cache Directory')
     ] %}
     <div class="col-md-4">
         <label class="form-label small">{{ label }}</label>
