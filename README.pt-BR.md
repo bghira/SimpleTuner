@@ -123,7 +123,6 @@ SimpleTuner suporta as seguintes familias de modelos. O suporte detalhado a recu
 | **Wan Video** | 1.3B-14B | Apache-2.0 | Sim |
 | **Wan S2V** | 14B | Apache-2.0 | Sim |
 | **Z-Image** | 6B | Apache-2.0 | Sim |
-| **Z-Image Omni** | 6B | Apache-2.0 | Sim |
 | **ZLab I1** | 3B | MIT | Sim |
 
 *Os valores de licenca vem dos model helpers do SimpleTuner quando disponiveis e dos model cards/licencas upstream para entradas que antes nao estavam especificadas. `Nao especificada no SimpleTuner` significa que o helper nao informa uma licenca e nenhum termo upstream esta resumido aqui; verifique o model card upstream antes de usar.*

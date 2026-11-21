@@ -22,7 +22,7 @@ Self-Flow は、外部ビジョンエンコーダを同一モデルのよりク�
 
 現在の対応ファミリ:
 
-- 画像 / 編集: `flux`, `flux2`, `sd3`, `pixart`, `sana`, `qwen_image`, `chroma`, `hidream`, `auraflow`, `lumina2`, `z_image`, `z_image_omni`, `kandinsky5_image`, `longcat_image`, `omnigen`, `ace_step`
+- 画像 / 編集: `flux`, `flux2`, `sd3`, `pixart`, `sana`, `qwen_image`, `chroma`, `hidream`, `auraflow`, `lumina2`, `z_image`, `kandinsky5_image`, `longcat_image`, `omnigen`, `ace_step`
 - 動画 / マルチモーダル: `wan`, `wan_s2v`, `ltxvideo`, `ltxvideo2`, `sanavideo`, `kandinsky5_video`, `hunyuanvideo`, `longcat_video`, `cosmos`, `anima`
 
 ## クイック設定（WebUI）

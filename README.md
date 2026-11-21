@@ -123,7 +123,6 @@ SimpleTuner supports the following model families. Detailed training feature sup
 | **Wan Video** | 1.3B-14B | Apache-2.0 | Yes |
 | **Wan S2V** | 14B | Apache-2.0 | Yes |
 | **Z-Image** | 6B | Apache-2.0 | Yes |
-| **Z-Image Omni** | 6B | Apache-2.0 | Yes |
 | **ZLab I1** | 3B | MIT | Yes |
 
 *License values are taken from SimpleTuner model helpers when available and upstream model cards/licenses for entries that were previously unspecified. `Not specified in SimpleTuner` means the helper does not name a license and no upstream term is summarized here; check the upstream model card before use.*

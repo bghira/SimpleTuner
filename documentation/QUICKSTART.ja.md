@@ -53,7 +53,6 @@ WebUI の環境作成画面とセットアップウィザードでは、先に�
 | Wan Video | 1.3B-14B | [WAN.ja.md](quickstart/WAN.ja.md) |
 | Wan S2V | 14B | [WAN_S2V.ja.md](quickstart/WAN_S2V.ja.md) |
 | Z-Image | 6B | [ZIMAGE.ja.md](quickstart/ZIMAGE.ja.md) |
-| Z-Image Omni | 6B | [ZIMAGE.ja.md](quickstart/ZIMAGE.ja.md) |
 | ZLab I1 | 3B | [ZLAB_i1.ja.md](quickstart/ZLAB_i1.ja.md) |
 
 ## 機能互換性
@@ -106,7 +105,6 @@ WebUI の環境作成画面とセットアップウィザードでは、先に�
 | Wan Video | ✓ | ✓ | ✓* | ✗ | ✓ I2V/VACE |
 | Wan S2V | ✓ | ✓ | ✓* | ✗ | ✗ |
 | Z-Image | ✓ | ✓ | ✓* | ✗ | ✗ |
-| Z-Image Omni | ✓ | ✓ | ✓* | ✗ | ✓ opt (Edit) |
 | ZLab I1 | ✓ | ✓ | ✓ | ✗ | ✗ |
 
 </details>
@@ -157,7 +155,6 @@ WebUI の環境作成画面とセットアップウィザードでは、先に�
 | Wan Video | int8 optional | bf16 |
 | Wan S2V | int8 optional | bf16 |
 | Z-Image | int8 optional | bf16 |
-| Z-Image Omni | int8 optional | bf16 |
 | ZLab I1 | int8 optional | bf16 |
 
 </details>
@@ -208,7 +205,6 @@ WebUI の環境作成画面とセットアップウィザードでは、先に�
 | Wan Video | ✓ | ✓ | ✓ | ✓ |
 | Wan S2V | ✓ | ✓ | ✓ | ✗ |
 | Z-Image | ✓ | ✓ | ✓ | ✓ |
-| Z-Image Omni | ✓ | ✗ | ✗ | ✗ |
 | ZLab I1 | ✓ | ✓ | ✓ | ✗ |
 
 </details>
@@ -261,7 +257,6 @@ WebUI の環境作成画面とセットアップウィザードでは、先に�
 | Wan Video | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Wan S2V | flow matching | ✓ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Z-Image | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Z-Image Omni | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ |
 | ZLab I1 | flow matching | ✓ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 </details>
@@ -312,7 +307,6 @@ WebUI の環境作成画面とセットアップウィザードでは、先に�
 | Wan Video | UMT5 | not specified | Wan VAE |
 | Wan S2V | UMT5 | not specified | Wan VAE |
 | Z-Image | Qwen3 4B | 4B | AutoencoderKL |
-| Z-Image Omni | Qwen3 4B | 4B | AutoencoderKL |
 | ZLab I1 | T5Gemma 2B | 2B | AutoencoderKL |
 
 </details>

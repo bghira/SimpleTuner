@@ -123,7 +123,6 @@ SimpleTuner es compatible con las siguientes familias de modelos. El soporte det
 | **Wan Video** | 1.3B-14B | Apache-2.0 | Sí |
 | **Wan S2V** | 14B | Apache-2.0 | Sí |
 | **Z-Image** | 6B | Apache-2.0 | Sí |
-| **Z-Image Omni** | 6B | Apache-2.0 | Sí |
 | **ZLab I1** | 3B | MIT | Sí |
 
 *Los valores de licencia se toman de los helpers de modelos de SimpleTuner cuando están disponibles y de las tarjetas/licencias upstream para entradas que antes no estaban especificadas. `No especificada en SimpleTuner` significa que el helper no nombra una licencia y aquí no se resume ningún término upstream; revisa la tarjeta del modelo upstream antes de usarlo.*
