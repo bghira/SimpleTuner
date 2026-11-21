@@ -6,6 +6,7 @@ from typing import Dict, Optional
 import torch
 import torchaudio
 from diffusers import AutoencoderKLWan, FlowMatchEulerDiscreteScheduler
+from diffusers.utils import SAFE_WEIGHTS_INDEX_NAME, _add_variant
 from huggingface_hub import hf_hub_download
 from huggingface_hub.errors import EntryNotFoundError, HfHubHTTPError, LocalEntryNotFoundError
 from safetensors import SafetensorError, safe_open
@@ -616,7 +617,7 @@ class WanS2V(VideoModelFoundation):
             index_path = self._checkpoint_file(
                 model_path,
                 model_subfolder,
-                "diffusion_pytorch_model.safetensors.index.json",
+                _add_variant(SAFE_WEIGHTS_INDEX_NAME, load_kwargs.get("variant")),
                 load_kwargs,
             )
             with open(index_path, "r", encoding="utf-8") as handle:
@@ -666,7 +667,7 @@ class WanS2V(VideoModelFoundation):
                     tuple(target_parameter.shape),
                 )
                 continue
-            source_tensor = source_tensor.to(dtype=target_parameter.dtype, device="cpu")
+            source_tensor = source_tensor.to(dtype=torch.float32, device="cpu")
             self._set_parameter(model, target_name, source_tensor, requires_grad=target_parameter.requires_grad)
             materialized = True
         return materialized
