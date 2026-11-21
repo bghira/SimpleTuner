@@ -526,7 +526,8 @@ def collate_fn(batch, *, dataset=None):
         has_conditioning_captions = True
     is_regularisation_data = batch.get("is_regularisation_data", False)
     is_i2v_data = batch.get("is_i2v_data", False)
-    if StateTracker.get_args().controlnet and len(examples) != len(conditioning_examples):
+    controlnet_enabled = StateTracker.get_args().controlnet
+    if controlnet_enabled and len(examples) != len(conditioning_examples):
         raise ValueError(
             "Number of training samples and conditioning samples must match for ControlNet."
             f"\n-> Training samples: {examples}"
@@ -911,6 +912,15 @@ def collate_fn(batch, *, dataset=None):
                     conditioning_pixel_values.append(
                         torch.stack([pixels.to(StateTracker.get_accelerator().device) for pixels in _pixel_values])
                     )
+
+            if controlnet_enabled and not requires_conditioning_latents:
+                pairs_by_example = {id(pair[2]): pair for pairs in conditioning_pairs_by_backend.values() for pair in pairs}
+                if len(pairs_by_example) != len(examples):
+                    raise ValueError("Each training sample must have a paired ControlNet image.")
+                controlnet_pixels = conditioning_pixels(
+                    [pairs_by_example[id(example)] for example in examples], dataset=dataset, model=model, view=view
+                ).to(StateTracker.get_accelerator().device)
+                conditioning_pixel_values = [controlnet_pixels, *(conditioning_pixel_values or [])]
 
     def _conditioning_pixel_value_for_example(example):
         pixel_tensor = reference_pixels.get(id(example))
