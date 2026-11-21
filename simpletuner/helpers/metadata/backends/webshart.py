@@ -11,6 +11,7 @@ from collections import defaultdict, deque
 from concurrent.futures import CancelledError, ThreadPoolExecutor
 from contextlib import ExitStack, closing, contextmanager, nullcontext
 from copy import copy, deepcopy
+from functools import partial
 from hashlib import file_digest, sha256
 from itertools import batched, chain, islice
 from math import ceil
@@ -18,7 +19,7 @@ from pathlib import Path
 from queue import SimpleQueue
 from threading import Event
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, NamedTuple, Optional
 from uuid import uuid4
 
 import ijson
@@ -84,12 +85,21 @@ def _empty_filtering_statistics():
     }
 
 
+class _TrainingWindow(NamedTuple):
+    partition: int
+    revision: str
+    buckets: dict[str, list[str]]
+    records: dict[str, dict]
+    captions: dict[str, CaptionValue]
+
+
 class WebshartMetadataBackend(MetadataBackend):
     native_policy = None
     epoch_recrop_version = 1
     window_shards = 4
     maximum_canvas_size = None
     collect_exclusions = collect_exclusions
+    _window_cache: _TrainingWindow | None = None
 
     def __init__(
         self,
@@ -171,7 +181,6 @@ class WebshartMetadataBackend(MetadataBackend):
         self._writing_transforms = None
         self._window_recipe = None
         self._window_revision = None
-        self._window_cache = None
         self._window_transforms = None
         if self.native_policy and self.data_backend.format == "parquet":
             self.reload_cache(set_config=not preparation_only)
@@ -201,8 +210,29 @@ class WebshartMetadataBackend(MetadataBackend):
             return
         self.data_backend.source_files.publish([("", [], sample_ids)])
 
+    @property
+    def caption_projection_strategy(self):
+        window = self._window_cache
+        return "webshart" if window is not None and window.captions else None
+
+    def read_caption_batch(self, refs):
+        """Read captions from the open training window, projecting any other refs."""
+        window = self._window_cache
+        if window is None or not window.captions:
+            return self.data_backend.read_caption_batch(refs)
+
+        refs = [self.data_backend.normalize_sample_id(ref) for ref in refs]
+        captions = window.captions
+        missing = [ref for ref in refs if ref not in captions]
+        projected = iter(self.data_backend.read_caption_batch(missing) if missing else ())
+        return [deepcopy(captions[ref]) if ref in captions else next(projected) for ref in refs]
+
     def caption_cache_entry(self, index: str) -> Optional[CaptionValue]:
-        return self.data_backend.get_caption(self.data_backend.normalize_sample_id(index))
+        ref = self.data_backend.normalize_sample_id(index)
+        window = self._window_cache
+        if window is not None and ref in window.captions:
+            return deepcopy(window.captions[ref])
+        return self.data_backend.get_caption(ref)
 
     def reload_cache(self, set_config: bool = True):
         if self.native_policy:
@@ -431,12 +461,13 @@ class WebshartMetadataBackend(MetadataBackend):
         return self._window_recipe is None
 
     def _open_training_partition(self, partition):
-        if self._window_cache is not None and self._window_cache[0] == partition:
-            return self._window_cache[1:]
+        window = self._window_cache
+        if window is not None and window.partition == partition:
+            return window
         start = self.window_shards * partition
         indices = range(start, min(start + self.window_shards, self.data_backend.num_shards()))
         pins = [self.data_backend.dataset.source_revision_for_shard(shard) for shard in indices]
-        records, buckets = {}, defaultdict(list)
+        records, buckets, captions = {}, defaultdict(list), {}
         rows = self._scan_rows(
             (),
             _empty_filtering_statistics(),
@@ -445,19 +476,23 @@ class WebshartMetadataBackend(MetadataBackend):
             recipe=self._window_recipe,
             shard_indices=indices,
             transforms=self._window_transforms,
+            window_captions=captions if self._window_require_captions else None,
         )
         for bucket, ref, record in rows:
             if self._allows_native_aspect(bucket, self._window_recipe):
                 buckets[bucket].append(ref)
                 records[ref] = record
+            else:
+                captions.pop(ref, None)
         self._window_transforms.flush()
         revision = sha256(json.dumps([pins, buckets], sort_keys=True).encode()).hexdigest()
-        self._window_cache = (partition, revision, buckets, records)
-        return revision, buckets, records
+        window = _TrainingWindow(partition, revision, buckets, records, captions)
+        self._window_cache = window
+        return window
 
     def _window_buckets(self, partition):
-        revision, buckets, _ = self._open_training_partition(partition)
-        return revision, buckets
+        window = self._open_training_partition(partition)
+        return window.revision, window.buckets
 
     def open_epoch(self, spec):
         if self._window_recipe is not None:
@@ -616,8 +651,8 @@ class WebshartMetadataBackend(MetadataBackend):
         if self._window_recipe is not None:
             if view.partition is None:
                 raise ValueError("A Webshart training shard window is required to read geometry.")
-            _, _, window = self._open_training_partition(view.partition)
-            records = [window.get(ref) for ref in refs]
+            window = self._open_training_partition(view.partition)
+            records = [window.records.get(ref) for ref in refs]
         else:
             records = self._published_metadata_batch(refs)
         if view.epoch in (None, 1) or not self.recrops_lazily:
@@ -975,6 +1010,8 @@ class WebshartMetadataBackend(MetadataBackend):
         require_captions: bool,
         recipe: PreparationGeometry | None = None,
         cached: dict | None = None,
+        *,
+        window_captions: dict[str, CaptionValue] | None = None,
     ) -> tuple[dict, Optional[tuple[str, dict]], Optional[Exception]]:
         try:
             filename = str(entry["filename"])
@@ -988,7 +1025,11 @@ class WebshartMetadataBackend(MetadataBackend):
                 )
             else:
                 prepared = self._prepare_metadata(sample_path, sample_metadata, recipe)
-            if prepared is not None and require_captions and not self._entry_has_caption(shard_metadata, entry, sample_path):
+            if (
+                prepared is not None
+                and require_captions
+                and not self._entry_has_caption(shard_metadata, entry, sample_path, window_captions=window_captions)
+            ):
                 raise CaptionNotFoundError(f"Could not find caption for {sample_path}")
             return sample_metadata, prepared, None
         except Exception as exc:
@@ -1053,10 +1094,15 @@ class WebshartMetadataBackend(MetadataBackend):
             entries.append({"sample_idx": sample_idx, "filename": filename})
         return entries
 
-    def _entry_has_caption(self, shard_metadata: dict, entry: dict, sample_path: str) -> bool:
+    def _entry_has_caption(
+        self, shard_metadata: dict, entry: dict, sample_path: str, *, window_captions: dict[str, CaptionValue] | None = None
+    ) -> bool:
         file_metadata = shard_metadata.get(str(entry["filename"]), {}) or {}
         if self.data_backend.format == "parquet":
-            return bool(self.data_backend._caption_from_metadata(file_metadata))
+            caption = self.data_backend._caption_from_metadata(file_metadata)
+            if window_captions is not None and caption:
+                window_captions[sample_path] = caption
+            return bool(caption)
         if self.data_backend.caption_key is not None:
             return bool(self.data_backend.get_caption(sample_path))
         if file_metadata.get("captions"):
@@ -1129,6 +1175,7 @@ class WebshartMetadataBackend(MetadataBackend):
         shard_indices=None,
         stop=None,
         transforms=None,
+        window_captions: dict[str, CaptionValue] | None = None,
     ):
         if recipe is None and self.native_policy:
             recipe = self._geometry_recipe(self.dataset_config)
@@ -1146,6 +1193,9 @@ class WebshartMetadataBackend(MetadataBackend):
             if self.dataset_type is DatasetType.VIDEO and worker_count > 1
             else None
         )
+        prepare_entry = self._prepare_bucket_entry
+        if window_captions is not None:
+            prepare_entry = partial(prepare_entry, window_captions=window_captions)
 
         try:
             for shard_idx in shard_indices:
@@ -1216,19 +1266,17 @@ class WebshartMetadataBackend(MetadataBackend):
                     if transforms is not None:
                         cached = transforms.read_cached_batch([ref for _, ref in chunk])
                         results = [
-                            self._prepare_bucket_entry(shard_metadata, entry, ref, require_captions, recipe, record)
+                            prepare_entry(shard_metadata, entry, ref, require_captions, recipe, record)
                             for (entry, ref), record in zip(chunk, cached, strict=True)
                         ]
                     elif executor is None:
                         results = [
-                            self._prepare_bucket_entry(shard_metadata, entry, sample_path, require_captions, recipe)
+                            prepare_entry(shard_metadata, entry, sample_path, require_captions, recipe)
                             for entry, sample_path in chunk
                         ]
                     else:
                         results = executor.map(
-                            lambda item: self._prepare_bucket_entry(
-                                shard_metadata, item[0], item[1], require_captions, recipe
-                            ),
+                            lambda item: prepare_entry(shard_metadata, item[0], item[1], require_captions, recipe),
                             chunk,
                         )
 

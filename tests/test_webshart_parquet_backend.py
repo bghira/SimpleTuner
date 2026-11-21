@@ -122,8 +122,10 @@ class TestWebshartParquetBackend(unittest.TestCase):
         from simpletuner.helpers.metadata.preparation import DatasetReadView, TrainingPreparation
         from simpletuner.simpletuner_sdk.server.services.cache_job_service import _CacheAcceleratorStub, _CacheArgsNamespace
 
-        for i in range(7):
-            pq.write_table(pa.Table.from_pylist(self.rows), self.source / f"part-{i}.parquet", row_group_size=2)
+        caption_rows = [{**row, "captions": [row["captions"], f"alternate {row['captions']}"]} for row in self.rows]
+        table = pa.Table.from_pylist(caption_rows)
+        for filename in ["part.parquet", *(f"part-{i}.parquet" for i in range(7))]:
+            pq.write_table(table, self.source / filename, row_group_size=2)
         self._publish_capture_manifest()
         args = _CacheArgsNamespace(
             dict(
@@ -190,12 +192,27 @@ class TestWebshartParquetBackend(unittest.TestCase):
                 self.assertTrue(set(first[1]).isdisjoint(peer_refs))
                 self.assertEqual(peer.state_dict()["window_revision"], continuation["window_revision"])
             first_view = DatasetReadView(continuation["view"], spec.epoch, spec.seed, first_partition)
-            (sample,) = runtime.read_samples(first[1], fields=("metadata", "caption"), view=first_view)
+            (first_ref,) = first[1]
+            with patch.object(runtime.data_backend, "read_caption_batch", side_effect=AssertionError("reread captions")):
+                (sample,) = runtime.read_samples(first[1], fields=("metadata", "caption"), view=first_view)
+                self.assertEqual(runtime.resolve_caption(first_ref), sample["caption"])
+                captions = metadata.read_caption_batch([first_ref, first_ref])
+                captions[0].append("changed")
+                self.assertEqual(captions[1], sample["caption"])
+                self.assertEqual(runtime.resolve_captions([first_ref]), [sample["caption"]])
             self.assertEqual(tuple(sample["target_size"]), (128, 64))
-            self.assertIn(sample["caption"], ("first", "third"))
+            self.assertIn(sample["caption"], (["first", "alternate first"], ["third", "alternate third"]))
             self.assertIn(sample["webshart"]["sample_idx"], (0, 2))
             batches_after_consume = [cursor.next_batch() for _ in range(4)]
             self.assertNotEqual(cursor.partition, first_partition)
+            (next_ref,) = batches_after_consume[-1][1]
+            with patch.object(
+                runtime.data_backend, "read_caption_batch", wraps=runtime.data_backend.read_caption_batch
+            ) as read:
+                current, previous, duplicate = runtime.resolve_captions([next_ref, first_ref, next_ref])
+                read.assert_called_once_with([first_ref])
+                self.assertEqual(current, duplicate)
+                self.assertEqual(previous, sample["caption"])
 
             with (
                 closing(runtime.open_epoch(spec)) as resume,
@@ -212,6 +229,7 @@ class TestWebshartParquetBackend(unittest.TestCase):
 
             runtime.prepare_view()
             self.assertEqual(runtime.describe().accepted_samples, 16)
+            self.assertIsNone(metadata.caption_projection_strategy)
             self.assertFalse(runtime.prepare_for_training(online))
 
     def test_viewer_resolves_conditioning_against_each_parquet_catalogue(self):
