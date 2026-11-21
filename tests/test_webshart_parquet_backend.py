@@ -152,6 +152,7 @@ class TestWebshartParquetBackend(unittest.TestCase):
         ):
             metadata = runtime.metadata_backend
             spec = replace(metadata.epoch_spec(1, 1), dp_size=2)
+            self.assertEqual(spec.sampling_order, "sequential")
             with (
                 patch.object(metadata, "_scan_rows", side_effect=AssertionError("startup scanned rows")),
                 patch.object(runtime.data_backend.dataset, "_file", side_effect=AssertionError("startup opened a shard")),
@@ -180,6 +181,8 @@ class TestWebshartParquetBackend(unittest.TestCase):
                 first = cursor.next_batch()
                 continuation = cursor.state_dict()
                 first_partition = cursor.partition
+                self.assertEqual(first_partition, 0)
+                self.assertEqual(continuation["layout"]["sampling_order"], "sequential")
                 self.assertLessEqual(projected.call_count, metadata.window_shards)
                 self.assertGreater(projected.call_count, 0)
             self.assertFalse(metadata.membership_path.exists())
@@ -208,6 +211,9 @@ class TestWebshartParquetBackend(unittest.TestCase):
             with closing(runtime.open_epoch(spec)) as resume:
                 with self.assertRaisesRegex(ValueError, "shard contents changed"):
                     resume.load_state_dict({**continuation, "window_revision": "changed"})
+            with closing(runtime.open_epoch(replace(spec, sampling_order="shuffled"))) as shuffled_resume:
+                with self.assertRaisesRegex(ValueError, "unchanged source"):
+                    shuffled_resume.load_state_dict(continuation)
             cursor.close()
 
             runtime.prepare_view()
@@ -2216,7 +2222,7 @@ class TestWebshartParquetBackend(unittest.TestCase):
             replacement.replace(original)
             metadata.reload_cache()
             for policy in ("global", "shard_local"):
-                with closing(metadata.open_epoch(replace(spec, policy=policy))) as cursor:
+                with closing(metadata.open_epoch(replace(spec, policy=policy, sampling_order="shuffled"))) as cursor:
                     _, refs = cursor.next_batch()
                     with self.assertRaisesRegex(ValueError, "object changed since the accepted dataset view"):
                         self.backend.read_caption_batch(refs)

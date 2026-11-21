@@ -200,6 +200,7 @@ class ImageBackendConfig(BaseBackendConfig):
 
         if config.backend_type == "webshart":
             validators.validate_webshart_sampling_policy(backend_dict.get("webshart"))
+            validators.validate_webshart_sampling_order(backend_dict.get("webshart"))
             webshart_block = backend_dict.get("webshart") or {}
             config.webshart = webshart_block
             config.webshart_caption_key = webshart_block.get("caption_key")
@@ -601,7 +602,7 @@ class ImageBackendConfig(BaseBackendConfig):
             if self.webshart_metadata is not None:
                 config["metadata"] = self.webshart_metadata
             webshart_config = config.setdefault("webshart", {})
-            for key in ("format", "manifest", "columns", "sampling_policy"):
+            for key in ("format", "manifest", "columns", "sampling_policy", "sampling_order"):
                 if key in (self.webshart or {}):
                     webshart_config[key] = self.webshart[key]
             if self.webshart_cache_dir is not None:

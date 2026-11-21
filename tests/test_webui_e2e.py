@@ -3091,6 +3091,14 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
                 lambda d: d.execute_script("return Alpine.store('trainer').hasUnsavedChanges === true;")
             )
             Select(field).select_by_value("parquet")
+            order_selector = (By.CSS_SELECTOR, ".dataset-list-item-expanded .webshart-sampling-order")
+            order = WebDriverWait(driver, 10).until(EC.visibility_of_element_located(order_selector))
+            self.assertEqual(Select(order).first_selected_option.get_attribute("value"), "sequential")
+            driver.execute_script("Alpine.store('trainer').hasUnsavedChanges = false;")
+            Select(order).select_by_value("shuffled")
+            WebDriverWait(driver, 5).until(
+                lambda d: d.execute_script("return Alpine.store('trainer').hasUnsavedChanges === true;")
+            )
             manifest = WebDriverWait(driver, 10).until(
                 EC.visibility_of_element_located((By.CSS_SELECTOR, ".dataset-list-item-expanded .webshart-manifest"))
             )
@@ -3117,6 +3125,7 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
             self.assertTrue(persisted["webshart"]["optimize_captions"])
             self.assertEqual(persisted["webshart"]["format"], "parquet")
             self.assertEqual(persisted["webshart"]["sampling_policy"], "shard_local")
+            self.assertEqual(persisted["webshart"]["sampling_order"], "shuffled")
             self.assertEqual(persisted["webshart"]["manifest"], "combined/dataset.json")
             self.assertEqual(persisted["webshart"]["columns"], {"captions": "caption_text"})
             for key, value in cache_options.items():
@@ -3144,6 +3153,9 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
             )
             self.assertEqual(
                 Select(driver.find_element(*policy_selector)).first_selected_option.get_attribute("value"), "shard_local"
+            )
+            self.assertEqual(
+                Select(driver.find_element(*order_selector)).first_selected_option.get_attribute("value"), "shuffled"
             )
             self.assertEqual(field.get_attribute("value"), "parquet")
             endpoint = WebDriverWait(driver, 10).until(
@@ -3180,6 +3192,7 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
             saved = next(d for d in json.loads(config_path.read_text()) if d["id"] == "webshart-parquet")
             self.assertTrue(saved["webshart"]["optimize_captions"])
             self.assertNotIn("manifest", saved["webshart"])
+            self.assertNotIn("sampling_order", saved["webshart"])
             self.assertNotIn("columns", saved["webshart"])
 
         self.for_each_browser("test_webshart_parquet_settings_edit_and_save", scenario)

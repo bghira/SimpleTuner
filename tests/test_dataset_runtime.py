@@ -148,6 +148,15 @@ class DatasetRuntimeTests(unittest.TestCase):
             StateTracker.clear_data_backends()
         self.assertEqual(order, ["other", "images", "writer"])
 
+    def test_native_webshart_order_does_not_change_legacy_occurrence_revision(self):
+        self.metadata_backend.epoch_provider = self.metadata_backend
+        settings = {"format": "parquet", "sampling_policy": "shard_local"}
+        runtime = DatasetRuntime("images", self.data_backend, self.metadata_backend, {**self.config, "webshart": settings})
+        args = SimpleNamespace(caption_dropout_probability=0)
+        legacy_revision = runtime.occurrence_revision(args)
+        runtime.config = {**runtime.config, "webshart": {**settings, "sampling_order": "shuffled"}}
+        self.assertEqual(runtime.occurrence_revision(args), legacy_revision)
+
     def test_occurrence_revision_pins_binding_order_views_captions_and_dropout(self):
         from simpletuner.helpers.metadata.preparation import DatasetDescription
 

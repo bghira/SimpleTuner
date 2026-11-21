@@ -288,8 +288,15 @@ class DatasetRuntime:
             description = dataset.describe()
             return [dataset.id, description.source_revision, description.view_revision, dataset.config]
 
+        dataset_config = self.config
+        webshart = dataset_config.get("webshart")
+        if self.uses_native_schedule and webshart is not None and "sampling_order" in webshart:
+            # The native checkpoint layout identifies sampling order separately.
+            webshart = dict(webshart)
+            webshart.pop("sampling_order")
+            dataset_config = {**dataset_config, "webshart": webshart}
         inputs = {
-            "dataset": self.config,
+            "dataset": dataset_config,
             "conditioning": [describe_binding(dataset) for dataset in self.conditioning_datasets],
             "audio": [describe_binding(dataset) for dataset in self.audio_datasets],
             "conditioning_sampling": getattr(args, "conditioning_multidataset_sampling", "combined"),

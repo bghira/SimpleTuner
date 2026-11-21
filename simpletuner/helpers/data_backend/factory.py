@@ -471,6 +471,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
             "shard_cache_dir",
             "shard_cache_gb",
             "sampling_policy",
+            "sampling_order",
             "parallel_downloads",
             "buffer_size",
             "max_file_size",

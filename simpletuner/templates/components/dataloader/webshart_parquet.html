@@ -3,13 +3,23 @@
     <select class="form-select form-select-sm webshart-format" x-model="{{ storage_dataset }}.webshart.format" @change="touchConnectionField({{ storage_dataset }})">
         <option value="tar">Tar</option><option value="parquet">Parquet</option>
     </select>
-    <label class="form-label small mt-2">Training sample order</label>
+    <label class="form-label small mt-2">Sampling policy</label>
     <select class="form-select form-select-sm webshart-sampling-policy" x-model="{{ storage_dataset }}.webshart.sampling_policy" @change="touchConnectionField({{ storage_dataset }})">
         <option value="">Existing sampler</option>
         <option value="global">Global shuffle</option>
-        <option value="shard_local">Shard-local shuffle</option>
+        <option value="shard_local">Shard-local</option>
     </select>
     <div x-show="{{ storage_dataset }}.webshart.format === 'parquet'" class="mt-2">
+        <div class="mb-2" x-show="{{ storage_dataset }}.webshart.sampling_policy === 'shard_local'">
+            <label class="form-label small">Training sample order</label>
+            <select class="form-select form-select-sm webshart-sampling-order"
+                    x-init="{{ storage_dataset }}.webshart.sampling_order ??= 'sequential'"
+                    x-model="{{ storage_dataset }}.webshart.sampling_order"
+                    @change="touchConnectionField({{ storage_dataset }})">
+                <option value="sequential">Sequential</option>
+                <option value="shuffled">Shuffled</option>
+            </select>
+        </div>
         <label class="form-label small">Capture Manifest</label>
         <input class="form-control form-control-sm webshart-manifest" x-model="{{ storage_dataset }}.webshart.manifest" @input="touchConnectionField({{ storage_dataset }})" placeholder="combined/dataset.json">
         <div class="form-text small">Optional descriptor relative to the dataset source. Captured image bytes are read directly from Parquet.</div>

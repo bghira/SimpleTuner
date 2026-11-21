@@ -3105,6 +3105,12 @@ function trainerComponent() {
                     const samplingPolicy = this._coerceString(dataset.webshart?.sampling_policy);
                     if (samplingPolicy) webshart.sampling_policy = samplingPolicy;
                     else delete webshart.sampling_policy;
+                    const samplingOrder = this._coerceString(options.sampling_order);
+                    if (format === 'parquet' && samplingPolicy === 'shard_local' && samplingOrder) {
+                        webshart.sampling_order = samplingOrder;
+                    } else {
+                        delete webshart.sampling_order;
+                    }
                     delete webshart.manifest;
                     delete webshart.columns;
                     if (format === 'parquet') {
