@@ -18,6 +18,7 @@ from simpletuner.helpers.acceleration import (
     get_sdnq_presets,
     get_torchao_presets,
 )
+from simpletuner.helpers.image_manipulation.load import align_video_vae_dimension
 from simpletuner.helpers.models.common import PipelineTypes, PredictionTypes, TextEmbedCacheKey, get_model_config_path
 from simpletuner.helpers.models.cosmos3.audio_tokenizer import Cosmos3AVAEAudioTokenizer
 from simpletuner.helpers.models.cosmos3.pipeline import (
@@ -64,6 +65,8 @@ class Cosmos3Image(Cosmos2Image):
     )
 
     TEXT_ENCODER_CONFIGURATION = {}
+    _vision_vae_spatial_ratio = 16
+    _vision_vae_temporal_ratio = 4
 
     @classmethod
     def max_swappable_blocks(cls, config=None) -> Optional[int]:
@@ -234,6 +237,31 @@ class Cosmos3Image(Cosmos2Image):
     def text_embed_cache_key(self) -> TextEmbedCacheKey:
         return TextEmbedCacheKey.DATASET_AND_FILENAME
 
+    def _training_video_fps(self) -> float:
+        return float(getattr(self.config, "framerate", 24.0) or 24.0)
+
+    def _pixel_frames(self, latent_frames: int) -> int:
+        return 1 + (latent_frames - 1) * self._vision_vae_temporal_ratio
+
+    def _prompt_geometry_from_latents(self, latent: torch.Tensor) -> tuple[int, int, int]:
+        frames, height, width = latent.shape[-3:]
+        return (
+            self._pixel_frames(frames),
+            height * self._vision_vae_spatial_ratio,
+            width * self._vision_vae_spatial_ratio,
+        )
+
+    def _reasoner_cache_metadata(self, prompt: str, num_frames: int, height: int, width: int, fps: float) -> dict:
+        metadata = {
+            "cosmos3_num_frames": num_frames,
+            "cosmos3_height": height,
+            "cosmos3_width": width,
+            "cosmos3_fps": fps,
+            "cosmos3_reasoner_component": self._reasoner_component_id(),
+        }
+        metadata["cosmos3_cache_signature"] = self._cosmos3_text_cache_signature(prompt=prompt, metadata=metadata)
+        return metadata
+
     def text_embed_cache_metadata_for_sample(
         self,
         *,
@@ -243,16 +271,8 @@ class Cosmos3Image(Cosmos2Image):
         data_backend_id: str | None,
         dataset_relative_path: str | None,
     ) -> dict:
-        fps = float(getattr(self.config, "framerate", 24.0) or 24.0)
-        metadata = {
-            "cosmos3_num_frames": int(latent.shape[-3]),
-            "cosmos3_height": int(latent.shape[-2]) * 16,
-            "cosmos3_width": int(latent.shape[-1]) * 16,
-            "cosmos3_fps": fps,
-            "cosmos3_reasoner_component": self._reasoner_component_id(),
-        }
-        metadata["cosmos3_cache_signature"] = self._cosmos3_text_cache_signature(prompt=prompt, metadata=metadata)
-        return metadata
+        num_frames, height, width = self._prompt_geometry_from_latents(latent)
+        return self._reasoner_cache_metadata(prompt, num_frames, height, width, self._training_video_fps())
 
     def text_embed_cache_metadata_for_preparation(
         self,
@@ -268,16 +288,19 @@ class Cosmos3Image(Cosmos2Image):
         if not target_size or len(target_size) != 2:
             raise ValueError(f"Cosmos3 text cache precompute requires target_size metadata for {image_path}.")
         width, height = int(target_size[0]), int(target_size[1])
-        num_frames = int(sample_metadata.get("bucket_frames") or sample_metadata.get("num_frames") or 1)
-        metadata = {
-            "cosmos3_num_frames": num_frames,
-            "cosmos3_height": height,
-            "cosmos3_width": width,
-            "cosmos3_fps": float(sample_metadata.get("fps") or getattr(self.config, "framerate", 24.0) or 24.0),
-            "cosmos3_reasoner_component": self._reasoner_component_id(),
-        }
-        metadata["cosmos3_cache_signature"] = self._cosmos3_text_cache_signature(prompt=prompt, metadata=metadata)
-        return metadata
+        frame_limit = sample_metadata.get("video_frame_limit")
+        num_frames = int(sample_metadata.get("num_frames") or frame_limit or 1)
+        if frame_limit is not None or num_frames > 1:
+            if frame_limit is not None:
+                num_frames = min(num_frames, frame_limit)
+            latent_frames = 1 + (num_frames - 1) // self._vision_vae_temporal_ratio
+            num_frames = self._pixel_frames(latent_frames)
+            height = align_video_vae_dimension(height, self._vision_vae_spatial_ratio)
+            width = align_video_vae_dimension(width, self._vision_vae_spatial_ratio)
+            fps = self._training_video_fps()
+        else:
+            fps = float(sample_metadata.get("fps") or self._training_video_fps())
+        return self._reasoner_cache_metadata(prompt, num_frames, height, width, fps)
 
     def text_embed_cache_key_value(self, *, prompt: str, default_key: str, metadata: dict) -> str:
         signature = metadata.get("cosmos3_cache_signature") or self._cosmos3_text_cache_signature(
@@ -488,6 +511,11 @@ class Cosmos3Image(Cosmos2Image):
             self._load_sound_tokenizer(move_to_device=True)
             return self.sound_tokenizer
         return self.get_vae()
+
+    def post_vae_load_setup(self):
+        super().post_vae_load_setup()
+        self._vision_vae_spatial_ratio = int(self.vae.config.scale_factor_spatial)
+        self._vision_vae_temporal_ratio = int(self.vae.config.scale_factor_temporal)
 
     def _resolve_vae_dtype(self):
         vae_dtype = getattr(self.config, "vae_dtype", None)
@@ -795,6 +823,8 @@ class Cosmos3Image(Cosmos2Image):
             self._training_pipeline_adapter.transformer = self.unwrap_model(self.model)
             self._training_pipeline_adapter.vae = None
             self._training_pipeline_adapter.sound_tokenizer = self.sound_tokenizer
+        self._training_pipeline_adapter.vae_scale_factor_spatial = self._vision_vae_spatial_ratio
+        self._training_pipeline_adapter.vae_scale_factor_temporal = self._vision_vae_temporal_ratio
         return self._training_pipeline_adapter
 
     def get_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True):
@@ -850,7 +880,7 @@ class Cosmos3Image(Cosmos2Image):
         prompts = prepared_batch["prompts"]
         audio_noisy_latents = prepared_batch.get("audio_noisy_latents")
         audio_timesteps = prepared_batch.get("audio_timesteps", timesteps)
-        fps = float(getattr(self.config, "framerate", 24.0) or 24.0)
+        fps = self._training_video_fps()
         reasoner_cache_batch = (prepared_batch.get("text_encoder_output") or {}).get("cosmos3_reasoner_cache")
         condition_frame_indexes = [0] if self._is_i2v_flavour() else []
 
@@ -918,16 +948,14 @@ class Cosmos3Image(Cosmos2Image):
         hidden_states_buffer: dict | None = None,
     ):
         device = vision_tokens.device
-        _, _, latent_t, latent_h, latent_w = vision_tokens.shape
-        height = latent_h * adapter.vae_scale_factor_spatial
-        width = latent_w * adapter.vae_scale_factor_spatial
+        num_frames, height, width = self._prompt_geometry_from_latents(vision_tokens)
 
         reasoner_memory_state = None
         if reasoner_cache is None:
             cond_input_ids, _ = adapter.tokenize_prompt(
                 prompt=prompt,
                 negative_prompt="",
-                num_frames=latent_t,
+                num_frames=num_frames,
                 height=height,
                 width=width,
                 fps=fps,
@@ -938,17 +966,8 @@ class Cosmos3Image(Cosmos2Image):
                 position_ids=text_segment["text_mrope_ids"],
             )
         else:
-            expected_signature = self._cosmos3_text_cache_signature(
-                prompt=prompt,
-                metadata={
-                    "cosmos3_num_frames": int(latent_t),
-                    "cosmos3_height": int(height),
-                    "cosmos3_width": int(width),
-                    "cosmos3_fps": float(fps),
-                    "cosmos3_reasoner_component": self._reasoner_component_id(),
-                },
-            )
-            if reasoner_cache.get("cache_signature") != expected_signature:
+            expected_metadata = self._reasoner_cache_metadata(prompt, num_frames, height, width, fps)
+            if reasoner_cache.get("cache_signature") != expected_metadata["cosmos3_cache_signature"]:
                 raise ValueError("Cosmos3 reasoner cache signature does not match the current sample geometry.")
             text_segment = {
                 "input_ids": reasoner_cache["input_ids"].to(device=device, dtype=torch.long),

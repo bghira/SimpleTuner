@@ -264,7 +264,7 @@ class DatasetRuntimeTests(unittest.TestCase):
         self.metadata_backend.get_metadata_by_filepath.side_effect = AssertionError("live metadata read")
         runtime = DatasetRuntime("images", self.data_backend, self.metadata_backend, config)
 
-        def metadata_for_preparation(*, read_metadata, image_path, **kwargs):
+        def metadata_for_preparation(*, read_metadata, image_path, prompt, data_backend_id, dataset_relative_path):
             return {"height": read_metadata(image_path)["target_size"][1]}
 
         model = SimpleNamespace(
