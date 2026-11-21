@@ -150,7 +150,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             self.exhausted_buckets = []
             self.metadata_backend.seen_images = {}
             self._unseen_indices.clear()
-            self._legacy_progress.reset(self.metadata_backend.seen_images, self._legacy_state(0))
+            if self.tracks_consumed_batches:
+                self._legacy_progress.reset(self.metadata_backend.seen_images, self._legacy_state(0))
 
     def _legacy_state(self, position):
         return {
@@ -319,7 +320,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 return False
         return True
 
-    def load_states(self, state_path: str):
+    def load_states(self, state_path: str, *, next_epoch: int | None = None):
         try:
             previous_state = self.state_manager.load_state(state_path)
         except Exception as e:
@@ -330,6 +331,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             if not isinstance(saved, dict):
                 raise ValueError("Provider-managed sampling requires a matching native checkpoint.")
             self.current_epoch = saved["layout"]["epoch"]
+            if next_epoch is not None and self.current_epoch != next_epoch - 1:
+                raise ValueError("Native epoch checkpoint does not match the completed epoch.")
             if self.training_cursor is not None:
                 self.training_cursor.close()
                 self.training_cursor = None
@@ -341,12 +344,20 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             raise ValueError("Restoring a provider-managed checkpoint requires the same sampling policy.")
         legacy_cursor = previous_state.get("legacy_cursor")
         if legacy_cursor is not None:
+            schedule_matches = (
+                previous_state.get("aspect_ratio_bucket_indices") == self.metadata_backend.aspect_ratio_bucket_indices
+            )
+            if not schedule_matches and next_epoch is not None:
+                args = StateTracker.get_args()
+                schedule_matches = self.metadata_backend.recrops_each_epoch(
+                    rebuild_random_aspect=not getattr(args, "aspect_bucket_disable_rebuild", False),
+                )
             if (
                 not self.tracks_consumed_batches
                 or not isinstance(legacy_cursor, dict)
                 or legacy_cursor.get("version") != 1
                 or legacy_cursor.get("layout") != self._legacy_layout()
-                or previous_state.get("aspect_ratio_bucket_indices") != self.metadata_backend.aspect_ratio_bucket_indices
+                or not schedule_matches
             ):
                 raise ValueError("Legacy consumed checkpoint requires unchanged prefetch, dataset, schedule and layout.")
             position, repeat = legacy_cursor.get("position"), legacy_cursor.get("repeat")
@@ -374,6 +385,18 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 f"Dataset '{self.id}': resuming with batch_size={self.batch_size} but checkpoint recorded "
                 f"batch_size={saved_batch_size}. Proceeding because override is set."
             )
+
+        if next_epoch is not None:
+            saved_epoch = previous_state.get("current_epoch")
+            allowed_epochs = (next_epoch - 1,) if legacy_cursor is not None else (next_epoch - 1, next_epoch)
+            if saved_epoch not in allowed_epochs or saved_batch_size != self.batch_size:
+                raise ValueError("Epoch checkpoint does not match the completed epoch or dataset batch size.")
+            if legacy_cursor is None and not self._saved_schedule_is_restorable(previous_state, state_path):
+                raise ValueError("Epoch checkpoint requires the same data-parallel layout and rank checkpoints.")
+            # The trainer prepares the next epoch before the sampler starts its schedule.
+            self.current_epoch = next_epoch - 1
+            self.validation_cursor.close()
+            return
 
         # Checkpoints contain the rank-local schedule. Restore it before seen
         # state so legacy boolean flags can be expanded to all occurrences.

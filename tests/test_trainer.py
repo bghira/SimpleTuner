@@ -2453,6 +2453,19 @@ class TestTrainer(unittest.TestCase):
             trainer._epoch_rollover(2)
         self.assertEqual(StateTracker.exhausted_backends, [])
 
+    def test_resumed_boundary_prepares_geometry_and_latents_before_the_first_epoch_batch(self):
+        trainer, metadata, cache, backends = self._rollover_fixture({"1.0": ["image.jpg"]})
+        trainer.state.update(first_epoch=2, resume_epoch_boundary=2, global_step=21)
+        order = Mock()
+        order.attach_mock(metadata.compute_aspect_ratio_bucket_indices, "geometry")
+        order.attach_mock(metadata.reload_cache, "reload")
+        order.attach_mock(metadata.split_buckets_between_processes, "partition")
+        order.attach_mock(cache.rebuild_cache, "latents")
+        with self._rollover_patches(backends):
+            trainer._epoch_rollover(2)
+        self.assertEqual([entry[0] for entry in order.mock_calls], ["geometry", "reload", "partition", "latents"])
+        trainer.get_steps_per_epoch_for_epoch.assert_called_once_with(2, first_step=22)
+
     def test_epoch_rollover_keeps_native_geometry_and_rebuilds_only_requested_artifacts(self):
         trainer, metadata, vae_cache, backends = self._rollover_fixture({}, provider=WebshartMetadataBackend)
         metadata.native_policy = "shard_local"
@@ -3566,17 +3579,21 @@ class TestTrainer(unittest.TestCase):
             def save_state(path):
                 Path(path).mkdir(parents=True, exist_ok=True)
                 (Path(path) / "pytorch_lora_weights.safetensors").write_bytes(b"weights")
+                (Path(path) / "training_state.json").write_text(
+                    json.dumps({"epoch": 2, "epoch_step": 20, "global_step": 100})
+                )
 
             trainer.accelerator = SimpleNamespace(
                 _models=[],
                 is_main_process=True,
+                process_index=0,
                 distributed_type=DistributedType.NO,
                 save_state=Mock(side_effect=save_state),
                 wait_for_everyone=Mock(),
             )
 
             with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_datasets", return_value={}):
-                save_path = trainer.checkpoint_state_save(tmpdir)
+                save_path = trainer.checkpoint_state_save(tmpdir, next_epoch=3)
 
             self.assertEqual(save_path, str(checkpoint_dir))
             self.assertEqual(stale_guard.read_text(encoding="utf-8"), "complete\n")
@@ -3584,6 +3601,8 @@ class TestTrainer(unittest.TestCase):
             manifest = trainer.checkpoint_manager.load_manifest(str(checkpoint_dir))
             self.assertIn("pytorch_lora_weights.safetensors", manifest["files"])
             self.assertNotIn(".guard", manifest["files"])
+            state = json.loads((checkpoint_dir / "training_state.json").read_text())
+            self.assertEqual(state, {"epoch": 3, "epoch_boundary": 3, "epoch_step": 0, "global_step": 100})
             trainer.accelerator.wait_for_everyone.assert_not_called()
 
     @patch("simpletuner.helpers.training.trainer.AttentionBackendController.on_save_checkpoint")
@@ -3812,18 +3831,29 @@ class TestTrainer(unittest.TestCase):
         lr_scheduler = Mock()
         lr_scheduler.state_dict.return_value = {"base_lrs": [0.1], "_last_lr": [0.1]}
 
-        with patch(
-            "simpletuner.helpers.training.trainer.StateTracker.get_datasets",
-            return_value={"foo": dataset},
+        for boundary, saved_mix, expected_boundary in (
+            (None, {"epoch": 2}, None),
+            (2, None, 2),
+            (None, {"epoch": 1}, 2),
         ):
-            with patch("simpletuner.helpers.training.trainer.StateTracker.get_global_step", return_value=10):
-                with patch("simpletuner.helpers.training.trainer.StateTracker.set_global_resume_step"):
-                    with patch("simpletuner.helpers.training.trainer.StateTracker.get_training_state", return_value={}):
-                        with patch("simpletuner.helpers.training.trainer.StateTracker.get_epoch", return_value=1):
-                            with patch("simpletuner.helpers.training.trainer.StateTracker.set_epoch"):
-                                trainer.init_resume_checkpoint(lr_scheduler=lr_scheduler)
-
-        sampler.load_states.assert_called_once_with(state_path="/path/to/output/checkpoint-100/training_state-rank1.json")
+            with (
+                self.subTest(boundary=boundary, saved_mix=saved_mix),
+                patch.object(StateTracker, "get_datasets", return_value={"foo": dataset}),
+                patch.object(StateTracker, "get_global_step", return_value=10),
+                patch.object(StateTracker, "set_global_resume_step"),
+                patch.object(StateTracker, "get_training_state", return_value={}),
+                patch.object(StateTracker, "get_epoch", return_value=2),
+                patch.object(StateTracker, "set_epoch"),
+                patch.object(StateTracker, "checkpoint_epoch_boundary", boundary),
+                patch.object(StateTracker, "consumed_dataset_mixer", saved_mix),
+            ):
+                sampler.reset_mock()
+                trainer.init_resume_checkpoint(lr_scheduler=lr_scheduler)
+                self.assertEqual(trainer.state["resume_epoch_boundary"], expected_boundary)
+                mode = {"next_epoch": expected_boundary} if expected_boundary is not None else {}
+                sampler.load_states.assert_called_once_with(
+                    state_path="/path/to/output/checkpoint-100/training_state-rank1.json", **mode
+                )
 
     def test_epoch_checkpoint_persists_next_epoch_without_state_mutation(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -3859,6 +3889,7 @@ class TestTrainer(unittest.TestCase):
                 parent_loss=None,
                 epoch=2,
                 upload_to_hub=False,
+                next_epoch=3,
             )
 
             self.assertEqual(str(checkpoint_dir), checkpoint_path)
@@ -3866,10 +3897,12 @@ class TestTrainer(unittest.TestCase):
 
             persisted_state = json.loads(training_state_path.read_text())
             self.assertEqual(3, persisted_state["epoch"])
+            self.assertEqual(3, persisted_state["epoch_boundary"])
+            self.assertEqual(0, persisted_state["epoch_step"])
             self.assertEqual(10, persisted_state["global_step"])
             self.assertEqual(2, trainer.state["current_epoch"])
             trainer._run_post_upload_script.assert_called_once_with(local_path=str(checkpoint_dir), remote_path=None)
-            trainer.checkpoint_state_save.assert_called_once_with(str(tmpdir))
+            trainer.checkpoint_state_save.assert_called_once_with(str(tmpdir), next_epoch=3)
 
     @patch("simpletuner.helpers.training.state_tracker.StateTracker")
     @patch("simpletuner.helpers.training.trainer.tqdm")

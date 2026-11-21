@@ -849,6 +849,34 @@ class TestIterationUnseenIndex(unittest.TestCase):
             self.assertEqual([replay.next_response(step) for step in range(2, 6)], expected)
             self.assertIs(expected[-1], False)
 
+    def test_epoch_boundary_uses_prepared_buckets_without_relaxing_mid_epoch_resume(self):
+        previous = {"0.5": [f"image-{index}.jpg" for index in range(4)]}
+        current = {"1.0": previous["0.5"]}
+        for recrop in (False, True):
+            with self.subTest(recrop=recrop):
+                original = self._sampler(previous, {}, True, track_consumed=True)
+                resumed = self._sampler(current, {}, True, track_consumed=True)
+                for sampler in (original, resumed):
+                    sampler.dataset_runtime.config.update(crop=recrop, crop_aspect="random", vae_cache_clear_each_epoch=True)
+                next(iter(original))
+                original.acknowledge_batch(original.fetched_state())
+                original.save_state("rank-0.json")
+                saved = original.state_manager.load_state("rank-0.json")
+                resumed.state_manager.load_state = lambda _: saved
+
+                with self.assertRaisesRegex(ValueError, "unchanged prefetch, dataset, schedule and layout"):
+                    resumed.load_states("rank-0.json")
+                if not recrop:
+                    with self.assertRaisesRegex(ValueError, "unchanged prefetch, dataset, schedule and layout"):
+                        resumed.load_states("rank-0.json", next_epoch=2)
+                    continue
+                resumed.load_states("rank-0.json", next_epoch=2)
+                resumed.start_training_epoch(2)
+                batch = next(iter(resumed))
+                self.assertEqual(resumed.current_epoch, 2)
+                self.assertEqual(resumed.buckets, ["1.0"])
+                self.assertCountEqual([row["image_path"] for row in batch], current["1.0"])
+
     def _run(self, sampler, epochs, restore_schedule, per_step):
         """Drain `epochs` epochs, disturbing the schedule and seen state the way training can.
 

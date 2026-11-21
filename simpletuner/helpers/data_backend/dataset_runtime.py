@@ -173,10 +173,10 @@ class DatasetRuntime:
         elif rebuilt or clear_latents:
             cache.rebuild_cache()
 
-    def start_epoch(self, epoch):
+    def start_epoch(self, epoch, *, resume_boundary=False):
         if self.uses_native_schedule:
             self.sampler.start_native_epoch(epoch)
-        elif self.tracks_consumed_batches:
+        elif self.tracks_consumed_batches or resume_boundary:
             self.sampler.start_training_epoch(epoch)
 
     @property
@@ -222,9 +222,12 @@ class DatasetRuntime:
         if self.sampler is not None:
             self.sampler.save_state(state_path=state_path)
 
-    def restore_checkpoint(self, state_path):
+    def restore_checkpoint(self, state_path, *, next_epoch=None):
         if self.sampler is not None:
-            self.sampler.load_states(state_path=state_path)
+            if next_epoch is None:
+                self.sampler.load_states(state_path=state_path)
+            else:
+                self.sampler.load_states(state_path=state_path, next_epoch=next_epoch)
 
     def log_sampling_state(self):
         if self.sampler is not None:

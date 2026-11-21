@@ -120,6 +120,20 @@ class CaptionSamplerCheckpointTests(unittest.TestCase):
             self.assertEqual(resumed.epoch, 1)
             self.assertEqual(next(iter(resumed)), ("meta-0", "meta-1"))
 
+    def test_next_epoch_checkpoint_starts_at_the_first_batch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            sampler = self.sampler(track_consumed=True)
+            next(iter(sampler))
+            sampler.acknowledge_batch(sampler.fetched_state())
+            state_path = str(Path(directory, "training_state.json"))
+            sampler.save_state(state_path)
+
+            resumed = self.sampler(track_consumed=True)
+            resumed.load_states(state_path, next_epoch=2)
+            resumed.start_training_epoch(2)
+            self.assertEqual(resumed.fetched_state(), {"epoch": 1, "cursor": 0})
+            self.assertEqual(next(iter(resumed)), ("meta-0", "meta-1"))
+
     def test_repeats_are_not_reapplied_by_random_iterator(self):
         self.metadata = DummyCaptionMetadataBackend(2)
         StateTracker.set_data_backend_config("caption", {"repeats": 2})
