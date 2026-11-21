@@ -501,8 +501,17 @@ class WebshartMetadataBackend(MetadataBackend):
     def open_epoch(self, spec):
         if self._window_recipe is not None:
             partitions = ceil(self.data_backend.num_shards() / self.window_shards)
+            prefill = None
+            if spec.sampling_order == "sequential" and getattr(self.accelerator, "is_local_main_process", True):
+                prefill = self.data_backend.sequential_prefill(self.window_shards)
             return WindowedWebshartEpoch(
-                spec, self._source_description()["source_revision"], self._window_revision, partitions, self._window_buckets
+                spec,
+                self._source_description()["source_revision"],
+                self._window_revision,
+                partitions,
+                self._window_buckets,
+                window_shards=self.window_shards,
+                prefill=prefill,
             )
         source = self._open_membership()
         try:

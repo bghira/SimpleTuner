@@ -204,6 +204,21 @@ class WebshartDataBackend(BaseDataBackend):
             )
         return dataset
 
+    def sequential_prefill(self, window_shards):
+        # Webshart releases before the byte-bounded cursor use on-demand caching.
+        if not hasattr(self.dataset, "sequential_prefill") or self.shard_cache_dir is None or Path(self.source).is_dir():
+            return None
+        downloads = os.environ.get("SIMPLETUNER_WEBSHART_PREFILL_DOWNLOADS")
+        if downloads is None:
+            return self.dataset.sequential_prefill(active_shards=window_shards)
+        downloads = int(downloads)
+        if downloads < 1:
+            raise ValueError("SIMPLETUNER_WEBSHART_PREFILL_DOWNLOADS must be positive.")
+        # Keep foreground I/O and the checkpointed dataset configuration independent.
+        reader = self.open_refresh_source().dataset
+        reader.enable_shard_cache(self.shard_cache_dir, self.shard_cache_gb, downloads)
+        return reader.sequential_prefill(active_shards=window_shards)
+
     def open_refresh_source(self):
         """An unpinned Parquet reader using the same transport and cache settings."""
         fresh = copy(self)
