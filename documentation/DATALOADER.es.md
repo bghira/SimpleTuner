@@ -898,6 +898,10 @@ La eliminación por backend puede habilitarse en `multidatabackend.json`:
 
 Cuando SimpleTuner procesa tu dataset, rastrea cuántos archivos fueron filtrados y por qué. Estas estadísticas se almacenan en el archivo de caché del dataset (`aspect_ratio_bucket_indices_*.json`) y pueden verse en la WebUI.
 
+En los conjuntos de datos visuales de Discovery y Parquet, el índice de grupos también identifica la receta de transformación publicada. Cada directorio de receta dentro de `aspect_ratio_bucket_metadata_<id>.transforms/` contiene los metadatos de medición en JSON y un almacén SQLite con las relaciones de aspecto, los tamaños y las coordenadas de recorte de esos grupos. En S3, los archivos se suben antes de actualizar el índice para que los demás procesos abran la misma receta.
+
+Una caché JSON existente con geometría completa se migra conservando sus recortes originales. Si la caché es incompleta, se vuelven a formar los grupos. Los escaneos forzados y los recortes por época publican nuevas recetas y conservan las versiones anteriores. Los cambios de recorte en el visor de conjuntos de datos respaldados por archivos actualizan el almacén de transformaciones publicado.
+
 **Estadísticas rastreadas:**
 - **total_processed**: Número de archivos procesados
 - **too_small**: Archivos filtrados por estar debajo de `minimum_image_size`

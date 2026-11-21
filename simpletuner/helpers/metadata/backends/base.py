@@ -1621,6 +1621,7 @@ class MetadataBackend:
         with self.metadata_semaphor:
             logger.debug(f"Setting metadata for {filepath} to {metadata}.")
             self.image_metadata[filepath] = metadata
+            self._metadata_changed((filepath,))
             if update_json:
                 self.save_image_metadata()
 
@@ -1628,6 +1629,10 @@ class MetadataBackend:
         """Submit a batch of prepared records keyed by sample reference."""
         with self.metadata_semaphor:
             self.image_metadata.update(records)
+            self._metadata_changed(records)
+
+    def _metadata_changed(self, refs):
+        """Record which prepared rows need to be persisted by a provider."""
 
     def flush_prepared_metadata(self):
         """Wait for submitted writes and make them visible to a reopened provider."""

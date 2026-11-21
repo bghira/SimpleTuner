@@ -898,6 +898,10 @@ A deleção por backend pode ser habilitada em `multidatabackend.json`:
 
 Quando o SimpleTuner processa seu dataset, ele rastreia quantos arquivos foram filtrados e por quê. Essas estatísticas são armazenadas no arquivo de cache do dataset (`aspect_ratio_bucket_indices_*.json`) e podem ser visualizadas na WebUI.
 
+Nos datasets visuais do Discovery e do Parquet, o índice de buckets também identifica a receita de transformação publicada. Cada diretório de receita em `aspect_ratio_bucket_metadata_<id>.transforms/` contém o JSON dos metadados medidos e um armazenamento SQLite com as proporções, os tamanhos e as coordenadas de recorte usados nesses buckets. No S3, os arquivos são enviados antes da atualização do índice para que os demais processos abram a mesma receita.
+
+Um cache JSON existente com geometria completa migra com os recortes originais. Se o cache estiver incompleto, os buckets são recriados. Varreduras forçadas e novos recortes por época publicam novas receitas e preservam os snapshots anteriores. Alterações de recorte no visualizador de datasets baseados em arquivos atualizam o armazenamento de transformações publicado.
+
 **Estatísticas rastreadas:**
 - **total_processed**: Número de arquivos processados
 - **too_small**: Arquivos filtrados por estarem abaixo de `minimum_image_size`

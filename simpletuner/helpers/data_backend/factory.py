@@ -2880,7 +2880,12 @@ class FactoryRegistry:
                 self.accelerator.wait_for_everyone()
             return
         with self._dataset_startup_phase(init_backend["id"], "Bucket discovery"):
-            if self.accelerator.is_local_main_process:
+            prepare_on_this_rank = (
+                self.accelerator.is_main_process
+                if getattr(metadata, "uses_remote_transform_store", False) is True
+                else self.accelerator.is_local_main_process
+            )
+            if prepare_on_this_rank:
                 info_log(f"(id={init_backend['id']}) Refreshing aspect buckets on main process.")
                 metadata.refresh_buckets(rank_info())
         if self._is_multi_process():

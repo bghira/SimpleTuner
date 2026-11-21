@@ -4,7 +4,7 @@ import os
 import time
 from collections.abc import Sequence
 from contextlib import closing
-from io import BytesIO
+from io import BytesIO, IOBase
 from itertools import batched
 from os.path import splitext
 from typing import Any, Dict, Optional, Union
@@ -196,17 +196,23 @@ class S3DataBackend(BaseDataBackend):
         """Retrieve and return the content of the file from S3."""
         return self._read_object(s3_key)
 
-    def _read_object(self, s3_key, *, stream=False):
+    def read_with_version(self, s3_key):
+        """Return the object and the ETag from the same read."""
+        return self._read_object(s3_key, with_version=True)
+
+    def _read_object(self, s3_key, *, stream=False, with_version=False):
         for i in range(self.read_retry_limit):
             try:
-                body = self.client.get_object(Bucket=self.bucket_name, Key=str(s3_key))["Body"]
+                response = self.client.get_object(Bucket=self.bucket_name, Key=str(s3_key))
+                body = response["Body"]
                 if stream:
                     return body
                 with closing(body):
-                    return body.read()
+                    data = body.read()
+                return (data, response["ETag"]) if with_version else data
             except self.client.exceptions.NoSuchKey:
                 logger.debug(f"File {s3_key} does not exist in S3 bucket ({self.bucket_name})")
-                return None
+                return (None, None) if with_version else None
             except (NoCredentialsError, PartialCredentialsError) as e:
                 raise e  # Raise credential errors to the caller
             except Exception as e:
@@ -215,7 +221,7 @@ class S3DataBackend(BaseDataBackend):
                     "NoSuchKey",
                     "NotFound",
                 }:
-                    return None
+                    return (None, None) if with_version else None
                 logger.error(f'Error reading S3 key "{s3_key}": {e}')
                 if i == self.read_retry_limit - 1:
                     raise e
@@ -242,6 +248,8 @@ class S3DataBackend(BaseDataBackend):
             try:
                 if isinstance(data, (dict, torch.Tensor)):
                     return self.torch_save(data, real_key)
+                if isinstance(data, IOBase):
+                    data.seek(0)
                 response = self.client.put_object(Body=data, Bucket=self.bucket_name, Key=real_key)
                 return response
             except Exception as e:
@@ -250,6 +258,12 @@ class S3DataBackend(BaseDataBackend):
                     raise e
                 else:
                     time.sleep(self.write_retry_interval)
+
+    def write_if_version(self, s3_key, data, *, expected_version):
+        """Publish an object only if the caller's snapshot is still current."""
+        condition = {"IfNoneMatch": "*"} if expected_version is None else {"IfMatch": expected_version}
+        result = self.client.put_object(Body=data, Bucket=self.bucket_name, Key=str(s3_key), **condition)
+        return result["ETag"]
 
     def delete(self, s3_key):
         """Delete the specified file from S3."""

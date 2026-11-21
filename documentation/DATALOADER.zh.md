@@ -897,6 +897,10 @@ effective_batch_size = 数据集 train_batch_size × num_gpus × gradient_accumu
 
 SimpleTuner 处理数据集时会追踪被过滤掉的文件数量及原因。这些统计信息保存在数据集缓存文件（`aspect_ratio_bucket_indices_*.json`）中，可在 WebUI 中查看。
 
+对于使用 Discovery 或 Parquet 的视觉数据集，分桶索引也会记录已发布的变换配方。`aspect_ratio_bucket_metadata_<id>.transforms/` 下的每个配方目录包含实测元数据的 JSON 文件，以及保存分桶所用宽高比、尺寸和裁剪坐标的 SQLite 存储。对于 S3，会先上传这些文件，再更新索引，以便所有进程读取同一个配方。
+
+几何信息完整的已有 JSON 缓存会保留原有裁剪并完成迁移。缓存不完整时会重新分桶。强制扫描和每轮重新裁剪会发布新配方，并保留之前的快照。在基于文件的数据集查看器中修改裁剪时，已发布的变换存储会随之更新。
+
 **统计追踪项：**
 - **total_processed**：已处理的文件数
 - **too_small**：因低于 `minimum_image_size` 而被过滤的文件

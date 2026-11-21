@@ -900,6 +900,10 @@ Per-backend deletion can be enabled in `multidatabackend.json`:
 
 When SimpleTuner processes your dataset, it tracks how many files were filtered out and why. These statistics are stored in the dataset's cache file (`aspect_ratio_bucket_indices_*.json`) and can be viewed in the WebUI.
 
+For Discovery and Parquet visual datasets, the bucket index also identifies the published transform recipe. Each recipe directory under `aspect_ratio_bucket_metadata_<id>.transforms/` holds the measured metadata JSON and a SQLite store for the aspect ratios, sizes, and crop coordinates used by those buckets. On S3, the files are uploaded before the index is updated so other ranks open the same recipe.
+
+An existing JSON cache with complete geometry migrates with its original crops. An incomplete cache is bucketed again. Forced scans and epoch recropping publish new recipes and retain earlier snapshots. Crop edits in the file-backed dataset viewer update the published transform store.
+
 **Statistics tracked:**
 - **total_processed**: Number of files that were processed
 - **too_small**: Files filtered because they were below `minimum_image_size`
