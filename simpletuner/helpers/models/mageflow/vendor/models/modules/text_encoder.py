@@ -36,7 +36,11 @@ class Qwen3VLModelOutput(ModelOutput):
 
     loss: torch.FloatTensor | None = None
     logits: torch.FloatTensor | None = None
-    past_key_values: Cache | None = None
+    # ModelOutput remaps the legacy constructor keyword to its native cache field.
+    if hasattr(BaseModelOutputWithPast, "cache"):
+        cache: Cache | None = None
+    else:
+        past_key_values: Cache | None = None
     hidden_states: tuple[torch.FloatTensor, ...] | None = None
     last_hidden_state: torch.FloatTensor | None = None
     attentions: tuple[torch.FloatTensor, ...] | None = None
