@@ -811,6 +811,77 @@ class CollateFunctionTests(unittest.TestCase):
         self.assertIsNotNone(result["conditioning_pixel_values"])
         self.assertIsNotNone(result["conditioning_latents"])
 
+    def test_sdxl_controlnet_passes_aligned_pixels_in_training_order(self):
+        from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
+        from simpletuner.helpers.models.sdxl.model import SDXL
+
+        self.base_args.controlnet = True
+        model = SDXL.__new__(SDXL)
+        model.config = SimpleNamespace(controlnet=True, weight_dtype=torch.float32, base_weight_dtype=torch.float32)
+        model.accelerator = SimpleNamespace(device="cpu")
+        residual = torch.zeros(2, 4, 1, 2)
+        model.controlnet = MagicMock(return_value=([residual], residual))
+        model.model = MagicMock(return_value=(residual,))
+        config = {"resolution_type": "pixel", "resolution": 8, "crop": False, "crop_aspect": "preserve"}
+        conditioning_backend = {
+            "id": "canny",
+            "data_backend": _make_stub_data_backend(),
+            "config": {**config, "dataset_type": "conditioning", "instance_data_dir": "/generated"},
+        }
+        training_backend = {
+            "text_embed_cache": SimpleNamespace(disabled=False),
+            "conditioning_data": [conditioning_backend],
+            "config": {**config, "instance_data_dir": "/train"},
+            "data_backend": _make_stub_data_backend(),
+        }
+        geometry = {
+            "original_size": (16, 8),
+            "intermediary_size": (16, 8),
+            "target_size": (16, 8),
+            "crop_coordinates": (0, 0),
+            "aspect_ratio": 2.0,
+        }
+        training_examples = []
+        conditioning_examples = []
+        images = [Image.new("RGB", (16, 8), color=color) for color in ("red", "green")]
+        for index, image in enumerate(images):
+            training_path = f"/train/{index}.png"
+            training_examples.append(
+                {**geometry, "image_path": training_path, "instance_prompt_text": "caption", "data_backend_id": "backend-1"}
+            )
+            conditioning_sample = TrainingSample(
+                image=image,
+                data_backend_id="canny",
+                image_metadata=geometry,
+                image_path=f"/generated/{index}.png",
+                data_backend_config=conditioning_backend["config"],
+                conditioning_type="controlnet",
+                model=model,
+            )
+            conditioning_sample.paired_source = ("backend-1", training_path)
+            conditioning_examples.append(conditioning_sample)
+
+        batch = [{"training_samples": training_examples, "conditioning_samples": conditioning_examples[::-1]}]
+        patchers, _ = self._patch_state_tracker(
+            model=model, data_backend=training_backend, text_outputs={"prompt_embeds": torch.zeros(2, 1)}
+        )
+        with ExitStack() as stack:
+            for patcher in patchers:
+                stack.enter_context(patcher)
+            latent_loader = stack.enter_context(
+                patch("simpletuner.helpers.training.collate.compute_latents", return_value=list(residual))
+            )
+            result = collate_fn(batch)
+
+        latent_loader.assert_called_once()
+        prepared = model.prepare_batch_conditions(result, state={})
+        prepared.update(noisy_latents=residual, timesteps=torch.tensor([1, 2]), encoder_hidden_states=torch.zeros(2, 1))
+        prepared["added_cond_kwargs"] = {}
+        model.controlnet_predict(prepared)
+
+        expected = torch.stack([model.get_transforms()(image) for image in images])
+        torch.testing.assert_close(model.controlnet.call_args.kwargs["controlnet_cond"], expected)
+
     def test_pixel_alignment_reuses_loaded_mask_and_source_occurrence_crop(self):
         from torchvision.transforms import ToTensor
 
