@@ -490,7 +490,7 @@ class MusubiBlockSwapManager:
                 checkpointed
                 and device.type == "cuda"
                 and self.offload_device.type == "cpu"
-                and _module_has_cpu_h2d_payload(block)
+                and (block_id in self._h2d_block_states or _module_has_cpu_h2d_payload(block))
             )
         if self._h2d_block_modes.get(block_id, False):
             state = self._h2d_state(block, device)

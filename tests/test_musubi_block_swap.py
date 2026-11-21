@@ -1,5 +1,6 @@
 import logging
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import torch
@@ -42,6 +43,31 @@ _QuantizedBuffer.__module__ = "sdnq.testing"
 
 
 class MusubiBlockSwapTests(unittest.TestCase):
+    def test_repeated_checkpointed_stream_in_keeps_the_active_ring_slot(self):
+        block = nn.Linear(2, 2).requires_grad_(False)
+        device = torch.device("cuda")
+        manager = MusubiBlockSwapManager([0], torch.device("cpu"), logging.getLogger(__name__))
+        state = SimpleNamespace()
+
+        def init_state(owner, _device):
+            return manager._h2d_block_states.setdefault(id(owner), state)
+
+        with (
+            patch("simpletuner.helpers.musubi_block_swap._module_has_cpu_h2d_payload", side_effect=[True, False]),
+            patch.object(manager, "_h2d_state", side_effect=init_state),
+            patch.object(manager, "_load_h2d_state") as load,
+            patch.object(manager, "_release_h2d_state") as release,
+            patch.object(manager, "move_module") as move,
+            patch("simpletuner.helpers.musubi_block_swap._module_on_device", return_value=True),
+        ):
+            manager.stream_in(block, device, checkpointed=True)
+            manager.stream_in(block, device, checkpointed=True)
+            manager.stream_out(block)
+
+        self.assertEqual(load.call_count, 2)
+        release.assert_called_once_with(state)
+        move.assert_not_called()
+
     def test_prepare_for_ddp_ignores_only_frozen_state(self):
         module = nn.Sequential(nn.Linear(4, 4), nn.Linear(4, 4))
         module[0].weight.requires_grad_(False)
