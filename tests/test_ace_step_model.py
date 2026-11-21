@@ -74,6 +74,7 @@ class TestACEStepModel(unittest.TestCase):
         latent_metadata = [{"latent_length": 16}, {"latent_length": 8}]
 
         batch = {
+            "data_backend_id": "ace-audio",
             "latent_batch": latents,
             "latent_metadata": latent_metadata,
             "prompt_embeds": torch.randn(batch_size, 10, 32),  # (B, T, D)
@@ -82,6 +83,7 @@ class TestACEStepModel(unittest.TestCase):
 
         prepared = self.model.prepare_batch(batch, state={"is_validation": True})
 
+        self.assertEqual(prepared["data_backend_id"], "ace-audio")
         self.assertIn("attention_mask", prepared)
         mask = prepared["attention_mask"]
         self.assertEqual(mask.shape, (batch_size, seq_len))
@@ -288,6 +290,7 @@ class TestACEStepModel(unittest.TestCase):
         self.model._build_v15_context_latents = MagicMock(return_value=torch.ones(2, 12, 128, dtype=torch.float32))
 
         batch = {
+            "data_backend_id": "ace-v15-audio",
             "latent_batch": torch.randn(2, 12, 64),
             "latent_metadata": [{"latent_length": 12}, {"latent_length": 5}],
             "prompt_embeds": torch.randn(2, 10, 32),
@@ -296,6 +299,7 @@ class TestACEStepModel(unittest.TestCase):
 
         prepared = self.model.prepare_batch(batch, state={"is_validation": True})
 
+        self.assertEqual(prepared["data_backend_id"], "ace-v15-audio")
         self.assertEqual(prepared["attention_mask"].shape, (2, 12))
         self.assertTrue(torch.all(prepared["attention_mask"][0] == 1.0))
         self.assertTrue(torch.all(prepared["attention_mask"][1, :5] == 1.0))

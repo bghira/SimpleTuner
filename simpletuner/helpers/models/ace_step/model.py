@@ -1651,6 +1651,7 @@ class ACEStep(AudioModelFoundation):
             context_latents = self._build_v15_context_latents(latents.shape[1], latents.shape[0], device, dtype)
 
             prepared = {
+                "data_backend_id": batch.get("data_backend_id"),
                 "latents": latents,
                 "noise": noise,
                 "noisy_latents": noisy_latents,
@@ -1732,6 +1733,7 @@ class ACEStep(AudioModelFoundation):
             lyric_mask = (lyric_mask * lyric_keep_mask).to(dtype=torch.long)
 
         prepared = {
+            "data_backend_id": batch.get("data_backend_id"),
             "latents": latents,
             "noisy_latents": noisy_latents,
             "sigmas": sigmas_expanded,
