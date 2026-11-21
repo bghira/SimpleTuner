@@ -7,7 +7,19 @@ from unittest.mock import MagicMock, patch
 import torch
 from transformers import AutoModel
 
+from simpletuner.helpers.models.ace_step.language_segmentation import LangSegment
 from simpletuner.helpers.models.ace_step.model import ACEStep
+
+
+class TestACEStepLanguageSegmentation(unittest.TestCase):
+    def test_loads_bundled_identifier_with_normalized_probabilities(self):
+        identifier = LangSegment().langid
+
+        language, confidence = identifier.classify("This is a sentence written in English.")
+
+        self.assertEqual(language, "en")
+        self.assertGreaterEqual(confidence, 0.0)
+        self.assertLessEqual(confidence, 1.0)
 
 
 class TestACEStepModel(unittest.TestCase):

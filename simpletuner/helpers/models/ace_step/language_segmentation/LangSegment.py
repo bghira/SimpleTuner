@@ -64,11 +64,6 @@ from py3langid.langid import MODEL_FILE, LanguageIdentifier
 
 from .utils.num import num2str
 
-# import langid
-# import py3langid as langid
-# pip install py3langid==0.2.2
-
-
 # -----------------------------------
 # 更新日志：新版本分词更加精准。
 # Changelog: The new version of the word segmentation is more accurate.
@@ -263,7 +258,10 @@ class LangSegment:
 
     def __init__(self):
 
-        self.langid = LanguageIdentifier.from_pickled_model(MODEL_FILE, norm_probs=True)
+        load_model = getattr(LanguageIdentifier, "from_model_file", None)
+        if load_model is None:
+            load_model = LanguageIdentifier.from_pickled_model
+        self.langid = load_model(MODEL_FILE, norm_probs=True)
 
         self._text_cache = None
         self._text_lasts = None
