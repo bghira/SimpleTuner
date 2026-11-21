@@ -104,6 +104,20 @@ class TestVaeCacheTraversal(unittest.TestCase):
     def test_default_traversal_retains_bucket_order(self):
         self._run_pipeline(webshart=False)
 
+    def test_cosmos3_video_cache_prepares_channel_first_pixels(self):
+        cache = VAECache.__new__(VAECache)
+        cache.num_video_frames = 5
+        cache.vae = SimpleNamespace(spatial_compression_ratio=8)
+        video = torch.arange(9 * 3 * 34 * 50).reshape(1, 9, 3, 34, 50)
+        image = video[:, 0]
+
+        with patch.object(StateTracker, "get_model_family", return_value="cosmos3"):
+            pixels = cache.prepare_video_latents(video)
+            image_pixels = cache.prepare_video_latents(image)
+
+        torch.testing.assert_close(pixels, video[:, :5, :, :32, :48].transpose(1, 2))
+        self.assertIs(image_pixels, image)
+
     def test_ondemand_cache_reads_keep_duplicate_payloads_and_report_missing_refs(self):
         cache = VAECache.__new__(VAECache)
         cache.id = "ondemand"

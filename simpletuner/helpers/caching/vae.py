@@ -1017,7 +1017,9 @@ class VAECache(WebhookMixin):
         return relevant_files
 
     def prepare_video_latents(self, samples):
-        if StateTracker.get_model_family() in [
+        model_family = StateTracker.get_model_family()
+        is_cosmos3_video = model_family == "cosmos3" and samples.ndim == 5
+        if is_cosmos3_video or model_family in [
             "ltxvideo",
             "ltxvideo2",
             "wan",
@@ -1089,8 +1091,8 @@ class VAECache(WebhookMixin):
                         target_width,
                     )
                     samples = samples[..., :target_height, :target_width]
-        elif StateTracker.get_model_family() in ["mochi"]:
-            raise Exception(f"{StateTracker.get_model_family()} not supported for VAE Caching yet.")
+        elif model_family == "mochi":
+            raise Exception(f"{model_family} not supported for VAE Caching yet.")
         logger.debug(f"Final samples shape: {samples.shape}")
         return samples
 
