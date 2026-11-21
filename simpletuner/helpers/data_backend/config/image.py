@@ -395,7 +395,7 @@ class ImageBackendConfig(BaseBackendConfig):
         validators.validate_crop_style(self.crop_style, self.id)
 
         validators.validate_image_size_constraints(
-            self.maximum_image_size, self.target_downsample_size, self.resolution_type, args.get("model_type", ""), self.id
+            self.maximum_image_size, self.target_downsample_size, self.resolution_type, args.get("model_family", ""), self.id
         )
 
         if self.resolution_type:

@@ -1276,7 +1276,9 @@ class TestFactoryEdgeCases(unittest.TestCase):
         """Test DeepFloyd model specific warnings and handling."""
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
 
-        self.args.model_type = "deepfloyd-if"
+        self.args.model_family = "deepfloyd"
+        self.args.model_flavour = "i-medium-400m"
+        self.args.model_type = "lora"
 
         config = [
             {

@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import psutil
 
+from simpletuner.helpers.data_backend.config.validators import validate_image_size_constraints
 from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime, TextRequestBuilder
 
 
@@ -701,46 +702,13 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     output["config"]["dataset_type"] = output["dataset_type"]
 
     if not is_audio_dataset:
-        if maximum_image_size and not target_downsample_size:
-            raise ValueError(
-                "When a data backend is configured to use `maximum_image_size`, you must also provide a value for `target_downsample_size`."
-            )
-        if (
-            maximum_image_size
-            and output["config"]["resolution_type"] == "area"
-            and maximum_image_size >= 20
-            and not os.environ.get("SIMPLETUNER_MAXIMUM_IMAGE_SIZE_OVERRIDE", False)
-        ):
-            raise ValueError(
-                f"(id={backend['id']}) maximum_image_size must be less than 20 megapixels when resolution_type is 'area'."
-            )
-        elif (
-            maximum_image_size
-            and output["config"]["resolution_type"] == "pixel"
-            and maximum_image_size < 512
-            and "deepfloyd" not in (_get_arg_value(args, "model_type", "") or "")
-        ):
-            raise ValueError(
-                f"(id={backend['id']}) maximum_image_size must be at least 512 pixels when resolution_type is 'pixel'."
-            )
-        if (
-            target_downsample_size
-            and output["config"]["resolution_type"] == "area"
-            and target_downsample_size >= 20
-            and not os.environ.get("SIMPLETUNER_MAXIMUM_IMAGE_SIZE_OVERRIDE", False)
-        ):
-            raise ValueError(
-                f"(id={backend['id']}) target_downsample_size must be less than 20 megapixels when resolution_type is 'area'."
-            )
-        elif (
-            target_downsample_size
-            and output["config"]["resolution_type"] == "pixel"
-            and target_downsample_size < 512
-            and "deepfloyd" not in (_get_arg_value(args, "model_type", "") or "")
-        ):
-            raise ValueError(
-                f"(id={backend['id']}) target_downsample_size must be at least 512 pixels when resolution_type is 'pixel'."
-            )
+        validate_image_size_constraints(
+            maximum_image_size,
+            target_downsample_size,
+            output["config"]["resolution_type"],
+            _get_arg_value(args, "model_family", ""),
+            backend["id"],
+        )
 
     if is_audio_dataset:
         output["config"]["audio"] = _prepare_audio_settings(backend)
@@ -3290,7 +3258,8 @@ class FactoryRegistry:
             slider_strength=slider_strength,
         )
 
-        if "deepfloyd" in self.args.model_type:
+        if getattr(self.args, "model_family", None) == "deepfloyd":
+            stage_two = (self.args.model_flavour or "").startswith("ii-")
             if init_backend["metadata_backend"].resolution_type == "area":
                 warning_log("Resolution type is 'area', but should be 'pixel' for DeepFloyd. Unexpected results may occur.")
                 if init_backend["metadata_backend"].resolution > 0.25:
@@ -3298,12 +3267,11 @@ class FactoryRegistry:
                         "Resolution is greater than 0.25 megapixels. This may lead to unconstrained memory requirements."
                     )
             if init_backend["metadata_backend"].resolution_type == "pixel":
-                if "stage2" not in self.args.model_type and init_backend["metadata_backend"].resolution > 64:
+                if not stage_two and init_backend["metadata_backend"].resolution > 64:
                     warning_log("Resolution is greater than 64 pixels, which will possibly lead to poor quality results.")
 
-        if "deepfloyd-stage2" in self.args.model_type:
-            if init_backend["metadata_backend"].resolution < 256:
-                warning_log("Increasing resolution to 256, as is required for DF Stage II.")
+            if stage_two and init_backend["metadata_backend"].resolution < 256:
+                warning_log("DeepFloyd Stage II requires a resolution of at least 256 pixels.")
 
         runtime = init_backend["dataset_runtime"]
         runtime.config.update(captions)
@@ -3757,7 +3725,7 @@ class FactoryRegistry:
             ("metadata" not in self.args.skip_file_discovery or "metadata" not in backend.get("skip_file_discovery", ""))
             and self.accelerator.is_main_process
             and backend.get("scan_for_errors", False)
-            and "deepfloyd" not in StateTracker.get_args().model_type
+            and getattr(self.model, "AUTOENCODER_CLASS", None) is not None
             and conditioning_type
             not in [
                 "mask",
@@ -4096,7 +4064,6 @@ class FactoryRegistry:
             and not init_backend["vaecache"].vae_cache_ondemand
             and "vae" not in self.args.skip_file_discovery
             and "vae" not in backend.get("skip_file_discovery", "")
-            and "deepfloyd" not in StateTracker.get_args().model_type
             and conditioning_type
             not in [
                 "mask",

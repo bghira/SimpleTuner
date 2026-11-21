@@ -1,4 +1,5 @@
 import unittest
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -51,6 +52,64 @@ class _RecordingPipeline:
             }
         )
         return _PipelineResult([f"{self.name}-image"])
+
+
+class DeepFloydConfigurationTests(unittest.TestCase):
+    def test_stage_one_keeps_small_pixel_sizes_for_lora_and_full_training(self):
+        from simpletuner.helpers.configuration.cmd_args import parse_cmdline_args
+        from simpletuner.helpers.data_backend.config.image import ImageBackendConfig
+        from simpletuner.helpers.data_backend.factory import init_backend_config
+
+        for model_type in ("lora", "full"):
+            with self.subTest(model_type=model_type), TemporaryDirectory() as output_dir:
+                args = parse_cmdline_args(
+                    [
+                        "--model_family=deepfloyd",
+                        "--model_flavour=i-medium-400m",
+                        f"--model_type={model_type}",
+                        f"--output_dir={output_dir}",
+                        "--optimizer=torch-adamw",
+                        "--data_backend_config=dataset.json",
+                        "--resolution_type=pixel",
+                        "--resolution=64",
+                        "--validation_resolution=64",
+                        "--maximum_image_size=128",
+                        "--target_downsample_size=64",
+                        "--aspect_bucket_alignment=32",
+                    ]
+                )
+                self.assertEqual(int(args.validation_resolution), 64)
+                self.assertEqual(args.aspect_bucket_alignment, 8)
+                backend = {
+                    "id": "stage-one",
+                    "type": "local",
+                    "resolution_type": "pixel",
+                    "maximum_image_size": 128,
+                    "target_downsample_size": 64,
+                }
+                ImageBackendConfig.from_dict(backend, vars(args)).validate(vars(args))
+                configured = init_backend_config(backend, args, accelerator=None)["config"]
+                self.assertEqual(configured["maximum_image_size"], 128)
+                self.assertEqual(configured["target_downsample_size"], 64)
+
+    def test_stage_two_uses_a_256_pixel_resolution_floor(self):
+        from simpletuner.helpers.configuration.cmd_args import parse_cmdline_args
+
+        with TemporaryDirectory() as output_dir:
+            args = parse_cmdline_args(
+                [
+                    "--model_family=deepfloyd",
+                    "--model_flavour=ii-medium-450m",
+                    "--model_type=lora",
+                    f"--output_dir={output_dir}",
+                    "--optimizer=torch-adamw",
+                    "--data_backend_config=dataset.json",
+                    "--resolution=128",
+                ]
+            )
+        self.assertEqual(args.resolution, 256)
+        self.assertEqual(args.resolution_type, "pixel")
+        self.assertEqual(args.aspect_bucket_alignment, 64)
 
 
 class DeepFloydMultistageValidationTests(unittest.TestCase):
