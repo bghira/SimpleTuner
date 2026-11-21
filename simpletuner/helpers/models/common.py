@@ -4051,8 +4051,10 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
                     "`image_processor_subfolder`) in your config to provide the processor configuration.",
                     message,
                 )
-            else:
+            elif "image_processor" in pipeline_init_signature.parameters:
                 pipeline_kwargs["image_processor"] = image_processor
+            elif "feature_extractor" in pipeline_init_signature.parameters:
+                pipeline_kwargs["feature_extractor"] = image_processor
 
         if "scheduler" not in pipeline_kwargs and self.requires_special_scheduler_setup():
             scheduler = self._load_scheduler_for_pipeline(pipeline_type)
