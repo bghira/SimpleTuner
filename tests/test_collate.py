@@ -225,6 +225,41 @@ class CollateFunctionTests(unittest.TestCase):
         self.assertEqual(output["s2v_audio_paths"], ["speech.wav"])
         self.assertEqual(output["s2v_audio_backend_ids"], ["speech"])
 
+    def test_audio_token_batch_keeps_source_identity_and_sampler_continuation(self):
+        from simpletuner.helpers.models.heartmula.gen_config import HeartMuLaGenConfig
+        from simpletuner.helpers.models.heartmula.model import HeartMuLa
+
+        model = HeartMuLa.__new__(HeartMuLa)
+        model.gen_config = HeartMuLaGenConfig(text_bos_id=1, text_eos_id=2)
+        model.tokenizer = MagicMock()
+        model.tokenizer.encode.return_value = SimpleNamespace(ids=[3])
+        model.model = SimpleNamespace(config=SimpleNamespace(audio_num_codebooks=2))
+        model.accelerator = SimpleNamespace(device="cpu")
+        dataset = DatasetRuntime("music", None, None, {"dataset_type": "audio"})
+        continuation = {"next_batch": 1}
+        examples = [
+            {
+                "image_path": "track.wav",
+                "data_backend_id": dataset.id,
+                "dataset_continuation": continuation,
+                "tags": "instrumental",
+                "lyrics": "a quiet verse",
+                "audio_tokens": [[2, 3], [4, 5], [6, 7]],
+            },
+        ]
+        batch = [{"training_samples": examples, "conditioning_samples": []}]
+
+        with (
+            patch.object(StateTracker, "get_model", return_value=model),
+            patch.object(StateTracker, "get_args", return_value=self.base_args),
+        ):
+            collated = collate_fn(batch, dataset=dataset)
+        prepared = model.prepare_batch(collated, state={})
+
+        self.assertEqual(prepared["data_backend_id"], dataset.id)
+        self.assertIs(prepared["dataset_continuation"], continuation)
+        self.assertEqual(prepared["audio_frame_mask"].sum().item(), 3)
+
     def test_mixed_s2v_occurrences_use_their_bound_audio_cache(self):
         dataset = DatasetRuntime("backend-1", _make_stub_data_backend(), None, {"dataset_type": "video"})
         metadata = SimpleNamespace(epoch_provider=None, requires_complete_preparation=False)

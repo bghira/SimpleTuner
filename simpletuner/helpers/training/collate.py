@@ -573,6 +573,9 @@ def collate_fn(batch, *, dataset=None):
         token_payload = model.collate_audio_tokens(examples)
         if not isinstance(token_payload, dict):
             raise ValueError("collate_audio_tokens must return a dictionary payload.")
+        token_payload["data_backend_id"] = batch_backend_id
+        if continuation is not None:
+            token_payload["dataset_continuation"] = continuation
         token_payload.setdefault("prompts", None)
         token_payload["is_regularisation_data"] = is_regularisation_data
         token_payload["is_i2v_data"] = is_i2v_data
