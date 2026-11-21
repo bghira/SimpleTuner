@@ -2962,6 +2962,19 @@ class FactoryRegistry:
                     raise ValueError(f"Ranks disagree on preparation mode for dataset {init_backend['id']!r}.")
         if not deferred:
             self._prepare_bucket_view(init_backend, discovers_buckets)
+            if (
+                preparation is not None
+                and preparation.ondemand_latents
+                and has_prepared_catalogue
+                and metadata.dataset_type is DatasetType.IMAGE
+                and metadata.delete_problematic_images
+            ):
+                with self._dataset_startup_phase(init_backend["id"], "Image decode validation"):
+                    init_backend["dataset_runtime"].exclude_unreadable_images(
+                        worker=self.accelerator.process_index,
+                        workers=self.accelerator.num_processes,
+                        batch_size=metadata.batch_size,
+                    )
 
         if (
             not has_metadata_clone_source

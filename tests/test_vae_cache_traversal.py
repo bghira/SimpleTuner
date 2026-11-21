@@ -343,6 +343,7 @@ class TestVaeCacheTraversal(unittest.TestCase):
         dataset.describe.return_value.accepted_samples = 3
         dataset.iter_preparation_batches.return_value = [("wide", ("a", "b")), ("square", ("c",))]
         dataset.read_sample_images.side_effect = lambda refs, **_: list(refs)
+        dataset.read_preparation_images.side_effect = DatasetRuntime.read_preparation_images.__get__(dataset)
         stored = {"b"}
         cache = VAECache.__new__(VAECache)
         cache.vae_batch_size = 2

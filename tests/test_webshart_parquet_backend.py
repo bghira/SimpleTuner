@@ -905,6 +905,66 @@ class TestWebshartParquetBackend(unittest.TestCase):
         self.assertEqual(len(keys), 1)
         self.assertEqual(len(images), 1)
 
+    def test_pixel_training_excludes_unreadable_native_rows_when_requested(self):
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+        from simpletuner.helpers.metadata.preparation import TrainingPreparation
+        from simpletuner.helpers.training.state_tracker import StateTracker
+        from simpletuner.simpletuner_sdk.server.services.cache_job_service import _CacheAcceleratorStub, _CacheArgsNamespace
+
+        self.rows[2]["image"]["bytes"] = b"broken image"
+        shard = self.source / "part.parquet"
+        pq.write_table(pa.Table.from_pylist(self.rows), shard, row_group_size=2)
+        original = shard.read_bytes()
+        args = _CacheArgsNamespace(
+            {
+                "output_dir": str(self.root),
+                "max_train_steps": 2,
+                "data_backend_sampling": "uniform",
+                "skip_file_discovery": "",
+            }
+        )
+        accelerator = _CacheAcceleratorStub(device="cpu")
+        factory = FactoryRegistry.__new__(FactoryRegistry)
+        factory.args = args
+        factory.accelerator = accelerator
+        config = {
+            "id": "pixel",
+            "type": "webshart",
+            "source": str(self.source),
+            "metadata_backend": "webshart",
+            "caption_strategy": "webshart",
+            "webshart": {"format": "parquet", "sampling_policy": "shard_local", "cache_dir": str(self.root / "pixel")},
+            "resolution": 8,
+            "resolution_type": "pixel",
+            "crop": False,
+            "delete_problematic_images": True,
+        }
+        prep = TrainingPreparation(online_text=True, ondemand_latents=True, requires_complete_view=False)
+        with (
+            closing(DatasetRuntime.from_config(config, args, accelerator)) as runtime,
+            patch.object(StateTracker, "get_args", return_value=args),
+            patch.object(StateTracker, "get_model", return_value=None),
+            patch.object(factory, "_handle_config_versioning"),
+        ):
+            self.assertTrue(runtime.metadata_backend.delete_problematic_images)
+            factory._handle_bucket_operations(
+                config,
+                {
+                    "id": runtime.id,
+                    "config": runtime.config,
+                    "metadata_backend": runtime.metadata_backend,
+                    "dataset_runtime": runtime,
+                },
+                None,
+                preparation=prep,
+            )
+            refs, count = runtime.read_page()
+            self.assertEqual(count, 1)
+            self.assertEqual(runtime.resolve_captions(refs), ["first"])
+            self.assertEqual(runtime.metadata_backend._published["exclusion_counts"], {"decode": 1})
+            self.assertEqual(shard.read_bytes(), original)
+
     def test_metadata_bucketing_uses_dimensions_without_image_reads(self):
         from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBackend
         from simpletuner.helpers.training.state_tracker import StateTracker
