@@ -35,6 +35,34 @@ class StochasticOptimizerUpdateTests(unittest.TestCase):
                         self.assertTrue(torch.all((target == sign) | (target == farther)).item())
                         self.assertEqual((target == farther).sum().item(), int(samples * fraction))
 
+    def test_rounding_preserves_nonfinite_values_and_seeded_finite_results(self):
+        source_bits = torch.tensor(
+            [0x7FFFFFFF, -1, 0x7F800001, -0x007FFFFF, 0x7F800000, -0x00800000],
+            dtype=torch.int32,
+        )
+        nonfinite_bits = source_bits.repeat_interleave(3)
+        nonfinite_draws = torch.tensor([0, 1, 0xFFFF], dtype=torch.int32).repeat(source_bits.numel())
+        finite = torch.linspace(-2.0, 2.0, 1025)
+        generator = torch.Generator().manual_seed(42)
+        finite_draws = torch.randint(0, 1 << 16, finite.shape, dtype=torch.int32, generator=generator)
+        expected = (finite.view(torch.int32) + finite_draws).bitwise_and(-65536).view(torch.float32).bfloat16()
+
+        for device in self.devices():
+            with self.subTest(device=device):
+                source = torch.cat((nonfinite_bits, finite.view(torch.int32))).to(device).view(torch.float32)
+                draws = torch.cat((nonfinite_draws, finite_draws)).to(device)
+                target = torch.empty_like(source, dtype=torch.bfloat16)
+                with patch.object(torch, "randint_like", return_value=draws):
+                    copy_stochastic_(target, source)
+
+                actual_nonfinite, actual_finite = target.cpu().split((nonfinite_bits.numel(), finite.numel()))
+                self.assertTrue(actual_nonfinite[:12].isnan().all().item())
+                torch.testing.assert_close(
+                    actual_nonfinite[12:],
+                    torch.tensor([float("inf")] * 3 + [float("-inf")] * 3, dtype=torch.bfloat16),
+                )
+                torch.testing.assert_close(actual_finite.view(torch.int16), expected.view(torch.int16), rtol=0, atol=0)
+
     def test_scaled_add_matches_tensor_add_and_preserves_source(self):
         for device in self.devices():
             for dtype in (torch.bfloat16, torch.float32):

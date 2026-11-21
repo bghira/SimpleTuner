@@ -65,10 +65,10 @@ def copy_stochastic_(target: Tensor, source: Tensor):
     # mask off the lower 16 bit of the mantissa
     result.bitwise_and_(-65536)  # -65536 = FFFF0000 as a signed int32
 
-    # copy the higher 16 bit into the target tensor
-    target.copy_(result.view(dtype=torch.float32))
-
-    del result
+    # A random carry can turn a NaN bit pattern into a signed zero.
+    rounded = result.view(dtype=torch.float32)
+    torch.where(source.isnan(), source.detach(), rounded, out=rounded)
+    target.copy_(rounded)
 
 
 def add_stochastic_(_input: Tensor, other: Tensor, alpha: float = 1.0):
