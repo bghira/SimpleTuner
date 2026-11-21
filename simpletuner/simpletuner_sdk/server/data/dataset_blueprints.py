@@ -989,12 +989,14 @@ _BLUEPRINTS: List[BackendBlueprint] = [
                 {
                     "id": "webshart.metadata_cache_dir",
                     "label": "metadata cache directory",
+                    "description": "Storage for the shard catalogue and capture manifest index. Defaults to metadata_cache under the dataset cache.",
                     "type": "text",
                     "advanced": True,
                 },
                 {
                     "id": "webshart.shard_cache_dir",
                     "label": "shard cache directory",
+                    "description": "Storage for downloaded shards. Defaults to shard_cache under the dataset cache.",
                     "type": "text",
                     "advanced": True,
                 },
