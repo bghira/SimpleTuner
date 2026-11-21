@@ -8,6 +8,7 @@ import numpy as np
 import PIL.Image
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from diffusers.configuration_utils import ConfigMixin
 from diffusers.image_processor import PipelineImageInput, VaeImageProcessor
 from diffusers.loaders import FromSingleFileMixin, PeftAdapterMixin
@@ -216,10 +217,11 @@ class HiDreamControlNetModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         return_dict: bool = True,
     ) -> Union[Tuple[torch.FloatTensor], HiDreamControlNetOutput]:
 
-        B, C, H, W = hidden_states.shape
+        B, _, H, W = hidden_states.shape
         patch_size = self.config.patch_size
         pH, pW = H // patch_size, W // patch_size
-        # patch_dim = C * patch_size * patch_size
+        image_seq_len = pH * pW
+        image_padding = img_ids.shape[1] - image_seq_len if img_ids is not None else 0
 
         def patchify(x):
             return einops.rearrange(
@@ -249,12 +251,13 @@ class HiDreamControlNetModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
 
         encoder_hidden_states = torch.cat([t5_embeds, llama_embeds], dim=1)
 
-        txt_ids = torch.zeros(B, encoder_hidden_states.shape[1], 3, device=hidden_states.device)
-        img_ids = torch.zeros(pH, pW, 3, device=hidden_states.device)
-        img_ids[..., 1] = torch.arange(pH).unsqueeze(1)
-        img_ids[..., 2] = torch.arange(pW).unsqueeze(0)
-        img_ids = einops.repeat(img_ids, "h w c -> b (h w) c", b=B)
-        ids = torch.cat([img_ids, txt_ids], dim=1)
+        if img_ids is None:
+            img_ids = torch.zeros(pH, pW, 3, device=hidden_states.device)
+            img_ids[..., 1] = torch.arange(pH, device=img_ids.device).unsqueeze(1)
+            img_ids[..., 2] = torch.arange(pW, device=img_ids.device).unsqueeze(0)
+            img_ids = einops.repeat(img_ids, "h w c -> b (h w) c", b=B)
+        txt_ids = img_ids.new_zeros((B, encoder_hidden_states.shape[1], 3))
+        ids = torch.cat([img_ids[:, :image_seq_len], txt_ids], dim=1)
         rope = self.pe_embedder(ids)
 
         block_samples = []
@@ -268,12 +271,19 @@ class HiDreamControlNetModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         for block in self.single_stream_blocks:
             rope = self.pe_embedder(torch.zeros(B, hidden_states.shape[1], 3, device=hidden_states.device))
             hidden_states = block(hidden_states, None, None, temb, rope)
-            single_block_samples.append(hidden_states[:, : pH * pW])
+            single_block_samples.append(hidden_states[:, :image_seq_len])
 
         controlnet_block_samples = [m(s) * conditioning_scale for m, s in zip(self.controlnet_blocks, block_samples)]
         controlnet_single_block_samples = [
             m(s) * conditioning_scale for m, s in zip(self.controlnet_single_blocks, single_block_samples)
         ]
+
+        # Match the transformer's padded image sequence after the residual projections.
+        if image_padding > 0:
+            controlnet_block_samples = [F.pad(sample, (0, 0, 0, image_padding)) for sample in controlnet_block_samples]
+            controlnet_single_block_samples = [
+                F.pad(sample, (0, 0, 0, image_padding)) for sample in controlnet_single_block_samples
+            ]
 
         if not return_dict:
             return controlnet_block_samples, controlnet_single_block_samples
@@ -1257,11 +1267,9 @@ class HiDreamControlNetPipeline(DiffusionPipeline, FromSingleFileMixin, HiDreamI
             img_ids_pad = torch.zeros(self.transformer.max_seq, 3)
             img_ids_pad[: pH * pW, :] = img_ids
 
-            img_sizes = img_sizes.unsqueeze(0).to(latents.device)
-            img_ids = img_ids_pad.unsqueeze(0).to(latents.device)
-            if self.do_classifier_free_guidance:
-                img_sizes = img_sizes.repeat(2 * B, 1)
-                img_ids = img_ids.repeat(2 * B, 1, 1)
+            model_batch_size = 2 * B if self.do_classifier_free_guidance else B
+            img_sizes = img_sizes.unsqueeze(0).to(latents.device).repeat(model_batch_size, 1)
+            img_ids = img_ids_pad.unsqueeze(0).to(latents.device).repeat(model_batch_size, 1, 1)
         else:
             img_sizes = img_ids = None
 
@@ -1323,8 +1331,21 @@ class HiDreamControlNetPipeline(DiffusionPipeline, FromSingleFileMixin, HiDreamI
                         controlnet_cond_scale = controlnet_cond_scale[0]
                     cond_scale = controlnet_cond_scale * controlnet_keep[i]
 
+                controlnet_block_samples, controlnet_single_block_samples = self.controlnet(
+                    hidden_states=latent_model_input,
+                    controlnet_cond=control_model_input,
+                    timesteps=timestep,
+                    t5_hidden_states=t5_embeds_input,
+                    llama_hidden_states=llama_embeds_input,
+                    pooled_embeds=pooled_embeds_input,
+                    img_sizes=img_sizes,
+                    img_ids=img_ids,
+                    conditioning_scale=cond_scale,
+                    return_dict=False,
+                )
+
                 # Reshape latents for transformer if needed
-                if latent_model_input.shape[-2] != latent_model_input.shape[-1]:
+                if img_sizes is not None:
                     B, C, H, W = latent_model_input.shape
                     patch_size = self.transformer.config.patch_size
                     pH, pW = H // patch_size, W // patch_size
@@ -1343,86 +1364,6 @@ class HiDreamControlNetPipeline(DiffusionPipeline, FromSingleFileMixin, HiDreamI
                     )
                     out[:, :, 0 : pH * pW] = latent_model_input
                     latent_model_input = out
-
-                    # CRITICAL: Apply same reshaping to control input
-                    if self.do_classifier_free_guidance:
-                        if isinstance(control_image, list):
-                            control_model_input = []
-                            for img in control_image:
-                                out_control = torch.zeros(
-                                    (
-                                        img.shape[0],
-                                        img.shape[1],
-                                        self.transformer.max_seq,
-                                        patch_size * patch_size,
-                                    ),
-                                    dtype=img.dtype,
-                                    device=img.device,
-                                )
-                                img_reshaped = einops.rearrange(
-                                    img,
-                                    "B C (H p1) (W p2) -> B C (H W) (p1 p2)",
-                                    p1=patch_size,
-                                    p2=patch_size,
-                                )
-                                out_control[:, :, 0 : pH * pW] = img_reshaped
-                                control_model_input.append(out_control)
-                        else:
-                            out_control = torch.zeros(
-                                (
-                                    control_model_input.shape[0],
-                                    control_model_input.shape[1],
-                                    self.transformer.max_seq,
-                                    patch_size * patch_size,
-                                ),
-                                dtype=control_model_input.dtype,
-                                device=control_model_input.device,
-                            )
-                            control_reshaped = einops.rearrange(
-                                control_model_input,
-                                "B C (H p1) (W p2) -> B C (H W) (p1 p2)",
-                                p1=patch_size,
-                                p2=patch_size,
-                            )
-                            out_control[:, :, 0 : pH * pW] = control_reshaped
-                            control_model_input = out_control
-                    else:
-                        # Same for non-CFG case
-                        if isinstance(control_image, list):
-                            # Handle list case
-                            pass
-                        else:
-                            out_control = torch.zeros(
-                                (
-                                    control_image.shape[0],
-                                    control_image.shape[1],
-                                    self.transformer.max_seq,
-                                    patch_size * patch_size,
-                                ),
-                                dtype=control_image.dtype,
-                                device=control_image.device,
-                            )
-                            control_reshaped = einops.rearrange(
-                                control_image,
-                                "B C (H p1) (W p2) -> B C (H W) (p1 p2)",
-                                p1=patch_size,
-                                p2=patch_size,
-                            )
-                            out_control[:, :, 0 : pH * pW] = control_reshaped
-                            control_model_input = control_image
-                # ControlNet prediction
-                controlnet_block_samples, controlnet_single_block_samples = self.controlnet(
-                    hidden_states=latent_model_input,
-                    controlnet_cond=control_model_input,
-                    timesteps=timestep,
-                    t5_hidden_states=t5_embeds_input,
-                    llama_hidden_states=llama_embeds_input,
-                    pooled_embeds=pooled_embeds_input,
-                    img_sizes=img_sizes,
-                    img_ids=img_ids,
-                    conditioning_scale=cond_scale,
-                    return_dict=False,
-                )
 
                 # Transformer prediction with ControlNet conditioning
                 noise_pred = self.transformer(
