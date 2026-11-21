@@ -696,6 +696,14 @@ class TextRequestBuilder:
         dataset_id = self.dataset.id
         uses_image_context = getattr(self.model, "requires_text_embed_image_context", lambda: False)()
         metadata_builder = getattr(self.model, "text_embed_cache_metadata_for_preparation", None)
+        frame_limit = (self.dataset.config.get("video") or {}).get("num_frames")
+
+        def read_prompt_metadata(image_path):
+            metadata = read_metadata(image_path)
+            if frame_limit is None or metadata is None:
+                return metadata
+            return {**metadata, "video_frame_limit": frame_limit}
+
         for caption, sample_ref in captions:
             image_path = str(sample_ref)
             relative_path = normalize_data_path(image_path, self.dataset_root)
@@ -729,7 +737,7 @@ class TextRequestBuilder:
                 if callable(metadata_builder):
                     details.update(
                         metadata_builder(
-                            read_metadata=read_metadata,
+                            read_metadata=read_prompt_metadata,
                             image_path=image_path,
                             prompt=text,
                             data_backend_id=dataset_id,

@@ -165,6 +165,12 @@ def load_image(img_data: Union[bytes, IO[Any], str]) -> Image.Image:
     return img
 
 
+def align_video_vae_dimension(size: int, spatial_compression_ratio: int) -> int:
+    """Trim to an even latent dimension when there is room for two VAE strides."""
+    multiple = 2 * spatial_compression_ratio
+    return (size // multiple) * multiple if size >= multiple else size
+
+
 def load_video(vid_data: Union[bytes, IO[Any], str]) -> np.ndarray:
     """
     Load a video using trainingsample's VideoCapture.

@@ -26,6 +26,7 @@ from simpletuner.helpers.caching.artifact_listing import ArtifactListing
 from simpletuner.helpers.data_backend.base import BaseDataBackend, ordered_sample_payloads
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.image_manipulation.batched_training_samples import BatchedTrainingSamples
+from simpletuner.helpers.image_manipulation.load import align_video_vae_dimension
 from simpletuner.helpers.image_manipulation.nsfw_classifier import (
     DEFAULT_NSFW_CHECK_MODELS_CSV,
     NsfwClassifierModelStore,
@@ -1017,7 +1018,9 @@ class VAECache(WebhookMixin):
         return relevant_files
 
     def prepare_video_latents(self, samples):
-        if StateTracker.get_model_family() in [
+        model_family = StateTracker.get_model_family()
+        is_cosmos3_video = model_family == "cosmos3" and samples.ndim == 5
+        if is_cosmos3_video or model_family in [
             "ltxvideo",
             "ltxvideo2",
             "wan",
@@ -1061,24 +1064,9 @@ class VAECache(WebhookMixin):
 
             spatial_ratio = getattr(self.vae, "spatial_compression_ratio", None)
             if spatial_ratio and spatial_ratio > 1:
-                # The encoder expects latent spatial dims to be divisible by its stride (typically 2).
-                # Ensure that (height / spatial_ratio) and (width / spatial_ratio) remain divisible by 2
-                # by trimming down in spatial_ratio-sized steps when necessary.
-                height = samples.shape[-2]
-                width = samples.shape[-1]
-
-                def _align_dimension(dim: int) -> int:
-                    aligned = (dim // spatial_ratio) * spatial_ratio
-                    min_dim = spatial_ratio * 2  # keep at least two stride steps
-                    if aligned < min_dim:
-                        # Not enough room to align; fall back to original (will likely error later)
-                        return dim
-                    while aligned >= min_dim and ((aligned // spatial_ratio) % 2 != 0):
-                        aligned -= spatial_ratio
-                    return max(min_dim, aligned)
-
-                target_height = _align_dimension(height)
-                target_width = _align_dimension(width)
+                height, width = samples.shape[-2:]
+                target_height = align_video_vae_dimension(height, spatial_ratio)
+                target_width = align_video_vae_dimension(width, spatial_ratio)
 
                 if target_height != height or target_width != width:
                     logger.warning(
@@ -1089,8 +1077,8 @@ class VAECache(WebhookMixin):
                         target_width,
                     )
                     samples = samples[..., :target_height, :target_width]
-        elif StateTracker.get_model_family() in ["mochi"]:
-            raise Exception(f"{StateTracker.get_model_family()} not supported for VAE Caching yet.")
+        elif model_family == "mochi":
+            raise Exception(f"{model_family} not supported for VAE Caching yet.")
         logger.debug(f"Final samples shape: {samples.shape}")
         return samples
 

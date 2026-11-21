@@ -7,11 +7,16 @@ from types import SimpleNamespace
 from unittest import mock
 
 import torch
+from diffusers import AutoencoderKLWan
 from safetensors import safe_open
 from safetensors.torch import save_file
 
 from scripts.extract_cosmos3_generator import _write_generator_component
 from scripts.extract_cosmos3_reasoner import _write_component
+from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
+from simpletuner.helpers.caching.vae import VAECache
+from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime, TextRequestBuilder
+from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.models.common import PipelineTypes, PredictionTypes, TextEmbedCacheKey
 from simpletuner.helpers.models.cosmos3.audio_tokenizer import Cosmos3AVAEAudioTokenizer
 from simpletuner.helpers.models.cosmos3.model import Cosmos3Image
@@ -23,7 +28,9 @@ from simpletuner.helpers.models.cosmos3.reasoner import (
     Cosmos3ReasonerConfig,
 )
 from simpletuner.helpers.models.cosmos3.transformer import Cosmos3OmniTransformer, Cosmos3ReasonerMemoryState
+from simpletuner.helpers.training.collate import collate_fn
 from simpletuner.helpers.training.explorative_modeling import ExplorativeModelingConfig
+from simpletuner.helpers.training.state_tracker import StateTracker
 
 
 class TestableCosmos3Image(Cosmos3Image):
@@ -509,10 +516,28 @@ class Cosmos3ModelTests(unittest.TestCase):
             metadata=metadata,
         )
 
-        self.assertEqual(metadata["cosmos3_num_frames"], 3)
+        self.assertEqual(metadata["cosmos3_num_frames"], 9)
         self.assertEqual(metadata["cosmos3_height"], 64)
         self.assertEqual(metadata["cosmos3_width"], 80)
         self.assertIn(metadata["cosmos3_cache_signature"], key)
+        image_context = model.text_embed_cache_metadata_for_preparation(
+            read_metadata=lambda _: {"target_size": (80, 64)},
+            image_path="image.png",
+            prompt="a robot drummer",
+            data_backend_id="train",
+            dataset_relative_path="image.png",
+        )
+        self.assertEqual(
+            image_context,
+            model.text_embed_cache_metadata_for_sample(
+                example={},
+                latent=latent[:, :1],
+                prompt="a robot drummer",
+                data_backend_id="train",
+                dataset_relative_path="image.png",
+            ),
+        )
+        self.assertEqual(image_context["cosmos3_num_frames"], 1)
         collated = model.collate_prompt_embeds(
             [
                 {"cosmos3_reasoner_cache": {"cache_signature": "one"}},
@@ -520,6 +545,116 @@ class Cosmos3ModelTests(unittest.TestCase):
             ]
         )
         self.assertEqual([entry["cache_signature"] for entry in collated["cosmos3_reasoner_cache"]], ["one", "two"])
+
+    def test_video_reasoner_cache_matches_first_training_batch_and_preview(self):
+        model = TestableCosmos3Image()
+        model.text_tokenizer = FakeTextTokenizer()
+        model.reasoner.config = SimpleNamespace()
+        model.vae = AutoencoderKLWan(
+            base_dim=8,
+            z_dim=2,
+            num_res_blocks=1,
+            latents_mean=[0.0, 0.0],
+            latents_std=[1.0, 1.0],
+            in_channels=12,
+            out_channels=12,
+            patch_size=2,
+            scale_factor_spatial=16,
+            scale_factor_temporal=4,
+        )
+        model.post_vae_load_setup()
+        path = "data/clip.mp4"
+        prompt = "a robot drummer"
+        sample_metadata = {"target_size": (68, 36), "num_frames": 96, "bucket_frames": 64, "fps": 30.0}
+        dataset = DatasetRuntime(
+            "video",
+            None,
+            SimpleNamespace(instance_data_dir="data", get_metadata_batch=lambda _: [sample_metadata]),
+            {"dataset_type": "video", "instance_data_dir": "data", "crop": False, "video": {"num_frames": 50}},
+        )
+
+        (prepared,) = TextRequestBuilder(model, dataset).records([(prompt, path)], read_metadata=lambda _: sample_metadata)
+        context = prepared["metadata"]
+        self.assertEqual(context["cosmos3_num_frames"], 49)
+        self.assertEqual((context["cosmos3_height"], context["cosmos3_width"]), (32, 64))
+        self.assertEqual(context["cosmos3_fps"], 24.0)
+        self.assertNotIn("video_frame_limit", sample_metadata)
+        embedding = model.encode_text_batch([prompt], prompt_contexts=[context])
+        preview, preview_tokenizer = self._make_pipeline()
+        preview.tokenize_prompt(prompt=prompt, num_frames=49, height=32, width=64, fps=24.0)
+        self.assertEqual(model.text_tokenizer.texts[-1], preview_tokenizer.texts[0])
+        self.assertEqual(json.loads(preview_tokenizer.texts[0])["duration"], "2s")
+
+        vae_cache = dataset.vae_cache = VAECache.__new__(VAECache)
+        vae_cache.id = dataset.id
+        vae_cache.dataset_type_enum = DatasetType.VIDEO
+        vae_cache.num_video_frames = dataset.config["video"]["num_frames"]
+        vae_cache.accelerator = model.accelerator
+        vae_cache.model = model
+        vae_cache.vae = model.vae
+        vae_cache.cache_dir = "cache/vae"
+        vae_cache._epoch_cache_dir = None
+        vae_cache.metadata_backend = dataset.metadata_backend
+        vae_cache.generate_vae_cache_filename = lambda _, view=None: ("cache/vae/clip.pt", None)
+        with (
+            mock.patch.object(StateTracker, "get_model_family", return_value="cosmos3"),
+            mock.patch.object(StateTracker, "get_vae_dtype", return_value=torch.float32),
+        ):
+            (latent,) = vae_cache.encode_images([torch.zeros(96, 3, 36, 68)], [path], load_from_cache=False)
+        self.assertEqual(latent.shape, (2, 13, 2, 4))
+        vae_cache.retrieve_from_cache = mock.Mock(return_value=latent)
+        model.vae = None
+
+        cache = dataset.text_embed_cache = TextEmbeddingCache.__new__(TextEmbeddingCache)
+        cache.model = model
+        cache.model_type = "cosmos3"
+        cache.cache_dir = "cache/text"
+        cache.key_type = model.text_embed_cache_key()
+        cache.caption_filters = []
+        cache._requires_path_based_keys = True
+        cache.text_cache_ondemand = False
+        cache.text_cache_encode_only = False
+        cache.text_encoder_batch_size = 1
+        cache.disabled = False
+        cache.wait_for_pending_writes = mock.Mock()
+        precomputed = {cache.hash_prompt_with_path(prepared): embedding}
+        cache.data_backend = SimpleNamespace(read_cached_tensors=lambda keys: map(precomputed.get, keys))
+
+        example = {"image_path": path, "instance_prompt_text": prompt, "data_backend_id": dataset.id, **sample_metadata}
+        args = SimpleNamespace(caption_dropout_probability=0.0, controlnet=False, model_family="cosmos3")
+        with (
+            mock.patch.object(StateTracker, "get_args", return_value=args),
+            mock.patch.object(StateTracker, "get_model", return_value=model),
+            mock.patch.object(StateTracker, "get_model_family", return_value="cosmos3"),
+            mock.patch.object(StateTracker, "get_accelerator", return_value=model.accelerator),
+            mock.patch.object(torch.backends.mps, "is_available", return_value=True),
+        ):
+            batch = collate_fn([{"training_samples": [example], "conditioning_samples": []}], dataset=dataset)
+        (reasoner_cache,) = batch["text_encoder_output"]["cosmos3_reasoner_cache"]
+        self.assertEqual(reasoner_cache["cache_signature"], context["cosmos3_cache_signature"])
+
+        model.model = FakeCosmos3Transformer()
+        adapter = FakeCosmos3Adapter()
+        model._predict_single_sample(
+            adapter=adapter,
+            prompt=prompt,
+            vision_tokens=batch["latent_batch"],
+            vision_timestep=torch.tensor(250.0),
+            fps=24.0,
+            reasoner_cache=reasoner_cache,
+        )
+        self.assertEqual(adapter.tokenize_calls, 0)
+        self.assertEqual(model.model.kwargs["vision_token_shapes"], [(13, 1, 1)])
+        with mock.patch.object(adapter, "tokenize_prompt", wraps=adapter.tokenize_prompt) as tokenize:
+            model._predict_single_sample(
+                adapter=adapter,
+                prompt=prompt,
+                vision_tokens=batch["latent_batch"],
+                vision_timestep=torch.tensor(250.0),
+                fps=24.0,
+            )
+        self.assertEqual(tokenize.call_args.kwargs["num_frames"], 49)
+        self.assertEqual(tokenize.call_args.kwargs["fps"], 24.0)
 
     def test_predict_single_sample_uses_cached_reasoner_segment(self):
         model = TestableCosmos3Image()
