@@ -11,6 +11,7 @@
     "disable_bucket_pruning": true,
     "dynamo_backend": "inductor",
     "dynamo_use_regional_compilation": true,
+    "dynamo_wrapper": "python",
     "eval_steps_interval": 999999,
     "flow_schedule_auto_shift": true,
     "flow_schedule_shift": 0.0,
