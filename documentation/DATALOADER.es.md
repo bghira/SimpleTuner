@@ -845,7 +845,7 @@ En este ejemplo, el dataset de 512px se usa para los pasos 1-300, luego el datas
 - **Advertencia:** Esto es destructivo y no se puede deshacer. Úsalo con cuidado.
 - **Default:** Usa el argumento `--delete_problematic_images` del trainer (default: `false`).
 
-En las vistas nativas de Webshart, la preparación del VAE registra las muestras ilegibles como exclusiones en la vista preparada. Los objetos de origen permanecen en R2.
+En Webshart nativo, esta opción registra las muestras ilegibles como exclusiones en la vista preparada. El entrenamiento en espacio de píxeles y la codificación VAE bajo demanda decodifican las imágenes aceptadas antes del entrenamiento. Con latentes precalculados, la preparación del VAE realiza la comprobación.
 
 ### `delete_nsfw_images`
 
@@ -1456,7 +1456,7 @@ Los datasets Webshart cargan shards tar estilo WebDataset mediante el paquete `w
 
 Usa `webshart.format: "parquet"` con shards locales, del Hub o de S3. `source` admite `s3://bucket` o `s3://bucket/prefix`; `webshart.manifest` selecciona un descriptor de captura relativo al origen. SimpleTuner requiere Webshart 0.9.1 o posterior.
 
-`webshart.columns` asigna `image`, `captions`, `width` y `height` a columnas del origen; los nombres omitidos usan esos valores. La imagen puede ser binaria o una estructura con `bytes`. Se excluyen capturas con `url_status != "ok"` o `stored_bytes` vacío conservando los índices físicos. Sin dimensiones no hay bucketing. No se descargan las URL originales. Si el VAE no puede decodificar una muestra bajo demanda, el entrenamiento se detiene e identifica la muestra. Durante la preparación nativa indexada del VAE, activa `delete_problematic_images` para excluir las muestras ilegibles de la vista preparada.
+`webshart.columns` asigna `image`, `captions`, `width` y `height` a columnas del origen; los nombres omitidos usan esos valores. La imagen puede ser binaria o una estructura con `bytes`. Se excluyen capturas con `url_status != "ok"` o `stored_bytes` vacío conservando los índices físicos. Sin dimensiones no hay bucketing. No se descargan las URL originales. SimpleTuner puede reparar algunos JPEG truncados restaurando el marcador de fin de imagen. Activa `delete_problematic_images` para excluir las muestras que sigan sin decodificarse durante la preparación nativa indexada. Sin esa opción, un fallo de decodificación al cargar un lote detiene el entrenamiento e identifica la muestra.
 
 Usa las opciones existentes de nivel superior `aws_region_name`, `aws_endpoint_url`, `aws_access_key_id`, `aws_secret_access_key`, `aws_session_token` y `aws_max_pool_connections`. El endpoint no incluye el bucket; el límite predeterminado es 32 solicitudes S3 simultáneas. Sin claves explícitas se usan variables AWS, identidad web o roles de contenedor/instancia. No se leen perfiles compartidos. Las representaciones de trabajadores omiten credenciales; expórtalas al entorno de los subprocesos cuando sea necesario.
 

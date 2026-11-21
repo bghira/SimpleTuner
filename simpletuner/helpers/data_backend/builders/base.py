@@ -147,7 +147,9 @@ def create_metadata_provider(
             cache_root,
             "aspect_ratio_bucket_metadata",
         ),
-        delete_problematic_images=get_arg_value(args, "delete_problematic_images") or False,
+        delete_problematic_images=backend_dict.get(
+            "delete_problematic_images", get_arg_value(args, "delete_problematic_images") or False
+        ),
         delete_unwanted_images=backend_dict.get("delete_unwanted_images", get_arg_value(args, "delete_unwanted_images")),
         cache_file_suffix=backend_dict.get("cache_file_suffix", dataset_id),
         repeats=backend_dict.get("repeats", 0),

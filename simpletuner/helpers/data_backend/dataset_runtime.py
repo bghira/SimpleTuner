@@ -327,6 +327,20 @@ class DatasetRuntime:
         paths, images = self.data_backend.read_image_batch(refs)
         return list(ordered_sample_payloads(self.id, refs, zip(paths, images, strict=True), allow_missing=allow_missing))
 
+    def read_preparation_images(self, bucket, refs, *, exclusions=None):
+        images = {}
+        for ref, image in zip(refs, self.read_sample_images(refs, allow_missing=exclusions is not None), strict=True):
+            if image is None:
+                exclusions.add(ref, bucket, "decode")
+            else:
+                images[ref] = image
+        return images
+
+    def exclude_unreadable_images(self, *, worker, workers, batch_size):
+        with self.metadata_backend.collect_exclusions() as exclusions:
+            for bucket, refs in self.iter_preparation_batches(worker=worker, workers=workers, batch_size=batch_size):
+                self.read_preparation_images(bucket, refs, exclusions=exclusions)
+
     def read_samples(
         self, sample_refs: Sequence[str], *, fields=("metadata",), view: DatasetReadView | None = None
     ) -> list[dict[str, Any]]:

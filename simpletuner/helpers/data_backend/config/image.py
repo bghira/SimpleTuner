@@ -71,6 +71,7 @@ class ImageBackendConfig(BaseBackendConfig):
     webshart_caption_key: Optional[Union[str, List[str]]] = None
 
     vae_cache_clear_each_epoch: Optional[bool] = None
+    delete_problematic_images: Optional[bool] = None
     probability: float = 1.0
     timestep_sampling_offset: float = 0.0
     repeats: int = 0
@@ -228,6 +229,7 @@ class ImageBackendConfig(BaseBackendConfig):
             config.webshart_optimize_captions = optimize_captions
 
         config.vae_cache_clear_each_epoch = backend_dict.get("vae_cache_clear_each_epoch")
+        config.delete_problematic_images = backend_dict.get("delete_problematic_images")
         config.probability = float(backend_dict.get("probability", 1.0)) if backend_dict.get("probability") else 1.0
         config.timestep_sampling_offset = (
             float(backend_dict.get("timestep_sampling_offset", 0.0)) if backend_dict.get("timestep_sampling_offset") else 0.0
@@ -519,6 +521,8 @@ class ImageBackendConfig(BaseBackendConfig):
             config["crop_aspect_buckets"] = self.crop_aspect_buckets
         if self.vae_cache_clear_each_epoch is not None:
             config["vae_cache_clear_each_epoch"] = self.vae_cache_clear_each_epoch
+        if self.delete_problematic_images is not None:
+            config["delete_problematic_images"] = self.delete_problematic_images
         if self.vae_cache_ondemand:
             config["vae_cache_ondemand"] = True
         if self.vae_cache_disable:

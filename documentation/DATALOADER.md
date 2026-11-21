@@ -847,7 +847,7 @@ In this example, the 512px dataset is used for steps 1-300, then the 1024px data
 - **Warning:** This is destructive and cannot be undone. Use with caution.
 - **Default:** Falls back to the trainer's `--delete_problematic_images` argument (default: `false`).
 
-For native Webshart views, VAE preparation records unreadable samples as exclusions in the prepared view. The source objects stay in R2.
+For native Webshart, this option records unreadable samples as exclusions in the prepared view. Pixel-space training and on-demand VAE encoding decode the accepted images before training. With precomputed latents, VAE preparation handles the check.
 
 ### `delete_nsfw_images`
 
@@ -1511,7 +1511,7 @@ Webshart datasets load WebDataset-style tar shards through the `webshart` packag
 
 Set `webshart.format` to `parquet` to read embedded image bytes from local, Hub, or S3-compatible Parquet shards. S3 sources use `s3://bucket` or `s3://bucket/prefix`; `webshart.manifest` optionally selects a capture descriptor relative to that source. SimpleTuner requires Webshart 0.9.1 or later.
 
-`webshart.columns` maps `image`, `captions`, `width`, and `height` to source column names; omitted names use those defaults. Images can be binary columns or structs containing `bytes`. Captured `url_status != "ok"` and empty `stored_bytes` rows are excluded without changing physical row IDs. Missing dimensions are excluded from bucketing. Original URLs are not fetched. A successful capture status does not guarantee that the full image will decode. On-demand VAE encoding stops training and identifies the unreadable sample. During indexed native VAE preparation, enable `delete_problematic_images` to exclude unreadable samples from the prepared view.
+`webshart.columns` maps `image`, `captions`, `width`, and `height` to source column names; omitted names use those defaults. Images can be binary columns or structs containing `bytes`. Captured `url_status != "ok"` and empty `stored_bytes` rows are excluded without changing physical row IDs. Missing dimensions are excluded from bucketing. Original URLs are not fetched. SimpleTuner can repair some truncated JPEGs by restoring their end marker. Enable `delete_problematic_images` to exclude samples that still fail to decode during indexed native preparation. Without that option, a decode failure during batch loading stops training and identifies the sample.
 
 Use the existing top-level `aws_region_name`, `aws_endpoint_url`, `aws_access_key_id`, `aws_secret_access_key`, `aws_session_token`, and `aws_max_pool_connections` settings. The endpoint excludes the bucket; concurrent S3 requests default to 32. Omit keys to use AWS environment variables, web identity, or container/instance roles. Shared profile files are not supported by this native transport. Credentials are omitted from worker representations; export AWS credentials in subprocess environments when needed.
 

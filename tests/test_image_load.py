@@ -47,6 +47,21 @@ class LoadImageTests(unittest.TestCase):
         self.assertEqual(image.mode, "RGB")
         np.testing.assert_array_equal(np.array(image), np.array(load_image(self._png(rgba, "RGBA"))))
 
+    def test_load_image_restores_a_missing_jpeg_end_marker(self):
+        buffer = BytesIO()
+        Image.new("RGB", (32, 24), "blue").save(buffer, "JPEG")
+        jpeg = buffer.getvalue()
+        self.assertEqual(jpeg[-2:], b"\xff\xd9")
+        expected = np.asarray(Image.open(BytesIO(jpeg)).convert("RGB"))
+        with patch("simpletuner.helpers.image_manipulation.load.tsr.imdecode_py", return_value=None):
+            image = load_image(BytesIO(jpeg[:-2]))
+        np.testing.assert_array_equal(np.asarray(image), expected)
+
+    def test_load_image_still_reports_an_undecodable_jpeg(self):
+        with patch("simpletuner.helpers.image_manipulation.load.tsr.imdecode_py", return_value=None):
+            with self.assertRaises(Image.UnidentifiedImageError):
+                load_image(b"\xff\xd8invalid header")
+
 
 if __name__ == "__main__":
     unittest.main()

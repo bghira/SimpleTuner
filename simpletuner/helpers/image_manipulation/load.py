@@ -53,31 +53,38 @@ def decode_image_with_trainingsample(img_bytes: bytes) -> Union[Image.Image, Non
     return img_tsr if img_tsr is None else _trainingsample_array_to_rgb_image(img_tsr)
 
 
+def _decode_pil_rgb(img_data: bytes) -> Image.Image:
+    if isinstance(img_data, bytes):
+        img_pil = Image.open(BytesIO(img_data))
+    else:
+        img_pil = Image.open(img_data)
+
+    if img_pil.mode not in ["RGB", "RGBA"] and "transparency" in img_pil.info:
+        img_pil = img_pil.convert("RGBA")
+
+    if img_pil.mode == "RGBA":
+        rgb_array, _ = tsr.rgba_to_rgb_optimized(np.array(img_pil))
+        return Image.fromarray(rgb_array)
+    return img_pil.convert("RGB")
+
+
 def decode_image_with_pil(img_data: bytes) -> Image.Image:
     try:
-        if isinstance(img_data, bytes):
-            img_pil = Image.open(BytesIO(img_data))
-        else:
-            img_pil = Image.open(img_data)
-
-        if img_pil.mode not in ["RGB", "RGBA"] and "transparency" in img_pil.info:
-            img_pil = img_pil.convert("RGBA")
-
-        # For transparent images, use ultra-fast trainingsample format conversion
-        if img_pil.mode == "RGBA":
-            # Use trainingsample's optimized RGBA->RGB conversion (10x faster!)
-            import numpy as np
-            import trainingsample as tsr
-
-            rgba_array = np.array(img_pil)
-            rgb_array, timing = tsr.rgba_to_rgb_optimized(rgba_array)
-            img_pil = Image.fromarray(rgb_array)
-        else:
-            img_pil = img_pil.convert("RGB")
-    except (OSError, Image.DecompressionBombError, ValueError) as e:
-        logger.warning(f"Error decoding image: {e}")
+        return _decode_pil_rgb(img_data)
+    except (OSError, Image.DecompressionBombError, ValueError) as error:
+        if (
+            isinstance(error, OSError)
+            and str(error).startswith("image file is truncated")
+            and isinstance(img_data, bytes)
+            and img_data.startswith(b"\xff\xd8")
+            and not img_data.endswith(b"\xff\xd9")
+        ):
+            try:
+                return _decode_pil_rgb(img_data + b"\xff\xd9")
+            except (OSError, ValueError):
+                pass
+        logger.warning("Error decoding image: %s", error)
         raise
-    return img_pil
 
 
 def remove_iccp_chunk(img_bytes: bytes) -> bytes:

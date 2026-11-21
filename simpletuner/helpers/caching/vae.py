@@ -2104,14 +2104,9 @@ class VAECache(WebhookMixin):
             requested = refs if self.nsfw_check_enabled else pending
             if requested:
                 if requires_complete:
-                    allow_missing = exclusions is not None and self.delete_problematic_images
-                    payloads = dataset.read_sample_images(requested, allow_missing=allow_missing)
-                    images = {}
-                    for ref, image in zip(requested, payloads, strict=True):
-                        if image is None:
-                            exclusions.add(ref, bucket, "decode")
-                        else:
-                            images[ref] = image
+                    images = dataset.read_preparation_images(
+                        bucket, requested, exclusions=exclusions if self.delete_problematic_images else None
+                    )
                     pending = [ref for ref in pending if ref in images]
                 else:
                     images = {
