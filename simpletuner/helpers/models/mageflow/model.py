@@ -45,6 +45,7 @@ class MageFlow(ImageModelFoundation):
 
     MODEL_CLASS = MageFlowTransformer2DModel
     MODEL_SUBFOLDER = "transformer"
+    REGIONAL_COMPILE_REPEATED_BLOCKS = True
     PIPELINE_CLASSES = {
         PipelineTypes.TEXT2IMG: MageFlowPipeline,
     }

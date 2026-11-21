@@ -54,6 +54,7 @@ class MageFlowTransformer2DModel(MageFlow, ModelMixin, ConfigMixin, PeftAdapterM
     _supports_ffn_gradient_checkpointing = True
     _supports_attention_activation_offload = True
     _no_split_modules = ["MageFlowTransformerBlock"]
+    _repeated_blocks = ["MageFlowTransformerBlock"]
     _skip_layerwise_casting_patterns = ["pos_embed", "norm"]
 
     @register_to_config
