@@ -154,6 +154,15 @@ def validate_webshart_sampling_policy(webshart) -> None:
         raise ValueError("webshart.sampling_policy must be global or shard_local.")
 
 
+def validate_webshart_sampling_order(webshart) -> None:
+    if not isinstance(webshart, dict) or webshart.get("sampling_order") is None:
+        return
+    if webshart["sampling_order"] not in ("sequential", "shuffled"):
+        raise ValueError("webshart.sampling_order must be sequential or shuffled.")
+    if webshart.get("sampling_policy") != "shard_local" or webshart.get("format") != "parquet":
+        raise ValueError("webshart.sampling_order requires shard-local Parquet sampling.")
+
+
 def validate_webshart_caption_key(caption_key) -> None:
     if caption_key is None:
         return

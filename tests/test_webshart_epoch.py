@@ -98,6 +98,28 @@ class WebshartEpochTests(unittest.TestCase):
         self.assertEqual(mixed["shard_local"], 0)
         self.assertGreater(mixed["global"], 12)
 
+    def test_sequential_order_is_physical_and_resume_rejects_a_different_order(self):
+        spec = replace(self.spec, policy="shard_local", sampling_order="sequential")
+        for indexed in (False, True):
+            with self.subTest(indexed=indexed):
+                if indexed:
+                    publish_geometry(self.path, self.buckets, self.shard)
+                with closing(self.open(spec)) as cursor:
+                    bucket, refs = cursor.next_batch()
+                    self.assertEqual(refs, self.buckets[bucket][: spec.batch_size])
+                    checkpoint = cursor.state_dict()
+                    remaining = self.drain(cursor)
+                    all_batches = [(bucket, refs), *remaining]
+                    shards = [self.shard(ref) for _, batch in all_batches for ref in batch]
+                    self.assertEqual(shards, sorted(shards))
+                with closing(self.open(spec)) as cursor:
+                    cursor.load_state_dict(checkpoint)
+                    self.assertEqual(self.drain(cursor), remaining)
+                with closing(self.open(replace(spec, sampling_order="shuffled"))) as cursor:
+                    self.assertNotIn("sampling_order", cursor.state_dict()["layout"])
+                    with self.assertRaisesRegex(ValueError, "unchanged source"):
+                        cursor.load_state_dict(checkpoint)
+
     def test_cursor_resume_and_index_reuse(self):
         for policy in ("global", "shard_local"):
             spec = replace(self.spec, policy=policy)

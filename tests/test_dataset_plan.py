@@ -290,6 +290,24 @@ class DatasetSchedulingValidationTest(unittest.TestCase):
                     self.assertEqual(errors, [])
                     ImageBackendConfig.from_dict(dataset, {})
 
+    def test_webshart_sampling_order_round_trips_and_validates(self):
+        from simpletuner.helpers.data_backend.config.image import ImageBackendConfig
+
+        settings = {"format": "parquet", "sampling_policy": "shard_local"}
+        for order in ("sequential", "shuffled", "random"):
+            with self.subTest(order=order):
+                dataset = dict(id="images", type="webshart", dataset_type="image", source="capture")
+                dataset["webshart"] = {**settings, "sampling_order": order}
+                errors = self._collect_by_field(compute_validations([dataset]), "images.webshart.sampling_order")
+                if order == "random":
+                    with self.assertRaises(ValueError) as failure:
+                        ImageBackendConfig.from_dict(dataset, {})
+                    self.assertEqual([(error.level, error.message) for error in errors], [("error", str(failure.exception))])
+                else:
+                    self.assertEqual(errors, [])
+                    config = ImageBackendConfig.from_dict(dataset, {}).to_dict()["config"]
+                    self.assertEqual(config["webshart"]["sampling_order"], order)
+
     def test_immediate_dataset_passes_validation(self):
         """Single immediate dataset should pass scheduling validation."""
         datasets = self._base_datasets()

@@ -364,6 +364,9 @@ class WebshartMetadataBackend(MetadataBackend):
             str(getattr(self.accelerator, "distributed_type", "NO")),
             *(getattr(parallel, name, 1) for name in ("dp_replicate_size", "dp_shard_size", "tp_size")),
         )
+        sampling_order = "shuffled"
+        if self.native_policy == "shard_local" and self.data_backend.format == "parquet":
+            sampling_order = (self.active_dataset_config.get("webshart") or {}).get("sampling_order") or "sequential"
         return EpochSpec(
             self.id,
             self.native_policy,
@@ -381,6 +384,7 @@ class WebshartMetadataBackend(MetadataBackend):
             ),
             topology,
             occurrence_revision=occurrence_revision,
+            sampling_order=sampling_order,
         )
 
     def _check_publication(self, pages):

@@ -918,12 +918,23 @@ _BLUEPRINTS: List[BackendBlueprint] = [
                 },
                 {
                     "id": "webshart.sampling_policy",
-                    "label": "training sample order",
+                    "label": "sampling policy",
                     "type": "select",
                     "options": [
                         {"value": "", "label": "Existing sampler"},
                         {"value": "global", "label": "Global shuffle"},
-                        {"value": "shard_local", "label": "Shard-local shuffle"},
+                        {"value": "shard_local", "label": "Shard-local"},
+                    ],
+                },
+                {
+                    "id": "webshart.sampling_order",
+                    "label": "training sample order",
+                    "description": "Shard-local Parquet sampling defaults to sequential order.",
+                    "type": "select",
+                    "advanced": True,
+                    "options": [
+                        {"value": "sequential", "label": "Sequential"},
+                        {"value": "shuffled", "label": "Shuffled"},
                     ],
                 },
                 {

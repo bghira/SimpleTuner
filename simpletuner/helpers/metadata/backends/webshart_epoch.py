@@ -30,10 +30,14 @@ class EpochSpec:
     pad: bool
     topology: tuple
     occurrence_revision: str | None = None
+    sampling_order: str = "shuffled"
 
     def __post_init__(self):
         if self.policy not in {"global", "shard_local"}:
             raise ValueError("Webshart sampling must be global or shard_local.")
+        allowed_orders = ("shuffled", "sequential") if self.policy == "shard_local" else ("shuffled",)
+        if self.sampling_order not in allowed_orders:
+            raise ValueError("Webshart sampling order must be shuffled, or sequential with shard-local sampling.")
         if (
             min(self.batch_size, self.dp_size, self.accumulation) < 1
             or self.repeats < 0
@@ -45,6 +49,12 @@ class EpochSpec:
         logical = count * (self.repeats + 1)
         unit = self.batch_size * self.dp_size * self.accumulation
         return ((logical + (unit - 1 if self.pad else 0)) // unit) * self.accumulation
+
+    def checkpoint_layout(self):
+        layout = {**asdict(self), "topology": list(self.topology)}
+        if self.sampling_order == "shuffled":
+            layout.pop("sampling_order")
+        return layout
 
 
 def _key(*parts):
@@ -150,7 +160,7 @@ class WebshartEpoch:
             raise
 
     def _open_shared_schedule(self):
-        layout = _key(
+        layout_parts = (
             self.version,
             self.spec.dataset_id,
             self.spec.seed,
@@ -158,7 +168,10 @@ class WebshartEpoch:
             self.spec.accumulation,
             self.spec.repeats,
             self.spec.pad,
-        ).hex()
+        )
+        if self.spec.sampling_order == "sequential":
+            layout_parts += ("sequential",)
+        layout = _key(*layout_parts).hex()
         publication = Path(self.source.name)
         path = publication.with_suffix(f".shard-local-{layout}.sqlite")
         expected = (self.pages.header["view_revision"], self.spec.epoch)
@@ -198,7 +211,11 @@ class WebshartEpoch:
         runs_db.create_function(
             "shard_order",
             1,
-            lambda shard: _key(self.spec.seed, self.spec.epoch, self.spec.dataset_id, shard),
+            (
+                (lambda shard: shard)
+                if self.spec.sampling_order == "sequential"
+                else (lambda shard: _key(self.spec.seed, self.spec.epoch, self.spec.dataset_id, shard))
+            ),
             deterministic=True,
         )
         table = "TEMP TABLE" if temporary else "TABLE"
@@ -238,7 +255,7 @@ class WebshartEpoch:
             "version": self.version,
             "view": self.pages.header["view_revision"],
             "source": self.pages.header.get("source_revision"),
-            "layout": {**asdict(self.spec), "topology": list(self.spec.topology)},
+            "layout": self.spec.checkpoint_layout(),
             "position": self.position,
         }
 
@@ -275,7 +292,10 @@ class WebshartEpoch:
                     "SELECT logical,source,n,key FROM segments WHERE bucket=? AND logical<=? ORDER BY logical DESC LIMIT 1",
                     (bucket, logical),
                 ).fetchone()
-                ordinal = member + _permute((logical - origin) % length, length, key)
+                offset = (logical - origin) % length
+                if self.spec.sampling_order == "shuffled":
+                    offset = _permute(offset, length, key)
+                ordinal = member + offset
             positions.append(ordinal)
         if self.index is None:
             refs = self.pages.read_positions(self.keys[bucket], positions)
@@ -313,7 +333,9 @@ class WindowedWebshartEpoch:
         self.frontier = (0, 0, None)
 
     def _open_window(self):
-        self.partition = _permute(self.window, self.partition_count, self.order_key)
+        self.partition = self.window
+        if self.spec.sampling_order == "shuffled":
+            self.partition = _permute(self.window, self.partition_count, self.order_key)
         self.revision, buckets = self.open_partition(self.partition)
         self.buckets = sorted(buckets.items())
         self.ends = []
@@ -345,11 +367,12 @@ class WindowedWebshartEpoch:
         start = batch * self.global_batch + self.spec.dp_rank * self.spec.batch_size
         count = len(refs)
         logical_count = count * (self.spec.repeats + 1)
-        key = _key(self.order_key.hex(), self.partition, bucket)
-        result = [
-            refs[_permute(occurrence % logical_count, logical_count, key) % count]
-            for occurrence in range(start, start + self.spec.batch_size)
-        ]
+        occurrences = range(start, start + self.spec.batch_size)
+        if self.spec.sampling_order == "sequential":
+            result = [refs[occurrence % count] for occurrence in occurrences]
+        else:
+            key = _key(self.order_key.hex(), self.partition, bucket)
+            result = [refs[_permute(occurrence % logical_count, logical_count, key) % count] for occurrence in occurrences]
         self.position += 1
         self.batch_in_window += 1
         self.frontier = (self.window, self.batch_in_window, self.revision)
@@ -361,7 +384,7 @@ class WindowedWebshartEpoch:
             "version": self.version,
             "view": self.view,
             "source": self.source,
-            "layout": {**asdict(self.spec), "topology": list(self.spec.topology)},
+            "layout": self.spec.checkpoint_layout(),
             "position": self.position,
             "window": window,
             "batch_in_window": batch,

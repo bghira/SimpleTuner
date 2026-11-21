@@ -14,6 +14,7 @@ import simpletuner.helpers.distillation.factory  # noqa: F401
 from simpletuner.helpers.data_backend.config.relationships import DatasetRelationshipError, resolve_dataset_relationships
 from simpletuner.helpers.data_backend.config.validators import (
     validate_caption_data_generator,
+    validate_webshart_sampling_order,
     validate_webshart_sampling_policy,
 )
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
@@ -184,13 +185,19 @@ def compute_validations(
             )
         if backend_type.lower() == "webshart":
             settings = dataset.get("webshart")
-            try:
-                validate_webshart_sampling_policy(settings)
-            except ValueError as error:
-                field = "webshart.sampling_policy" if isinstance(settings, dict) else "webshart"
-                validations.append(
-                    ValidationMessage(field=f"{_normalise_identifier(dataset)}.{field}", message=str(error), level="error")
-                )
+            for option, validate in (
+                ("sampling_policy", validate_webshart_sampling_policy),
+                ("sampling_order", validate_webshart_sampling_order),
+            ):
+                try:
+                    validate(settings)
+                except ValueError as error:
+                    field = f"webshart.{option}" if isinstance(settings, dict) else "webshart"
+                    validations.append(
+                        ValidationMessage(
+                            field=f"{_normalise_identifier(dataset)}.{field}", message=str(error), level="error"
+                        )
+                    )
         normalized_type = _dataset_type(dataset)
         if dataset.get("data_generator") is not None:
             try:
