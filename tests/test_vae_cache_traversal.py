@@ -96,6 +96,37 @@ class TestCacheGroups(unittest.TestCase):
 
 
 class TestVaeCacheTraversal(unittest.TestCase):
+    def test_reference_latent_from_local_discovery_loads_with_relative_pairing_path(self):
+        with TemporaryDirectory(dir=Path.cwd()) as directory:
+            root = Path(directory) / "references"
+            root.mkdir()
+            Image.new("RGB", (8, 8)).save(root / "pattern.png")
+            relative_root = os.path.relpath(root)
+            source = LocalDataBackend(None, "references")
+            (discovered_ref,) = source.iter_file_keys(["png"], relative_root)
+            metadata = SimpleNamespace(
+                active_dataset_config={"instance_data_dir": relative_root, "conditioning_type": "reference_loose"},
+                instance_data_dir=relative_root,
+            )
+            paired_ref = MetadataBackend.conditioning_ref(metadata, "pattern.png")
+            self.assertTrue(os.path.isabs(discovered_ref))
+            self.assertFalse(os.path.isabs(paired_ref))
+
+            cache = VAECache.__new__(VAECache)
+            cache.id = source.id
+            cache.image_data_backend = source
+            cache.cache_data_backend = LocalDataBackend(None, "latents")
+            cache.instance_data_dir = relative_root
+            cache.cache_dir = str(Path(directory) / "latents")
+            cache.hash_filenames = True
+            cache.vae_cache_ondemand = False
+            path = cache.cache_path_for_image(discovered_ref)
+            Path(path).parent.mkdir(parents=True)
+            latent = torch.rand(4, 2, 2)
+            cache.cache_data_backend.torch_save(latent, path)
+
+            torch.testing.assert_close(cache.retrieve_from_cache(paired_ref), latent)
+
     @patch.dict("os.environ", {"SIMPLETUNER_SHUFFLE_ASPECTS": "false"})
     def test_shard_traversal_filters_before_grouping_and_drains_homogeneous_batches(self):
         self._run_pipeline(webshart=True)

@@ -638,6 +638,9 @@ class VAECache(WebhookMixin):
             base_filename = str(sha256(sample_id.encode()).hexdigest()) if self.hash_filenames else sample_id
             base_filename = str(base_filename).replace("/", "_").replace(":", "_") + ".pt"
             return os.path.join(self.cache_dir, base_filename), base_filename
+        if self.image_data_backend is not None and self.image_data_backend.type == "local":
+            # Match the absolute source paths used by local discovery and cache preparation.
+            filepath = self.image_data_backend.get_abs_path(filepath)
         return legacy_vae_cache_filename(
             filepath,
             self.instance_data_dir,
