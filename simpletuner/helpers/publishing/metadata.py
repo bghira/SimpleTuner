@@ -227,12 +227,16 @@ def _gligen_injection_code(model):
     )
 
 
-def _model_card_base_model(args, base_model: str = None) -> str:
+def _model_card_base_model(args, base_model: str = None) -> str | None:
     override = getattr(args, "model_card_base_model", None)
     if override:
         validate_repo_id(override)
         return override
-    source = args.pretrained_model_name_or_path if base_model is None else base_model
+    source = (
+        base_model or args.pretrained_model_name_or_path or getattr(args, "pretrained_transformer_model_name_or_path", None)
+    )
+    if not source:
+        return None
     unknown_model = f"{args.model_family}/unknown-model"
     if os.path.exists(source):
         return unknown_model
@@ -881,10 +885,16 @@ Note: The validation settings are not necessarily the same as the [training sett
 """
     sage_usage = getattr(args.sageattention_usage, "value", args.sageattention_usage)
     license_metadata = _license_metadata(model)
+    base_model_metadata = f'base_model: "{base_model}"\n' if base_model else ""
+    model_description = (
+        f"This is a {model_type(args)} derived from [{base_model}](https://huggingface.co/{base_model})."
+        if base_model
+        else "This model was trained from scratch."
+    )
+    text_encoder_source = "base model text encoder" if base_model else "original text encoders"
     yaml_content = f"""---
 {license_metadata}
-base_model: "{base_model}"
-tags:
+{base_model_metadata}tags:
   - {_model_card_family_tag(model_family)}
   - {f'{_model_card_family_tag(model_family)}-diffusers' if 'deepfloyd' not in args.model_type else 'deepfloyd-if-diffusers'}
   - {_pipeline_tag(args)}
@@ -905,7 +915,7 @@ inference: true
 """
     model_card_content = f"""# {repo_id}
 
-This is a {model_type(args)} derived from [{base_model}](https://huggingface.co/{base_model}).
+{model_description}
 
 {validation_intro}
 {validation_prompt_block}
@@ -914,7 +924,7 @@ This is a {model_type(args)} derived from [{base_model}](https://huggingface.co/
 {validation_settings}{gallery_section}
 
 The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
-{'You may reuse the base model text encoder for inference.' if not train_text_encoder else 'If the text encoder from this repository is not used at inference time, unexpected or bad results could occur.'}
+{f'You may reuse the {text_encoder_source} for inference.' if not train_text_encoder else 'If the text encoder from this repository is not used at inference time, unexpected or bad results could occur.'}
 
 
 ## Training settings
