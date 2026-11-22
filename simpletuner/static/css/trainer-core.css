@@ -1,16 +1,5 @@
 /* trainer-core.css - Core styles extracted from trainer_htmx.html inline styles */
 
-/* Main content layout */
-.main-content {
-    margin-left: 280px;
-}
-
-@media (max-width: 1024px) {
-    .main-content {
-        margin-left: 0;
-    }
-}
-
 .tab-fragment .card {
     background: var(--panel-bg);
     border: 1px solid var(--panel-border);
@@ -138,7 +127,7 @@
 /* Event Dock Styles */
 .event-dock-shell {
     position: fixed;
-    left: 280px;
+    left: var(--sidebar-offset);
     right: 0;
     bottom: 0;
     padding: 0 2rem;
@@ -412,7 +401,6 @@
 /* Event dock responsive styles */
 @media (max-width: 1024px) {
     .event-dock-shell {
-        left: 0;
         padding: 0 1rem;
     }
 }
