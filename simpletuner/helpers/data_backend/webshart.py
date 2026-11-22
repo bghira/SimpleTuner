@@ -74,6 +74,7 @@ class WebshartDataBackend(BaseDataBackend):
         aws_secret_access_key: Optional[str] = None,
         aws_session_token: Optional[str] = None,
         aws_max_pool_connections: int = 32,
+        shuffle_seed: Optional[int] = None,
     ):
         if not source:
             raise ValueError("source is required for Webshart data backends.")
@@ -85,6 +86,7 @@ class WebshartDataBackend(BaseDataBackend):
             raise ValueError("S3 Webshart sources require format='parquet'.")
         if format == "tar" and (manifest or any(v not in (None, "") for v in (columns or {}).values())):
             raise ValueError("Webshart manifest and columns require format='parquet'.")
+        self.shuffle_seed = shuffle_seed
         self.format = format
         self.manifest = manifest or None
         self.columns = {k: v for k, v in (columns or {}).items() if v not in (None, "")}
@@ -118,6 +120,14 @@ class WebshartDataBackend(BaseDataBackend):
         self.shard_cache_dir = str(shard_cache_dir) if shard_cache_dir else str(Path(self.cache_dir) / "shard_cache")
         if self.shard_cache_gb == 0:
             self.shard_cache_dir = None
+        elif (
+            shuffle_seed is not None
+            and accelerator is not None
+            and accelerator.num_processes > 1
+            and not Path(source).is_dir()
+        ):
+            # Webshart permits one active prefill order per cache directory.
+            self.shard_cache_dir = str(Path(self.shard_cache_dir) / f"rank-{accelerator.process_index}")
         self.parallel_downloads = int(parallel_downloads)
         self.buffer_size = int(buffer_size)
         self.max_file_size = int(max_file_size)
@@ -204,20 +214,33 @@ class WebshartDataBackend(BaseDataBackend):
             )
         return dataset
 
-    def sequential_prefill(self, window_shards):
+    def seeded_shards(self, seed):
+        try:
+            from webshart.parquet import _shuffled_shard_order
+        except ImportError as exc:
+            raise ImportError("webshart.shuffle_seed requires Webshart 0.9.3 or newer.") from exc
+        prefill = self.sequential_prefill(1, shuffle_seed=seed)
+        if prefill is not None:
+            return prefill.shard_at, prefill
+        return _shuffled_shard_order(self.num_shards(), seed).__getitem__, None
+
+    def sequential_prefill(self, window_shards, *, shuffle_seed=None):
         # Webshart releases before the byte-bounded cursor use on-demand caching.
         if not hasattr(self.dataset, "sequential_prefill") or self.shard_cache_dir is None or Path(self.source).is_dir():
             return None
+        options = {"active_shards": window_shards}
+        if shuffle_seed is not None:
+            options["shuffle_seed"] = shuffle_seed
         downloads = os.environ.get("SIMPLETUNER_WEBSHART_PREFILL_DOWNLOADS")
         if downloads is None:
-            return self.dataset.sequential_prefill(active_shards=window_shards)
+            return self.dataset.sequential_prefill(**options)
         downloads = int(downloads)
         if downloads < 1:
             raise ValueError("SIMPLETUNER_WEBSHART_PREFILL_DOWNLOADS must be positive.")
         # Keep foreground I/O and the checkpointed dataset configuration independent.
         reader = self.open_refresh_source().dataset
         reader.enable_shard_cache(self.shard_cache_dir, self.shard_cache_gb, downloads)
-        return reader.sequential_prefill(active_shards=window_shards)
+        return reader.sequential_prefill(**options)
 
     def open_refresh_source(self):
         """An unpinned Parquet reader using the same transport and cache settings."""
@@ -773,6 +796,7 @@ class WebshartDataBackend(BaseDataBackend):
             "format": self.format,
             "dataset_fingerprint": self.dataset.fingerprint if self.format == "parquet" else None,
             "manifest": self.manifest,
+            "shuffle_seed": self.shuffle_seed,
             "columns": self.columns,
             "aws_region_name": self.aws_region_name,
             "aws_endpoint_url": self.aws_endpoint_url,
@@ -802,6 +826,7 @@ class WebshartDataBackend(BaseDataBackend):
             source=representation["source"],
             format=representation.get("format", "tar"),
             manifest=representation.get("manifest"),
+            shuffle_seed=representation.get("shuffle_seed"),
             columns=representation.get("columns"),
             aws_region_name=representation.get("aws_region_name"),
             aws_endpoint_url=representation.get("aws_endpoint_url"),

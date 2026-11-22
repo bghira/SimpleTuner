@@ -31,6 +31,7 @@ class EpochSpec:
     topology: tuple
     occurrence_revision: str | None = None
     sampling_order: str = "shuffled"
+    shuffle_seed: int | None = None
 
     def __post_init__(self):
         if self.policy not in {"global", "shard_local"}:
@@ -45,13 +46,33 @@ class EpochSpec:
         ):
             raise ValueError("Invalid Webshart epoch layout.")
 
+    @property
+    def rank_shuffle_seed(self):
+        return (self.shuffle_seed + (self.epoch - 1) * self.dp_size + self.dp_rank) % (1 << 64)
+
+    def rank_positions(self, count, batch, key):
+        owned = len(range(self.dp_rank, count, self.dp_size))
+        for position in range(batch * self.batch_size, (batch + 1) * self.batch_size):
+            offset = position % owned
+            if self.sampling_order == "shuffled":
+                offset = _permute(offset, owned, key)
+            yield self.dp_rank + self.dp_size * offset
+
     def batches_for(self, count):
+        if self.shuffle_seed is not None:
+            if count < self.dp_size:
+                return 0
+            # All ranks take the same step count. Repeats and padding stay within each rank's rows.
+            owned = (count + (self.dp_size - 1 if self.pad else 0)) // self.dp_size
+            count = owned * self.dp_size
         logical = count * (self.repeats + 1)
         unit = self.batch_size * self.dp_size * self.accumulation
         return ((logical + (unit - 1 if self.pad else 0)) // unit) * self.accumulation
 
     def checkpoint_layout(self):
         layout = {**asdict(self), "topology": list(self.topology)}
+        if self.shuffle_seed is None:
+            layout.pop("shuffle_seed")
         if self.sampling_order == "shuffled":
             layout.pop("sampling_order")
         return layout
@@ -124,10 +145,29 @@ def _shard_runs(pages, shard_of):
         return sqlite3.connect(path.resolve().as_uri() + "?mode=ro&immutable=1", uri=True, check_same_thread=False)
 
 
+def _ordered_runs(pages, db, shard_order):
+    db.create_function("shard_order", 1, shard_order, deterministic=True)
+    if isinstance(pages, IndexedMembership):
+        return pages.shard_runs(db)
+    return db.execute("SELECT shard,bucket,start,n FROM runs ORDER BY shard_order(shard),shard,bucket,start")
+
+
+def seeded_published_batches(pages, spec, shard_of):
+    runs = pages.open_geometry() if isinstance(pages, IndexedMembership) else _shard_runs(pages, shard_of)
+    with closing(runs):
+        if not pages.header.get("membership_exclusion_revision"):
+            return sum(
+                spec.batches_for(n) * frequency for n, frequency in runs.execute("SELECT n,count(*) FROM runs GROUP BY n")
+            )
+        return sum(spec.batches_for(count) for _, _, _, count in _ordered_runs(pages, runs, int))
+
+
 class WebshartEpoch:
     version = 1
 
-    def __init__(self, source, spec, shard_of):
+    def __init__(self, source, spec, shard_of, *, shard_at=None, shard_count=0, prefill=None):
+        self.prefill = prefill
+        self.prefill_position = None
         self.source = source
         self.spec = spec
         self.db = None
@@ -150,14 +190,31 @@ class WebshartEpoch:
             if isinstance(self.pages, IndexedMembership):
                 self.index = self.pages.open_geometry()
             if spec.policy == "shard_local":
-                if self.index is None:
-                    self.db = _shard_runs(self.pages, shard_of)
+                self.db = self.index if self.index is not None else _shard_runs(self.pages, shard_of)
+                if shard_at is not None:
+                    self._order_seeded_shards(shard_at, shard_count)
+                elif self.index is None:
                     self._order_shards(self.db, self.db, temporary=True)
                 else:
                     self.db = self._open_shared_schedule()
         except BaseException:
             self.close()
             raise
+
+    def _order_seeded_shards(self, shard_at, shard_count):
+        positions = {shard_at(i): i for i in range(shard_count)}
+        self.db.execute(
+            "CREATE TEMP TABLE shard_batches(step INTEGER PRIMARY KEY, slot INTEGER, bucket INTEGER, start INTEGER, n INTEGER)"
+        )
+        self.batches = 0
+        for shard, bucket, start, n in _ordered_runs(self.pages, self.db, positions.__getitem__):
+            batches = self.spec.batches_for(n)
+            if batches:
+                self.db.execute(
+                    "INSERT INTO shard_batches VALUES (?,?,?,?,?)",
+                    (self.batches, positions[shard], bucket, start, n),
+                )
+                self.batches += batches
 
     def _open_shared_schedule(self):
         layout_parts = (
@@ -208,15 +265,10 @@ class WebshartEpoch:
 
     def _order_shards(self, runs_db, schedule_db, *, temporary=False):
         runs_db.execute("PRAGMA temp_store=FILE")
-        runs_db.create_function(
-            "shard_order",
-            1,
-            (
-                (lambda shard: shard)
-                if self.spec.sampling_order == "sequential"
-                else (lambda shard: _key(self.spec.seed, self.spec.epoch, self.spec.dataset_id, shard))
-            ),
-            deterministic=True,
+        shard_order = (
+            int
+            if self.spec.sampling_order == "sequential"
+            else (lambda shard: _key(self.spec.seed, self.spec.epoch, self.spec.dataset_id, shard))
         )
         table = "TEMP TABLE" if temporary else "TABLE"
         schedule_db.execute(
@@ -228,12 +280,7 @@ class WebshartEpoch:
         scheduled = [0] * len(self.keys)
         step = 0
         limits = [end - start for start, end in zip([0] + self.ends, self.ends)]
-        ranges = (
-            self.pages.shard_runs(runs_db)
-            if self.index is not None
-            else runs_db.execute("SELECT shard,bucket,start,n FROM runs ORDER BY shard_order(shard),shard,bucket,start")
-        )
-        for shard, bucket, start, count in ranges:
+        for shard, bucket, start, count in _ordered_runs(self.pages, runs_db, shard_order):
             schedule_db.execute(
                 "INSERT INTO segments VALUES (?,?,?,?,?)",
                 (bucket, consumed[bucket], start, count, _key(self.spec.seed, self.spec.epoch, shard, bucket, start)),
@@ -271,6 +318,17 @@ class WebshartEpoch:
     def next_batch(self):
         if self.position == self.batches:
             raise StopIteration
+        if self.spec.shuffle_seed is not None:
+            step, slot, bucket, start, n = self.db.execute(
+                "SELECT step,slot,bucket,start,n FROM shard_batches WHERE step<=? ORDER BY step DESC LIMIT 1",
+                (self.position,),
+            ).fetchone()
+            if self.prefill is not None and slot != self.prefill_position:
+                self.prefill.advance(slot)
+                self.prefill_position = slot
+            key = _key(self.order_key.hex(), bucket, start)
+            positions = [start + i for i in self.spec.rank_positions(n, self.position - step, key)]
+            return self._read_batch(bucket, positions)
         if self.db is None:
             step = _permute(self.position, self.batches, self.order_key)
             bucket = bisect_right(self.ends, step)
@@ -297,6 +355,9 @@ class WebshartEpoch:
                     offset = _permute(offset, length, key)
                 ordinal = member + offset
             positions.append(ordinal)
+        return self._read_batch(bucket, positions)
+
+    def _read_batch(self, bucket, positions):
         if self.index is None:
             refs = self.pages.read_positions(self.keys[bucket], positions)
         else:
@@ -305,6 +366,8 @@ class WebshartEpoch:
         return self.keys[bucket], refs
 
     def close(self):
+        if self.prefill is not None:
+            self.prefill.close()
         if self.db is not None and self.db is not self.index:
             self.db.close()
         if self.index is not None:
@@ -317,12 +380,15 @@ class WindowedWebshartEpoch:
 
     version = "shard-window-v1"
 
-    def __init__(self, spec, source, view, partition_count, open_partition, *, window_shards=None, prefill=None):
+    def __init__(
+        self, spec, source, view, partition_count, open_partition, *, window_shards=None, prefill=None, shard_at=None
+    ):
         self.spec = spec
         self.source = source
         self.view = view
         self.partition_count = partition_count
         self.prefill = prefill
+        self.shard_at = shard_at
         self.window_shards = window_shards
         self.open_partition = open_partition
         self.order_key = _key(spec.seed, spec.epoch, spec.dataset_id, self.version)
@@ -336,10 +402,12 @@ class WindowedWebshartEpoch:
 
     def _open_window(self):
         self.partition = self.window
-        if self.spec.sampling_order == "shuffled":
+        if self.shard_at is not None:
+            self.partition = self.shard_at(self.window)
+        elif self.spec.sampling_order == "shuffled":
             self.partition = _permute(self.window, self.partition_count, self.order_key)
         if self.prefill is not None:
-            self.prefill.advance(self.partition * self.window_shards)
+            self.prefill.advance(self.window * self.window_shards)
         self.revision, buckets = self.open_partition(self.partition)
         self.buckets = sorted(buckets.items())
         self.ends = []
@@ -372,7 +440,10 @@ class WindowedWebshartEpoch:
         count = len(refs)
         logical_count = count * (self.spec.repeats + 1)
         occurrences = range(start, start + self.spec.batch_size)
-        if self.spec.sampling_order == "sequential":
+        if self.spec.shuffle_seed is not None:
+            key = _key(self.order_key.hex(), self.partition, bucket)
+            result = [refs[i] for i in self.spec.rank_positions(count, batch, key)]
+        elif self.spec.sampling_order == "sequential":
             result = [refs[occurrence % count] for occurrence in occurrences]
         else:
             key = _key(self.order_key.hex(), self.partition, bucket)

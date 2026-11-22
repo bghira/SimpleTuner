@@ -45,6 +45,7 @@ class WebshartBackendBuilder(BaseBackendBuilder):
             "caption_key": config.webshart_caption_key,
             "format": webshart_config.get("format", "tar"),
             "manifest": webshart_config.get("manifest"),
+            "shuffle_seed": webshart_config.get("shuffle_seed"),
             "columns": webshart_config.get("columns"),
             **{
                 key: getattr(config, key, None)

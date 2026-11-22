@@ -11,6 +11,7 @@ from collections import defaultdict, deque
 from concurrent.futures import CancelledError, ThreadPoolExecutor
 from contextlib import ExitStack, closing, contextmanager, nullcontext
 from copy import copy, deepcopy
+from dataclasses import replace
 from functools import partial
 from hashlib import file_digest, sha256
 from itertools import batched, chain, cycle, islice
@@ -32,7 +33,12 @@ from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.data_backend.webshart import CaptionValue, WebshartDataBackend
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.metadata.backends.base import MetadataBackend, get_cp_aware_dp_info
-from simpletuner.helpers.metadata.backends.webshart_epoch import EpochSpec, WebshartEpoch, WindowedWebshartEpoch
+from simpletuner.helpers.metadata.backends.webshart_epoch import (
+    EpochSpec,
+    WebshartEpoch,
+    WindowedWebshartEpoch,
+    seeded_published_batches,
+)
 from simpletuner.helpers.metadata.backends.webshart_exclusions import (
     collect_exclusions,
     exclusion_path,
@@ -175,6 +181,8 @@ class WebshartMetadataBackend(MetadataBackend):
         self._geometry_digest = None
         self.maximum_canvas_size = maximum_canvas_size
         self.native_policy = (self.dataset_config.get("webshart") or {}).get("sampling_policy")
+        if data_backend.shuffle_seed is not None:
+            self.window_shards = 1
         self._artifact_models = {}
         self._snapshot = None
         self._accepted_geometry = None
@@ -308,10 +316,17 @@ class WebshartMetadataBackend(MetadataBackend):
             with self._open_membership() as source:
                 pages = MembershipPages.open(source)
                 if pages is not None:
-                    if spec is not None:
-                        self._check_publication(pages)
-                    return pages.describe(spec)
+                    return self._describe_pages(pages, spec)
         return DatasetDescription(**self._source_description())
+
+    def _describe_pages(self, pages, spec):
+        if spec is None:
+            return pages.describe()
+        self._check_publication(pages)
+        if spec.shuffle_seed is None:
+            return pages.describe(spec)
+        batches = seeded_published_batches(pages, spec, self.data_backend.shard_of)
+        return replace(pages.describe(), batches=batches, scheduled_occurrences=batches * spec.batch_size * spec.dp_size)
 
     @property
     def view_revision(self):
@@ -389,6 +404,7 @@ class WebshartMetadataBackend(MetadataBackend):
             topology,
             occurrence_revision=occurrence_revision,
             sampling_order=sampling_order,
+            shuffle_seed=self.data_backend.shuffle_seed,
         )
 
     def _check_publication(self, pages):
@@ -531,6 +547,9 @@ class WebshartMetadataBackend(MetadataBackend):
         vacancies = sum(ref not in images for ref in refs)
         if vacancies:
             members = window.buckets[bucket]
+            if self.data_backend.shuffle_seed is not None:
+                size, rank, _ = get_cp_aware_dp_info(self.accelerator)
+                members = members[rank::size]
             start = members.index(refs[-1]) + 1
             ordered = chain(islice(members, start, None), islice(members, start))
             candidates = (ref for ref in ordered if ref not in window.excluded and ref not in images)
@@ -542,21 +561,48 @@ class WebshartMetadataBackend(MetadataBackend):
                 read(group)
                 replacements.extend(ref for ref in group if ref in images)
             if not images:
-                # Every rank has the same bucket and will advance past this occurrence.
                 return [], {}
             pads = chain(replacements, cycle(images))
             refs = [ref if ref in images else next(pads) for ref in refs]
         return refs, images
+
+    def resolve_window_batch(self, cursor, bucket, refs):
+        partition = cursor.partition
+        refs, images = self.read_window_batch(partition, bucket, refs)
+        spec = cursor.spec
+        if refs or spec.shuffle_seed is None:
+            return partition, bucket, refs, images
+
+        # Skipping a step on just one data rank would unbalance the distributed epoch.
+        empty_bucket = bucket
+        for offset in range(cursor.partition_count):
+            partition = cursor.shard_at((cursor.window + offset) % cursor.partition_count)
+            window = self._open_training_partition(partition)
+            for bucket, members in sorted(window.buckets.items()):
+                if offset == 0 and bucket == empty_bucket:
+                    continue
+                owned = members[spec.dp_rank :: spec.dp_size]
+                if owned:
+                    refs, images = self.read_window_batch(partition, bucket, list(islice(cycle(owned), spec.batch_size)))
+                    if refs:
+                        return partition, bucket, refs, images
+        raise ValueError(f"No decodable Webshart samples remain for data rank {spec.dp_rank} in dataset {self.id!r}.")
 
     def _window_buckets(self, partition):
         window = self._open_training_partition(partition)
         return window.revision, window.buckets
 
     def open_epoch(self, spec):
+        shard_at, prefill = None, None
+        if spec.shuffle_seed is not None:
+            shard_at, prefill = self.data_backend.seeded_shards(spec.rank_shuffle_seed)
         if self._window_recipe is not None:
             partitions = ceil(self.data_backend.num_shards() / self.window_shards)
-            prefill = None
-            if spec.sampling_order == "sequential" and getattr(self.accelerator, "is_local_main_process", True):
+            if (
+                shard_at is None
+                and spec.sampling_order == "sequential"
+                and getattr(self.accelerator, "is_local_main_process", True)
+            ):
                 prefill = self.data_backend.sequential_prefill(self.window_shards)
             return WindowedWebshartEpoch(
                 spec,
@@ -566,13 +612,21 @@ class WebshartMetadataBackend(MetadataBackend):
                 self._window_buckets,
                 window_shards=self.window_shards,
                 prefill=prefill,
+                shard_at=shard_at,
             )
         source = self._open_membership()
         try:
             if self.native_policy:
                 self._check_publication(MembershipPages.open(source))
                 source.seek(0)
-            return WebshartEpoch(source, spec, self.data_backend.shard_of)
+            return WebshartEpoch(
+                source,
+                spec,
+                self.data_backend.shard_of,
+                shard_at=shard_at,
+                shard_count=self.data_backend.num_shards() if shard_at else 0,
+                prefill=prefill,
+            )
         except BaseException:
             source.close()
             raise
@@ -581,9 +635,7 @@ class WebshartMetadataBackend(MetadataBackend):
         if self._window_recipe is not None:
             return None
         with self._open_membership() as source:
-            pages = MembershipPages.open(source)
-            self._check_publication(pages)
-            return pages.describe(spec).batches
+            return self._describe_pages(MembershipPages.open(source), spec).batches
 
     def _source_description(self):
         if self.data_backend.format != "parquet":

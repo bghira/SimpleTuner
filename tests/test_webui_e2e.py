@@ -3152,6 +3152,8 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
             self.assertEqual(Select(order).first_selected_option.get_attribute("value"), "sequential")
             driver.execute_script("Alpine.store('trainer').hasUnsavedChanges = false;")
             Select(order).select_by_value("shuffled")
+            seed_selector = (By.CSS_SELECTOR, ".dataset-list-item-expanded .webshart-shuffle-seed")
+            driver.find_element(*seed_selector).send_keys("0", Keys.TAB)
             WebDriverWait(driver, 5).until(
                 lambda d: d.execute_script("return Alpine.store('trainer').hasUnsavedChanges === true;")
             )
@@ -3196,6 +3198,7 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
             self.assertEqual(persisted["webshart"]["format"], "parquet")
             self.assertEqual(persisted["webshart"]["sampling_policy"], "shard_local")
             self.assertEqual(persisted["webshart"]["sampling_order"], "shuffled")
+            self.assertEqual(persisted["webshart"]["shuffle_seed"], 0)
             self.assertEqual(persisted["webshart"]["manifest"], "combined/dataset.json")
             self.assertEqual(persisted["webshart"]["columns"], {"captions": "caption_text"})
             for key, value in expected_cache_options.items():
@@ -3228,6 +3231,7 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
                 Select(driver.find_element(*order_selector)).first_selected_option.get_attribute("value"), "shuffled"
             )
             self.assertEqual(field.get_attribute("value"), "parquet")
+            self.assertEqual(driver.find_element(*seed_selector).get_attribute("value"), "0")
             endpoint = WebDriverWait(driver, 10).until(
                 lambda d: next(
                     (
@@ -3263,6 +3267,7 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
             self.assertTrue(saved["webshart"]["optimize_captions"])
             self.assertNotIn("manifest", saved["webshart"])
             self.assertNotIn("sampling_order", saved["webshart"])
+            self.assertNotIn("shuffle_seed", saved["webshart"])
             self.assertNotIn("columns", saved["webshart"])
 
         self.for_each_browser("test_webshart_parquet_settings_edit_and_save", scenario)

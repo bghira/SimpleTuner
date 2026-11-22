@@ -16,6 +16,7 @@ from simpletuner.helpers.data_backend.config.validators import (
     validate_caption_data_generator,
     validate_webshart_sampling_order,
     validate_webshart_sampling_policy,
+    validate_webshart_shuffle_seed,
 )
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.data_backend.runtime.schedule import dataset_is_active
@@ -188,6 +189,7 @@ def compute_validations(
             for option, validate in (
                 ("sampling_policy", validate_webshart_sampling_policy),
                 ("sampling_order", validate_webshart_sampling_order),
+                ("shuffle_seed", validate_webshart_shuffle_seed),
             ):
                 try:
                     validate(settings)
