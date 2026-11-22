@@ -663,6 +663,41 @@ class TestMetadataFunctions(unittest.TestCase):
         self.assertNotIn(self.args.pretrained_model_name_or_path, card)
         self.assertEqual(self.args.pretrained_model_name_or_path, "/opt/models/flux3_image")
 
+    def test_save_model_card_for_training_from_scratch(self):
+        self.args.pretrained_transformer_model_name_or_path = None
+        self.args.model_type = "full"
+        self.args.pretrained_model_name_or_path = None
+        self.args.controlnet = False
+        self.args.control = False
+        model = MagicMock(
+            MODEL_TYPE=SimpleNamespace(value="transformer"),
+            PREDICTION_TYPE=SimpleNamespace(value="flow_matching"),
+            MODEL_LICENSE="other",
+            gligen=False,
+        )
+        model.custom_model_card_schedule_info.return_value = ""
+        model.custom_model_card_code_example.return_value = ""
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(StateTracker, "get_args", return_value=self.args),
+            patch.object(StateTracker, "get_model", return_value=model),
+            patch.object(StateTracker, "get_model_family", return_value=self.args.model_family),
+            patch.object(StateTracker, "get_datasets", return_value={}),
+            patch.object(StateTracker, "get_accelerator", return_value=SimpleNamespace(num_processes=8)),
+        ):
+            save_model_card(model=model, repo_id="owner/model", repo_folder=directory, global_step=10000, epoch=1)
+            card = Path(directory, "README.md").read_text()
+
+            for key in ("pretrained_transformer_model_name_or_path", "pretrained_model_name_or_path"):
+                with self.subTest(key=key), patch.object(self.args, key, "owner/source-model"):
+                    save_model_card(model=model, repo_id="owner/model", repo_folder=directory, global_step=10000, epoch=1)
+                    derived = Path(directory, "README.md").read_text()
+                    self.assertEqual(yaml.safe_load(derived.split("---", 2)[1])["base_model"], "owner/source-model")
+
+        self.assertNotIn("base_model", yaml.safe_load(card.split("---", 2)[1]))
+        self.assertIn("This model was trained from scratch.", card)
+
     def test_upload_full_model_uses_empty_repo_path_for_top_level_uploads(self):
         hub_manager = object.__new__(HubManager)
         hub_manager.config = SimpleNamespace(push_to_hub=True, output_dir="output")
