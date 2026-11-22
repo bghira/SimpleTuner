@@ -1,6 +1,6 @@
 import unittest
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import torch
 from torch import nn
@@ -107,6 +107,32 @@ class NextLatXmTests(unittest.TestCase):
         losses = blockwise_cross_entropy(logits, targets, block_size=2)
         self.assertEqual(tuple(losses.shape), (2,))
         self.assertLess(losses.max().item(), 0.01)
+
+    def test_chunked_blockwise_cross_entropy_bounds_workspace_and_preserves_winners(self):
+        targets = torch.arange(74).reshape(2, 37).remainder(53).repeat(2, 1)
+        targets[:, ::5] = -100
+        targets[1::2, -11:] = -100
+        for dtype in (torch.float32, torch.bfloat16):
+            with self.subTest(dtype=dtype):
+                logits = torch.randn(4, 37, 53, dtype=dtype, requires_grad=True)
+                baseline = logits.detach().clone().requires_grad_()
+                expected = blockwise_cross_entropy(baseline, targets, block_size=7)
+                expected_loss, expected_winners = select_min_candidate_loss(expected.view(2, 2))
+                expected_loss.backward()
+
+                cross_entropy = torch.nn.functional.cross_entropy
+                with patch.object(torch.nn.functional, "cross_entropy", wraps=cross_entropy) as ce:
+                    actual = blockwise_cross_entropy(logits, targets, block_size=7, token_chunk_size=16)
+                    actual_loss, actual_winners = select_min_candidate_loss(actual.view(2, 2))
+                    actual_loss.backward()
+
+                for call in ce.call_args_list:
+                    self.assertLessEqual(call.args[0].shape[0], 16)
+                    self.assertEqual(call.args[0].dtype, torch.float32)
+                self.assertGreater(len(ce.call_args_list), 2)
+                torch.testing.assert_close(actual, expected)
+                torch.testing.assert_close(actual_winners, expected_winners)
+                torch.testing.assert_close(logits.grad, baseline.grad)
 
     def test_nextlat_regularizer_computes_loss_from_captured_layer(self):
         config = SimpleNamespace(
