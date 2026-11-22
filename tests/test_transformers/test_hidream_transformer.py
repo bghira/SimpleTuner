@@ -190,6 +190,23 @@ class TestRopeFunctions(TransformerBaseTest):
         self.assertEqual(xq_out.dtype, xq.dtype)
         self.assertEqual(xk_out.dtype, xk.dtype)
 
+    def test_apply_rope_matches_matrix_rotation_in_forward_and_backward(self):
+        query = torch.randn(1, 7, 3, 16, dtype=torch.bfloat16, requires_grad=True)
+        key = torch.randn_like(query, requires_grad=True)
+        freqs = torch.randn(1, 7, 1, 8, 2, 2, requires_grad=True)
+
+        def reference(states):
+            pairs = states.float().reshape(*states.shape[:-1], -1, 1, 2)
+            return (freqs[..., 0] * pairs[..., 0] + freqs[..., 1] * pairs[..., 1]).reshape_as(states).type_as(states)
+
+        expected = (reference(query), reference(key))
+        actual = apply_rope(query, key, freqs)
+        torch.testing.assert_close(actual, expected, atol=0, rtol=0)
+        output_grads = tuple(torch.randn_like(tensor) for tensor in expected)
+        expected_grads = torch.autograd.grad(expected, (query, key, freqs), grad_outputs=output_grads)
+        actual_grads = torch.autograd.grad(actual, (query, key, freqs), grad_outputs=output_grads)
+        torch.testing.assert_close(actual_grads, expected_grads, atol=0, rtol=0)
+
     def test_apply_rope_dtype_preservation(self):
         """Test that apply_rope preserves input dtypes."""
         for dtype in [torch.float32, torch.float16]:

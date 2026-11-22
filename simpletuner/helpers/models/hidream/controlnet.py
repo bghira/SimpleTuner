@@ -238,7 +238,6 @@ class HiDreamControlNetModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         temb = self.t_embedder(timesteps, hidden_states.dtype) + self.p_embedder(pooled_embeds)
 
         t5_embeds = self.t5_embedder(t5_hidden_states)
-        llama_embeds = self.llama_embedder(llama_hidden_states)
         if llama_hidden_states.dim() == 5:
             llama_hidden_states = llama_hidden_states.squeeze(2)  # [B, L, S, D]
             selected = [llama_hidden_states[:, i] for i in range(min(2, llama_hidden_states.shape[1]))]
@@ -260,9 +259,15 @@ class HiDreamControlNetModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         ids = torch.cat([img_ids[:, :image_seq_len], txt_ids], dim=1)
         rope = self.pe_embedder(ids)
 
+        checkpoint_blocks = torch.is_grad_enabled() and self.gradient_checkpointing
         block_samples = []
-        for i, block in enumerate(self.double_stream_blocks):
-            hidden_states, encoder_hidden_states = block(hidden_states, None, encoder_hidden_states, temb, rope)
+        for block in self.double_stream_blocks:
+            if checkpoint_blocks:
+                hidden_states, encoder_hidden_states = self._gradient_checkpointing_func(
+                    block, hidden_states, None, encoder_hidden_states, temb, rope
+                )
+            else:
+                hidden_states, encoder_hidden_states = block(hidden_states, None, encoder_hidden_states, temb, rope)
             block_samples.append(hidden_states)
 
         hidden_states = torch.cat([hidden_states, encoder_hidden_states], dim=1)
@@ -270,7 +275,10 @@ class HiDreamControlNetModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         single_block_samples = []
         for block in self.single_stream_blocks:
             rope = self.pe_embedder(torch.zeros(B, hidden_states.shape[1], 3, device=hidden_states.device))
-            hidden_states = block(hidden_states, None, None, temb, rope)
+            if checkpoint_blocks:
+                hidden_states = self._gradient_checkpointing_func(block, hidden_states, None, None, temb, rope)
+            else:
+                hidden_states = block(hidden_states, None, None, temb, rope)
             single_block_samples.append(hidden_states[:, :image_seq_len])
 
         controlnet_block_samples = [m(s) * conditioning_scale for m, s in zip(self.controlnet_blocks, block_samples)]

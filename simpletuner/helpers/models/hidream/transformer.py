@@ -318,11 +318,13 @@ except:
 def apply_rope(xq: torch.Tensor, xk: torch.Tensor, freqs_cis: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     # Input from EmbedND has shape [B, S, 1, rope_dim, 2, 2]
     # The '1' at position 2 broadcasts with the 'heads' dimension in xq/xk
-    xq_ = xq.float().reshape(*xq.shape[:-1], -1, 1, 2)
-    xk_ = xk.float().reshape(*xk.shape[:-1], -1, 1, 2)
-    xq_out = freqs_cis[..., 0] * xq_[..., 0] + freqs_cis[..., 1] * xq_[..., 1]
-    xk_out = freqs_cis[..., 0] * xk_[..., 0] + freqs_cis[..., 1] * xk_[..., 1]
-    return xq_out.reshape(*xq.shape).type_as(xq), xk_out.reshape(*xk.shape).type_as(xk)
+    def rotate(states: torch.Tensor) -> torch.Tensor:
+        pairs = states.float().reshape(*states.shape[:-1], -1, 1, 2)
+        rotated = freqs_cis[..., 0] * pairs[..., 0]
+        rotated.add_(freqs_cis[..., 1] * pairs[..., 1])
+        return rotated.reshape_as(states).type_as(states)
+
+    return rotate(xq), rotate(xk)
 
 
 def attention(
@@ -1660,13 +1662,16 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
         musubi_manager = self._musubi_block_swap
         musubi_offload_active = False
         grad_enabled = torch.is_grad_enabled()
+        checkpoint_blocks = grad_enabled and (
+            self.training or controlnet_block_samples is not None or controlnet_single_block_samples is not None
+        )
         if musubi_manager is not None:
             musubi_offload_active = musubi_manager.activate(combined_blocks, hidden_states.device, grad_enabled)
 
         # Process through double stream blocks
         capture_idx = 0
         for bid, block in enumerate(self.double_stream_blocks):
-            checkpoint_this_block = self.training and should_checkpoint_block(
+            checkpoint_this_block = checkpoint_blocks and should_checkpoint_block(
                 bid,
                 self.gradient_checkpointing,
                 self.gradient_checkpointing_interval,
@@ -1802,7 +1807,7 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
 
         # 7. Process through single stream blocks
         for bid, block in enumerate(self.single_stream_blocks):
-            checkpoint_this_block = self.training and should_checkpoint_block(
+            checkpoint_this_block = checkpoint_blocks and should_checkpoint_block(
                 len(self.double_stream_blocks) + bid,
                 self.gradient_checkpointing,
                 self.gradient_checkpointing_interval,
