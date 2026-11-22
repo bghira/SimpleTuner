@@ -3,7 +3,12 @@
     "id": "minimaxmusic-lm-demo-data",
     "type": "huggingface",
     "dataset_type": "audio",
-    "dataset_name": "RareConcepts/suno-reggae-test-dataset",
+    "dataset_name": "audiofolder",
+    "huggingface": {
+      "data_files": {"train": "hf://datasets/RareConcepts/suno-reggae-test-dataset/*.mp3"},
+      "audio_caption_fields": ["prompt"],
+      "lyrics_column": "lyrics"
+    },
     "metadata_backend": "huggingface",
     "caption_strategy": "huggingface",
     "audio": {
