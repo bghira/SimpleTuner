@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import math
 from dataclasses import dataclass
+from pathlib import Path
 
 import torch
 import torch.nn as nn
@@ -22,6 +24,7 @@ from diffusers.loaders import PeftAdapterMixin
 from diffusers.models.attention import AttentionMixin, AttentionModuleMixin
 from diffusers.models.attention_dispatch import dispatch_attention_fn
 from diffusers.models.embeddings import TimestepEmbedding, Timesteps
+from diffusers.models.model_loading_utils import _fetch_index_file
 from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import RMSNorm
 from diffusers.utils import BaseOutput, logging
@@ -678,6 +681,53 @@ class Cosmos3OmniTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, Attentio
             swap_device=musubi_block_swap_device,
             logger=logger,
         )
+
+    @classmethod
+    def load_config(cls, pretrained_model_name_or_path, return_unused_kwargs=False, return_commit_hash=False, **kwargs):
+        config, *extras, commit_hash = super().load_config(
+            pretrained_model_name_or_path,
+            return_unused_kwargs=return_unused_kwargs,
+            return_commit_hash=True,
+            **kwargs,
+        )
+        # The original Nano generator export retained its sound weights but omitted their config.
+        if (
+            config.get("component") == "cosmos3_generator"
+            and config.get("source_model_id") == "nvidia/Cosmos3-Nano"
+            and config.get("source_revision") == "411f42a8fdfb8c5b2583cb8786e0938f49796eaa"
+            and "sound_gen" not in config
+            and "sound_gen" not in kwargs
+        ):
+            index = _fetch_index_file(
+                is_local=Path(pretrained_model_name_or_path).is_dir(),
+                pretrained_model_name_or_path=pretrained_model_name_or_path,
+                subfolder=kwargs.get("subfolder"),
+                use_safetensors=True,
+                cache_dir=kwargs.get("cache_dir"),
+                variant=None,
+                force_download=kwargs.get("force_download", False),
+                proxies=kwargs.get("proxies"),
+                local_files_only=kwargs.get("local_files_only", False),
+                token=kwargs.get("token"),
+                revision=kwargs.get("revision"),
+                user_agent=kwargs.get("user_agent"),
+                commit_hash=commit_hash,
+            )
+            if index is not None and index.is_file():
+                audio_weights = {
+                    "audio_modality_embed",
+                    "audio_proj_in.bias",
+                    "audio_proj_in.weight",
+                    "audio_proj_out.bias",
+                    "audio_proj_out.weight",
+                }
+                with index.open(encoding="utf-8") as handle:
+                    if audio_weights.issubset(json.load(handle)["weight_map"]):
+                        config.update(sound_gen=True, sound_dim=64)
+
+        if return_commit_hash:
+            extras.append(commit_hash)
+        return (config, *extras) if extras else config
 
     def fuse_qkv_projections(self, preferred_backend: str | None = None) -> None:
         fused = 0

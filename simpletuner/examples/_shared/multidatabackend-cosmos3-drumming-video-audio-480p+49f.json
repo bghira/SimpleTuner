@@ -21,8 +21,8 @@
         },
         "audio": {
             "auto_split": true,
-            "sample_rate": 16000,
-            "channels": 1,
+            "sample_rate": 48000,
+            "channels": 2,
             "duration_interval": 3.0,
             "allow_zero_audio": false
         },
