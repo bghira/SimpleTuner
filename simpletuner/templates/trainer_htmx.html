@@ -3111,6 +3111,11 @@ function trainerComponent() {
                     } else {
                         delete webshart.sampling_order;
                     }
+                    if (format === 'parquet' && samplingPolicy === 'shard_local' && options.shuffle_seed != null && options.shuffle_seed !== '') {
+                        webshart.shuffle_seed = options.shuffle_seed;
+                    } else {
+                        delete webshart.shuffle_seed;
+                    }
                     delete webshart.manifest;
                     delete webshart.columns;
                     if (format === 'parquet') {

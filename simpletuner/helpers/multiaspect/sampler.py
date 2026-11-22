@@ -212,12 +212,13 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             state = cursor.state_dict()
             spec = cursor.spec
             rng = random.Random(f"{self.id}:{spec.seed}:{spec.epoch}:{spec.dp_rank}:{cursor.position}")
-            view = DatasetReadView(state["view"], spec.epoch, spec.seed, getattr(cursor, "partition", None))
+            partition = getattr(cursor, "partition", None)
             images = None
-            if view.partition is not None and self.epoch_provider.delete_problematic_images:
-                refs, images = self.epoch_provider.read_window_batch(view.partition, bucket, refs)
+            if partition is not None and self.epoch_provider.delete_problematic_images:
+                partition, bucket, refs, images = self.epoch_provider.resolve_window_batch(cursor, bucket, refs)
                 if not refs:
                     continue
+            view = DatasetReadView(state["view"], spec.epoch, spec.seed, partition)
             records = self._validate_and_yield_images_from_samples(refs, bucket, rng=rng, view=view)
             if images is not None:
                 for record in records:

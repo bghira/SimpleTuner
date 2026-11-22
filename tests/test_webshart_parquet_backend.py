@@ -57,6 +57,92 @@ class TestWebshartParquetBackend(unittest.TestCase):
             None, "parquet", str(source), format="parquet", cache_dir=str(self.root / "cache")
         )
 
+    def test_seeded_shards_keep_rank_rows_disjoint_and_resume_in_prefetch_order(self):
+        from importlib.metadata import version
+
+        from packaging.version import Version
+
+        if Version(version("webshart")) < Version("0.9.3"):
+            self.skipTest("Seeded shard order requires Webshart 0.9.3.")
+        from webshart.parquet import _shuffled_shard_order
+
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+        from simpletuner.helpers.metadata.preparation import TrainingPreparation
+        from simpletuner.simpletuner_sdk.server.services.cache_job_service import _CacheAcceleratorStub, _CacheArgsNamespace
+
+        # Equal physical row counts, different accepted counts including one shard too small for two ranks.
+        for shard in range(8):
+            rows = [self.rows[0]] * (shard + 1) + [self.rows[1]] * (7 - shard)
+            path = self.source / ("part.parquet" if shard == 0 else f"part-{shard}.parquet")
+            pq.write_table(pa.Table.from_pylist(rows), path)
+        self._publish_capture_manifest()
+        config = dict(
+            id="capture",
+            type="webshart",
+            source=str(self.source),
+            resolution=64,
+            resolution_type="pixel",
+            webshart=dict(format="parquet", manifest="capture.json", sampling_policy="shard_local", shuffle_seed=0),
+            caption_strategy="webshart",
+            crop=False,
+        )
+        args = _CacheArgsNamespace(
+            dict(output_dir=str(self.root), seed=7, max_train_steps=20, gradient_accumulation_steps=1)
+        )
+        online = TrainingPreparation(online_text=True, ondemand_latents=True, requires_complete_view=False)
+        with closing(DatasetRuntime.from_config(config, args, _CacheAcceleratorStub(device="cpu"))) as runtime:
+            self.assertTrue(runtime.prepare_for_training(online))
+            metadata = runtime.metadata_backend
+            for indexed in (False, True):
+                if indexed:
+                    runtime.prepare_view()
+                for pad, row_order in ((False, "sequential"), (True, "shuffled")):
+                    samples, orders, steps = [], [], []
+                    for rank in range(2):
+                        spec = replace(
+                            metadata.epoch_spec(2, 2), dp_size=2, dp_rank=rank, repeats=1, pad=pad, sampling_order=row_order
+                        )
+                        self.assertEqual(spec.rank_shuffle_seed, 2 + rank)
+                        order = list(_shuffled_shard_order(8, 2 + rank))
+                        with closing(runtime.open_epoch(spec)) as cursor:
+                            batches = list(iter(cursor.next_batch, None))
+                        shard_of = runtime.data_backend.shard_of
+                        seen = list(dict.fromkeys(shard_of(refs[0]) for _, refs in batches))
+                        self.assertEqual(seen, [shard for shard in order if shard in seen])
+                        self.assertGreater(len(seen), 3)
+                        orders.append(seen)
+                        samples.append({ref for _, refs in batches for ref in refs})
+                        steps.append(len(batches))
+                        if indexed:
+                            self.assertEqual(runtime.describe(spec).batches, len(batches))
+                        cut = len(batches) // 2
+                        with closing(runtime.open_epoch(spec)) as cursor:
+                            for _ in range(cut):
+                                cursor.next_batch()
+                            saved = cursor.state_dict()
+                        with closing(runtime.open_epoch(replace(spec, shuffle_seed=9))) as changed:
+                            with self.assertRaisesRegex(ValueError, "unchanged source"):
+                                changed.load_state_dict(saved)
+                        prefill = Mock()
+                        prefill.shard_at.side_effect = order.__getitem__
+                        with patch.object(runtime.data_backend, "sequential_prefill", return_value=prefill) as create:
+                            with closing(runtime.open_epoch(spec)) as resumed:
+                                create.assert_called_once_with(1, shuffle_seed=2 + rank)
+                                resumed.load_state_dict(saved)
+                                for expected in batches[cut:]:
+                                    actual = resumed.next_batch()
+                                    self.assertEqual(actual, expected)
+                                    slot = prefill.advance.call_args.args[0]
+                                    self.assertTrue(all(shard_of(ref) == order[slot] for ref in actual[1]))
+                                with self.assertRaises(StopIteration):
+                                    resumed.next_batch()
+                            prefill.close.assert_called_once()
+                    self.assertEqual(steps[0], steps[1])
+                    self.assertNotEqual(orders[0], orders[1])
+                    self.assertTrue(samples[0].isdisjoint(samples[1]))
+                    if pad:
+                        self.assertEqual(len(samples[0] | samples[1]), sum(range(2, 9)))
+
     def test_prefill_concurrency_uses_a_separate_reader(self):
         backend = self.backend
         backend.source = "s3://capture"
@@ -218,6 +304,74 @@ class TestWebshartParquetBackend(unittest.TestCase):
                     with self.assertRaisesRegex(TimeoutError, "shard fetch"):
                         metadata.read_window_batch(2, bucket, refs)
         self.assertEqual(positions[0]["window_revision"], positions[1]["window_revision"])
+
+    def test_seeded_decode_replacement_keeps_the_batch_on_its_data_rank(self):
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+        from simpletuner.helpers.metadata.preparation import TrainingPreparation
+        from simpletuner.helpers.multiaspect.sampler import MultiAspectSampler
+        from simpletuner.helpers.training.state_tracker import StateTracker
+        from simpletuner.simpletuner_sdk.server.services.cache_job_service import _CacheAcceleratorStub, _CacheArgsNamespace
+
+        good = self.rows[0]
+        bad = {**good, "image": {"bytes": b"broken", "path": None}}
+        self.rows = [bad, good, bad, good]
+        pq.write_table(pa.Table.from_pylist(self.rows), self.source / "part.parquet")
+        pq.write_table(pa.Table.from_pylist([good] * 4), self.source / "z.parquet")
+        self._publish_capture_manifest()
+        config = dict(
+            id="capture",
+            type="webshart",
+            source=str(self.source),
+            resolution=64,
+            resolution_type="pixel",
+            caption_strategy="webshart",
+            crop=False,
+            webshart=dict(format="parquet", manifest="capture.json", sampling_policy="shard_local", shuffle_seed=0),
+        )
+        args = _CacheArgsNamespace(
+            dict(
+                output_dir=str(self.root),
+                seed=19,
+                max_train_steps=20,
+                gradient_accumulation_steps=1,
+                delete_problematic_images=True,
+            )
+        )
+        samples = []
+        for rank in range(2):
+            accelerator = _CacheAcceleratorStub(device="cpu")
+            accelerator.num_processes, accelerator.process_index = 2, rank
+            with closing(DatasetRuntime.from_config(config, args, accelerator)) as runtime:
+                self.assertTrue(
+                    runtime.prepare_for_training(
+                        TrainingPreparation(online_text=True, ondemand_latents=True, requires_complete_view=False)
+                    )
+                )
+                metadata = runtime.metadata_backend
+                spec = metadata.epoch_spec(1, 2)
+                order = [rank, 1 - rank]
+                with (
+                    patch.object(runtime.data_backend, "seeded_shards", return_value=(order.__getitem__, None)),
+                    closing(runtime.open_epoch(spec)) as cursor,
+                    patch.object(StateTracker, "get_args", return_value=SimpleNamespace(model_family="hdit_plus")),
+                ):
+                    sampler = object.__new__(MultiAspectSampler)
+                    sampler.id, sampler.dataset_type = "capture", "image"
+                    sampler.dataset_runtime, sampler.epoch_provider = runtime, metadata
+                    sampler._open_training_cursor = lambda: cursor
+                    batches = sampler._iterate_native()
+                    refs = []
+                    for position in (1, 2):
+                        batch = next(batches)
+                        self.assertEqual(batch[0]["dataset_continuation"]["position"], position)
+                        for row in batch:
+                            ref = row["image_path"]
+                            self.assertEqual(runtime.data_backend.shard_of(ref), batch[0]["dataset_read_view"].partition)
+                            self.assertEqual(row["decoded_training_image"].size, (16, 8))
+                            refs.append(ref)
+                    samples.append(set(refs))
+        self.assertTrue(samples[0].isdisjoint(samples[1]))
+        self.assertEqual([len(s) for s in samples], [2, 4])
 
     def test_online_training_opens_one_shard_window_and_resumes_the_consumed_batch(self):
         from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
@@ -918,6 +1072,26 @@ class TestWebshartParquetBackend(unittest.TestCase):
                 self.assertEqual(provider.describe().view_revision, revision)
                 self.assertEqual(provider.get_metadata_batch(refs)[0]["target_size"], before[0]["target_size"])
 
+    def test_seeded_remote_ranks_prefill_separate_caches_and_workers_reopen_the_same_path(self):
+        import webshart
+
+        root = self.root / "shards"
+        with patch.object(webshart, "discover_dataset", return_value=self.backend.dataset):
+            for rank in range(2):
+                backend = WebshartDataBackend(
+                    SimpleNamespace(num_processes=2, process_index=rank),
+                    "capture",
+                    "s3://capture",
+                    format="parquet",
+                    cache_dir=str(self.root / "cache"),
+                    shard_cache_dir=str(root),
+                    shuffle_seed=0,
+                )
+                self.assertEqual(Path(backend.shard_cache_dir), root / f"rank-{rank}")
+                worker = WebshartDataBackend.from_instance_representation(backend.get_instance_representation())
+                self.assertEqual(worker.shard_cache_dir, backend.shard_cache_dir)
+                self.assertEqual(worker.shuffle_seed, 0)
+
     def test_remote_shard_cache_bounds_retained_readers(self):
         import webshart
 
@@ -1454,7 +1628,7 @@ class TestWebshartParquetBackend(unittest.TestCase):
             for shard in sorted(self.source.glob("*.parquet")):
                 entry = {
                     "key": shard.name,
-                    "num_rows": len(self.rows),
+                    "num_rows": pq.read_metadata(shard).num_rows,
                     "size_bytes": shard.stat().st_size,
                     "sha256": sha256(shard.read_bytes()).hexdigest(),
                 }

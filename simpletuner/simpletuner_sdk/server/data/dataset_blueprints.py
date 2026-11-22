@@ -938,6 +938,13 @@ _BLUEPRINTS: List[BackendBlueprint] = [
                     ],
                 },
                 {
+                    "id": "webshart.shuffle_seed",
+                    "label": "shard shuffle seed",
+                    "description": "Optional base seed for independent shard traversal on each data rank and epoch.",
+                    "type": "number",
+                    "advanced": True,
+                },
+                {
                     "id": "webshart.manifest",
                     "label": "capture manifest",
                     "description": "optional source-relative image capture descriptor, such as combined/dataset.json",
