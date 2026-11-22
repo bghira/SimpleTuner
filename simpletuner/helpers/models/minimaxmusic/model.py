@@ -1839,7 +1839,7 @@ class MiniMaxMusic(AudioModelFoundation):
                 )
             else:
                 targets = base_targets.repeat((candidate_count, 1))
-                per_candidate = blockwise_cross_entropy(logits, targets, block_size=block_size)
+                per_candidate = blockwise_cross_entropy(logits, targets, block_size=block_size, token_chunk_size=256)
                 candidate_losses = per_candidate.reshape(candidate_count, base_targets.shape[0])
             selected_loss, winner_indices = select_min_candidate_loss(candidate_losses)
             model_output["xm_winner_indices"] = winner_indices.detach()

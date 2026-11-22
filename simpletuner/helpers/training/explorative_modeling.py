@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Literal, Optional, cast
 
 import torch
+from torch.autograd.function import once_differentiable
 
 XMTrainingTarget = Literal["noise", "route"]
 XMSelectionScope = Literal["sample", "block"]
@@ -98,24 +99,64 @@ def select_winning_candidates(value: torch.Tensor, winner_indices: torch.Tensor,
     return candidate_view[gather_index, batch_positions]
 
 
+class _ChunkedCrossEntropy(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, logits, targets, ignore_index, chunk_size):
+        ctx.save_for_backward(logits, targets)
+        ctx.ignore_index = ignore_index
+        ctx.chunk_size = chunk_size
+        return torch.cat(
+            [
+                torch.nn.functional.cross_entropy(piece.float(), labels, ignore_index=ignore_index, reduction="none")
+                for piece, labels in zip(logits.split(chunk_size), targets.split(chunk_size), strict=True)
+            ]
+        )
+
+    @staticmethod
+    @once_differentiable
+    def backward(ctx, grad_loss):
+        logits, targets = ctx.saved_tensors
+        grad_logits = torch.empty_like(logits)
+        chunk_size = ctx.chunk_size
+        for piece, labels, grad_piece, output in zip(
+            logits.split(chunk_size),
+            targets.split(chunk_size),
+            grad_loss.split(chunk_size),
+            grad_logits.split(chunk_size),
+            strict=True,
+        ):
+            # Recompute one FP32 cross-entropy workspace at a time and write
+            # straight into the input gradient instead of retaining dense temporaries.
+            with torch.enable_grad():
+                piece = piece.detach().float().requires_grad_()
+                losses = torch.nn.functional.cross_entropy(piece, labels, ignore_index=ctx.ignore_index, reduction="none")
+            (gradient,) = torch.autograd.grad(losses, piece, grad_piece)
+            output.copy_(gradient)
+        return grad_logits, None, None, None
+
+
 def blockwise_cross_entropy(
     logits: torch.Tensor,
     targets: torch.Tensor,
     *,
     ignore_index: int = -100,
     block_size: int = 0,
+    token_chunk_size: int | None = None,
 ) -> torch.Tensor:
     if logits.ndim != 3:
         raise ValueError(f"Expected logits with shape [batch, seq, vocab], got {tuple(logits.shape)}.")
     if targets.shape != logits.shape[:2]:
         raise ValueError(f"Targets must have shape {tuple(logits.shape[:2])}, got {tuple(targets.shape)}.")
 
-    flat_loss = torch.nn.functional.cross_entropy(
-        logits.reshape(-1, logits.shape[-1]).float(),
-        targets.reshape(-1),
-        ignore_index=ignore_index,
-        reduction="none",
-    ).reshape(targets.shape)
+    flat_logits = logits.reshape(-1, logits.shape[-1])
+    flat_targets = targets.reshape(-1)
+    if token_chunk_size is not None and flat_logits.shape[0] > token_chunk_size:
+        flat_loss = _ChunkedCrossEntropy.apply(flat_logits, flat_targets, ignore_index, token_chunk_size)
+    else:
+        flat_loss = torch.nn.functional.cross_entropy(
+            flat_logits.float(), flat_targets, ignore_index=ignore_index, reduction="none"
+        )
+    flat_loss = flat_loss.reshape(targets.shape)
     valid = targets.ne(ignore_index)
     if block_size <= 0:
         denom = valid.sum(dim=1).clamp_min(1)
