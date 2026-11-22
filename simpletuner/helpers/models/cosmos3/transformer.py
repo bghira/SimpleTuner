@@ -508,10 +508,14 @@ class Cosmos3VLTextMoTDecoderLayer(nn.Module):
 
     def forward(
         self,
-        und_seq: torch.Tensor,
+        und_seq: torch.Tensor | None,
         gen_seq: torch.Tensor,
-        rotary_emb: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+        rotary_emb: tuple[torch.Tensor, ...],
+        *,
+        reasoner_kv: dict[str, torch.Tensor] | None = None,
+    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+        if reasoner_kv is not None:
+            return self.forward_gen_only(gen_seq, rotary_emb, reasoner_kv)
         if not self.load_reasoning_layers:
             raise RuntimeError("Cosmos3 generator-only layer cannot run the understanding pathway.")
         und_norm = self.input_layernorm(und_seq)
@@ -1073,14 +1077,14 @@ class Cosmos3OmniTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, Attentio
                         kv=layer_kv[layer_idx],
                     ):
                         self._stream_in_for_checkpoint_recompute(musubi_manager, idx, layer, x.device)
-                        return layer.forward_gen_only(x, rotary_gen, kv)
+                        return layer(None, x, rotary_gen, reasoner_kv=kv)
 
                     gen_seq = self._gradient_checkpointing_func(
                         checkpointed_gen_only,
                         gen_seq,
                     )
                 else:
-                    gen_seq = decoder_layer.forward_gen_only(gen_seq, rotary_gen, layer_kv[layer_idx])
+                    gen_seq = decoder_layer(None, gen_seq, rotary_gen, reasoner_kv=layer_kv[layer_idx])
                 capture_layers = getattr(hidden_states_buffer, "capture_layers", None)
                 if hidden_states_buffer is not None and (capture_layers is None or layer_idx in capture_layers):
                     hidden_states_buffer[f"layer_{layer_idx}"] = gen_seq[vision_mse_loss_indexes_local].unsqueeze(0)

@@ -1,3 +1,4 @@
+import contextlib
 import json
 import tempfile
 import unittest
@@ -7,6 +8,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 import torch
+from accelerate.utils.other import compile_regions
 from diffusers import AutoencoderKLWan
 from safetensors import safe_open
 from safetensors.torch import save_file
@@ -30,6 +32,7 @@ from simpletuner.helpers.models.cosmos3.reasoner import (
 from simpletuner.helpers.models.cosmos3.transformer import Cosmos3OmniTransformer, Cosmos3ReasonerMemoryState
 from simpletuner.helpers.training.collate import collate_fn
 from simpletuner.helpers.training.explorative_modeling import ExplorativeModelingConfig
+from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 
@@ -1205,6 +1208,88 @@ class Cosmos3ModelTests(unittest.TestCase):
         layer_kv = memory_state.layer_kv[0]
         self.assertIn("k_for_gen", layer_kv)
         self.assertEqual(layer_kv["k_for_gen"].shape, layer_kv["k"].shape)
+
+    def test_checkpointed_cached_reasoner_releases_musubi_slots_after_backward(self):
+        self._check_checkpointed_cached_reasoner_musubi_slots(regional_compile=False)
+
+    def test_regionally_compiled_cached_reasoner_releases_musubi_slots_after_backward(self):
+        self._check_checkpointed_cached_reasoner_musubi_slots(regional_compile=True)
+
+    def _check_checkpointed_cached_reasoner_musubi_slots(self, *, regional_compile):
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        transformer = Cosmos3OmniTransformer(
+            hidden_size=8,
+            intermediate_size=16,
+            head_dim=4,
+            num_attention_heads=2,
+            num_key_value_heads=1,
+            num_hidden_layers=4,
+            latent_channel=2,
+            patch_latent_dim=8,
+            vocab_size=32,
+            rope_axes_dim=[2, 1, 1],
+            load_reasoning_layers=False,
+            musubi_blocks_to_swap=3,
+        ).to(device)
+        transformer.requires_grad_(False)
+        for layer in transformer.layers:
+            layer.self_attn.add_q_proj.requires_grad_(True)
+        if regional_compile:
+            transformer.enable_gradient_checkpointing(gradient_checkpointing_func=offloaded_checkpoint)
+            transformer = compile_regions(transformer, backend="aot_eager")
+        else:
+            transformer.enable_gradient_checkpointing()
+
+        manager = transformer._musubi_block_swap
+        with contextlib.ExitStack() as stack:
+            if device.type == "cpu":
+                copier = stack.enter_context(mock.patch.object(manager, "_h2d_copier")).return_value
+                stack.enter_context(mock.patch.object(torch.cuda, "current_stream"))
+                copier.submit.side_effect = lambda _key, dst, src, _event: dst.copy_(src)
+
+                def activate(blocks, compute_device, grad_enabled):
+                    manager._ensure_lifecycle_hooks(list(blocks), compute_device, grad_enabled)
+                    for idx in manager.block_indices:
+                        manager._h2d_block_modes[id(blocks[idx])] = True
+                    return True
+
+                stream_in = manager.stream_in
+
+                def stream_in_with_host_ring(block, device, checkpointed=None):
+                    return stream_in(block, device)
+
+                stack.enter_context(mock.patch.object(manager, "activate", new=activate))
+                stack.enter_context(mock.patch.object(manager, "stream_in", new=stream_in_with_host_ring))
+
+            for _ in range(2):
+                prediction = transformer(
+                    input_ids=torch.tensor([1, 2], device=device),
+                    text_indexes=torch.tensor([0, 1], device=device),
+                    position_ids=torch.zeros(3, 3, dtype=torch.long, device=device),
+                    und_len=2,
+                    sequence_length=3,
+                    vision_tokens=[torch.randn(1, 2, 1, 2, 2, device=device)],
+                    vision_token_shapes=[(1, 1, 1)],
+                    vision_sequence_indexes=torch.tensor([2], device=device),
+                    vision_mse_loss_indexes=torch.tensor([2], device=device),
+                    vision_timesteps=torch.tensor([250.0], device=device),
+                    vision_noisy_frame_indexes=[torch.tensor([0], device=device)],
+                    reasoner_memory_state=Cosmos3ReasonerMemoryState(
+                        layer_kv=[
+                            {"k": torch.randn(2, 1, 4, device=device), "v": torch.randn(2, 1, 4, device=device)}
+                            for _ in transformer.layers
+                        ]
+                    ),
+                    return_dict=False,
+                )[0][0]
+                prediction.square().mean().backward()
+
+                self.assertEqual(len(manager._h2d_block_states), 3)
+                self.assertEqual(len(manager._h2d_ring_pools), 1)
+                self.assertTrue(all(state.slot is None for state in manager._h2d_block_states.values()))
+                for layer in transformer.layers:
+                    self.assertIsNotNone(layer.self_attn.add_q_proj.weight.grad)
+                transformer.zero_grad()
 
     def test_transformer_cached_reasoner_replay_matches_joint_forward(self):
         configs = [

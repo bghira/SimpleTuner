@@ -5,6 +5,7 @@ from typing import Any, Iterable, List, Optional
 
 import torch
 import torch.nn as nn
+from diffusers.utils.torch_utils import is_compiled_module
 
 __all__ = [
     "MusubiBlockSwapManager",
@@ -715,7 +716,9 @@ class MusubiBlockSwapManager:
             # block back in before its own backward work begins.
             for hook_module in block.modules():
                 self._backward_hooks.append(hook_module.register_full_backward_pre_hook(_make_pre_hook(block)))
-            self._backward_hooks.append(block.register_full_backward_hook(_make_post_hook(block)))
+            # OptimizedModule can bypass its own backward hooks.
+            hook_owner = block._orig_mod if is_compiled_module(block) else block
+            self._backward_hooks.append(hook_owner.register_full_backward_hook(_make_post_hook(block)))
 
     def _move_module(self, module: nn.Module, device: torch.device):
         if _module_on_device(module, device):
