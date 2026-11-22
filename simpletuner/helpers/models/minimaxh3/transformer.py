@@ -2337,12 +2337,10 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
                     self.gradient_checkpointing_interval,
                     self.gradient_checkpointing_segment_stride,
                 )
-                if musubi_offload_active and musubi_manager.is_managed_block(block_idx):
-                    musubi_manager.stream_in(
-                        block,
-                        hidden_states.device,
-                        checkpointed=checkpoint_this_block and not self.gradient_checkpointing_backend.endswith("-ffn"),
-                    )
+                managed_block = musubi_offload_active and musubi_manager.is_managed_block(block_idx)
+                checkpoint_ffn = self.gradient_checkpointing_backend.endswith("-ffn")
+                if managed_block and (not checkpoint_this_block or checkpoint_ffn):
+                    musubi_manager.stream_in(block, hidden_states.device, checkpointed=False)
 
                 if checkpoint_this_block:
                     if self.gradient_checkpointing_backend.startswith("unsloth"):
@@ -2352,7 +2350,7 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
                     else:
                         checkpoint_fn = torch.utils.checkpoint.checkpoint
 
-                    if self.gradient_checkpointing_backend.endswith("-ffn"):
+                    if checkpoint_ffn:
                         hidden_states = block(
                             hidden_states,
                             temb,
@@ -2374,7 +2372,13 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
                             checkpoint_block=block,
                             checkpoint_adaln_indices=current_adaln_indices,
                             checkpoint_rotary_emb=current_rotary_emb,
+                            checkpoint_managed_block=managed_block,
                         ):
+                            # A reference forward can reset the block's transport before backward.
+                            if checkpoint_managed_block:
+                                musubi_manager.stream_in(
+                                    checkpoint_block, checkpoint_hidden_states.device, checkpointed=True
+                                )
                             return checkpoint_block(
                                 checkpoint_hidden_states,
                                 temb,
@@ -2403,7 +2407,7 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
                         sparse_attention_layout=block_sparse_attention_layout,
                     )
 
-                if musubi_offload_active and musubi_manager.is_managed_block(block_idx):
+                if managed_block:
                     musubi_manager.stream_out(block)
 
                 if routing_now and route_ptr < len(routes) and block_idx == routes[route_ptr]["end_layer_idx"]:

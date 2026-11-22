@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import torch
 from torch import nn
-from torch.utils.checkpoint import checkpoint
+from torch.utils.checkpoint import checkpoint, set_checkpoint_early_stop
 
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager, _module_on_device, prepare_musubi_model_for_ddp
 
@@ -268,6 +268,33 @@ class MusubiBlockSwapTests(unittest.TestCase):
         self.assertTrue(all(block.adapter_down.weight.grad is not None for block in blocks))
         self.assertTrue(all(block.adapter_up.weight.grad is not None for block in blocks))
         optimizer.step()
+
+    def test_checkpointed_non_ring_defers_offload_until_backward(self):
+        device = torch.device("cpu")
+        for early_stop in (True, False):
+            with self.subTest(early_stop=early_stop):
+                block = nn.Linear(8, 8)
+                block.weight.requires_grad_(False)
+                manager = MusubiBlockSwapManager([0], device, logging.getLogger(__name__))
+                manager._ensure_lifecycle_hooks([block], device, grad_enabled=True)
+                value = torch.randn(2, 8, requires_grad=True)
+                with patch.object(manager, "stream_out", wraps=manager.stream_out) as offload:
+                    manager.stream_in(block, device, checkpointed=True)
+                    with set_checkpoint_early_stop(early_stop):
+                        output = checkpoint(block, value, use_reentrant=False)
+                    offload.assert_not_called()
+                    manager.stream_out(block)
+                    offload.assert_called_once_with(block)
+
+                    output.square().mean().backward()
+                    self.assertIsNotNone(value.grad)
+                    self.assertEqual(offload.call_count, 2)
+                    offload.assert_called_with(block)
+
+                    offload.reset_mock()
+                    manager.stream_in(block, device, checkpointed=False)
+                    block(value)
+                    offload.assert_called_once_with(block)
 
     @unittest.skipUnless(torch.cuda.is_available(), "CUDA is required for the H2D ring test")
     def test_checkpointed_blocks_reuse_h2d_ring_storage(self):

@@ -1433,6 +1433,26 @@ class MiniMaxH3Tests(unittest.TestCase):
             ],
         )
 
+    def test_h3_checkpoint_restores_musubi_mode_after_reference_forward(self):
+        model = tiny_h3_transformer(num_layers=3)
+        model.train()
+        model.gradient_checkpointing = True
+        model.set_gradient_checkpointing_backend("torch")
+        manager = FakeMusubiManager(managed_block_idx=1)
+        model._musubi_block_swap = manager
+        block = model.transformer_blocks[1]
+        inputs = tiny_inputs()
+
+        prediction = model(**inputs)
+        with torch.no_grad():
+            model(**inputs)
+        prediction.sample.square().mean().backward()
+
+        self.assertEqual(
+            [call[3] for call in manager.calls if call[:2] == ("stream_in", id(block))],
+            [True, False, True],
+        )
+
     def test_acceleration_presets_include_h3_ramtorch_and_musubi_block_swap(self):
         presets = MiniMaxH3.get_acceleration_presets()
         ramtorch = next(preset for preset in presets if preset.backend is AccelerationBackend.RAMTORCH)
