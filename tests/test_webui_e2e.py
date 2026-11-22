@@ -96,6 +96,34 @@ class _TrainerPageMixin:
         return result.get("names") or []
 
 
+class ResponsiveTrainerLayoutTestCase(WebUITestCase):
+    def test_sidebar_space_on_window_resize(self):
+        def scenario(driver, _browser):
+            driver.set_window_size(1200, 900)
+            driver.get(f"{self.base_url}/web")
+            sidebar = WebDriverWait(driver, 15).until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".sidebar")))
+            for width in (1200, 1024, 1000, 768, 1025):
+                with self.subTest(width=width):
+                    driver.set_window_size(width, 900)
+                    sidebar_visible = width > 1024
+                    WebDriverWait(driver, 5).until(
+                        lambda d: d.execute_script(
+                            "const r = arguments[0].getBoundingClientRect();"
+                            "return arguments[1] ? r.left === 0 : r.right <= 0;",
+                            sidebar,
+                            sidebar_visible,
+                        )
+                    )
+                    left = sidebar.rect["width"] if sidebar_visible else 0
+                    right = driver.execute_script("return document.documentElement.clientWidth")
+                    for selector in (".content-wrapper", ".topbar", ".event-dock-shell"):
+                        rect = driver.find_element(By.CSS_SELECTOR, selector).rect
+                        self.assertAlmostEqual(rect["x"], left, delta=1, msg=selector)
+                        self.assertAlmostEqual(rect["x"] + rect["width"], right, delta=1, msg=selector)
+
+        self.for_each_browser("sidebar_space_on_resize", scenario)
+
+
 class SplitServerRoutingTestCase(_TrainerPageMixin, WebUITestCase):
     BROWSERS = ("chrome",)
 

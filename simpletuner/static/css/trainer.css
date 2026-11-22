@@ -107,6 +107,7 @@ body {
 
 /* Dashboard Layout */
 .dashboard-wrapper {
+    --sidebar-offset: var(--layout-sidebar-width);
     display: flex;
     min-height: 100vh;
     width: 100%;
@@ -262,7 +263,8 @@ body {
 /* Main content area */
 .main-content {
     flex: 1;
-    margin-left: var(--layout-sidebar-width);
+    margin-left: var(--sidebar-offset);
+    min-width: 0;
     display: flex;
     flex-direction: column;
     min-height: 100vh;
@@ -283,7 +285,7 @@ body {
     gap: var(--spacing-md);
     position: fixed;
     top: 0;
-    left: var(--layout-sidebar-width);
+    left: var(--sidebar-offset);
     right: 0;
     z-index: 100;
     min-height: 3.25rem;
@@ -698,6 +700,10 @@ body {
 
 /* Responsive */
 @media (max-width: 1024px) {
+    .dashboard-wrapper {
+        --sidebar-offset: 0px;
+    }
+
     .sidebar {
         transform: translateX(-100%);
         box-shadow: var(--shadow-xl);
@@ -719,14 +725,9 @@ body {
         display: block;
     }
 
-    .main-content {
-        margin-left: 0;
-    }
-
     /* Topbar: revert to sticky on tablet/mobile (sidebar is hidden) */
     .topbar {
         position: sticky;
-        left: 0;
         gap: var(--spacing-md);
     }
 
@@ -910,11 +911,6 @@ body {
     }
 
     /* Sidebar improvements for small screens */
-    .sidebar {
-        width: 85vw;
-        max-width: 300px;
-    }
-
     .sidebar-header {
         padding: var(--spacing-lg) var(--spacing-md);
     }
@@ -1613,11 +1609,6 @@ body {
     display: none !important; /* Hide old action buttons area */
 }
 
-/* More compact sidebar */
-.sidebar {
-    width: 240px !important; /* Was 280px */
-}
-
 .sidebar-header {
     padding: var(--spacing-lg-xl) var(--spacing-lg) !important; /* Was 2rem 1.5rem */
 }
@@ -1647,11 +1638,6 @@ body {
 .nav-section-title {
     padding: 0 1rem !important; /* Was 0 1.5rem */
     margin-bottom: var(--spacing-sm) !important; /* Was 0.75rem */
-}
-
-/* Adjust main content for smaller sidebar */
-.main-content {
-    margin-left: 240px !important; /* Was 280px */
 }
 
 /* Compact header */
@@ -1764,10 +1750,6 @@ body {
         transform: translateX(0);
     }
 
-    .main-content {
-        margin-left: 0 !important;
-    }
-
     .content-body {
         padding: var(--spacing-lg) !important;
     }
@@ -1802,18 +1784,7 @@ optgroup option {
     padding: var(--spacing-md) var(--spacing-xl) !important;
     background: var(--sidebar-bg) !important;
     border-bottom: 1px solid var(--glass-border) !important;
-    position: fixed;
-    top: 0;
-    left: var(--layout-sidebar-width);
-    right: 0;
     z-index: 999;
-}
-
-@media (max-width: 1024px) {
-    .topbar {
-        position: sticky;
-        left: 0;
-    }
 }
 
 .config-selector {
