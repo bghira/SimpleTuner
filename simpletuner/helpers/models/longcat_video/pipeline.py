@@ -215,6 +215,37 @@ class LongCatLoraLoaderMixin(LoraBaseMixin):
             hotswap=hotswap,
         )
 
+    @classmethod
+    def save_lora_weights(
+        cls,
+        save_directory,
+        transformer_lora_layers=None,
+        is_main_process: bool = True,
+        weight_name: Optional[str] = None,
+        save_function: Optional[Callable] = None,
+        safe_serialization: bool = True,
+        transformer_lora_adapter_metadata: Optional[dict] = None,
+        *,
+        dit_lora_layers=None,
+        dit_lora_adapter_metadata: Optional[dict] = None,
+    ):
+        # Checkpoints use LongCat's pretrained subfolder name for the transformer.
+        if transformer_lora_layers is None:
+            transformer_lora_layers = dit_lora_layers
+            transformer_lora_adapter_metadata = dit_lora_adapter_metadata
+        if not transformer_lora_layers:
+            raise ValueError("LongCat-Video LoRA export requires transformer weights.")
+
+        cls._save_lora_weights(
+            save_directory=save_directory,
+            lora_layers={cls.transformer_name: transformer_lora_layers},
+            lora_metadata={cls.transformer_name: transformer_lora_adapter_metadata},
+            is_main_process=is_main_process,
+            weight_name=weight_name,
+            save_function=save_function,
+            safe_serialization=safe_serialization,
+        )
+
     def fuse_lora(self, lora_scale: float = 1.0, fuse_unet: bool = True, fuse_text_encoder: bool = True):
         scale_lora_layers(self.transformer, lora_scale)
         super().fuse_lora(components=[self.transformer_name])
