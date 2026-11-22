@@ -447,6 +447,7 @@ class MusubiBlockSwapManager:
         self._backward_hooks: List[torch.utils.hooks.RemovableHandle] = []
         self._hooked_block_ids: tuple[int, ...] = ()
         self._backward_hook_device: Optional[torch.device] = None
+        self._checkpointed_block_ids: set[int] = set()
         self._h2d_block_modes: dict[int, bool] = {}
         self._h2d_block_states: dict[int, _H2DBlockState] = {}
         self._h2d_ring_pools: dict[tuple, List[_H2DRingSlot]] = {}
@@ -511,6 +512,10 @@ class MusubiBlockSwapManager:
     def stream_in(self, block: nn.Module, device: torch.device, checkpointed: Optional[bool] = None):
         block_id = id(block)
         if checkpointed is not None:
+            if checkpointed:
+                self._checkpointed_block_ids.add(block_id)
+            else:
+                self._checkpointed_block_ids.discard(block_id)
             self._h2d_block_modes[block_id] = bool(
                 checkpointed
                 and device.type == "cuda"
@@ -685,7 +690,10 @@ class MusubiBlockSwapManager:
 
             def _make_forward_hook(owner_block):
                 def _forward_hook(_module, _args, output):
-                    if not self._h2d_block_modes.get(id(owner_block), False):
+                    # The caller offloads the initial checkpointed forward. During replay, the
+                    # backward hook must keep saved parameter references live through metadata checks.
+                    block_id = id(owner_block)
+                    if block_id not in self._checkpointed_block_ids and not self._h2d_block_modes.get(block_id, False):
                         self.stream_out(owner_block)
                     return output
 
