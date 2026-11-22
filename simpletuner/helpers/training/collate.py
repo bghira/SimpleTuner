@@ -308,6 +308,9 @@ def _training_text_request(prompt_entry, text_embed_cache, model=None):
         use_dropout_sentinel = getattr(cache_model, "use_text_cache_dropout_sentinel", lambda: True)()
         if text_embed_cache._requires_path_based_keys and use_dropout_sentinel:
             prompt_entry = {**prompt_entry, "key": "__caption_dropout__"}
+            if not text_embed_cache.text_cache_ondemand:
+                # Precompute writes the global sentinel without sample context.
+                prompt_entry["metadata"] = {}
         debug_log(
             f"Hashing caption '{prompt_value}' on text embed cache: {text_embed_cache.id} using data backend {text_embed_cache.data_backend.id}"
         )

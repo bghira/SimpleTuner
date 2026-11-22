@@ -62,6 +62,39 @@ class LongCatImageModelTests(unittest.TestCase):
 
         self.assertIsNone(pipeline.image_encoder)
 
+    def test_caption_dropout_reads_precomputed_embedding_with_reference_context(self):
+        from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
+        from simpletuner.helpers.data_backend.local import LocalDataBackend
+        from simpletuner.helpers.training.collate import compute_prompt_embeddings
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        self.model.config.model_flavour = "edit"
+        self.model._is_edit_flavour = lambda: True
+        expected = torch.ones(2, 3)
+        metadata = {"image_paths": ["reference/25.jpg"], "data_backend_ids": ["canny"]}
+        request = {"prompt": "", "key": "training:25.jpg", "metadata": metadata}
+        with TemporaryDirectory() as directory:
+            cache = TextEmbeddingCache(
+                id="text",
+                data_backend=LocalDataBackend(self.model.accelerator, "text"),
+                text_encoders=[],
+                tokenizers=[],
+                accelerator=self.model.accelerator,
+                cache_dir=directory,
+                model_type="longcat_image",
+                model=self.model,
+            )
+            try:
+                with patch.object(self.model, "encode_dropout_caption", return_value={"prompt_embeds": expected}):
+                    cache.encode_dropout_caption()
+                    cache.wait_for_pending_writes()
+                with patch.object(StateTracker, "get_default_text_embed_cache", return_value=cache):
+                    result = compute_prompt_embeddings([request], cache, self.model)
+                torch.testing.assert_close(result["prompt_embeds"], expected.unsqueeze(0))
+            finally:
+                cache.close()
+        self.assertEqual(request["metadata"], metadata)
+
     def test_text_precompute_reads_generated_canny_for_target_caption(self):
         from accelerate import Accelerator
 
