@@ -60,7 +60,7 @@ from simpletuner.helpers.data_backend.runtime.schedule import (
 from simpletuner.helpers.distillation.composition import resolve_configured_distiller_requirement_profile
 from simpletuner.helpers.distillation.requirements import EMPTY_PROFILE, DistillerRequirementProfile
 from simpletuner.helpers.models.registry import ModelRegistry
-from simpletuner.helpers.musubi_block_swap import prepare_musubi_model_for_ddp
+from simpletuner.helpers.musubi_block_swap import move_musubi_trainable_parameters, prepare_musubi_model_for_ddp
 from simpletuner.helpers.publishing import PublishingManager
 from simpletuner.helpers.publishing.huggingface import HubManager
 from simpletuner.helpers.publishing.providers.s3 import S3PublishingProvider
@@ -5532,11 +5532,12 @@ class Trainer:
                     child.to(target_device)
                 torch.cuda.empty_cache()
 
-        # Move non-managed blocks to GPU, keep managed blocks on CPU
+        # Keep frozen weights of managed blocks on the offload device.
         for idx, block in enumerate(all_blocks):
             if idx in managed_indices:
                 if block_swap_manager is not None:
                     block_swap_manager.stream_out(block)
+                    move_musubi_trainable_parameters(block, target_device)
                 else:
                     block.to("cpu")
                 logger.debug("Block %d: keeping on CPU (managed by block swap)", idx)

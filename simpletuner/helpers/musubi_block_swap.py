@@ -9,6 +9,7 @@ import torch.nn as nn
 __all__ = [
     "MusubiBlockSwapManager",
     "apply_musubi_pretrained_defaults",
+    "move_musubi_trainable_parameters",
     "prepare_musubi_model_for_ddp",
 ]
 
@@ -207,8 +208,8 @@ def _move_module_without_swapping_quantized_params(module: nn.Module, device: to
             module._buffers[key] = buffer.to(device, non_blocking=True)
 
 
-def prepare_musubi_model_for_ddp(module: nn.Module, device: torch.device) -> tuple[int, int]:
-    """Move trainable params to the rank device and exclude frozen params plus buffers from DDP."""
+def move_musubi_trainable_parameters(module: nn.Module, device: torch.device) -> int:
+    """Place trainable parameters on the compute device while leaving frozen payloads in place."""
     target_device = torch.device(device)
     moved_trainable = 0
     for param in module.parameters():
@@ -219,7 +220,12 @@ def prepare_musubi_model_for_ddp(module: nn.Module, device: torch.device) -> tup
         if param.grad is not None:
             param.grad = param.grad.to(target_device, non_blocking=True)
         moved_trainable += 1
+    return moved_trainable
 
+
+def prepare_musubi_model_for_ddp(module: nn.Module, device: torch.device) -> tuple[int, int]:
+    """Move trainable params to the rank device and exclude frozen params plus buffers from DDP."""
+    moved_trainable = move_musubi_trainable_parameters(module, device)
     ignored_names = {
         name
         for name, param in module.named_parameters()

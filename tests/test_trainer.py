@@ -3,6 +3,7 @@
 import importlib.machinery as machinery
 import importlib.util as _importlib_util
 import json
+import logging
 import os
 import shutil
 import sys
@@ -913,6 +914,39 @@ class TestTrainer(unittest.TestCase):
             [call(model.blocks[0], torch.device("cpu")), call(model.blocks[1], torch.device("cpu"))],
         )
         model._musubi_block_swap.stream_out.assert_called_once_with(model.blocks[2])
+
+    def test_musubi_placement_moves_lora_weights_without_loading_frozen_block(self):
+        from peft import LoraConfig, get_peft_model
+
+        from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
+
+        if torch.cuda.is_available():
+            device = torch.device("cuda", torch.cuda.current_device())
+        elif torch.backends.mps.is_available():
+            device = torch.device("mps", 0)
+        else:
+            self.skipTest("An accelerator is required to test block-swap placement.")
+
+        model = torch.nn.Module()
+        model.blocks = torch.nn.ModuleList(
+            [torch.nn.ModuleDict({"to_q": torch.nn.Linear(4, 4, bias=False)}) for _ in range(2)]
+        )
+        model._musubi_block_swap = MusubiBlockSwapManager([1], torch.device("cpu"), logging.getLogger(__name__))
+        peft_model = get_peft_model(model, LoraConfig(r=2, target_modules=["to_q"]))
+        projection = model.blocks[1]["to_q"]
+        lora_weights = (projection.lora_A["default"].weight, projection.lora_B["default"].weight)
+        self.assertTrue(all(weight.device.type == "cpu" for weight in lora_weights))
+
+        trainer = object.__new__(Trainer)
+        trainer.accelerator = SimpleNamespace(device=device)
+        trainer.config = SimpleNamespace(musubi_blocks_to_swap=1)
+        trainer._move_model_with_block_swap(peft_model)
+
+        self.assertEqual(projection.base_layer.weight.device.type, "cpu")
+        self.assertIs(projection.lora_A["default"].weight, lora_weights[0])
+        self.assertIs(projection.lora_B["default"].weight, lora_weights[1])
+        for weight in lora_weights:
+            self.assertEqual(weight.device, device)
 
     def test_init_text_encoder_disables_fsdp_cpu_ram_efficient_loading_during_load(self):
         trainer = object.__new__(Trainer)
