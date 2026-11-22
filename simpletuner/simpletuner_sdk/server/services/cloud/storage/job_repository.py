@@ -710,7 +710,7 @@ class JobRepository(BaseSQLiteStore):
                     """
                     SELECT * FROM jobs
                     WHERE job_type = 'local' AND status IN ('pending', 'queued')
-                      AND COALESCE(provider, '') != 'kubeflow'
+                      AND COALESCE(provider, '') NOT IN ('kubeflow', 'worker')
                     ORDER BY priority DESC, queued_at ASC
                     """
                 )
@@ -732,7 +732,7 @@ class JobRepository(BaseSQLiteStore):
                     """
                     SELECT * FROM jobs
                     WHERE job_type = 'local' AND status = 'running'
-                      AND COALESCE(provider, '') != 'kubeflow'
+                      AND COALESCE(provider, '') NOT IN ('kubeflow', 'worker')
                     ORDER BY started_at ASC
                     """
                 )
@@ -754,6 +754,7 @@ class JobRepository(BaseSQLiteStore):
                     """
                     SELECT allocated_gpus FROM jobs
                     WHERE job_type = 'local' AND status = 'running' AND allocated_gpus IS NOT NULL
+                      AND COALESCE(provider, '') NOT IN ('kubeflow', 'worker')
                     """
                 )
                 allocated: set = set()
@@ -784,7 +785,7 @@ class JobRepository(BaseSQLiteStore):
                     """
                     SELECT COUNT(*) as cnt FROM jobs
                     WHERE job_type = 'local' AND status = 'running'
-                      AND COALESCE(provider, '') != 'kubeflow'
+                      AND COALESCE(provider, '') NOT IN ('kubeflow', 'worker')
                     """
                 )
                 return cursor.fetchone()["cnt"]
