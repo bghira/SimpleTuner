@@ -12,6 +12,7 @@ from transformers.modeling_outputs import BaseModelOutputWithPast
 
 from simpletuner.helpers.acceleration import AccelerationBackend
 from simpletuner.helpers.models.common import ImageModelFoundation, PipelineTypes
+from simpletuner.helpers.models.mageflow import transformer as mageflow_transformer
 from simpletuner.helpers.models.mageflow.pipeline import MageFlowPipeline, _load_scheduler, _mageflow_velocity
 from simpletuner.helpers.models.mageflow.pipeline_edit import MageFlowEditPipeline
 from simpletuner.helpers.models.mageflow.transformer import MageFlowTransformer2DModel
@@ -27,7 +28,7 @@ from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.training.explorative_modeling import ExplorativeModelingConfig
 
 
-def _tiny_transformer(depth=1, enable_time_sign_embed=False):
+def _tiny_transformer(depth=1, enable_time_sign_embed=False, musubi_blocks_to_swap=0):
     return MageFlowTransformer2DModel(
         in_channels=4,
         out_channels=4,
@@ -38,6 +39,7 @@ def _tiny_transformer(depth=1, enable_time_sign_embed=False):
         context_in_dim=8,
         attn_type="sdpa",
         enable_time_sign_embed=enable_time_sign_embed,
+        musubi_blocks_to_swap=musubi_blocks_to_swap,
     )
 
 
@@ -461,6 +463,81 @@ class MageFlowModelTests(unittest.TestCase):
         self.assertEqual(output.shape, (1, 4, 4))
         self.assertEqual(len(checkpoint_calls), 1)
         self.assertEqual(checkpoint_calls[0], {"use_reentrant": False})
+
+    def test_checkpointed_musubi_block_leaves_modulation_placement_to_manager(self):
+        model = _tiny_transformer(depth=2, musubi_blocks_to_swap=1).train()
+        model.enable_gradient_checkpointing()
+        unmanaged_block, managed_block = model.transformer_blocks
+        manager = model._musubi_block_swap
+
+        with (
+            patch.object(manager, "activate", return_value=True),
+            patch.object(manager, "stream_in") as stream_in,
+            patch.object(manager, "stream_out") as stream_out,
+            patch.object(
+                mageflow_transformer, "_ensure_module_device", wraps=mageflow_transformer._ensure_module_device
+            ) as ensure_device,
+        ):
+            output = model(
+                img=torch.randn(1, 4, 4),
+                txt=torch.randn(1, 3, 8),
+                timesteps=torch.tensor([0.5]),
+                img_shapes=[[(1, 2, 2)]],
+                img_cu_seqlens=torch.tensor([0, 4], dtype=torch.int32),
+                txt_cu_seqlens=torch.tensor([0, 3], dtype=torch.int32),
+            )
+
+        self.assertEqual(output.shape, (1, 4, 4))
+        stream_in.assert_called_once_with(managed_block, torch.device("cpu"), checkpointed=True)
+        stream_out.assert_called_once_with(managed_block)
+        placed_modules = [call.args[0] for call in ensure_device.call_args_list]
+        self.assertIn(unmanaged_block.img_mod, placed_modules)
+        self.assertIn(unmanaged_block.txt_mod, placed_modules)
+        self.assertNotIn(managed_block.img_mod, placed_modules)
+        self.assertNotIn(managed_block.txt_mod, placed_modules)
+
+    def test_checkpointed_musubi_blocks_release_ring_slots_after_backward(self):
+        model = _tiny_transformer(depth=4, musubi_blocks_to_swap=3).train()
+        model.requires_grad_(False)
+        for block in model.transformer_blocks:
+            block.img_mod.requires_grad_(True)
+        model.enable_gradient_checkpointing()
+        manager = model._musubi_block_swap
+
+        def activate(blocks, device, grad_enabled):
+            manager._ensure_lifecycle_hooks(list(blocks), device, grad_enabled)
+            for index in manager.block_indices:
+                manager._h2d_block_modes[id(blocks[index])] = True
+            return True
+
+        stream_in = manager.stream_in
+
+        def stream_in_with_host_ring(block, device, checkpointed=None):
+            return stream_in(block, device)
+
+        with (
+            patch.object(manager, "activate", new=activate),
+            patch.object(manager, "stream_in", new=stream_in_with_host_ring),
+            patch.object(manager, "_h2d_copier") as copier,
+            patch.object(torch.cuda, "current_stream"),
+        ):
+            copier.return_value.submit.side_effect = lambda _key, dst, src, _event: dst.copy_(src)
+            output = model(
+                img=torch.randn(1, 4, 4),
+                txt=torch.randn(1, 3, 8),
+                timesteps=torch.tensor([0.5]),
+                img_shapes=[[(1, 2, 2)]],
+                img_cu_seqlens=torch.tensor([0, 4], dtype=torch.int32),
+                txt_cu_seqlens=torch.tensor([0, 3], dtype=torch.int32),
+            )
+            output.square().mean().backward()
+
+        self.assertEqual(len(manager._h2d_block_states), 3)
+        self.assertEqual(len(manager._h2d_ring_pools), 1)
+        self.assertTrue(all(state.slot is None for state in manager._h2d_block_states.values()))
+        self.assertTrue(
+            all(parameter.grad is not None for block in model.transformer_blocks for parameter in block.img_mod.parameters())
+        )
 
     def test_model_level_gradient_checkpointing_reaches_wrapped_transformer(self):
         model_cls = _mageflow_class()

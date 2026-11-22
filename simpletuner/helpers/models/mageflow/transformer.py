@@ -310,25 +310,28 @@ class MageFlowTransformer2DModel(MageFlow, ModelMixin, ConfigMixin, PeftAdapterM
                 )
                 continue
 
-            _ensure_module_device(getattr(block, "img_mod", None), img.device)
-            _ensure_module_device(getattr(block, "txt_mod", None), img.device)
+            musubi_managed = musubi_offload_active and musubi_manager.is_managed_block(index_block)
             checkpoint_this_block = (
                 index_block not in skip_layers_set
                 and self.training
                 and self.checkpoint
                 and self.gradient_checkpointing_scope == "layer"
             )
-            if musubi_offload_active and musubi_manager.is_managed_block(index_block):
+            if musubi_managed:
                 musubi_manager.stream_in(block, img.device, checkpointed=checkpoint_this_block)
+            else:
+                _ensure_module_device(getattr(block, "img_mod", None), img.device)
+                _ensure_module_device(getattr(block, "txt_mod", None), img.device)
+            # Musubi's full backward hook tracks gradients of positional inputs.
             if index_block in skip_layers_set:
                 pass
             elif self.training and self.checkpoint and self.gradient_checkpointing_scope == "ffn":
                 txt, img = block(
-                    hidden_states=img,
-                    encoder_hidden_states=txt,
+                    img,
+                    txt,
+                    temb,
                     txt_cu_lens=txt_cu_seqlens,
                     img_cu_lens=img_cu_seqlens,
-                    temb=temb,
                     image_rotary_emb=ms_pe,
                     joint_attention_kwargs=attention_kwargs,
                     checkpoint_ffn=True,
@@ -347,11 +350,11 @@ class MageFlowTransformer2DModel(MageFlow, ModelMixin, ConfigMixin, PeftAdapterM
                     checkpoint_block=block,
                 ):
                     return checkpoint_block(
-                        hidden_states=checkpoint_img,
-                        encoder_hidden_states=checkpoint_txt,
+                        checkpoint_img,
+                        checkpoint_txt,
+                        checkpoint_temb,
                         txt_cu_lens=checkpoint_txt_cu_seqlens,
                         img_cu_lens=checkpoint_img_cu_seqlens,
-                        temb=checkpoint_temb,
                         image_rotary_emb=checkpoint_pe,
                         joint_attention_kwargs=attention_kwargs,
                         offload_attention=self.gradient_checkpointing_offload_attention,
@@ -369,16 +372,16 @@ class MageFlowTransformer2DModel(MageFlow, ModelMixin, ConfigMixin, PeftAdapterM
                 )
             else:
                 txt, img = block(
-                    hidden_states=img,
-                    encoder_hidden_states=txt,
+                    img,
+                    txt,
+                    temb,
                     txt_cu_lens=txt_cu_seqlens,
                     img_cu_lens=img_cu_seqlens,
-                    temb=temb,
                     image_rotary_emb=ms_pe,
                     joint_attention_kwargs=attention_kwargs,
                     offload_attention=self.gradient_checkpointing_offload_attention,
                 )
-            if musubi_offload_active and musubi_manager.is_managed_block(index_block):
+            if musubi_managed:
                 musubi_manager.stream_out(block)
             _store_hidden_state(hidden_states_buffer, f"layer_{index_block}", img)
 
