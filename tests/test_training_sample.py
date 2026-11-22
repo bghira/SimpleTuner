@@ -1,10 +1,11 @@
 import os
+import struct
 import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
 import numpy as np
-from PIL import Image
+from PIL import ExifTags, Image, ImageOps
 
 from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 from simpletuner.helpers.image_manipulation.batched_training_samples import BatchedTrainingSamples
@@ -124,6 +125,29 @@ class TestTrainingSample(unittest.TestCase):
                 expected = np.asarray(image)[..., 11:75, 27:91, :]
                 np.testing.assert_array_equal(np.asarray(prepared.image), expected)
                 self.assertEqual(prepared.crop_coordinates, (11, 27))
+
+    def test_orientation_with_malformed_gps_latitude(self):
+        pixels = np.arange(18, dtype=np.uint8).reshape(2, 3, 3)
+        for orientation in range(2, 9):
+            with self.subTest(orientation=orientation):
+                image = Image.fromarray(pixels)
+                valid = Image.Exif()
+                valid[ExifTags.Base.Orientation] = orientation
+                image.info["exif"] = valid.tobytes()
+                expected = ImageOps.exif_transpose(image)
+
+                # Little-endian TIFF with a GPS subdirectory storing latitude as ASCII instead of rationals.
+                image.info["exif"] = b"Exif\x00\x00" + b"".join(
+                    (
+                        struct.pack("<2sHIH", b"II", 42, 8, 2),
+                        struct.pack("<HHIHH", ExifTags.Base.Orientation, 3, 1, orientation, 0),
+                        struct.pack("<HHIII", ExifTags.IFD.GPSInfo, 4, 1, 38, 0),
+                        struct.pack("<HHHI4sI", 1, ExifTags.GPS.GPSLatitude, 2, 4, b"abc\x00", 0),
+                    )
+                )
+                sample = TrainingSample(image, self.data_backend_id, {"original_size": image.size})
+                np.testing.assert_array_equal(np.asarray(sample.image), np.asarray(expected))
+                self.assertNotIn(ExifTags.Base.Orientation, sample.image.getexif())
 
     def test_image_initialization(self):
         """Test that the image is correctly initialized and converted."""

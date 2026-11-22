@@ -12,7 +12,7 @@ from math import sqrt
 import numpy as np
 import trainingsample as tsr
 from diffusers.utils.export_utils import export_to_gif
-from PIL import Image
+from PIL import ExifTags, Image
 from PIL.ImageOps import exif_transpose
 from tqdm import tqdm
 
@@ -709,7 +709,20 @@ class TrainingSample:
         if self.image is not None and hasattr(self.image, "convert"):
             # Convert image to RGB to remove any alpha channel and apply EXIF data transformations
             self.image = self.image.convert("RGB")
-            self.image = exif_transpose(self.image)
+            try:
+                self.image = exif_transpose(self.image)
+            except TypeError as error:
+                # Pillow can read the orientation but fail to write an unrelated rational tag stored as text.
+                if str(error) != "bad operand type for abs(): 'str'":
+                    raise
+                orientation = self.image.getexif().get(ExifTags.Base.Orientation)
+                if orientation not in range(2, 9):
+                    raise
+                exif = Image.Exif()
+                exif[ExifTags.Base.Orientation] = orientation
+                self.image.info["exif"] = exif.tobytes()
+                self.image = exif_transpose(self.image)
+                logger.warning("Dropped malformed EXIF metadata while orienting %s.", self._image_path)
         return self
 
     def _apply_prepared_crop(self):
