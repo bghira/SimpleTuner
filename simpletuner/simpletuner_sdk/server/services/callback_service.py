@@ -474,11 +474,37 @@ class CallbackService:
             status = status or str(event.message or event.title or "running").lower()
         elif event.type == EventType.TRAINING_PROGRESS or (event.type == EventType.NOTIFICATION and event.progress):
             status = "running"
-        elif event.type in {EventType.CHECKPOINT, EventType.VALIDATION}:
+        elif event.type in {EventType.CHECKPOINT, EventType.VALIDATION, EventType.VALIDATION_IMAGE}:
             status = "running"
         else:
             return None
         return status
+
+    @staticmethod
+    def _update_validation(run: dict, event: CallbackEvent, training_resumed: bool, terminal: bool) -> None:
+        timestamp = event.timestamp.timestamp()
+        if not terminal and timestamp < run.get("validation_at", 0):
+            return
+        if event.stage and event.stage.key == "validation":
+            active = event.stage.status in {StageStatus.PENDING, StageStatus.RUNNING}
+            progress = event.stage.progress or ProgressData()
+        elif event.type == EventType.VALIDATION_IMAGE:
+            active = True
+            # Older workers send the sampling total only in the displayed step label.
+            total = event.data.get("total_steps")
+            if total is None:
+                total = str(event.data.get("step_label", "")).partition("/")[2]
+            progress = ProgressData(current=parse_number(event.data.get("step")), total=parse_number(total))
+        elif (terminal or training_resumed) and run.get("validation") is not None:
+            active = False
+        else:
+            return
+        run["validation_at"] = timestamp
+        run["validation"] = (
+            {"current": progress.current, "total": progress.total, "percent": progress.normalized_percent}
+            if active
+            else None
+        )
 
     def _update_training_state(
         self,
@@ -511,6 +537,7 @@ class CallbackService:
             status = self._job_status.get(job_id, status)
 
         progress = run.get("progress")
+        previous_step = progress["step"] if progress else -1
         if (
             event.progress
             and not event.stage
@@ -519,6 +546,7 @@ class CallbackService:
             progress = self._merge_progress_state(progress, event.progress, event.data)
             run["progress"] = progress
         terminal = status in TERMINAL_STATUSES
+        self._update_validation(run, event, progress is not None and progress["step"] > previous_step, terminal)
         failed = terminal and status not in {"completed", "success"}
         if terminal:
             run["terminal_index"] = event.index
@@ -529,7 +557,7 @@ class CallbackService:
         self._runs_revision += 1
 
         stage = self._stage_state(event.stage) if event.stage else None
-        if local and not replay:
+        if local and not replay and event.type != EventType.VALIDATION_IMAGE:
             APIState.set_state("training_status", status)
             if progress is not None or terminal:
                 APIState.set_state("training_progress", None if failed else progress)
@@ -578,8 +606,11 @@ class CallbackService:
             for run in self._runs.values():
                 if not view_all and run.get("user_id") != user.id:
                     continue
-                if (progress := run.get("progress")) is None:
-                    continue
+                progress = run.get("progress")
+                if progress is None:
+                    if run.get("validation") is None:
+                        continue
+                    progress = self._merge_progress_state(None, ProgressData())
                 metrics = progress.get("metrics", {})
                 stats = {key: progress[key] for key in ("step", "total_steps", "percent", "epoch", "loss", "learning_rate")}
                 stats["metrics"] = {
@@ -594,7 +625,19 @@ class CallbackService:
                     )
                     if (value := parse_number(metrics.get(key))) is not None
                 }
-                summary = {key: run.get(key) for key in ("job_id", "worker", "gpu", "config_name", "updated_at", "status")}
+                summary = {
+                    key: run.get(key)
+                    for key in (
+                        "job_id",
+                        "worker",
+                        "gpu",
+                        "config_name",
+                        "updated_at",
+                        "status",
+                        "validation",
+                        "validation_at",
+                    )
+                }
                 snapshots.append({**summary, "progress": stats, "terminal": run["status"] in TERMINAL_STATUSES})
             return self._runs_revision, snapshots
 

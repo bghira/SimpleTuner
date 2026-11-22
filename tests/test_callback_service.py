@@ -329,6 +329,32 @@ class CallbackServiceTestCase(unittest.TestCase):
         self.assertEqual(APIState.get_state("current_job_id"), "local-run")
         self.assertEqual(APIState.get_state("training_progress")["step"], local["progress"]["step"])
 
+    def test_validation_can_precede_training_and_ends_on_skip_cancel_or_training(self):
+        def stage(status):
+            self.service.handle_incoming(
+                {"type": "lifecycle.stage", "job_id": "sample", "stage": {"key": "validation", "status": status}}
+            )
+
+        for status in ("skipped", "cancelled", "failed", "completed"):
+            stage("running")
+            (row,) = self.service.training_runs_since(-1)[1]
+            self.assertEqual(row["validation"], {"current": None, "total": None, "percent": None})
+            stage(status)
+            self.assertEqual(self.service.training_runs_since(-1)[1], [])
+
+        self.service.handle_incoming(
+            {"type": "training.progress", "job_id": "sample", "progress": {"step": 12, "total": 20}}
+        )
+        stage("running")
+        self.service.handle_incoming(
+            {"type": "validation.image", "job_id": "sample", "data": {"step": 3, "step_label": "3/10"}}
+        )
+        (row,) = self.service.training_runs_since(-1)[1]
+        self.assertEqual(row["validation"], {"current": 3, "total": 10, "percent": 30})
+        self.assertEqual(row["progress"]["step"], 12)
+        self.service.handle_incoming({"type": "training.progress", "job_id": "sample", "progress": {"step": 13}})
+        self.assertIsNone(self.service.training_runs_since(-1)[1][0]["validation"])
+
     def test_active_snapshots_outlive_event_history_and_respect_ownership(self):
         owner = Mock(id=9)
         owner.has_permission.return_value = False

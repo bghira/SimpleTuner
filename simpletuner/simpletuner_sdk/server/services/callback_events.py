@@ -43,6 +43,8 @@ class StageStatus(str, Enum):
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
+    SKIPPED = "skipped"
+    CANCELLED = "cancelled"
 
 
 @dataclass(frozen=True)

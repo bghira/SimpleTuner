@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from ..services.callback_events import StageStatus
 from ..services.callback_service import get_default_callback_service
 from ..services.cloud.auth import User, get_optional_user
 from ..services.worker_credentials import generate_worker_token, hash_token
@@ -66,12 +67,19 @@ class HeartbeatRequest(BaseModel):
     vram_used_gb: Optional[float] = None
 
 
+class WorkerValidationUpdate(BaseModel):
+    status: StageStatus
+    progress: Optional[Dict[str, Any]] = None
+    timestamp: datetime
+
+
 class JobStatusUpdate(BaseModel):
     """Job status update from worker."""
 
     status: str | None = None
     progress: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
+    validation: WorkerValidationUpdate | None = None
 
 
 class CreateWorkerRequest(BaseModel):
@@ -404,14 +412,21 @@ async def _assigned_job(job_repo, job_id: str, worker_id: str):
     return job
 
 
-def _record_worker_stats(job, worker, status: str, progress: dict | None):
+def _record_worker_stats(job, worker, status: str, progress: dict | None, validation: WorkerValidationUpdate | None = None):
+    event = {
+        "type": "training.status",
+        "job_id": job.job_id,
+        "data": {"status": "running" if status == "training" else status, "worker": worker.name},
+        "progress": progress,
+    }
+    if validation is not None:
+        event.update(
+            type="lifecycle.stage",
+            timestamp=validation.timestamp.isoformat(),
+            stage={"key": "validation", "status": validation.status, "progress": validation.progress},
+        )
     get_default_callback_service().handle_incoming(
-        {
-            "type": "training.status",
-            "job_id": job.job_id,
-            "data": {"status": "running" if status == "training" else status, "worker": worker.name},
-            "progress": progress,
-        },
+        event,
         assigned_worker={
             "assigned_worker": True,
             "worker": worker.name,
@@ -521,10 +536,10 @@ async def update_job_status(
 
     job = await _assigned_job(job_repo, job_id, worker.worker_id)
     if not request.status:
-        if not request.progress:
-            raise HTTPException(status_code=422, detail="Expected worker status or progress")
+        if not request.progress and request.validation is None:
+            raise HTTPException(status_code=422, detail="Expected worker status, progress, or validation")
         if not job.is_terminal:
-            _record_worker_stats(job, worker, "running", request.progress)
+            _record_worker_stats(job, worker, "running", request.progress, request.validation)
         return {"success": True}
 
     logger.info(

@@ -81,6 +81,21 @@ class TestWebhookHTTPSending(unittest.TestCase):
         self.assertEqual(reports[0]["data"], {"progress": progress})
         self.assertNotIn("X-Worker-Token", reports[1]["headers"])
 
+    def test_worker_reports_validation_stage_and_sampling_counts_without_media(self):
+        env = {"SIMPLETUNER_WORKER_STATUS_URL": "http://127.0.0.1:8999/status", "SIMPLETUNER_WORKER_TOKEN": "test-token"}
+        with patch.dict(os.environ, env):
+            handler = WebhookHandler(None, "worker")
+            handler.send_lifecycle_stage("validation", "Running Validation", "running")
+            handler.send_raw(
+                {"type": "validation.image", "data": {"step": 4, "total_steps": 8, "prompt": "sample prompt"}},
+                images=["preview"],
+            )
+            handler.send_lifecycle_stage("validation", "Running Validation", "completed")
+        start, sample, end = [r["data"]["validation"] for r in TestWebhookHTTPServer.received_requests]
+        self.assertEqual((start["status"], end["status"]), ("running", "completed"))
+        self.assertEqual(set(sample), {"progress", "status", "timestamp"})
+        self.assertEqual(sample["progress"], {"current": 4, "total": 8})
+
     def test_simple_message_sent(self):
         """Test that a simple text message is sent via HTTP."""
         webhook_config = [

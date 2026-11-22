@@ -708,16 +708,29 @@ class WebhookHandler:
         if "timestamp" not in payload:
             payload["timestamp"] = datetime.now(tz=timezone.utc).isoformat()
 
-        if (
-            self.worker_status_url
-            and payload.get("type") in {"training.status", "training.progress"}
-            and payload.get("progress")
-        ):
+        worker_report = None
+        if self.worker_status_url:
+            if payload.get("type") in {"training.status", "training.progress"} and payload.get("progress"):
+                worker_report = {"progress": payload["progress"]}
+            elif payload.get("type") == "lifecycle.stage" and payload.get("stage", {}).get("key") == "validation":
+                stage = payload["stage"]
+                worker_report = {"validation": {"status": stage["status"], "progress": stage.get("progress")}}
+            elif payload.get("type") == "validation.image":
+                data = payload["data"]
+                worker_report = {
+                    "validation": {
+                        "status": "running",
+                        "progress": {"current": data["step"], "total": data.get("total_steps")},
+                    }
+                }
+        if worker_report is not None:
+            if "validation" in worker_report:
+                worker_report["validation"]["timestamp"] = payload["timestamp"]
             try:
                 response = requests.post(
                     self.worker_status_url,
                     headers={"X-Worker-Token": os.environ["SIMPLETUNER_WORKER_TOKEN"]},
-                    json={"progress": self._sanitize_for_json(payload["progress"])},
+                    json=self._sanitize_for_json(worker_report),
                     timeout=5,
                     allow_redirects=False,
                 )

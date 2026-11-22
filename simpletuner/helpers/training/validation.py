@@ -1777,6 +1777,7 @@ class ValidationPreviewer:
             "body": metadata.prompt or "",
             "data": {
                 "step": int(step + 1),
+                "total_steps": int(total_steps) if total_steps else None,
                 "timestep": float(timestep) if timestep is not None else None,
                 "resolution": list(metadata.resolution),
                 "validation_type": metadata.validation_type,
