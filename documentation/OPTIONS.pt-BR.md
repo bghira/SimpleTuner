@@ -1321,6 +1321,8 @@ Estas sao configuracoes avancadas opcionais para treino LTX-2. Defina-as em JSON
 
 > Nota: Alguns otimizadores podem nao estar disponiveis em hardware nao-NVIDIA.
 
+Para modelos BF16 com dimensões de base µP, use `--optimizer=adamw_bf16 --optimizer_config=mup=true` para ajustar as atualizações à largura com arredondamento estocástico e soma compensada. Para usar o AdamW do PyTorch com escala µP, selecione `--optimizer=mup-adamw`.
+
 ### `--optimizer_config`
 
 - **O que**: Ajusta configuracoes do otimizador.

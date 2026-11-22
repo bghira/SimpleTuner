@@ -1347,6 +1347,8 @@ These are optional advanced settings for LTX-2 training. Set them in JSON/TOML c
 
 > Note: Some optimisers may not be available on non-NVIDIA hardware.
 
+For BF16 models with µP base shapes, use `--optimizer=adamw_bf16 --optimizer_config=mup=true` for width-scaled updates with stochastic rounding and compensated summation. For PyTorch AdamW with µP scaling, select `--optimizer=mup-adamw`.
+
 ### `--optimizer_config`
 
 - **What**: Tweak optimizer settings.

@@ -84,6 +84,15 @@ optimizer_choices = {
         },
         "class": torch.optim.Adam,
     },
+    "mup-adamw": {
+        "precision": "any",
+        "default_settings": {
+            "betas": (0.9, 0.95),
+            "weight_decay": 1e-2,
+            "eps": 1e-8,
+        },
+        "class": get_lazy_class("mup", "MuAdamW"),
+    },
     "torch-adamw": {
         "precision": "any",
         "default_settings": {

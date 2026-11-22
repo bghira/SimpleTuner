@@ -1323,6 +1323,8 @@ MOSS-Image की नकारात्मक CFG शाखा में छो�
 
 > Note: कुछ optimisers non‑NVIDIA hardware पर उपलब्ध नहीं हो सकते।
 
+µP बेस शेप वाले BF16 मॉडल के लिए `--optimizer=adamw_bf16 --optimizer_config=mup=true` का उपयोग करें। यह चौड़ाई के अनुसार अपडेट को समायोजित करता है और स्टोकैस्टिक राउंडिंग तथा क्षतिपूरित योग का उपयोग करता है। µP स्केलिंग के साथ PyTorch AdamW का उपयोग करने के लिए `--optimizer=mup-adamw` चुनें।
+
 ### `--optimizer_config`
 
 - **What**: optimizer settings को fine‑tune करें।
