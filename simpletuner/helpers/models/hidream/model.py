@@ -308,6 +308,11 @@ class HiDream(ImageModelFoundation):
             self.controlnet = HiDreamControlNetModel.from_transformer(self.unwrap_model(self.model), **cn_custom_config)
         self.controlnet.train()
 
+    def enable_gradient_checkpointing(self):
+        if self.config.controlnet:
+            # The frozen denoiser still propagates gradients into ControlNet residuals.
+            self.unwrap_model(model=self.model).enable_gradient_checkpointing()
+
     def requires_conditioning_latents(self) -> bool:
         """HiDream ControlNet requires latent inputs instead of pixels."""
         if self.config.controlnet:

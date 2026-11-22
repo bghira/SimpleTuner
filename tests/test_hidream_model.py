@@ -1,11 +1,12 @@
 import unittest
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import torch
 from diffusers import AutoencoderKL, FlowMatchEulerDiscreteScheduler
 from tokenizers import Tokenizer
 from tokenizers.models import WordLevel
+from torch.utils.checkpoint import checkpoint
 from transformers import PreTrainedTokenizerFast
 
 from simpletuner.helpers.models.hidream.controlnet import HiDreamControlNetModel, HiDreamControlNetPipeline
@@ -46,7 +47,7 @@ class HiDreamModelTests(unittest.TestCase):
             block_size=0,
         )
 
-    def _make_controlnet(self):
+    def _make_controlnet(self, *, use_shared_modules=True):
         transformer = HiDreamImageTransformer2DModel(
             patch_size=2,
             in_channels=2,
@@ -62,7 +63,8 @@ class HiDreamModelTests(unittest.TestCase):
             llama_layers=[0, 1],
         )
         transformer.final_layer.linear.reset_parameters()
-        return transformer, HiDreamControlNetModel.from_transformer(transformer)
+        transformer.register_to_config(pooled_projection_dim=8)
+        return transformer, HiDreamControlNetModel.from_transformer(transformer, use_shared_modules=use_shared_modules)
 
     def test_controlnet_predict_aligns_residuals_for_rectangular_batch(self):
         self.model.model, self.model.controlnet = self._make_controlnet()
@@ -96,6 +98,83 @@ class HiDreamModelTests(unittest.TestCase):
         prediction.square().mean().backward()
         for projection in projections:
             self.assertGreater(projection.weight.grad.abs().sum().item(), 0)
+
+    def test_controlnet_checkpoints_blocks_and_only_projects_selected_llama_layers(self):
+        _, controlnet = self._make_controlnet()
+        with torch.no_grad():
+            for projection in (*controlnet.controlnet_blocks, *controlnet.controlnet_single_blocks):
+                projection.weight.normal_()
+
+        inputs = dict(
+            hidden_states=torch.randn(1, 2, 4, 6),
+            controlnet_cond=torch.randn(1, 2, 4, 6),
+            timesteps=torch.tensor([0.5]),
+            t5_hidden_states=torch.randn(1, 3, 8),
+            llama_hidden_states=torch.randn(4, 1, 3, 8),
+            pooled_embeds=torch.randn(1, 8),
+            return_dict=False,
+        )
+
+        def run():
+            controlnet.zero_grad(set_to_none=True)
+            outputs = controlnet(**inputs)
+            sum(sample.square().mean() for stream in outputs for sample in stream).backward()
+            return outputs, {name: param.grad for name, param in controlnet.named_parameters() if param.grad is not None}
+
+        eager_outputs, eager_gradients = run()
+        controlnet.enable_gradient_checkpointing(lambda block, *args: checkpoint(block, *args, use_reentrant=False))
+        with (
+            patch.object(controlnet.llama_embedder, "forward", wraps=controlnet.llama_embedder.forward) as project_llama,
+            patch.object(
+                controlnet, "_gradient_checkpointing_func", wraps=controlnet._gradient_checkpointing_func
+            ) as checkpoint_block,
+        ):
+            checkpoint_outputs, checkpoint_gradients = run()
+
+        self.assertEqual(project_llama.call_count, 2)
+        self.assertEqual(
+            [call.args[0] for call in checkpoint_block.call_args_list],
+            [controlnet.double_stream_blocks[0], controlnet.single_stream_blocks[0]],
+        )
+        torch.testing.assert_close(checkpoint_outputs, eager_outputs)
+        torch.testing.assert_close(checkpoint_gradients, eager_gradients)
+
+    def test_controlnet_checkpoints_frozen_eval_transformer_for_residual_gradients(self):
+        transformer, controlnet = self._make_controlnet(use_shared_modules=False)
+        self.model.config.controlnet = True
+        self.model.model = transformer.requires_grad_(False).eval()
+        self.model.controlnet = controlnet
+        control_projection = controlnet.controlnet_blocks[0].weight
+        latents = torch.randn(1, 2, 4, 6)
+        batch = {
+            "noisy_latents": latents,
+            "conditioning_latents": torch.randn_like(latents),
+            "timesteps": torch.tensor([250.0]),
+            "text_encoder_output": {
+                "t5_prompt_embeds": torch.randn(1, 3, 8),
+                "llama_prompt_embeds": torch.randn(2, 1, 3, 8),
+                "pooled_prompt_embeds": torch.randn(1, 8),
+            },
+        }
+
+        def run():
+            controlnet.zero_grad(set_to_none=True)
+            prediction = self.model.controlnet_predict(batch)["model_prediction"]
+            prediction.square().mean().backward()
+            return prediction, control_projection.grad
+
+        expected, expected_gradient = run()
+        self.assertGreater(expected_gradient.abs().sum().item(), 0)
+        self.model.enable_gradient_checkpointing()
+        base_block = transformer.single_stream_blocks[0]
+        with patch.object(base_block, "forward", wraps=base_block.forward) as forward:
+            actual, actual_gradient = run()
+
+        self.assertFalse(transformer.training)
+        self.assertEqual(forward.call_count, 2)
+        self.assertTrue(all(param.grad is None for param in transformer.parameters()))
+        torch.testing.assert_close(actual, expected)
+        torch.testing.assert_close(actual_gradient, expected_gradient)
 
     def test_controlnet_pipeline_denoises_rectangular_batch(self):
         transformer, controlnet = self._make_controlnet()
