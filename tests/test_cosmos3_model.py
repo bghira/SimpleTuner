@@ -845,6 +845,69 @@ class Cosmos3ModelTests(unittest.TestCase):
         self.assertIs(model.pre_vae_encode_transform_sample(audio), audio)
         self.assertEqual(model.pre_vae_encode_transform_sample(image).shape, (2, 3, 1, 64, 64))
 
+    def test_video_audio_cache_preparation_uses_sound_tokenizer(self):
+        model = TestableCosmos3Image()
+        model.vae = AutoencoderKLWan(
+            base_dim=8,
+            z_dim=2,
+            num_res_blocks=1,
+            latents_mean=[0.0, 0.0],
+            latents_std=[1.0, 1.0],
+        )
+        model.sound_tokenizer = Cosmos3AVAEAudioTokenizer(
+            vocoder_input_dim=2,
+            dec_dim=4,
+            dec_c_mults=(1, 2),
+            dec_strides=(2,),
+            enc_dim=4,
+            enc_n_fft=16,
+            enc_hop_length=4,
+            enc_latent_dim=4,
+            enc_c_mults=(1,),
+            enc_strides=(2,),
+            enc_num_blocks=1,
+        )
+        path = "data/clip.mp4"
+        waveform = torch.linspace(-0.5, 0.5, 512).repeat(2, 1)
+        dataset = mock.Mock(requires_complete_preparation=False, uses_native_schedule=False)
+        dataset.describe.return_value.accepted_samples = 1
+        dataset.iter_preparation_batches.return_value = [("audio", (path,))]
+
+        cache = VAECache.__new__(VAECache)
+        cache.id = "video_audio"
+        cache.model = model
+        cache.accelerator = model.accelerator
+        cache.dataset_type_enum = DatasetType.AUDIO
+        cache.dataset_type = DatasetType.AUDIO.value
+        cache.vae = model.get_vae_for_dataset_type(cache.dataset_type)
+        cache.vae_batch_size = 1
+        cache.nsfw_check_enabled = False
+        cache._artifact_inventory = None
+        cache.metadata_backend = mock.Mock()
+        cache.metadata_backend.get_metadata_batch.return_value = [{}]
+        cache.cache_path_for_image = mock.Mock(return_value="cache/clip.pt")
+        cache.generate_vae_cache_filename = mock.Mock(return_value=("cache/clip.pt", None))
+        cache.cache_data_backend = mock.Mock()
+        cache.cache_data_backend.bulk_exists.return_value = [False]
+        cache._read_from_storage_concurrently = mock.Mock(return_value=iter([(path, waveform)]))
+        cache._process_images_in_batch = mock.Mock(return_value=[(waveform, path, "audio", True)])
+        cache._write_latents_in_batch = mock.Mock()
+        cache._handle_metadata_filtered_sample = mock.Mock()
+        cache.debug_log = mock.Mock()
+
+        with (
+            mock.patch.object(StateTracker, "get_model_family", return_value="cosmos3"),
+            mock.patch.object(StateTracker, "get_vae_dtype", return_value=torch.float32),
+        ):
+            self.assertEqual(cache.prepare_dataset(dataset), 1)
+
+        self.assertIs(cache.vae, model.sound_tokenizer)
+        ((key, source, actual),) = cache._write_latents_in_batch.call_args.args[0]
+        self.assertEqual((key, source), ("cache/clip.pt", path))
+        expected = model.sound_tokenizer.encode(waveform.unsqueeze(0), force_pad=True).latent_dist.mode()[0]
+        self.assertEqual(actual.shape, (2, 64))
+        torch.testing.assert_close(actual, expected)
+
     def test_prepare_batch_carries_audio_latents(self):
         torch.manual_seed(1)
         model = TestableCosmos3Image()
@@ -1116,6 +1179,55 @@ class Cosmos3ModelTests(unittest.TestCase):
                         "source_revision": "abc123",
                     },
                 )
+
+    def test_legacy_nano_generator_loads_audio_heads_from_sharded_weights(self):
+        generator = Cosmos3OmniTransformer(
+            hidden_size=8,
+            intermediate_size=16,
+            head_dim=4,
+            num_attention_heads=2,
+            num_key_value_heads=1,
+            num_hidden_layers=1,
+            patch_latent_dim=8,
+            vocab_size=32,
+            load_reasoning_layers=False,
+            sound_gen=True,
+            sound_dim=64,
+        )
+        with torch.no_grad():
+            generator.audio_modality_embed.fill_(0.25)
+
+        with tempfile.TemporaryDirectory() as work:
+            generator.save_pretrained(work, max_shard_size="1KB")
+            config_path = Path(work) / "config.json"
+            config = json.loads(config_path.read_text())
+            config.pop("sound_gen")
+            config.pop("sound_dim")
+            config["component"] = "cosmos3_generator"
+            config["source_model_id"] = "nvidia/Cosmos3-Nano"
+            config["source_revision"] = "411f42a8fdfb8c5b2583cb8786e0938f49796eaa"
+            config_path.write_text(json.dumps(config))
+
+            restored = Cosmos3OmniTransformer.from_pretrained(work)
+            self.assertTrue(restored.config.sound_gen)
+            self.assertFalse(restored.load_reasoning_layers)
+            for name, tensor in generator.state_dict().items():
+                if name.startswith("audio_"):
+                    torch.testing.assert_close(restored.state_dict()[name], tensor)
+
+            config["sound_gen"] = False
+            config_path.write_text(json.dumps(config))
+            image_only = Cosmos3OmniTransformer.from_pretrained(work)
+            self.assertFalse(image_only.config.sound_gen)
+            self.assertFalse(hasattr(image_only, "audio_proj_in"))
+
+            config.pop("sound_gen")
+            config_path.write_text(json.dumps(config))
+            index_path = Path(work) / "diffusion_pytorch_model.safetensors.index.json"
+            index = json.loads(index_path.read_text())
+            index["weight_map"].pop("audio_proj_out.weight")
+            index_path.write_text(json.dumps(index))
+            self.assertNotIn("sound_gen", Cosmos3OmniTransformer.load_config(work))
 
     def test_generator_only_transformer_does_not_allocate_reasoner_layers(self):
         transformer = Cosmos3OmniTransformer(

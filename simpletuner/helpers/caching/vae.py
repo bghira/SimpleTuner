@@ -859,24 +859,7 @@ class VAECache(WebhookMixin):
         return self._publish_artifact_files(self.cache_data_backend.iter_file_keys(["pt"], self.cache_dir))
 
     def init_vae(self):
-        if StateTracker.get_args().model_family == "sana":
-            from diffusers import AutoencoderDC as AutoencoderClass
-        elif StateTracker.get_args().model_family == "ltxvideo":
-            from simpletuner.helpers.models.ltxvideo.autoencoder import AutoencoderKLLTXVideo as AutoencoderClass
-        elif StateTracker.get_args().model_family == "ltxvideo2":
-            from simpletuner.helpers.models.ltxvideo2.autoencoder import AutoencoderKLLTX2Video as AutoencoderClass
-        elif StateTracker.get_args().model_family in ["wan", "wan_s2v", "infinitetalk"]:
-            from diffusers import AutoencoderKLWan as AutoencoderClass
-        else:
-            from diffusers import AutoencoderKL as AutoencoderClass
-
-        args = StateTracker.get_args()
-        vae_path = (
-            args.pretrained_model_name_or_path
-            if args.pretrained_vae_model_name_or_path is None
-            else args.pretrained_vae_model_name_or_path
-        )
-        self.vae = self.model.get_vae()
+        self.vae = self.model.get_vae_for_dataset_type(self.dataset_type)
         self.vae.to(self.accelerator.device, dtype=self._cache_vae_dtype())
 
     def rebuild_cache(self):
