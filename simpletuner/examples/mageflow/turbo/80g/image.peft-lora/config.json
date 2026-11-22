@@ -6,7 +6,7 @@
     "checkpoint_step_interval": 100,
     "checkpoints_total_limit": 3,
     "compress_disk_cache": false,
-    "data_backend_config": "config/examples/multidatabackend-mageflow-domokun-1024-arb.json",
+    "data_backend_config": "config/examples/_shared/multidatabackend-mageflow-domokun-1024-arb.json",
     "disable_bucket_pruning": true,
     "dynamo_backend": "inductor",
     "dynamo_use_regional_compilation": true,
