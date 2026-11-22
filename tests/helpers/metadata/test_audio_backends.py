@@ -6,6 +6,7 @@ import tempfile
 import unittest
 import wave
 from io import BytesIO
+from pathlib import Path
 from typing import Optional, Tuple
 from unittest.mock import Mock, patch
 
@@ -13,8 +14,10 @@ from simpletuner.helpers.audio.load import NoAudioStreamError
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
+from simpletuner.helpers.data_backend.local import LocalDataBackend
 from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend
 from simpletuner.helpers.metadata.backends.parquet import ParquetMetadataBackend
+from simpletuner.helpers.prompts import PromptHandler
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 
@@ -259,6 +262,75 @@ class TestAudioMetadataBackends(unittest.TestCase):
         self.assertEqual(audio_metadata["prompt"], "bright synth pop")
         self.assertEqual(audio_metadata["lyrics"], "hello from heartmula")
         self.assertEqual(audio_metadata["audio_tokens_path"], "tokenized.tokens.npy")
+
+    def test_parquet_local_audio_matches_relative_roots_for_directories_and_symlinks(self):
+        dataset_id = "relative_parquet_audio"
+        root = Path(self.tempdir.name)
+        audio_dir = root / "audio"
+        audio_dir.mkdir()
+        (audio_dir / "disc").mkdir()
+        sample_rate, num_samples = _write_test_wav(str(audio_dir / "disc" / "tone.wav"))
+        symlink = root / "linked-audio"
+        symlink.symlink_to(audio_dir, target_is_directory=True)
+        manifest = root / "manifest.jsonl"
+        manifest.write_text(
+            json.dumps(
+                {
+                    "filename": "disc/tone.wav",
+                    "tags": "instrumental",
+                    "lyrics": "[instrumental]",
+                    "audio_tokens": [[1, 2], [3, 4]],
+                    "sample_rate": sample_rate,
+                    "num_samples": num_samples,
+                    "channels": 1,
+                }
+            )
+            + "\n"
+        )
+
+        self._register_dataset_config(dataset_id)
+        source = LocalDataBackend(None, dataset_id)
+        for directory in (audio_dir, symlink):
+            with self.subTest(directory=directory.name):
+                instance_data_dir = os.path.relpath(directory)
+                backend = ParquetMetadataBackend(
+                    id=dataset_id,
+                    instance_data_dir=instance_data_dir,
+                    cache_file=str(root / "buckets.json"),
+                    metadata_file=str(root / "metadata.json"),
+                    data_backend=source,
+                    accelerator=None,
+                    batch_size=1,
+                    resolution=1.0,
+                    resolution_type="pixel",
+                    parquet_config={
+                        "path": str(manifest),
+                        "filename_column": "filename",
+                        "identifier_includes_extension": True,
+                        "caption_column": "tags",
+                        "lyrics_column": "lyrics",
+                    },
+                    dataset_config={"dataset_type": "audio", "caption_strategy": "parquet"},
+                )
+                (discovered,) = source.iter_file_keys(["wav"], instance_data_dir)
+                self.assertEqual(discovered, str(directory / "disc" / "tone.wav"))
+                metadata, statistics = {}, {}
+                buckets = backend._process_for_bucket(discovered, {}, metadata_updates=metadata, statistics=statistics)
+                self.assertIn(discovered, sum(buckets.values(), []), statistics)
+                self.assertEqual(metadata[discovered]["audio_tokens"], [[1, 2], [3, 4]])
+                self.assertEqual(metadata[discovered]["lyrics"], "[instrumental]")
+                self.assertEqual(
+                    PromptHandler.prepare_instance_prompt_from_parquet(
+                        discovered,
+                        use_captions=True,
+                        prepend_instance_prompt=False,
+                        data_backend=source,
+                        sampler_backend_id=dataset_id,
+                        metadata_backend=backend,
+                        backend_config={"instance_data_dir": instance_data_dir},
+                    ),
+                    "instrumental",
+                )
 
     def test_parquet_audio_bucket_reads_from_audio_when_manifest_missing_values(self):
         dataset_id = "audio_parquet_fallback"

@@ -15,7 +15,7 @@ from simpletuner.helpers.data_backend.filters import filter_file_list
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.helpers.metadata.backends.legacy_geometry import SQLiteGeometryMetadata
-from simpletuner.helpers.metadata.captions import is_missing_caption
+from simpletuner.helpers.metadata.captions import is_missing_caption, parquet_sample_key
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
 from simpletuner.helpers.training import audio_file_extensions, image_file_extensions, video_file_extensions
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -172,16 +172,12 @@ class ParquetMetadataBackend(SQLiteGeometryMetadata, MetadataBackend):
             raise ValueError(f"Parquet file {self.parquet_path} contains no usable captions in the configured columns.")
 
     def _caption_key(self, path):
-        filename = str(path)
-        roots = self.instance_data_dir
-        for root in roots if isinstance(roots, (list, tuple)) else (roots,):
-            prefix = str(root or "").rstrip("/") + "/"
-            if root and filename.startswith(prefix):
-                filename = filename[len(prefix) :]
-                break
-        if not self.parquet_config.get("identifier_includes_extension", False):
-            filename = os.path.splitext(filename)[0]
-        return filename
+        return parquet_sample_key(
+            path,
+            self.instance_data_dir,
+            includes_extension=self.parquet_config.get("identifier_includes_extension", False),
+            local=getattr(self.data_backend, "type", None) == "local",
+        )
 
     def _locate_missing_caption_from_fast_list(self):
         return [
@@ -475,19 +471,10 @@ class ParquetMetadataBackend(SQLiteGeometryMetadata, MetadataBackend):
         # process file using parquet metadata only - no actual file loading
         try:
             # 1. Identify the row in parquet
-            image_path_filtered = image_path_str
-            if not self.parquet_config.get("identifier_includes_extension", False):
-                image_path_filtered = os.path.splitext(os.path.split(image_path_str)[-1])[0]
-            instance_data_dirs = self.instance_data_dir
-            if not isinstance(instance_data_dirs, (list, tuple)):
-                instance_data_dirs = [instance_data_dirs]
-            for instance_data_dir in instance_data_dirs:
-                instance_data_dir = str(instance_data_dir or "")
-                if instance_data_dir and instance_data_dir in image_path_filtered:
-                    image_path_filtered = image_path_filtered.replace(instance_data_dir, "")
-                    if image_path_filtered.startswith("/"):
-                        image_path_filtered = image_path_filtered[1:]
-                    break
+            if self.parquet_config.get("identifier_includes_extension", False):
+                image_path_filtered = self._caption_key(image_path_str)
+            else:
+                image_path_filtered = os.path.splitext(os.path.basename(image_path_str))[0]
 
             try:
                 database_row = self.parquet_database.loc[image_path_filtered]

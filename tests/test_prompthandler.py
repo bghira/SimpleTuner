@@ -45,6 +45,24 @@ class TestPromptHandler(unittest.TestCase):
         self.assertEqual(result_caption, expected_caption)
         mock_metadata_backend.caption_cache_entry.assert_called_once_with("image_3")
 
+    def test_parquet_caption_resolves_nested_cloud_keys(self):
+        metadata_backend = MagicMock()
+        metadata_backend.parquet_config = {"identifier_includes_extension": True}
+        metadata_backend.caption_cache_entry.return_value = "a cloud-hosted sample"
+
+        caption = PromptHandler.prepare_instance_prompt_from_parquet(
+            image_path="s3://bucket/dataset/disc/tone.wav",
+            use_captions=True,
+            prepend_instance_prompt=False,
+            data_backend=SimpleNamespace(type="aws"),
+            sampler_backend_id="cloud",
+            metadata_backend=metadata_backend,
+            backend_config={"instance_data_dir": ["s3://bucket/data", "s3://bucket/dataset/"]},
+        )
+
+        self.assertEqual(caption, "a cloud-hosted sample")
+        metadata_backend.caption_cache_entry.assert_called_once_with("disc/tone.wav")
+
     def test_raises_value_error_on_missing_sampler_backend_id(self):
         with self.assertRaises(ValueError):
             PromptHandler.prepare_instance_prompt_from_parquet(

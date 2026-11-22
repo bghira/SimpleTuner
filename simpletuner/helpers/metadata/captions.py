@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
@@ -53,6 +54,21 @@ def caption_records_revision(records: Iterable[CaptionRecord]) -> str:
         digest.update(json.dumps([record.metadata_id, record.caption_text], ensure_ascii=False).encode("utf-8"))
     digest.update(b"]")
     return digest.hexdigest()
+
+
+def parquet_sample_key(path, roots, *, includes_extension: bool, local: bool) -> str:
+    filename = str(path)
+    candidate = os.path.abspath(filename) if local else filename
+    separator = os.sep if local else "/"
+    for root in roots if isinstance(roots, (list, tuple)) else (roots,):
+        if not root:
+            continue
+        prefix = os.path.abspath(root) if local else str(root)
+        prefix = prefix.rstrip(separator) + separator
+        if candidate.startswith(prefix):
+            filename = candidate[len(prefix) :]
+            break
+    return filename if includes_extension else os.path.splitext(filename)[0]
 
 
 def is_missing_caption(value: Any) -> bool:

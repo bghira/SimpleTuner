@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy
 import regex as re
 
-from simpletuner.helpers.metadata.captions import is_missing_caption
+from simpletuner.helpers.metadata.captions import is_missing_caption, parquet_sample_key
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.simpletuner_sdk.server.services.prompt_library_service import PromptLibraryEntry, PromptLibraryService
 
@@ -325,15 +325,12 @@ class PromptHandler:
         identifier_includes_extension = metadata_backend.parquet_config.get("identifier_includes_extension", False)
         if backend_config is None:
             backend_config = StateTracker.get_data_backend_config(data_backend_id=data_backend.id)
-        instance_data_dir = backend_config.get("instance_data_dir")
-        image_filename_stem = image_path
-        if instance_data_dir is not None and instance_data_dir in image_filename_stem:
-            image_filename_stem = image_filename_stem.replace(instance_data_dir, "")
-            if image_filename_stem.startswith("/"):
-                image_filename_stem = image_filename_stem[1:]
-
-        if not identifier_includes_extension:
-            image_filename_stem = os.path.splitext(image_filename_stem)[0]
+        image_filename_stem = parquet_sample_key(
+            image_path,
+            backend_config.get("instance_data_dir"),
+            includes_extension=identifier_includes_extension,
+            local=getattr(data_backend, "type", None) == "local",
+        )
         image_caption = metadata_backend.caption_cache_entry(image_filename_stem)
         if instance_prompt is None and not image_caption:
             raise CaptionNotFoundError(
