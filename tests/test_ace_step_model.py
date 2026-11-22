@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import torch
-from transformers import AutoModel
+from transformers import AutoModel, PreTrainedConfig, PreTrainedModel
 
 from simpletuner.helpers.models.ace_step.language_segmentation import LangSegment
 from simpletuner.helpers.models.ace_step.model import ACEStep
@@ -378,6 +378,46 @@ class TestACEStepModel(unittest.TestCase):
                     component_name="condition model",
                     pretrained_model_name_or_path="ACE-Step/Ace-Step1.5",
                 )
+
+    def test_load_v15_hf_component_preserves_cpu_initialized_nonpersistent_buffers(self):
+        class TinyConditionModel(PreTrainedModel):
+            config_class = PreTrainedConfig
+
+            def __init__(self, config):
+                super().__init__(config)
+                self.projection = torch.nn.Linear(2, 2, bias=False)
+                frequencies = torch.tensor([1.0, 0.25])
+                frequencies.test_rotary_frequencies = True
+                self.register_buffer("rotary_frequencies", frequencies, persistent=False)
+                self.post_init()
+
+            def forward(self, sample):
+                return self.projection(sample) * self.rotary_frequencies.cos()
+
+        model = TinyConditionModel(PreTrainedConfig())
+        sample = torch.tensor([[1.0, 2.0]])
+        expected = model(sample)
+        original_empty_like = torch.empty_like
+
+        def poison_uninitialized_frequencies(tensor, *args, **kwargs):
+            output = original_empty_like(tensor, *args, **kwargs)
+            if getattr(tensor, "test_rotary_frequencies", False):
+                output.fill_(torch.nan)
+            return output
+
+        with TemporaryDirectory() as checkpoint:
+            model.save_pretrained(checkpoint)
+            with patch.object(torch, "empty_like", side_effect=poison_uninitialized_frequencies):
+                loaded = self.model._load_v15_hf_component(
+                    TinyConditionModel,
+                    component_name="condition model",
+                    pretrained_model_name_or_path=checkpoint,
+                    force_cpu_init_without_meta=True,
+                )
+
+        torch.testing.assert_close(loaded.rotary_frequencies, model.rotary_frequencies)
+        torch.testing.assert_close(loaded(sample), expected)
+        self.assertNotIn("rotary_frequencies", loaded.state_dict())
 
     def test_get_pipeline_v15_wires_loaded_components(self):
         self.model._v15_layout = {"variant_path": "dummy"}

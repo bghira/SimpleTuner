@@ -447,11 +447,11 @@ class ACEStep(AudioModelFoundation):
         if force_cpu_init_without_meta:
             from transformers.modeling_utils import PreTrainedModel
 
-            original_get_init_context = PreTrainedModel.get_init_context
-            original_get_init_context_func = original_get_init_context.__func__
+            original_get_init_context = vars(PreTrainedModel)["get_init_context"]
+            original_named_non_persistent_buffers = PreTrainedModel.named_non_persistent_buffers
 
             def get_cpu_init_context(cls, dtype, is_quantized, _is_ds_init_called, allow_all_kernels):
-                contexts = original_get_init_context_func(
+                contexts = original_get_init_context.__func__(
                     cls,
                     dtype,
                     is_quantized,
@@ -462,7 +462,14 @@ class ACEStep(AudioModelFoundation):
                     context for context in contexts if not (isinstance(context, torch.device) and context.type == "meta")
                 ]
 
+            def named_meta_buffers(model, recurse=True, remove_duplicate=True):
+                for name, buffer in original_named_non_persistent_buffers(model, recurse, remove_duplicate):
+                    if buffer.is_meta:
+                        yield name, buffer
+
+            # Transformers replaces nonpersistent buffers during loading, including ones already initialized on CPU.
             PreTrainedModel.get_init_context = classmethod(get_cpu_init_context)
+            PreTrainedModel.named_non_persistent_buffers = named_meta_buffers
         try:
             return loader_cls.from_pretrained(
                 pretrained_model_name_or_path=pretrained_model_name_or_path,
@@ -480,6 +487,7 @@ class ACEStep(AudioModelFoundation):
         finally:
             if original_get_init_context is not None:
                 PreTrainedModel.get_init_context = original_get_init_context
+                PreTrainedModel.named_non_persistent_buffers = original_named_non_persistent_buffers
 
     def _build_v15_text_prompt(self, prompt: str, prompt_context: Optional[dict]) -> str:
         metadata = prompt_context or {}
