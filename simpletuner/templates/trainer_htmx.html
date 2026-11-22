@@ -7289,14 +7289,28 @@ function trainerComponent() {
                 <h5><i class="fas fa-chart-line" aria-hidden="true"></i> Training Progress</h5>
                 <template x-for="run in trainingRuns" :key="run.job_id">
                     <article class="training-run" :aria-label="run.job_id">
-                        <div class="training-run-heading">
-                            <strong x-text="run.worker || run.job_id"></strong>
-                            <span x-show="run.gpu && run.gpu !== run.worker" x-text="run.gpu"></span>
-                            <span x-text="run.config_name || (run.worker ? run.job_id : '')" :title="run.job_id"></span>
-                            <progress max="100" :value="run.progress.percent" :aria-label="run.job_id"></progress>
-                            <strong x-text="Math.round(run.progress.percent * 100) / 100 + '%'"></strong>
-                            <span x-show="run.status !== 'running'" x-text="run.status"></span>
-                        </div>
+                        <dl class="training-run-heading">
+                            <div class="training-run-worker">
+                                <dt x-text="run.worker ? 'Worker' : 'Job'"></dt>
+                                <dd :title="run.job_id" x-text="run.worker || run.job_id"></dd>
+                            </div>
+                            <div class="training-run-gpu">
+                                <dt>GPU</dt>
+                                <dd x-text="run.gpu || '—'"></dd>
+                            </div>
+                            <div class="training-run-env">
+                                <dt>Environment</dt>
+                                <dd x-text="run.config_name || '—'"></dd>
+                            </div>
+                            <div class="training-run-progress">
+                                <dt>Progress</dt>
+                                <dd>
+                                    <progress max="100" :value="run.progress.percent" :aria-label="'Training progress for ' + run.job_id"></progress>
+                                    <b x-text="Math.round(run.progress.percent * 100) / 100 + '%'"></b>
+                                </dd>
+                                <dd x-show="run.status !== 'running'" x-text="run.status"></dd>
+                            </div>
+                        </dl>
                         <div class="training-run-metrics">
                             <span>Step <b x-text="run.progress.step.toLocaleString()"></b> / <b x-text="run.progress.total_steps.toLocaleString()"></b></span>
                             <span>Epoch <b x-text="run.progress.epoch"></b></span>

@@ -164,7 +164,8 @@ class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
                 return driver.find_element(By.CSS_SELECTOR, f'.training-run[aria-label="{job}"]')
 
             wait.until(lambda _: "8 samples/s" in row(first).text)
-            self.register_job(second, "remote-worker", "NVIDIA H200")
+            gpu = "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition"
+            self.register_job(second, "large-batch", gpu)
             worker_url = f"{self.base_url}/api/workers/job/{second}/status"
             headers = {"X-Worker-Token": second + "-token"}
             requests.post(
@@ -177,8 +178,13 @@ class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
             wait.until(lambda _: "Loss 1.1250" in row(first).text)
             self.assertIn("Loss —", row(second).text)
             self.assertIn("LR 0.00e+0", row(second).text)
-            self.assertIn("NVIDIA H200", row(second).text)
-            self.assertIn("large-batch", row(second).text)
+            fields = {
+                field.find_element(By.TAG_NAME, "dt").text: field.find_element(By.TAG_NAME, "dd").text
+                for field in row(second).find_elements(By.CSS_SELECTOR, ".training-run-heading > div")
+            }
+            self.assertEqual(fields["Worker"], "large-batch")
+            self.assertEqual(fields["Environment"], "large-batch")
+            self.assertEqual(fields["GPU"], gpu)
             requests.post(worker_url, headers=headers, json={"status": "failed"}, timeout=5).raise_for_status()
             wait.until(lambda _: "failed" in row(second).text)
             report(first, "running", {"current": 9, "total": 10})
@@ -186,19 +192,29 @@ class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
             self.assertIn("8 samples/s", row(first).text)
             self.assertIn("0%", row(second).text)
             self.assertFalse(driver.execute_script("return Alpine.store('trainer').showTrainingProgress"))
-            driver.set_window_size(390, 800)
-            self.assertTrue(
-                driver.execute_script(
-                    """
-                const run = arguments[0], bounds = run.getBoundingClientRect();
-                return [...run.querySelectorAll('.training-run-metrics > span')].every(span => {
-                    const r = span.getBoundingClientRect();
-                    return r.left >= bounds.left && r.right <= bounds.right;
-                });
-            """,
-                    row(first),
-                )
-            )
+            bar_widths = []
+            for width in (1440, 720, 390):
+                driver.set_window_size(width, 900)
+                for job in (first, second):
+                    article = row(job)
+                    bar_widths.append(article.find_element(By.TAG_NAME, "progress").rect["width"])
+                    self.assertTrue(
+                        driver.execute_script(
+                            """
+                        const run = arguments[0], bounds = run.getBoundingClientRect();
+                        return [...run.querySelectorAll('dd, .training-run-metrics > span')].every(field => {
+                            if (!field.getClientRects().length) return true;
+                            const r = field.getBoundingClientRect();
+                            return r.left >= bounds.left && r.right <= bounds.right && field.scrollWidth <= field.clientWidth + 1;
+                        });
+                    """,
+                            article,
+                        ),
+                        f"Field overflow at {width}px for {job}",
+                    )
+            self.assertEqual(len(set(bar_widths)), 1)
+            self.assertGreater(bar_widths[0], 0)
+            self.assertLess(bar_widths[0], 100)
 
         self.for_each_browser("interleaved_training_runs", scenario)
 
