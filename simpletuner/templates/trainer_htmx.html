@@ -689,8 +689,9 @@ function trainerComponent() {
                 const latest = run.progress.step > previous.progress.step ||
                     (run.progress.step === previous.progress.step && run.updated_at >= previous.updated_at) ? run : previous;
                 const state = run.terminal ? run : previous.terminal ? previous : latest;
+                const phase = (run.validation_at ?? 0) >= (previous.validation_at ?? 0) ? run : previous;
                 byJob.set(run.job_id, {
-                    ...latest, worker: run.worker || previous.worker, gpu: run.gpu || previous.gpu,
+                    ...latest, validation_at: phase.validation_at, validation: state.terminal ? null : phase.validation, worker: run.worker || previous.worker, gpu: run.gpu || previous.gpu,
                     config_name: run.config_name || previous.config_name, status: state.status,
                     progress: { ...latest.progress, percent: Math.max(previous.progress.percent, run.progress.percent) }
                 });
@@ -701,7 +702,8 @@ function trainerComponent() {
                     ?? (metrics.steps_per_second > 0 ? 1 / metrics.steps_per_second : null);
                 const batch = metrics.effective_batch_size ?? metrics.total_batch_size;
                 const samplesPerSecond = metrics.samples_per_second ?? (batch != null && stepSpeed > 0 ? batch / stepSpeed : null);
-                return { ...run, stepSpeed, samplesPerSecond };
+                const displayPercent = run.validation ? run.validation.percent : run.progress.percent;
+                return { ...run, displayPercent, stepSpeed, samplesPerSecond };
             });
         },
         connectionStatus: 'connected',
@@ -7303,15 +7305,23 @@ function trainerComponent() {
                                 <dd x-text="run.config_name || '—'"></dd>
                             </div>
                             <div class="training-run-progress">
-                                <dt>Progress</dt>
+                                <dt x-text="run.validation ? 'Validation' : 'Progress'"></dt>
                                 <dd>
-                                    <progress max="100" :value="run.progress.percent" :aria-label="'Training progress for ' + run.job_id"></progress>
-                                    <b x-text="Math.round(run.progress.percent * 100) / 100 + '%'"></b>
+                                    <progress max="100"
+                                              x-effect="if (run.displayPercent == null) { $el.removeAttribute('value') } else { $el.value = run.displayPercent }"
+                                              :aria-label="(run.validation ? 'Validation progress for ' : 'Training progress for ') + run.job_id"></progress>
+                                    <b x-show="run.displayPercent != null" x-text="Math.round(run.displayPercent * 100) / 100 + '%'"></b>
                                 </dd>
-                                <dd x-show="run.status !== 'running'" x-text="run.status"></dd>
+                                <dd x-show="!run.validation && run.status !== 'running'" x-text="run.status"></dd>
                             </div>
                         </dl>
-                        <div class="training-run-metrics">
+                        <template x-if="run.validation">
+                            <div class="training-run-metrics">
+                                <span x-show="run.validation.current == null">Running validation…</span>
+                                <span x-show="run.validation.current != null">Validation step <b x-text="run.validation.current"></b><template x-if="run.validation.total != null"><span> / <b x-text="run.validation.total"></b></span></template></span>
+                            </div>
+                        </template>
+                        <div class="training-run-metrics" x-show="!run.validation">
                             <span>Step <b x-text="run.progress.step.toLocaleString()"></b> / <b x-text="run.progress.total_steps.toLocaleString()"></b></span>
                             <span>Epoch <b x-text="run.progress.epoch"></b></span>
                             <span>Loss <b x-text="run.progress.loss?.toFixed(4) ?? '—'"></b></span>

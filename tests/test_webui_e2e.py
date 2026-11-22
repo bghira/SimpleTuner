@@ -172,6 +172,45 @@ class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
                 worker_url, headers=headers, json={"progress": {"current": 0, "total": 200, "learning_rate": 0}}, timeout=5
             ).raise_for_status()
             wait.until(lambda _: "Step 0 / 200" in row(second).text)
+
+            def callback(kind, **payload):
+                requests.post(
+                    f"{self.base_url}/callback", json={"job_id": first, "type": kind, **payload}, timeout=5
+                ).raise_for_status()
+
+            callback("lifecycle.stage", stage={"key": "validation", "status": "running"})
+            wait.until(lambda _: "Running validation…" in row(first).text)
+            self.assertIsNone(row(first).find_element(By.TAG_NAME, "progress").get_dom_attribute("value"))
+            self.assertNotIn("Loss", row(first).text)
+            callback("validation.image", data={"step": 3, "step_label": "3/10"})
+            wait.until(lambda _: "Validation step 3 / 10" in row(first).text)
+            self.assertIn("30%", row(first).text)
+            driver.refresh()
+            wait.until(lambda _: "Validation step 3 / 10" in row(first).text)
+            self.assertIn("Step 0 / 200", row(second).text)
+            from datetime import datetime, timezone
+
+            def worker_validation(status, **progress):
+                requests.post(
+                    worker_url,
+                    headers=headers,
+                    json={
+                        "validation": {
+                            "status": status,
+                            "progress": progress,
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        }
+                    },
+                    timeout=5,
+                ).raise_for_status()
+
+            worker_validation("running", current=2, total=4)
+            wait.until(lambda _: "Validation step 2 / 4" in row(second).text)
+            callback("lifecycle.stage", stage={"key": "validation", "status": "completed"})
+            wait.until(lambda _: "Step 7 / 10" in row(first).text)
+            self.assertIn("50%", row(second).text)
+            worker_validation("cancelled")
+            wait.until(lambda _: "Step 0 / 200" in row(second).text)
             report(first, "running", {"current": 8, "total": 10})
             wait.until(lambda _: "80%" in row(first).text)
             driver.refresh()
