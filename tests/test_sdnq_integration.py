@@ -1,4 +1,6 @@
 import unittest
+from contextlib import ExitStack
+from unittest.mock import patch
 
 import torch
 
@@ -266,6 +268,119 @@ class TestSDNQSaveHooksIntegration(unittest.TestCase):
         except ImportError:
             # SDNQ not installed, skip
             self.skipTest("SDNQ not installed")
+
+
+class TestSDNQHadamardCompilation(unittest.TestCase):
+    def test_int8_backward_rotation_reuses_full_graph_for_varying_sequence_lengths(self):
+        try:
+            from sdnq import common, quant_utils
+            from sdnq.training.layers.linear.linear_int8 import linear_int8_dynamic
+
+            original = quant_utils.rotate_hadamard_compiled
+        except (ImportError, AttributeError):
+            self.skipTest("SDNQ's INT8 Hadamard compilation path is unavailable")
+
+        from simpletuner.helpers.training.sdnq_workarounds import _patch_sdnq_int8_hadamard_rotation
+
+        graph_count = 0
+
+        def backend(graph_module, _example_inputs):
+            nonlocal graph_count
+            graph_count += 1
+            return graph_module.forward
+
+        def compile_func(function, **kwargs):
+            self.assertTrue(kwargs["fullgraph"])
+            return torch.compile(function, backend=backend, **kwargs)
+
+        torch._dynamo.reset()
+        self.addCleanup(torch._dynamo.reset)
+        hadamard = quant_utils.build_hadamard(16, dtype=torch.float32, device=torch.device("cpu"))
+        with (
+            patch.object(common, "use_torch_compile", True),
+            patch.object(common, "compile_func", side_effect=compile_func) as compiler,
+            patch.object(linear_int8_dynamic, "rotate_hadamard_compiled", original),
+        ):
+            _patch_sdnq_int8_hadamard_rotation()
+            _patch_sdnq_int8_hadamard_rotation()
+            compiler.assert_called_once()
+            for seq_len in (13, 17, 23, 29, 31):
+                for width in (32, 48, 96):
+                    weight = torch.randn(1, seq_len, width)
+                    expected = quant_utils.rotate_hadamard(weight, hadamard=hadamard)
+                    actual = linear_int8_dynamic.rotate_hadamard_compiled(weight, hadamard=hadamard)
+                    torch.testing.assert_close(actual, expected)
+
+        self.assertEqual(graph_count, 1)
+
+    def test_int8_input_preparation_reuses_graph_across_token_lengths(self):
+        try:
+            from sdnq import common, quant_utils
+            from sdnq.training.layers.linear.linear_int8 import linear_int8, linear_int8_dynamic
+        except ImportError:
+            self.skipTest("SDNQ's INT8 input preparation is unavailable")
+
+        from simpletuner.helpers.training.sdnq_workarounds import _patch_sdnq_int8_inputs
+
+        graphs = []
+
+        def backend(graph_module, _example_inputs):
+            graphs.append(graph_module)
+            return graph_module.forward
+
+        def compile_func(function, **kwargs):
+            return torch.compile(function, backend=backend, **kwargs)
+
+        torch._dynamo.reset()
+        self.addCleanup(torch._dynamo.reset)
+        hadamard = quant_utils.build_hadamard(16, dtype=torch.float32, device=torch.device("cpu"))
+        targets = (
+            (
+                linear_int8,
+                "get_int8_matmul_inputs",
+                dict(weight=torch.randint(-127, 128, (64, 32), dtype=torch.int8), scale=torch.rand(64, 1)),
+                lambda rows: (1, rows, 32),
+            ),
+            (
+                linear_int8_dynamic,
+                "get_int8_matmul_dynamic_inputs",
+                dict(weight=torch.randn(64, 32)),
+                lambda rows: (rows, 32),
+            ),
+        )
+        prepares = {}
+        with (
+            ExitStack() as patches,
+            patch.object(common, "use_torch_compile", True),
+            patch.object(common, "compile_func", side_effect=compile_func) as compiler,
+        ):
+            for module, name, _, _ in targets:
+                original = getattr(module, name)
+                prepare = getattr(original, "_torchdynamo_orig_callable", original)
+                prepares[name] = prepare
+                compiled = compile_func(prepare, fullgraph=True, dynamic=False)
+                patches.enter_context(patch.object(module, "include_mm_kernel_in_compile", False))
+                patches.enter_context(patch.object(module, name, compiled))
+
+            _patch_sdnq_int8_inputs()
+            _patch_sdnq_int8_inputs()
+            self.assertEqual(compiler.call_count, 2)
+            wrappers = [call.args[0] for call in compiler.call_args_list]
+            self.assertIsNot(wrappers[0].__code__, wrappers[1].__code__)
+            for module, name, parameters, input_shape in targets:
+                with self.subTest(name=name):
+                    before = len(graphs)
+                    for rows in (80, 96, 112, 128):
+                        kwargs = dict(
+                            input=torch.randn(input_shape(rows), requires_grad=True),
+                            hadamard=hadamard,
+                            **parameters,
+                        )
+                        actual = getattr(module, name)(**kwargs)
+                        expected = prepares[name](**kwargs)
+                        self.assertEqual(actual[4:], expected[4:])
+                        torch.testing.assert_close(actual[:4], expected[:4], atol=0, rtol=0)
+                    self.assertEqual(len(graphs) - before, 1)
 
 
 if __name__ == "__main__":

@@ -6,6 +6,8 @@ logger = logging.getLogger(__name__)
 
 _PATCHED_FROM_FLOAT_ATTR = "_simpletuner_patched_from_float"
 _PATCHED_GET_HADAMARD_ATTR = "_simpletuner_fake_safe_get_hadamard"
+_PATCHED_ROTATE_HADAMARD_ATTR = "_simpletuner_dynamic_rotate_hadamard"
+_PATCHED_INT8_INPUTS_ATTR = "_simpletuner_dynamic_int8_inputs"
 _PATCHED_SCALED_MM_ATTR = "_simpletuner_allocator_safe_scaled_mm"
 _TRITON_ALLOCATOR_ATTR = "_simpletuner_sdnq_allocator"
 
@@ -75,6 +77,70 @@ def _patch_sdnq_scaled_mm_allocator_context() -> bool:
     return True
 
 
+def _patch_sdnq_int8_hadamard_rotation() -> None:
+    from sdnq.common import compile_func, use_torch_compile
+
+    if not use_torch_compile:
+        return
+    try:
+        from sdnq.quant_utils import rotate_hadamard
+        from sdnq.training.layers.linear.linear_int8 import linear_int8_dynamic
+
+        original = linear_int8_dynamic.rotate_hadamard_compiled
+    except (ImportError, AttributeError):
+        return
+    if getattr(original, _PATCHED_ROTATE_HADAMARD_ATTR, False):
+        return
+
+    def rotate_int8_backward(weight: torch.Tensor, *, hadamard: torch.Tensor) -> torch.Tensor:
+        # Give this variable-shape rotation its own Dynamo frame instead of
+        # sharing the frame used to compile SDNQ's context-decorated functions.
+        return rotate_hadamard(weight, hadamard=hadamard)
+
+    compiled_rotation = compile_func(rotate_int8_backward, fullgraph=True, dynamic=True)
+    setattr(compiled_rotation, _PATCHED_ROTATE_HADAMARD_ATTR, True)
+    linear_int8_dynamic.rotate_hadamard_compiled = compiled_rotation
+
+
+def _patch_sdnq_int8_inputs() -> None:
+    from sdnq.common import compile_func, use_torch_compile
+
+    if not use_torch_compile:
+        return
+    try:
+        from sdnq.training.layers.linear.linear_int8 import linear_int8, linear_int8_dynamic
+    except ImportError:
+        return
+
+    def wrap_inputs(prepare, dynamic_weights):
+        # Distinct code objects keep forward and backward out of the shared context-wrapper frame.
+        if dynamic_weights:
+
+            def prepare_int8_dynamic_inputs(*args, **kwargs):
+                return prepare(*args, **kwargs)
+
+            return prepare_int8_dynamic_inputs
+
+        def prepare_int8_inputs(*args, **kwargs):
+            return prepare(*args, **kwargs)
+
+        return prepare_int8_inputs
+
+    for module, name, dynamic_weights in (
+        (linear_int8, "get_int8_matmul_inputs", False),
+        (linear_int8_dynamic, "get_int8_matmul_dynamic_inputs", True),
+    ):
+        if getattr(module, "include_mm_kernel_in_compile", True):
+            continue
+        original = getattr(module, name, None)
+        prepare = getattr(original, "_torchdynamo_orig_callable", None)
+        if prepare is None or getattr(original, _PATCHED_INT8_INPUTS_ATTR, False):
+            continue
+        compiled = compile_func(wrap_inputs(prepare, dynamic_weights), fullgraph=True, dynamic=True)
+        setattr(compiled, _PATCHED_INT8_INPUTS_ATTR, True)
+        setattr(module, name, compiled)
+
+
 def apply_sdnq_workarounds() -> None:
     try:
         import sdnq.dequantizer as sdnq_dequantizer
@@ -85,6 +151,8 @@ def apply_sdnq_workarounds() -> None:
 
     _install_triton_allocator()
     _patch_sdnq_scaled_mm_allocator_context()
+    _patch_sdnq_int8_hadamard_rotation()
+    _patch_sdnq_int8_inputs()
 
     if not getattr(SDNQTensor, _PATCHED_FROM_FLOAT_ATTR, False):
         original_from_float = SDNQTensor.from_float
