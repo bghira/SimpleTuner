@@ -1,0 +1,26 @@
+[
+  {
+    "id": "mageflow-domokun-704-arb",
+    "type": "huggingface",
+    "dataset_name": "RareConcepts/Domokun",
+    "crop": false,
+    "crop_style": "random",
+    "crop_aspect": "preserve",
+    "minimum_image_size": 256,
+    "maximum_image_size": 704,
+    "target_downsample_size": 704,
+    "resolution": 704,
+    "resolution_type": "pixel",
+    "metadata_backend": "huggingface",
+    "caption_strategy": "instanceprompt",
+    "instance_prompt": "🟫",
+    "cache_dir_vae": "cache/vae/{model_family}/domokun-704-arb"
+  },
+  {
+    "id": "alt-embed-cache",
+    "dataset_type": "text_embeds",
+    "default": true,
+    "type": "local",
+    "cache_dir": "cache/text/{model_family}"
+  }
+]
