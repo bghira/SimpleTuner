@@ -15,6 +15,7 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import Select, WebDriverWait
 
+from simpletuner.simpletuner_sdk.server import ServerMode
 from tests.pages.trainer_page import BasicConfigTab, DatasetsTab, ModelConfigTab, TrainerPage, TrainingConfigTab
 from tests.webui_test_base import WebUITestCase
 
@@ -94,6 +95,140 @@ class _TrainerPageMixin:
         if result.get("error"):
             raise AssertionError(result["error"])
         return result.get("names") or []
+
+
+class _TrainingWorkerFixture:
+
+    def register_job(self, job_id, worker_name, gpu):
+        import asyncio
+        from datetime import datetime, timezone
+        from unittest.mock import patch
+
+        from simpletuner.simpletuner_sdk.server.models.worker import Worker, WorkerStatus, WorkerType
+        from simpletuner.simpletuner_sdk.server.services.cloud.base import JobType, UnifiedJob
+        from simpletuner.simpletuner_sdk.server.services.cloud.storage.job_repository import JobRepository
+        from simpletuner.simpletuner_sdk.server.services.worker_credentials import hash_token
+        from simpletuner.simpletuner_sdk.server.services.worker_repository import WorkerRepository
+
+        cloud_dir = self.home_path / ".simpletuner" / "cloud"
+        worker = Worker(
+            worker_id=f"worker-{job_id}",
+            name=worker_name,
+            worker_type=WorkerType.PERSISTENT,
+            status=WorkerStatus.BUSY,
+            token_hash=hash_token(job_id + "-token"),
+            user_id=1,
+            gpu_info={"name": gpu},
+            current_job_id=job_id,
+        )
+        with patch.dict(WorkerRepository._instances, clear=True):
+            asyncio.run(WorkerRepository(cloud_dir / "workers.db").create_worker(worker))
+        job = UnifiedJob(
+            job_id=job_id,
+            job_type=JobType.LOCAL,
+            provider="worker",
+            status="running",
+            config_name="large-batch",
+            created_at=datetime.now(timezone.utc).isoformat(),
+            metadata={"worker_id": worker.worker_id},
+        )
+        with patch.dict(JobRepository._instances, clear=True):
+            asyncio.run(JobRepository(cloud_dir / "jobs.db").add(job))
+
+
+class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
+    SERVER_MODE = ServerMode.UNIFIED
+
+    def test_interleaved_workers_survive_reload_and_terminal_status(self):
+        def report(job, status, progress, **data):
+            response = requests.post(
+                f"{self.base_url}/callback",
+                json={"type": "training.status", "job_id": job, "data": {"status": status, **data}, "progress": progress},
+                timeout=5,
+            )
+            response.raise_for_status()
+
+        def scenario(driver, browser):
+            first, second = f"l40s-{browser}", f"h200-{browser}"
+            report(
+                first,
+                "running",
+                {"current": 7, "total": 10, "metrics": {"loss": 1.125, "step_speed_seconds": 2, "effective_batch_size": 16}},
+                worker="L40S",
+            )
+            driver.set_window_size(1000, 900)
+            driver.get(f"{self.base_url}/web")
+            wait = WebDriverWait(driver, 20)
+
+            def row(job):
+                return driver.find_element(By.CSS_SELECTOR, f'.training-run[aria-label="{job}"]')
+
+            wait.until(lambda _: "8 samples/s" in row(first).text)
+            self.register_job(second, "remote-worker", "NVIDIA H200")
+            worker_url = f"{self.base_url}/api/workers/job/{second}/status"
+            headers = {"X-Worker-Token": second + "-token"}
+            requests.post(
+                worker_url, headers=headers, json={"progress": {"current": 0, "total": 200, "learning_rate": 0}}, timeout=5
+            ).raise_for_status()
+            wait.until(lambda _: "Step 0 / 200" in row(second).text)
+            report(first, "running", {"current": 8, "total": 10})
+            wait.until(lambda _: "80%" in row(first).text)
+            driver.refresh()
+            wait.until(lambda _: "Loss 1.1250" in row(first).text)
+            self.assertIn("Loss —", row(second).text)
+            self.assertIn("LR 0.00e+0", row(second).text)
+            self.assertIn("NVIDIA H200", row(second).text)
+            self.assertIn("large-batch", row(second).text)
+            requests.post(worker_url, headers=headers, json={"status": "failed"}, timeout=5).raise_for_status()
+            wait.until(lambda _: "failed" in row(second).text)
+            report(first, "running", {"current": 9, "total": 10})
+            wait.until(lambda _: "90%" in row(first).text)
+            self.assertIn("8 samples/s", row(first).text)
+            self.assertIn("0%", row(second).text)
+            self.assertFalse(driver.execute_script("return Alpine.store('trainer').showTrainingProgress"))
+            driver.set_window_size(390, 800)
+            self.assertTrue(
+                driver.execute_script(
+                    """
+                const run = arguments[0], bounds = run.getBoundingClientRect();
+                return [...run.querySelectorAll('.training-run-metrics > span')].every(span => {
+                    const r = span.getBoundingClientRect();
+                    return r.left >= bounds.left && r.right <= bounds.right;
+                });
+            """,
+                    row(first),
+                )
+            )
+
+        self.for_each_browser("interleaved_training_runs", scenario)
+
+
+class SplitWorkerStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
+    def test_worker_heartbeat_on_trainer_server_reaches_card(self):
+        def scenario(driver, browser):
+            job_id = f"heartbeat-{browser}"
+            self.register_job(job_id, "training-worker", "L40S")
+            response = requests.post(
+                f"{self.base_url}/api/workers/heartbeat",
+                headers={"X-Worker-Token": job_id + "-token"},
+                json={
+                    "worker_id": f"worker-{job_id}",
+                    "status": "busy",
+                    "current_job_id": job_id,
+                    "job_progress": {"step": 4, "total_steps": 20, "metrics": {"loss": 0.75}},
+                },
+                timeout=5,
+            )
+            response.raise_for_status()
+            driver.get(f"{self.base_url}/web")
+            row = WebDriverWait(driver, 20).until(
+                EC.visibility_of_element_located((By.CSS_SELECTOR, f'.training-run[aria-label="{job_id}"]'))
+            )
+            self.assertIn("Loss 0.7500", row.text)
+            self.assertIn("20%", row.text)
+            self.assertIn("training-worker", row.text)
+
+        self.for_each_browser("split_worker_heartbeat", scenario)
 
 
 class ResponsiveTrainerLayoutTestCase(WebUITestCase):

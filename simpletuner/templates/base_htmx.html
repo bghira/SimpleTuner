@@ -666,7 +666,7 @@
         function setupSSE() {
             // Initialize SSE Manager
             window.sseManager = window.SSEManager.init({
-                url: '/api/events',
+                url: window.ServerConfig.getEndpointUrl('/api/events'),
                 maxRetries: 10,
                 baseRetryDelay: 1000,
                 maxRetryDelay: 30000
@@ -700,6 +700,7 @@
                 // User needs to login - skip SSE initialization
                 return;
             }
+            await window.ServerConfig.waitForReady();
             initializeEventStream();
         });
     </script>

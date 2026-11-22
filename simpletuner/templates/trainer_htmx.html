@@ -674,6 +674,36 @@ function trainerComponent() {
          isTraining: false,
          showTrainingProgress: false,
         trainingProgress: {},
+        trainingRuns: [],
+        runFeeds: { callback: [], worker: [] },
+        updateTrainingRuns(source, runs) {
+            this.runFeeds[source] = runs;
+            const byJob = new Map();
+            for (const run of [...this.runFeeds.callback, ...this.runFeeds.worker]) {
+                const previous = byJob.get(run.job_id);
+                if (!previous) {
+                    byJob.set(run.job_id, run);
+                    continue;
+                }
+                // The same job can report to both servers. The worker owns its final status.
+                const latest = run.progress.step > previous.progress.step ||
+                    (run.progress.step === previous.progress.step && run.updated_at >= previous.updated_at) ? run : previous;
+                const state = run.terminal ? run : previous.terminal ? previous : latest;
+                byJob.set(run.job_id, {
+                    ...latest, worker: run.worker || previous.worker, gpu: run.gpu || previous.gpu,
+                    config_name: run.config_name || previous.config_name, status: state.status,
+                    progress: { ...latest.progress, percent: Math.max(previous.progress.percent, run.progress.percent) }
+                });
+            }
+            this.trainingRuns = Array.from(byJob.values(), run => {
+                const metrics = run.progress.metrics || {};
+                const stepSpeed = metrics.step_speed_seconds ?? metrics.iteration_step_time_seconds
+                    ?? (metrics.steps_per_second > 0 ? 1 / metrics.steps_per_second : null);
+                const batch = metrics.effective_batch_size ?? metrics.total_batch_size;
+                const samplesPerSecond = metrics.samples_per_second ?? (batch != null && stepSpeed > 0 ? batch / stepSpeed : null);
+                return { ...run, stepSpeed, samplesPerSecond };
+            });
+        },
         connectionStatus: 'connected',
         connectionMessage: '',
         defaults: null,
@@ -5928,142 +5958,6 @@ function trainerComponent() {
              }
          });
 
-        const handleTrainingProgress = (event) => {
-            const detail = event.detail || {};
-
-            if (detail.reset) {
-                $data.trainingProgress = {};
-                $data.isTraining = false;
-                $data.showTrainingProgress = false;
-                if (window.eventHandler && typeof window.eventHandler.resetTrainingState === 'function') {
-                    window.eventHandler.resetTrainingState();
-                }
-                return;
-            }
-
-            const parseNumeric = (value) => {
-                if (typeof value === 'number') {
-                    return Number.isFinite(value) ? value : null;
-                }
-                if (typeof value === 'string' && value.trim() !== '') {
-                    const parsed = Number(value);
-                    return Number.isFinite(parsed) ? parsed : null;
-                }
-                return null;
-            };
-
-            const formatStepSpeedLabel = (seconds) => {
-                const value = parseNumeric(seconds);
-                if (!value || value <= 0) {
-                    return 'N/A';
-                }
-                const precision = value >= 10 ? 1 : 2;
-                return `${value.toFixed(precision)} s/step`;
-            };
-
-            const formatSamplesPerSecondLabel = (samples) => {
-                const value = parseNumeric(samples);
-                if (!value || value <= 0) {
-                    return 'N/A';
-                }
-                if (value >= 1000) {
-                    return new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value);
-                }
-                const precision = value >= 10 ? 1 : 2;
-                return value.toFixed(precision);
-            };
-
-            const loss = detail.loss;
-            const formattedLoss = (typeof loss === 'number' && !isNaN(loss))
-                ? loss.toFixed(4)
-                : (loss ?? 'N/A');
-
-            const lr = detail.learning_rate ?? detail.lr;
-            const formattedLr = (typeof lr === 'number' && !isNaN(lr))
-                ? lr.toExponential(2)
-                : (lr ?? 'N/A');
-
-            const rawPercent = Number(detail.percent ?? detail.percentage ?? 0);
-            const safePercent = Number.isFinite(rawPercent) ? rawPercent : 0;
-            const normalizedPercent = Math.max(0, Math.min(100, safePercent));
-            const roundedPercent = Math.round(normalizedPercent * 100) / 100;
-
-            // Preserve previous values to avoid losing data from incomplete events
-            const prev = $data.trainingProgress || {};
-
-            let stepSpeedSeconds = parseNumeric(detail.step_speed_seconds ?? detail.iteration_step_time_seconds);
-            let stepsPerSecond = parseNumeric(detail.steps_per_second);
-            if (!stepsPerSecond && stepSpeedSeconds && stepSpeedSeconds > 0) {
-                stepsPerSecond = 1 / stepSpeedSeconds;
-            }
-            if (!stepSpeedSeconds && stepsPerSecond && stepsPerSecond > 0) {
-                stepSpeedSeconds = 1 / stepsPerSecond;
-            }
-            // Fall back to previous values if current event doesn't have rate stats
-            stepSpeedSeconds = stepSpeedSeconds ?? prev.step_speed_seconds;
-            stepsPerSecond = stepsPerSecond ?? (prev.step_speed_seconds ? 1 / prev.step_speed_seconds : null);
-
-            const effectiveBatchSize = parseNumeric(detail.effective_batch_size ?? detail.total_batch_size) ?? prev.effective_batch_size;
-            let samplesPerSecond = parseNumeric(detail.samples_per_second);
-            if (
-                !samplesPerSecond &&
-                stepsPerSecond &&
-                stepsPerSecond > 0 &&
-                effectiveBatchSize &&
-                effectiveBatchSize > 0
-            ) {
-                samplesPerSecond = stepsPerSecond * effectiveBatchSize;
-            }
-            // Fall back to previous samples_per_second
-            samplesPerSecond = samplesPerSecond ?? prev.samples_per_second;
-
-            // Use ?? for step/epoch to handle 0 correctly (|| treats 0 as falsy)
-            $data.trainingProgress = {
-                percent: roundedPercent,
-                step: detail.step ?? detail.current_step ?? prev.step ?? 0,
-                total_steps: detail.total_steps ?? detail.total ?? prev.total_steps ?? 0,
-                epoch: detail.epoch ?? prev.epoch ?? 0,
-                loss: formattedLoss !== 'N/A' ? formattedLoss : (prev.loss ?? 'N/A'),
-                learning_rate: formattedLr !== 'N/A' ? formattedLr : (prev.learning_rate ?? 'N/A'),
-                step_speed_seconds: stepSpeedSeconds,
-                step_speed_label: formatStepSpeedLabel(stepSpeedSeconds),
-                samples_per_second: samplesPerSecond,
-                samples_per_second_label: formatSamplesPerSecondLabel(samplesPerSecond),
-                effective_batch_size: effectiveBatchSize,
-            };
-            $data.isTraining = true;
-            $data.showTrainingProgress = true;
-        };
-
-        const handleTrainingStatus = (event) => {
-            const detail = event.detail || {};
-            const status = String(detail.status || '').toLowerCase();
-            if (['running', 'starting', 'initializing'].includes(status)) {
-                $data.isTraining = true;
-                if (detail.progress) {
-                    handleTrainingProgress({ detail: detail.progress });
-                }
-            } else if (status) {
-                $data.isTraining = false;
-                if (status === 'completed' && $data.trainingProgress && ($data.trainingProgress.percent || 0) < 100) {
-                    $data.trainingProgress = {
-                        ...$data.trainingProgress,
-                        percent: 100,
-                    };
-                } else if (['failed', 'error', 'cancelled', 'stopped'].includes(status)) {
-                    handleTrainingProgress({ detail: { reset: true } });
-                }
-            }
-        };
-
-        window.addEventListener('training-progress', handleTrainingProgress);
-        window.addEventListener('training-status', handleTrainingStatus);
-
-        window.addEventListener('beforeunload', () => {
-            window.removeEventListener('training-progress', handleTrainingProgress);
-            window.removeEventListener('training-status', handleTrainingStatus);
-        });
-
          // Initialize other components
          $nextTick(async () => {
              // Wait for auth before making any API calls
@@ -7390,48 +7284,30 @@ function trainerComponent() {
             <div id="training-status" class="mt-3"></div>
 
             <!-- Training Progress -->
-            <div x-show="showTrainingProgress"
-                 x-transition
-                 class="training-progress-section">
-                <div class="config-card">
-                    <h5 class="card-title">
-                        <i class="fas fa-chart-line"></i> Training Progress
-                    </h5>
-                    <div class="progress mb-3">
-                        <div class="progress-bar"
-                             :style="`width: ${trainingProgress.percent || 0}%`"
-                             x-text="`${trainingProgress.percent || 0}%`"></div>
-                    </div>
-                    <div class="row">
-                        <div class="col-md-3">
-                            <strong>Epoch:</strong>
-                            <span x-text="trainingProgress.epoch || 0"></span>
+            <section class="training-progress-section" @training-runs.window="updateTrainingRuns('callback', $event.detail)"
+                     @worker-training-runs.window="updateTrainingRuns('worker', $event.detail)" x-show="trainingRuns.length" x-cloak aria-label="Training Progress">
+                <h5><i class="fas fa-chart-line" aria-hidden="true"></i> Training Progress</h5>
+                <template x-for="run in trainingRuns" :key="run.job_id">
+                    <article class="training-run" :aria-label="run.job_id">
+                        <div class="training-run-heading">
+                            <strong x-text="run.worker || run.job_id"></strong>
+                            <span x-show="run.gpu && run.gpu !== run.worker" x-text="run.gpu"></span>
+                            <span x-text="run.config_name || (run.worker ? run.job_id : '')" :title="run.job_id"></span>
+                            <progress max="100" :value="run.progress.percent" :aria-label="run.job_id"></progress>
+                            <strong x-text="Math.round(run.progress.percent * 100) / 100 + '%'"></strong>
+                            <span x-show="run.status !== 'running'" x-text="run.status"></span>
                         </div>
-                        <div class="col-md-3">
-                            <strong>Step:</strong>
-                            <span x-text="trainingProgress.step || 0"></span>
+                        <div class="training-run-metrics">
+                            <span>Step <b x-text="run.progress.step.toLocaleString()"></b> / <b x-text="run.progress.total_steps.toLocaleString()"></b></span>
+                            <span>Epoch <b x-text="run.progress.epoch"></b></span>
+                            <span>Loss <b x-text="run.progress.loss?.toFixed(4) ?? '—'"></b></span>
+                            <span>LR <b x-text="run.progress.learning_rate?.toExponential(2) ?? '—'"></b></span>
+                            <span><b x-text="run.stepSpeed?.toFixed(2) ?? '—'"></b> s/step</span>
+                            <span><b x-text="run.samplesPerSecond?.toLocaleString(undefined, { maximumFractionDigits: 2 }) ?? '—'"></b> samples/s</span>
                         </div>
-                        <div class="col-md-3">
-                            <strong>Loss:</strong>
-                            <span x-text="trainingProgress.loss || 'N/A'"></span>
-                        </div>
-                        <div class="col-md-3">
-                            <strong>LR:</strong>
-                            <span x-text="trainingProgress.learning_rate || 'N/A'"></span>
-                        </div>
-                    </div>
-                    <div class="row mt-3">
-                        <div class="col-md-3">
-                            <strong>Step Speed:</strong>
-                            <span x-text="trainingProgress.step_speed_label || 'N/A'"></span>
-                        </div>
-                        <div class="col-md-3">
-                            <strong>Samples/sec:</strong>
-                            <span x-text="trainingProgress.samples_per_second_label || 'N/A'"></span>
-                        </div>
-                    </div>
-                </div>
-            </div>
+                    </article>
+                </template>
+            </section>
 
             {% with placement='panel' %}
                 {% include 'components/action_buttons_htmx.html' %}

@@ -80,6 +80,11 @@ class WorkerAgentJobStartTestCase(unittest.IsolatedAsyncioTestCase):
             process_env = create_process.await_args.kwargs["env"]
             self.assertEqual(command, (sys.executable, "-m", "simpletuner.train"))
             self.assertEqual(process_env["CONFIG_PATH"], str(config_path))
+            self.assertEqual(process_env["SIMPLETUNER_JOB_ID"], job_id)
+            self.assertEqual(
+                process_env["SIMPLETUNER_WORKER_STATUS_URL"],
+                f"https://orchestrator.example.com/api/workers/job/{job_id}/status",
+            )
             self.assertEqual(process_env["SIMPLETUNER_CONFIG_BACKEND"], "json")
             self.assertEqual(process_env["SIMPLETUNER_UPLOAD_TOKEN"], "test-upload-token")
             report_status.assert_awaited_once_with("starting")

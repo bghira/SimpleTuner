@@ -276,6 +276,9 @@ class EventHandler {
                 this.setConnectionStatus(true, null, false);
             }
 
+            if (data.training_runs) {
+                window.dispatchEvent(new CustomEvent('worker-training-runs', { detail: data.training_runs }));
+            }
             // Process process keeper events
             if (data.events && data.events.length > 0) {
                 this.processProcessKeeperEvents(data.events);
@@ -1687,6 +1690,9 @@ class EventHandler {
                     return;
                 }
 
+                if (data.training_runs) {
+                    window.dispatchEvent(new CustomEvent('worker-training-runs', { detail: data.training_runs }));
+                }
                 if (data.event) {
                     // Process single event from WebSocket
                     this.processProcessKeeperEvents([data.event]);
@@ -1979,10 +1985,6 @@ style.textContent = `
         padding: 0.25rem 0.5rem;
         background-color: rgba(0, 0, 0, 0.05);
         border-radius: 0.25rem;
-    }
-
-    .training-progress-section {
-        margin-top: 1.5rem;
     }
 
     .event-display {

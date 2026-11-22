@@ -312,6 +312,9 @@ class WorkerAgent:
                 "SIMPLETUNER_UPLOAD_ENDPOINT": f"{self.config.orchestrator_url}{event['upload_endpoint']}",
                 "SIMPLETUNER_UPLOAD_TOKEN": event.get("upload_token", ""),
                 "CONFIG_PATH": str(config_path),
+                "SIMPLETUNER_JOB_ID": job_id,
+                "SIMPLETUNER_WORKER_STATUS_URL": f"{self.config.orchestrator_url}/api/workers/job/{job_id}/status",
+                "SIMPLETUNER_WORKER_TOKEN": self.config.worker_token,
                 "SIMPLETUNER_CONFIG_BACKEND": "json",
             }
         )

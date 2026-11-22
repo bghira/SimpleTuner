@@ -364,6 +364,7 @@
 
             switch (category) {
                 case 'progress': {
+                    if (data?.local === false) break;
                     var progressMessages = transformProgressPayload(payload);
                     if (Array.isArray(progressMessages)) {
                         progressMessages.forEach(function(msg) {
@@ -448,6 +449,7 @@
                     handleMessage({
                         type: 'error',
                         message: errorMessage,
+                        local: data?.local,
                         level: 'danger',
                         payload: payload
                     });
@@ -563,7 +565,7 @@
 
             try {
                 updateConnectionStatus('connecting', 'Connecting...');
-                eventSource = new EventSource(connectionUrl);
+                eventSource = new EventSource(connectionUrl, { withCredentials: true });
 
                 eventSource.onopen = function() {
                     console.log('SSE connection established');
@@ -640,7 +642,7 @@
                     try {
                         var data = JSON.parse(event.data);
                         notifyListeners('lifecycle.stage', data);
-                        window.dispatchEvent(new CustomEvent('startup-progress', { detail: data }));
+                        if (data.local !== false) window.dispatchEvent(new CustomEvent('startup-progress', { detail: data }));
                     } catch (error) {
                         console.error('Error parsing lifecycle stage:', error);
                     }
@@ -766,9 +768,12 @@
         function handleMessage(data) {
             // Route message based on type
             switch (data.type) {
+                case 'training.runs':
+                    window.dispatchEvent(new CustomEvent('training-runs', { detail: data.runs }));
+                    break;
                 case 'training.progress':
                     // Update training progress UI
-                    if (window.htmx && !data.reset) {
+                    if (window.htmx && !data.reset && data.local !== false) {
                         const progressEl = document.querySelector('#training-progress');
                         if (progressEl) {
                             htmx.trigger(progressEl, 'update-progress', data);
@@ -779,7 +784,7 @@
 
                 case 'lifecycle.stage':
                     notifyListeners('lifecycle.stage', data);
-                    window.dispatchEvent(new CustomEvent('startup-progress', { detail: data }));
+                    if (data.local !== false) window.dispatchEvent(new CustomEvent('startup-progress', { detail: data }));
                     break;
 
                 case 'validation_complete':

@@ -2136,7 +2136,7 @@ class Trainer:
             logging.debug(f"Creating webhook: {webhook_config}")
         else:
             webhook_config = getattr(getattr(self, "config", None), "webhook_config", None)
-        if webhook_config is None:
+        if webhook_config is None and not os.environ.get("SIMPLETUNER_WORKER_STATUS_URL"):
             return
 
         # Only reset webhook_handler if we have a valid config to replace it with
@@ -2144,9 +2144,6 @@ class Trainer:
 
         # Handle string webhook_config (file path or JSON string)
         if isinstance(webhook_config, str):
-            import json
-            import os
-
             if webhook_config.startswith("{") or webhook_config.startswith("["):
                 # Parse as JSON string
                 try:

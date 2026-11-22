@@ -41,7 +41,7 @@ def _server_process_context() -> multiprocessing.context.BaseContext:
     return multiprocessing.get_context()
 
 
-def _run_test_server(port: int, home_path: str, webui_config_path: str) -> None:
+def _run_test_server(port: int, home_path: str, webui_config_path: str, mode: ServerMode) -> None:
     import logging
 
     import uvicorn
@@ -60,6 +60,7 @@ def _run_test_server(port: int, home_path: str, webui_config_path: str) -> None:
     # Ensure the subprocess uses the test's temporary HOME directory
     os.environ["HOME"] = home_path
     os.environ["SIMPLETUNER_WEB_UI_CONFIG"] = webui_config_path
+    os.environ["SIMPLETUNER_STATE_DIR"] = str(Path(home_path) / ".simpletuner")
     os.environ["TQDM_DISABLE"] = "1"
     # Prevent CUDA initialisation issues when running inside forked test workers.
     # Tests exercise the WebUI and do not need GPU access.
@@ -67,7 +68,7 @@ def _run_test_server(port: int, home_path: str, webui_config_path: str) -> None:
     os.environ.setdefault("DIFFUSERS_DISABLE_CUDA", "1")
     os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
-    app = create_app(mode=ServerMode.TRAINER)
+    app = create_app(mode=mode)
     uvicorn.run(app, host=TEST_HOST, port=port, log_level="error")
 
 
@@ -85,19 +86,22 @@ class _TestServerManager:
             raise RuntimeError("Test server port unavailable")
         return f"http://{TEST_HOST}:{self.port}"
 
-    def start(self, home_path: str) -> str:
+    def start(self, home_path: str, mode: ServerMode = ServerMode.TRAINER) -> str:
         # If server is already running with a different home path, restart it
         if self._process and self._process.is_alive():
-            if self.home_path == home_path:
+            if self.home_path == home_path and self.mode == mode:
                 return self.base_url
             # Home path changed, need to restart the server
             self.stop()
 
+        self.mode = mode
         self.home_path = home_path
         webui_config_path = str(Path(home_path) / ".simpletuner" / "webui")
         self.port = self._find_free_port()
         process_context = _server_process_context()
-        self._process = process_context.Process(target=_run_test_server, args=(self.port, home_path, webui_config_path))
+        self._process = process_context.Process(
+            target=_run_test_server, args=(self.port, home_path, webui_config_path, mode)
+        )
         self._process.daemon = True
         self._process.start()
         timeout = os.environ.get("SELENIUM_SERVER_START_TIMEOUT")
@@ -175,9 +179,9 @@ def ensure_global_home() -> Path:
     return _GLOBAL_HOME_PATH
 
 
-def ensure_test_server(home_path: Path) -> str:
+def ensure_test_server(home_path: Path, mode: ServerMode = ServerMode.TRAINER) -> str:
     """Ensure the singleton test server is running."""
-    return _SERVER_MANAGER.start(str(home_path))
+    return _SERVER_MANAGER.start(str(home_path), mode)
 
 
 def _chrome_options() -> ChromeOptions:
@@ -302,6 +306,7 @@ class SeleniumTestCase(unittest.TestCase):
 
     BROWSERS: Iterable[str] = _DEFAULT_BROWSERS
     MAX_BROWSERS: int | None = None
+    SERVER_MODE = ServerMode.TRAINER
     base_url: str = ""
     _driver_cache: Dict[str, webdriver.Remote]
 
@@ -317,7 +322,7 @@ class SeleniumTestCase(unittest.TestCase):
 
         super().setUpClass()
         cls.home_path = ensure_global_home()
-        cls.base_url = ensure_test_server(cls.home_path)
+        cls.base_url = ensure_test_server(cls.home_path, cls.SERVER_MODE)
         cls._driver_cache = {}
 
     @classmethod

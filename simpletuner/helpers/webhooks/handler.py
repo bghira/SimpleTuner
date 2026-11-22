@@ -84,6 +84,7 @@ class WebhookHandler:
         self.send_video = send_video
         self.video_framerate = video_framerate
         self.stored_response = None
+        self.worker_status_url = os.environ.get("SIMPLETUNER_WORKER_STATUS_URL")
 
         # Handle mock config for testing
         if mock_webhook_config is not None:
@@ -706,6 +707,23 @@ class WebhookHandler:
 
         if "timestamp" not in payload:
             payload["timestamp"] = datetime.now(tz=timezone.utc).isoformat()
+
+        if (
+            self.worker_status_url
+            and payload.get("type") in {"training.status", "training.progress"}
+            and payload.get("progress")
+        ):
+            try:
+                response = requests.post(
+                    self.worker_status_url,
+                    headers={"X-Worker-Token": os.environ["SIMPLETUNER_WORKER_TOKEN"]},
+                    json={"progress": self._sanitize_for_json(payload["progress"])},
+                    timeout=5,
+                    allow_redirects=False,
+                )
+                response.raise_for_status()
+            except requests.RequestException as exc:
+                logging.warning("Could not report worker training progress: %s", exc)
 
         exclude_urls = set()
         if exclude_webhook_urls:

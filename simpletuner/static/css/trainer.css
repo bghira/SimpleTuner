@@ -1676,10 +1676,59 @@ body {
     margin-bottom: var(--spacing-xs-sm) !important;
 }
 
-/* Compact progress section */
+/* Training progress is shared by all reporting runs. */
 .training-progress-section {
-    margin-top: var(--spacing-lg) !important; /* Was 1.5rem */
-    margin-bottom: var(--spacing-md) !important;
+    margin: var(--spacing-md) 0;
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: var(--card-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
+    font-variant-numeric: tabular-nums;
+}
+
+.training-progress-section h5 {
+    margin: 0;
+    font-size: 1rem;
+}
+
+.training-run {
+    padding-top: var(--spacing-xs);
+}
+
+.training-run + .training-run {
+    margin-top: var(--spacing-xs);
+    border-top: 1px solid var(--glass-border);
+}
+
+.training-run-heading, .training-run-metrics {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.125rem 0.75rem;
+    overflow-wrap: anywhere;
+}
+
+.training-run-heading progress {
+    flex: 1 1 5rem;
+    width: 0;
+    min-width: 3rem;
+    height: 0.45rem;
+    align-self: center;
+    accent-color: var(--primary);
+}
+
+.training-run-metrics {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+}
+
+.training-run-metrics > span {
+    white-space: nowrap;
+}
+
+.training-run-metrics b {
+    font-weight: 500;
+    color: var(--text-primary);
 }
 
 .progress {
