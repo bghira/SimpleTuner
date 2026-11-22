@@ -118,6 +118,7 @@ def _materialize_zimage_meta_buffers(model: nn.Module) -> None:
 
 def _load_sdnq_training_symbols():
     from simpletuner.helpers.training.sdnq_compile import configure_sdnq_compile_mode
+    from simpletuner.helpers.training.sdnq_workarounds import apply_sdnq_workarounds
 
     configure_sdnq_compile_mode()
     try:
@@ -127,6 +128,7 @@ def _load_sdnq_training_symbols():
         from sdnq.training.tensor import SDNQTensor
     except ImportError as exc:
         raise ImportError("Z-Image ConvRot INT8 weights require SDNQ. Install it with `pip install sdnq`.") from exc
+    apply_sdnq_workarounds()
     return SDNQDequantizer, SDNQTensor, get_sdnq_wrapper_class, get_forward_func
 
 

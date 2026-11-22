@@ -245,11 +245,11 @@ class TestQuantizationConfigParsing(unittest.TestCase):
 
         warning.assert_not_called()
 
-    def test_convrot_loader_applies_sdnq_compile_mode_before_import(self):
+    def test_convrot_loader_configures_sdnq_and_installs_scaled_mm_allocator(self):
         from simpletuner.helpers.models.z_image import quantized_loading
 
         class Dummy:
-            pass
+            from_float = staticmethod(lambda weight: weight)
 
         dequantizer_module = ModuleType("sdnq.dequantizer")
         dequantizer_module.SDNQDequantizer = Dummy
@@ -259,6 +259,17 @@ class TestQuantizationConfigParsing(unittest.TestCase):
         forward_module.get_forward_func = lambda *args, **kwargs: None
         tensor_module = ModuleType("sdnq.training.tensor")
         tensor_module.SDNQTensor = Dummy
+        quant_utils_module = ModuleType("sdnq.quant_utils")
+        quant_utils_module.get_hadamard = lambda n, **kwargs: None
+        calls = []
+
+        def backend(value):
+            calls.append(value)
+            return value
+
+        kernels_module = ModuleType("sdnq.kernels")
+        scaled_mm_module = ModuleType("sdnq.kernels.triton_scaled_mm")
+        scaled_mm_module.sdnq_scaled_mm = SimpleNamespace(_backend_fns={None: backend})
         training_module = ModuleType("sdnq.training")
         sdnq_module = ModuleType("sdnq")
 
@@ -266,6 +277,9 @@ class TestQuantizationConfigParsing(unittest.TestCase):
             "sdnq": sdnq_module,
             "sdnq.dequantizer": dequantizer_module,
             "sdnq.layers": layers_module,
+            "sdnq.quant_utils": quant_utils_module,
+            "sdnq.kernels": kernels_module,
+            "sdnq.kernels.triton_scaled_mm": scaled_mm_module,
             "sdnq.training": training_module,
             "sdnq.training.forward": forward_module,
             "sdnq.training.tensor": tensor_module,
@@ -273,8 +287,13 @@ class TestQuantizationConfigParsing(unittest.TestCase):
         with (
             patch.dict("sys.modules", modules),
             patch("simpletuner.helpers.training.sdnq_compile.configure_sdnq_compile_mode") as configure,
+            patch("simpletuner.helpers.training.sdnq_workarounds._install_triton_allocator") as install,
         ):
             quantized_loading._load_sdnq_training_symbols()
+            install.assert_called_once_with()
+            self.assertEqual(scaled_mm_module.sdnq_scaled_mm._backend_fns[None](17), 17)
+            self.assertEqual(install.call_count, 2)
+            self.assertEqual(calls, [17])
 
         configure.assert_called_once_with()
 
