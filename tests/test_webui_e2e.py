@@ -97,6 +97,34 @@ class _TrainerPageMixin:
 
 
 class ResponsiveTrainerLayoutTestCase(WebUITestCase):
+
+    def test_config_menu_opens_beside_desktop_sidebar(self):
+        def scenario(driver, _browser):
+            driver.set_window_size(1440, 900)
+            driver.get(f"{self.base_url}/web")
+            wait = WebDriverWait(driver, 15)
+            toggle = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, ".config-selector__toggle-wrapper button")))
+            self.dismiss_onboarding(driver)
+            toggle.click()
+            menu = wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".config-selector__menu")))
+            sidebar = driver.find_element(By.CSS_SELECTOR, ".sidebar")
+            self.assertGreater(sidebar.rect["x"] + sidebar.rect["width"], 0)
+            self.assertGreaterEqual(menu.rect["x"], sidebar.rect["x"] + sidebar.rect["width"])
+
+            manage = menu.find_element(By.CSS_SELECTOR, 'a[href="#environments"]')
+            self.assertTrue(
+                driver.execute_script(
+                    "const item = arguments[0], r = item.getBoundingClientRect();"
+                    "return item.contains(document.elementFromPoint(r.left + 2, r.top + r.height / 2));",
+                    manage,
+                )
+            )
+            manage.click()
+            wait.until(EC.invisibility_of_element(menu))
+            wait.until(EC.url_contains("#environments"))
+
+        self.for_each_browser("config_menu_beside_sidebar", scenario)
+
     def test_sidebar_space_on_window_resize(self):
         def scenario(driver, _browser):
             driver.set_window_size(1200, 900)
