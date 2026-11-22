@@ -1326,6 +1326,8 @@ Estos son ajustes avanzados opcionales para entrenamiento LTX-2. Úsalos en arch
 
 > Nota: Algunos optimizadores pueden no estar disponibles en hardware no NVIDIA.
 
+Para modelos BF16 con formas base µP, usa `--optimizer=adamw_bf16 --optimizer_config=mup=true` para aplicar actualizaciones escaladas por anchura con redondeo estocástico y suma compensada. Para usar AdamW de PyTorch con escalado µP, selecciona `--optimizer=mup-adamw`.
+
 ### `--optimizer_config`
 
 - **Qué**: Ajusta la configuración del optimizador.

@@ -29,6 +29,7 @@ class AdamWBF16(Optimizer):
         betas=(0.9, 0.999),
         eps=1e-8,
         weight_decay=0,
+        mup=False,
     ):
         """
         Implements AdamW optimization specifically for bfloat16 models.
@@ -37,7 +38,7 @@ class AdamWBF16(Optimizer):
         Uses delayed accumulation for decays and compensated summation for Adam steps.
         Uses only one additional bfloat16 weight for keeping correction.
         Do not use schedulers - those can't affect cuda graphs.
-        :param lr_function: a callable that maps torch scalar (step) to torch scalar (learning rate)
+        Set mup=True after assigning µP base shapes to the model.
         """
         if not 0.0 <= eps:
             raise ValueError(f"Invalid epsilon value: {eps}")
@@ -47,8 +48,39 @@ class AdamWBF16(Optimizer):
             raise ValueError(f"Invalid beta parameter at index 1: {betas[1]}")
         if not 0.0 <= weight_decay:
             raise ValueError(f"Invalid weight_decay value: {weight_decay}")
-        defaults = dict(betas=betas, eps=eps, weight_decay=weight_decay, lr=lr)
+        defaults = dict(betas=betas, eps=eps, weight_decay=weight_decay, lr=lr, mup=mup)
         super().__init__(params, defaults)
+
+    def add_param_group(self, param_group):
+        super().add_param_group(param_group)
+        group = self.param_groups[-1]
+        if not group.get("mup", False) or not group["params"]:
+            return
+
+        # PyTorch has validated the group and normalized named parameters and iterables.
+        self.param_groups.pop()
+        by_width = {}
+        for index, param in enumerate(group["params"]):
+            shape = getattr(param, "infshape", None)
+            if shape is None:
+                raise ValueError("adamw_bf16 with mup=True requires mup.set_base_shapes() on every optimized parameter.")
+            infinite_dims = shape.ninf()
+            if infinite_dims > 2:
+                raise ValueError("µP AdamW supports at most two infinite dimensions per parameter.")
+            width = shape.width_mult() if infinite_dims == 2 else 1
+            by_width.setdefault(width, []).append(index)
+
+        for width, indices in by_width.items():
+            scaled = dict(group)
+            scaled["params"] = [group["params"][i] for i in indices]
+            if "param_names" in group:
+                scaled["param_names"] = [group["param_names"][i] for i in indices]
+            scaled["lr"] = group["lr"] / width
+            if "initial_lr" in group:
+                scaled["initial_lr"] = group["initial_lr"] / width
+            # Keep the decoupled decay per step (lr * weight_decay) independent of width.
+            scaled["weight_decay"] = group["weight_decay"] * width
+            self.param_groups.append(scaled)
 
     @torch.no_grad()
     def step(self, zero_grad: bool = False):

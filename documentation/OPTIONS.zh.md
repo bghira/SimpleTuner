@@ -1326,6 +1326,8 @@ MOSS-Image 验证时的推理流偏移，默认 **5.0**。偏移仅应用一次�
 
 > 注记：部分优化器在非 NVIDIA 硬件上可能不可用。
 
+对于 已设置 µP 基础形状的 BF16 模型，使用 `--optimizer=adamw_bf16 --optimizer_config=mup=true` 可按宽度缩放更新，并使用随机舍入和补偿求和。 要使用带 µP 缩放的 PyTorch AdamW，请选择 `--optimizer=mup-adamw`。
+
 ### `--optimizer_config`
 
 - **内容**：调整优化器设置。

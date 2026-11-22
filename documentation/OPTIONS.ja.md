@@ -1324,6 +1324,8 @@ MOSS-Image の負の CFG 分岐でスキップする Transformer レイヤーの
 
 > 注記: 一部のオプティマイザは NVIDIA 以外のハードウェアでは利用できない場合があります。
 
+µP のベース形状を設定した BF16 モデルでは、`--optimizer=adamw_bf16 --optimizer_config=mup=true` を指定すると、幅に応じて更新量を調整し、確率的丸めと補償和を使用します。 µP スケーリングを適用した PyTorch の AdamW を使用するには、`--optimizer=mup-adamw` を指定します。
+
 ### `--optimizer_config`
 
 - **内容**: オプティマイザ設定を調整します。
