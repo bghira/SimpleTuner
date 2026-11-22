@@ -50,6 +50,48 @@ class InfiniteTalkAudioTests(unittest.TestCase):
         self.assertTrue(torch.equal(padded[:, :4], short_waveform))
         self.assertEqual(torch.count_nonzero(padded[:, 4:]).item(), 0)
 
+    @torch.no_grad()
+    def test_wav2vec_hidden_states_match_frame_aligned_encoder(self):
+        from transformers import Wav2Vec2Config, Wav2Vec2Model
+
+        from simpletuner.helpers.models.infinitetalk.audio import encode_wav2vec_hidden_states
+
+        input_values = torch.randn(2, 64)
+        num_frames = 9
+        for stable_layer_norm in (False, True):
+            with self.subTest(stable_layer_norm=stable_layer_norm):
+                model = Wav2Vec2Model(
+                    Wav2Vec2Config(
+                        hidden_size=8,
+                        num_hidden_layers=3,
+                        num_attention_heads=2,
+                        intermediate_size=16,
+                        conv_dim=(8,),
+                        conv_stride=(2,),
+                        conv_kernel=(3,),
+                        num_conv_pos_embeddings=4,
+                        num_conv_pos_embedding_groups=2,
+                        do_stable_layer_norm=stable_layer_norm,
+                    )
+                ).eval()
+
+                def align_projection_input(module, args):
+                    (features,) = args
+                    self.assertNotEqual(features.shape[1], num_frames)
+                    aligned = torch.nn.functional.interpolate(
+                        features.transpose(1, 2), size=num_frames, mode="linear", align_corners=True
+                    )
+                    return (aligned.transpose(1, 2),)
+
+                actual = encode_wav2vec_hidden_states(model, input_values, num_frames)
+                with model.feature_projection.register_forward_pre_hook(align_projection_input):
+                    reference = model(input_values, output_hidden_states=True)
+
+                expected = torch.stack((*reference.hidden_states[1:-1], reference.last_hidden_state), dim=2)
+
+                self.assertEqual(actual.shape, (2, num_frames, 3, 8))
+                torch.testing.assert_close(actual, expected)
+
     def test_window_audio_embeddings_matches_official_geometry(self):
         from simpletuner.helpers.models.infinitetalk.audio import window_audio_embeddings
 

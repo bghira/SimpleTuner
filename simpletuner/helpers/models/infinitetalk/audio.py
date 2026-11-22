@@ -1,5 +1,6 @@
 import torch
 import torch.nn.functional as F
+from transformers.utils.output_capturing import capture_outputs
 
 from simpletuner.helpers.models.infinitetalk import INFINITETALK_AUDIO_FPS
 
@@ -29,6 +30,13 @@ def interpolate_wav2vec_features(features: torch.Tensor, num_frames: int) -> tor
     return F.interpolate(features.transpose(1, 2), size=num_frames, mode="linear", align_corners=True).transpose(1, 2)
 
 
+# Transformers registers the layer recorders on the full model. Capture the
+# aligned encoder pass and keep its final normalization in the last state.
+@capture_outputs
+def _encode_wav2vec_features(audio_encoder, hidden_states: torch.Tensor, **kwargs):
+    return audio_encoder.encoder(hidden_states, **kwargs)
+
+
 def encode_wav2vec_hidden_states(
     audio_encoder,
     input_values: torch.Tensor,
@@ -37,7 +45,8 @@ def encode_wav2vec_hidden_states(
     extract_features = audio_encoder.feature_extractor(input_values).transpose(1, 2)
     extract_features = interpolate_wav2vec_features(extract_features, num_frames)
     hidden_states, _ = audio_encoder.feature_projection(extract_features)
-    encoder_outputs = audio_encoder.encoder(
+    encoder_outputs = _encode_wav2vec_features(
+        audio_encoder,
         hidden_states,
         output_hidden_states=True,
         return_dict=True,
