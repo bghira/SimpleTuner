@@ -1,9 +1,10 @@
 import unittest
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import torch
 
+from simpletuner.helpers.models.common import ModelFoundation
 from simpletuner.helpers.models.sana.model import Sana
 from simpletuner.helpers.training.explorative_modeling import ExplorativeModelingConfig
 
@@ -35,6 +36,15 @@ class SanaModelTests(unittest.TestCase):
             selection_scope="sample",
             block_size=0,
         )
+
+    def test_prepare_batch_preserves_the_vae_cache_scale(self):
+        vae = SimpleNamespace(config=SimpleNamespace(scaling_factor=0.41407))
+        cached = self.model.scale_vae_latents_for_cache(torch.ones(1, 32, 2, 2), vae)
+
+        with patch.object(ModelFoundation, "prepare_batch", autospec=True, side_effect=lambda model, batch, state: batch):
+            prepared = self.model.prepare_batch({"latent_batch": cached}, {})
+
+        torch.testing.assert_close(prepared["latent_batch"], torch.full_like(cached, 0.41407))
 
     def test_model_predict_uses_crepa_capture_block_override(self):
         hidden_states_buffer = {}
