@@ -3,7 +3,6 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 from diffusers.image_processor import PipelineImageInput
 from diffusers.loaders.lora_base import LoraBaseMixin, _fetch_state_dict
 from diffusers.models import AutoencoderKLWan
@@ -22,10 +21,11 @@ from diffusers.utils import (
 )
 from diffusers.utils.torch_utils import randn_tensor
 from diffusers.video_processor import VideoProcessor
-from transformers import AutoTokenizer, Qwen2_5_VLForConditionalGeneration
+from transformers import AutoTokenizer, UMT5EncoderModel
 
 from simpletuner.helpers.models.longcat_video import optimized_scale, pack_video_latents, unpack_video_latents
 from simpletuner.helpers.models.longcat_video.transformer import LongCatVideoTransformer3DModel
+from simpletuner.helpers.models.wan.pipeline import prompt_clean
 from simpletuner.helpers.training.lora_format import (
     PEFTLoRAFormat,
     convert_comfyui_to_diffusers,
@@ -76,7 +76,6 @@ DEFAULT_VAE_LATENTS_STD = [
     2.8251,
     1.916,
 ]
-DEFAULT_TRANSFORMER_CAPTION_CHANNELS = 4096
 DEFAULT_TRANSFORMER_IN_CHANNELS = 16
 
 
@@ -285,7 +284,7 @@ class LongCatVideoPipeline(DiffusionPipeline, LongCatLoraLoaderMixin):
         self,
         scheduler: FlowMatchEulerDiscreteScheduler,
         vae: Optional[AutoencoderKLWan],
-        text_encoder: Qwen2_5_VLForConditionalGeneration,
+        text_encoder: UMT5EncoderModel,
         tokenizer: AutoTokenizer,
         transformer: Optional[LongCatVideoTransformer3DModel],
     ):
@@ -313,9 +312,6 @@ class LongCatVideoPipeline(DiffusionPipeline, LongCatLoraLoaderMixin):
         self.max_tokenizer_len = 512
 
         transformer_config = getattr(transformer, "config", None)
-        self.transformer_caption_channels = getattr(
-            transformer_config, "caption_channels", DEFAULT_TRANSFORMER_CAPTION_CHANNELS
-        )
         self.transformer_in_channels = getattr(transformer_config, "in_channels", DEFAULT_TRANSFORMER_IN_CHANNELS)
 
         latents_mean = torch.tensor(latents_mean_config, dtype=torch.float32).view(1, z_dim, 1, 1, 1)
@@ -352,12 +348,6 @@ class LongCatVideoPipeline(DiffusionPipeline, LongCatLoraLoaderMixin):
             raise ValueError("Transformer is not loaded; load a transformer before running generation.")
         return self.transformer
 
-    def _get_attention_mask(self, attention_mask: torch.Tensor, target_batch: int, num_videos_per_prompt: int):
-        attention_mask = attention_mask.unsqueeze(1).unsqueeze(1)
-        attention_mask = attention_mask.repeat(1, num_videos_per_prompt, 1, 1)
-        attention_mask = attention_mask.view(target_batch, 1, 1, -1)
-        return attention_mask
-
     @property
     def guidance_scale(self):
         return self._guidance_scale
@@ -378,17 +368,6 @@ class LongCatVideoPipeline(DiffusionPipeline, LongCatLoraLoaderMixin):
     def interrupt(self):
         return getattr(self, "_interrupt", False)
 
-    def _pad_prompt_embeds(self, prompt_embeds: torch.Tensor):
-        target_dim = self.transformer_caption_channels or prompt_embeds.shape[-1]
-        if prompt_embeds.shape[-1] == target_dim:
-            return prompt_embeds
-        if prompt_embeds.shape[-1] < target_dim:
-            pad = target_dim - prompt_embeds.shape[-1]
-            prompt_embeds = F.pad(prompt_embeds, (0, pad))
-        else:
-            prompt_embeds = prompt_embeds[..., :target_dim]
-        return prompt_embeds
-
     @torch.no_grad()
     def encode_prompt(
         self,
@@ -400,74 +379,37 @@ class LongCatVideoPipeline(DiffusionPipeline, LongCatLoraLoaderMixin):
         max_sequence_length: Optional[int] = None,
         dtype: Optional[torch.dtype] = None,
     ):
-        prompt = [prompt] if isinstance(prompt, str) else prompt
-        batch_size = len(prompt)
-        max_length = max_sequence_length or self.max_tokenizer_len
-
-        tokenized = self.tokenizer(
-            prompt,
-            padding="max_length",
-            max_length=max_length,
-            truncation=True,
-            return_attention_mask=True,
-            return_tensors="pt",
-        )
-
-        input_ids = tokenized.input_ids.to(device)
-        attention_mask = tokenized.attention_mask.to(device)
-
+        prompts = [prompt] if isinstance(prompt, str) else prompt
         target_dtype = dtype or self.text_encoder.dtype
         if device.type == "mps" and target_dtype == torch.float64:
             target_dtype = torch.float32
 
-        outputs = self.text_encoder(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            output_hidden_states=True,
-        )
-        prompt_embeds = outputs.hidden_states[-1].to(device=device, dtype=target_dtype)
-        prompt_embeds = self._pad_prompt_embeds(prompt_embeds[:, :max_length, :])
+        def encode(texts):
+            tokens = self.tokenizer(
+                [prompt_clean(text) for text in texts],
+                padding="max_length",
+                max_length=max_sequence_length or self.max_tokenizer_len,
+                truncation=True,
+                add_special_tokens=True,
+                return_attention_mask=True,
+                return_tensors="pt",
+            )
+            mask = tokens.attention_mask.to(device)
+            embeddings = self.text_encoder(tokens.input_ids.to(device), attention_mask=mask).last_hidden_state
+            embeddings = embeddings.to(dtype=target_dtype).unsqueeze(1).repeat_interleave(num_videos_per_prompt, dim=0)
+            mask = mask[:, None, None, :].repeat_interleave(num_videos_per_prompt, dim=0)
+            return embeddings, mask
 
-        if prompt_embeds.dim() == 3:
-            prompt_embeds = prompt_embeds.unsqueeze(1)
-        prompt_embeds = prompt_embeds.repeat(1, num_videos_per_prompt, 1, 1)
-        prompt_embeds = prompt_embeds.view(batch_size * num_videos_per_prompt, 1, max_length, -1)
-        prompt_attention_mask = self._get_attention_mask(attention_mask, prompt_embeds.shape[0], num_videos_per_prompt).to(
-            device
-        )
-
+        prompt_embeds, prompt_attention_mask = encode(prompts)
         if not do_classifier_free_guidance:
             return prompt_embeds, prompt_attention_mask, None, None
-
-        neg_prompt = negative_prompt or ""
-        neg_prompt = batch_size * [neg_prompt] if isinstance(neg_prompt, str) else neg_prompt
-        negative_tokenized = self.tokenizer(
-            neg_prompt,
-            padding="max_length",
-            max_length=max_length,
-            truncation=True,
-            return_attention_mask=True,
-            return_tensors="pt",
-        )
-        negative_input_ids = negative_tokenized.input_ids.to(device)
-        negative_attention_mask = negative_tokenized.attention_mask.to(device)
-
-        negative_outputs = self.text_encoder(
-            input_ids=negative_input_ids,
-            attention_mask=negative_attention_mask,
-            output_hidden_states=True,
-        )
-        negative_prompt_embeds = negative_outputs.hidden_states[-1].to(device=device, dtype=target_dtype)
-        negative_prompt_embeds = self._pad_prompt_embeds(negative_prompt_embeds[:, :max_length, :])
-        if negative_prompt_embeds.dim() == 3:
-            negative_prompt_embeds = negative_prompt_embeds.unsqueeze(1)
-        negative_prompt_embeds = negative_prompt_embeds.repeat(1, num_videos_per_prompt, 1, 1)
-        negative_prompt_embeds = negative_prompt_embeds.view(batch_size * num_videos_per_prompt, 1, max_length, -1)
-        negative_attention_mask = self._get_attention_mask(
-            negative_attention_mask, negative_prompt_embeds.shape[0], num_videos_per_prompt
-        ).to(device)
-
-        return prompt_embeds, prompt_attention_mask, negative_prompt_embeds, negative_attention_mask
+        negative_prompts = negative_prompt or ""
+        if isinstance(negative_prompts, str):
+            negative_prompts = [negative_prompts] * len(prompts)
+        elif len(negative_prompts) != len(prompts):
+            raise ValueError("LongCat Video requires one negative prompt per prompt.")
+        negative_embeds, negative_mask = encode(negative_prompts)
+        return prompt_embeds, prompt_attention_mask, negative_embeds, negative_mask
 
     def _normalize_latents(self, latents: torch.Tensor, device: torch.device, dtype: torch.dtype):
         latents_mean = self.latents_mean.to(device=device, dtype=dtype)

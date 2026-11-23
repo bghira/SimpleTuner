@@ -172,7 +172,7 @@ SimpleTuner 支持以下模型系列。详细的训练功能支持请参阅[快�
 - **[Sana 指南](/documentation/quickstart/SANA.md)** - 轻量级 flow-matching 模型
 - **[Lumina2 指南](/documentation/quickstart/LUMINA2.md)** - 2B 参数 flow-matching 模型
 - **[Kwai Kolors 指南](/documentation/quickstart/KOLORS.md)** - 基于 SDXL，使用 ChatGLM 编码器
-- **[LongCat-Video 指南](/documentation/quickstart/LONGCAT_VIDEO.md)** - 使用 Qwen-2.5-VL 的 flow-matching 文本到视频和图像到视频
+- **[LongCat-Video 指南](/documentation/quickstart/LONGCAT_VIDEO.md)** - 使用 UMT5-XXL 的 flow-matching 文本到视频和图像到视频
 - **[LongCat-Video Edit 指南](/documentation/quickstart/LONGCAT_VIDEO_EDIT.md)** - 条件优先风格（图像到视频）
 - **[LongCat-Image 指南](/documentation/quickstart/LONGCAT_IMAGE.md)** - 6B 双语 flow-matching 模型，使用 Qwen-2.5-VL 编码器
 - **[LongCat-Image Edit 指南](/documentation/quickstart/LONGCAT_EDIT.md)** - 需要参考潜变量的图像编辑风格

@@ -10,7 +10,7 @@ Esta guía te lleva por el entrenamiento y la validación del flujo imagen‑a�
 | ----------------------------- | ----------------- | ---------- |
 | Flavour                       | `final`           | `final` (mismos pesos) |
 | Condicionamiento              | ninguno           | **requiere frame de condicionamiento** (el primer latente se mantiene fijo) |
-| Codificador de texto          | Qwen‑2.5‑VL       | Qwen‑2.5‑VL (igual) |
+| Codificador de texto          | UMT5-XXL       | UMT5-XXL (igual) |
 | Pipeline                      | TEXT2IMG          | IMG2VIDEO |
 | Entradas de validación        | solo prompt       | prompt **y** imagen de condicionamiento |
 | Buckets / stride              | buckets de 64px, `(frames-1)%4==0` | igual |
@@ -18,7 +18,7 @@ Esta guía te lleva por el entrenamiento y la validación del flujo imagen‑a�
 **Valores predeterminados base que heredas**
 - Flow matching con shift `12.0`.
 - Buckets de aspecto forzados a 64px.
-- Codificador de texto Qwen‑2.5‑VL; negativos vacíos auto‑agregados cuando CFG está activo.
+- Codificador de texto UMT5-XXL; negativos vacíos auto‑agregados cuando CFG está activo.
 - Frames por defecto: 93 (cumple `(frames-1)%4==0`).
 
 ---

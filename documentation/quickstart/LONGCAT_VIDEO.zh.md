@@ -1,6 +1,6 @@
 # LongCat‑Video 快速入门
 
-LongCat‑Video 是一个 13.6B 双语（zh/en）文生视频/图生视频模型，使用流匹配、Qwen‑2.5‑VL 文本编码器和 Wan VAE。本指南带你完成 SimpleTuner 的设置、数据准备，以及首次训练/验证。
+LongCat‑Video 是一个 13.6B 双语（zh/en）文生视频/图生视频模型，使用流匹配、UMT5-XXL 文本编码器和 Wan VAE。本指南带你完成 SimpleTuner 的设置、数据准备，以及首次训练/验证。
 
 ---
 
@@ -59,7 +59,7 @@ simpletuner server
 **需保留的关键默认值**
 - shift `12.0` 的流匹配调度器是自动的；无需额外噪声参数。
 - 宽高比桶保持 64px 对齐；`aspect_bucket_alignment` 强制为 64。
-- 最大 token 长度 512（Qwen‑2.5‑VL）；CFG 开启且未给负向提示词时，管线会自动补一个空负向。
+- 最大 token 长度 512（UMT5-XXL）；CFG 开启且未给负向提示词时，管线会自动补一个空负向。
 - 帧数必须满足 `(num_frames - 1)` 可被 VAE 时间步长（默认 4）整除。默认 93 帧已满足该条件。
 
 可选 VRAM 节省项：

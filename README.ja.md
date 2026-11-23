@@ -172,7 +172,7 @@ SimpleTunerは以下のモデルファミリーをサポートしています。
 - **[Sanaガイド](/documentation/quickstart/SANA.md)** - 軽量flow-matchingモデル
 - **[Lumina2ガイド](/documentation/quickstart/LUMINA2.md)** - 2Bパラメータflow-matchingモデル
 - **[Kwai Kolorsガイド](/documentation/quickstart/KOLORS.md)** - ChatGLMエンコーダー付きSDXLベース
-- **[LongCat-Videoガイド](/documentation/quickstart/LONGCAT_VIDEO.md)** - Qwen-2.5-VLを使用したflow-matching text-to-videoおよびimage-to-video
+- **[LongCat-Videoガイド](/documentation/quickstart/LONGCAT_VIDEO.md)** - UMT5-XXLを使用したflow-matching text-to-videoおよびimage-to-video
 - **[LongCat-Video Editガイド](/documentation/quickstart/LONGCAT_VIDEO_EDIT.md)** - Conditioning-firstフレーバー（image-to-video）
 - **[LongCat-Imageガイド](/documentation/quickstart/LONGCAT_IMAGE.md)** - Qwen-2.5-VLエンコーダーを備えた6Bバイリンガルflow-matchingモデル
 - **[LongCat-Image Editガイド](/documentation/quickstart/LONGCAT_EDIT.md)** - 参照潜在変数を必要とする画像編集フレーバー

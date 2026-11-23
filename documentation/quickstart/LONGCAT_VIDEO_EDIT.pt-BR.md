@@ -10,7 +10,7 @@ Este guia mostra como treinar e validar o fluxo imagem-para-vídeo do LongCat-Vi
 | ----------------------------- | ----------------- | ---------- |
 | Flavour                       | `final`           | `final` (mesmos pesos) |
 | Condicionamento               | nenhum            | **requer frame de condicionamento** (primeiro latente mantido fixo) |
-| Encoder de texto              | Qwen-2.5-VL       | Qwen-2.5-VL (mesmo) |
+| Encoder de texto              | UMT5-XXL       | UMT5-XXL (mesmo) |
 | Pipeline                      | TEXT2IMG          | IMG2VIDEO |
 | Entradas de validação         | apenas prompt     | prompt **e** imagem de condicionamento |
 | Buckets / stride              | buckets de 64px, `(frames-1)%4==0` | igual |
@@ -18,7 +18,7 @@ Este guia mostra como treinar e validar o fluxo imagem-para-vídeo do LongCat-Vi
 **Padrões principais herdados**
 - Flow matching com shift `12.0`.
 - Buckets de aspecto forçados a 64px.
-- Encoder de texto Qwen-2.5-VL; negativos vazios adicionados automaticamente quando CFG está ligado.
+- Encoder de texto UMT5-XXL; negativos vazios adicionados automaticamente quando CFG está ligado.
 - Frames padrão: 93 (satisfaz `(frames-1)%4==0`).
 
 ---

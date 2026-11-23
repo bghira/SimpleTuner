@@ -172,7 +172,7 @@ SimpleTuner निम्नलिखित मॉडल families का सम�
 - **[Sana Guide](/documentation/quickstart/SANA.md)** - lightweight flow‑matching मॉडल
 - **[Lumina2 Guide](/documentation/quickstart/LUMINA2.md)** - 2B पैरामीटर flow‑matching मॉडल
 - **[Kwai Kolors Guide](/documentation/quickstart/KOLORS.md)** - ChatGLM encoder के साथ SDXL‑आधारित
-- **[LongCat-Video Guide](/documentation/quickstart/LONGCAT_VIDEO.md)** - Qwen‑2.5‑VL के साथ flow‑matching text‑to‑video और image‑to‑video
+- **[LongCat-Video Guide](/documentation/quickstart/LONGCAT_VIDEO.md)** - UMT5-XXL के साथ flow‑matching text‑to‑video और image‑to‑video
 - **[LongCat-Video Edit Guide](/documentation/quickstart/LONGCAT_VIDEO_EDIT.md)** - conditioning‑first flavour (image‑to‑video)
 - **[LongCat-Image Guide](/documentation/quickstart/LONGCAT_IMAGE.md)** - Qwen‑2.5‑VL encoder के साथ 6B bilingual flow‑matching मॉडल
 - **[LongCat-Image Edit Guide](/documentation/quickstart/LONGCAT_EDIT.md)** - reference latents की आवश्यकता वाला image editing flavour
