@@ -23,6 +23,7 @@ from simpletuner.helpers.models.common import (
     TextEmbedCacheKey,
     VideoModelFoundation,
 )
+from simpletuner.helpers.models.longcat_video import normalize_latents
 from simpletuner.helpers.models.longcat_video.pipeline import LongCatVideoPipeline
 from simpletuner.helpers.models.longcat_video.transformer import LongCatVideoTransformer3DModel
 from simpletuner.helpers.models.registry import ModelRegistry
@@ -234,6 +235,26 @@ class LongCatVideo(VideoModelFoundation):
         conditioning latents correctly.
         """
         return True
+
+    def post_vae_load_setup(self):
+        super().post_vae_load_setup()
+        mean, std, _, _, _ = LongCatVideoPipeline._resolve_vae_config(self.vae)
+        vae_config = self.vae.config
+        cache_shift = getattr(vae_config, "shift_factor", None) or 0.0
+        cache_scale = getattr(self, "AUTOENCODER_SCALING_FACTOR", getattr(vae_config, "scaling_factor", 1.0))
+        # Express the checkpoint statistics in the existing VAE cache's coordinate space.
+        self._cached_vae_latent_mean = (torch.tensor(mean, dtype=torch.float32) - cache_shift) * cache_scale
+        self._cached_vae_inv_std = torch.tensor(std, dtype=torch.float32).reciprocal() / cache_scale
+
+    def prepare_batch(self, batch: dict, state: dict) -> dict:
+        latents = batch.get("latent_batch")
+        if torch.is_tensor(latents):
+            latents = latents.to(device=self.accelerator.device)
+            stats_shape = (1, -1) + (1,) * (latents.ndim - 2)
+            mean = self._cached_vae_latent_mean.to(latents).view(stats_shape)
+            inv_std = self._cached_vae_inv_std.to(latents).view(stats_shape)
+            batch = {**batch, "latent_batch": normalize_latents(latents, mean, inv_std)}
+        return super().prepare_batch(batch, state)
 
     def requires_conditioning_dataset(self) -> bool:
         # Conditioning is supported when provided, but not mandatory.

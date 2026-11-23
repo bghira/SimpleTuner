@@ -1,8 +1,33 @@
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import torch
 
+from simpletuner.helpers.models.common import ModelFoundation
+from simpletuner.helpers.models.longcat_video.model import LongCatVideo
 from simpletuner.helpers.models.longcat_video.transformer import LongCatVideoTransformer3DModel
+
+
+class TestLongCatVideoTrainingLatents(unittest.TestCase):
+    def test_normalizes_existing_cached_latents_before_noise_sampling(self):
+        model = LongCatVideo.__new__(LongCatVideo)
+        model.accelerator = SimpleNamespace(device=torch.device("cpu"))
+        model.vae = SimpleNamespace(
+            config=SimpleNamespace(z_dim=2, latents_mean=[-1.0, 2.0], latents_std=[2.0, 4.0]),
+        )
+        raw = torch.tensor([3.0, 5.0, 6.0, 10.0]).view(1, 2, 2, 1, 1)
+        cached = model.scale_vae_latents_for_cache(raw, model.vae)
+        model.post_vae_load_setup()
+        model.vae = None
+        batch = {"latent_batch": cached, "conditioning_latent_count": 1}
+
+        with patch.object(ModelFoundation, "prepare_batch", autospec=True, side_effect=lambda model, batch, state: batch):
+            prepared = model.prepare_batch(batch, {})
+
+        torch.testing.assert_close(prepared["latent_batch"], torch.tensor([2.0, 3.0, 1.0, 2.0]).view_as(raw))
+        torch.testing.assert_close(batch["latent_batch"], raw)
+        self.assertEqual(prepared["conditioning_latent_count"], 1)
 
 
 class TestLongCatVideoTransformerShapes(unittest.TestCase):
