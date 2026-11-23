@@ -112,6 +112,10 @@ class ACEStep(AudioModelFoundation):
         "v15-base": "acestep-v15-base",
         "v15-sft": "acestep-v15-sft",
     }
+    V15_STANDALONE_VARIANT_REPOS = {
+        "acestep-v15-base": "ACE-Step/acestep-v15-base",
+        "acestep-v15-sft": "ACE-Step/acestep-v15-sft",
+    }
     V15_SHARED_VAE_SUBFOLDER = "vae"
     V15_SHARED_TEXT_ENCODER_SUBFOLDER = "Qwen3-Embedding-0.6B"
     V15_SILENCE_LATENT_FILENAME = "silence_latent.pt"
@@ -362,7 +366,6 @@ class ACEStep(AudioModelFoundation):
             return None
 
         base_dir = Path(base_path)
-        self._v15_layout_probe_base = str(base_path)
         variant_subdir = self._preferred_v15_variant_subdir()
         shared_root = base_dir
         variant_dir: Optional[Path] = None
@@ -370,18 +373,22 @@ class ACEStep(AudioModelFoundation):
         if base_dir.name.lower().startswith("acestep-v15-"):
             variant_dir = base_dir
             shared_root = base_dir.parent
-        elif variant_subdir is not None:
-            candidate = base_dir / variant_subdir
-            if candidate.is_dir():
-                variant_dir = candidate
+        elif variant_subdir is not None and (base_dir / variant_subdir).is_dir():
+            variant_dir = base_dir / variant_subdir
 
-        if variant_dir is None and base_dir.is_dir():
-            available_variants = sorted(
-                child for child in base_dir.iterdir() if child.is_dir() and child.name.lower().startswith("acestep-v15-")
-            )
-            if available_variants:
-                variant_dir = available_variants[0]
+        configured_transformer = self._get_optional_config_model_path("pretrained_transformer_model_name_or_path")
+        if variant_subdir is not None and configured_transformer:
+            variant_dir = Path(configured_transformer)
+            if not variant_dir.is_dir():
+                variant_dir = Path(snapshot_download(repo_id=configured_transformer))
+        elif variant_dir is None and variant_subdir is not None:
+            official_source = self.config.pretrained_model_name_or_path == self.HUGGINGFACE_PATHS["v15-turbo"]
+            variant_repo = self.V15_STANDALONE_VARIANT_REPOS.get(variant_subdir) if official_source else None
+            if variant_repo is None:
+                raise FileNotFoundError(f"ACE-Step v1.5 checkpoint is missing the requested variant {variant_subdir}.")
+            variant_dir = Path(snapshot_download(repo_id=variant_repo))
 
+        self._v15_layout_probe_base = str(base_path)
         qwen_text_encoder_path = self._get_optional_config_model_path("qwen_text_encoder_model_name_or_path")
         tokenizer_dir = shared_root / self.V15_SHARED_TEXT_ENCODER_SUBFOLDER
         vae_dir = shared_root / self.V15_SHARED_VAE_SUBFOLDER
@@ -755,17 +762,14 @@ class ACEStep(AudioModelFoundation):
                 f"{self.V15_SHARED_VAE_SUBFOLDER}/*",
                 f"{self.V15_SHARED_TEXT_ENCODER_SUBFOLDER}/*",
             ]
+            allow_patterns.extend(
+                [
+                    self.V15_SILENCE_LATENT_FILENAME,
+                    f"acestep-v15-*/{self.V15_SILENCE_LATENT_FILENAME}",
+                ]
+            )
             if v15_variant_subdir is not None:
-                allow_patterns.extend(
-                    [
-                        f"{v15_variant_subdir}/*",
-                        f"{v15_variant_subdir}/{self.V15_SILENCE_LATENT_FILENAME}",
-                        "acestep-v15-*/*",
-                        "acestep-v15-*/silence_latent.pt",
-                    ]
-                )
-            else:
-                allow_patterns.extend(["acestep-v15-*/*", "acestep-v15-*/silence_latent.pt"])
+                allow_patterns.append(f"{v15_variant_subdir}/*")
         self._checkpoint_base = snapshot_download(
             repo_id=base,
             allow_patterns=allow_patterns,
