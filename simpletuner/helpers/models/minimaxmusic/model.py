@@ -489,10 +489,22 @@ class MiniMaxMusic(AudioModelFoundation):
         return True
 
     def text_embed_cache_key_value(self, *, prompt: str, default_key: str, metadata: dict) -> str:
-        del metadata
+        if (duration_limit := metadata.get("audio_duration_limit_seconds")) is not None:
+            default_key = f"{default_key}:audio-limit:{duration_limit}"
         if prompt == "":
             return f"{default_key}:__caption_dropout__"
         return default_key
+
+    def _dataset_audio_prompt_context(self, sample_metadata, prompt, data_backend_id: str | None) -> dict:
+        context = self._prompt_context_from_audio_metadata(sample_metadata, prompt)
+        if data_backend_id:
+            from simpletuner.helpers.training.state_tracker import StateTracker
+
+            audio_config = StateTracker.get_data_backend_config(data_backend_id).get("audio") or {}
+            limit = self._metadata_float(audio_config, "max_duration_seconds")
+            if limit is not None and math.isfinite(limit) and limit > 0:
+                context["audio_duration_limit_seconds"] = limit
+        return context
 
     def text_embed_cache_metadata_for_sample(
         self,
@@ -503,7 +515,7 @@ class MiniMaxMusic(AudioModelFoundation):
         data_backend_id: Optional[str],
         dataset_relative_path: Optional[str],
     ) -> dict:
-        del latent, data_backend_id, dataset_relative_path
+        del latent, dataset_relative_path
         sample_metadata = {}
         if isinstance(example, dict):
             embedded_metadata = example.get("image_metadata")
@@ -515,7 +527,7 @@ class MiniMaxMusic(AudioModelFoundation):
             if isinstance(embedded_metadata, dict):
                 sample_metadata.update(embedded_metadata)
 
-        return self._prompt_context_from_audio_metadata(sample_metadata, str(prompt))
+        return self._dataset_audio_prompt_context(sample_metadata, str(prompt), data_backend_id)
 
     def text_embed_cache_metadata_for_preparation(
         self,
@@ -526,9 +538,9 @@ class MiniMaxMusic(AudioModelFoundation):
         data_backend_id: str | None,
         dataset_relative_path: str | None,
     ) -> dict:
-        del data_backend_id, dataset_relative_path
+        del dataset_relative_path
         sample_metadata = read_metadata(image_path) or {}
-        return self._prompt_context_from_audio_metadata(sample_metadata, str(prompt))
+        return self._dataset_audio_prompt_context(sample_metadata, str(prompt), data_backend_id)
 
     def flow_matching_target_direction(self) -> float:
         return -1.0
@@ -1981,18 +1993,22 @@ class MiniMaxMusic(AudioModelFoundation):
         self.condition_encoder = None
 
     def _audio_duration_for_context(self, context: dict) -> float:
-        for key in (
-            "audio_duration",
-            "duration",
-            "duration_seconds",
-            "bucket_duration_seconds",
-            "truncated_duration_seconds",
-            "original_duration_seconds",
-        ):
-            value = context.get(key) if isinstance(context, dict) else None
-            if value is not None:
-                return max(float(value), 0.04)
-        return max(float(getattr(self.config, "validation_audio_duration", 60.0) or 60.0), 0.04)
+        requested_duration = float(getattr(self.config, "validation_audio_duration", 60.0) or 60.0)
+        if isinstance(context, dict):
+            for key in (
+                "audio_duration",
+                "duration",
+                "duration_seconds",
+                "bucket_duration_seconds",
+                "truncated_duration_seconds",
+                "original_duration_seconds",
+            ):
+                if context.get(key) is not None:
+                    requested_duration = float(context[key])
+                    break
+            if (duration_limit := context.get("audio_duration_limit_seconds")) is not None:
+                requested_duration = min(requested_duration, duration_limit)
+        return max(requested_duration, 0.04)
 
     def _lyrics_for_context(self, context: dict, prompt: str) -> str:
         if isinstance(context, dict):

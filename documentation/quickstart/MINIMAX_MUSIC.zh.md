@@ -137,6 +137,8 @@ datasets/minimaxmusic-audio/
 └── track_01.lyrics
 ```
 
+训练提示词预处理会应用数据集的 `audio.max_duration_seconds`。修改上限后，受影响的嵌入会使用新的缓存键重新生成。
+
 ## 验证设置
 
 - **`validation_prompt`**：音乐描述或 tags。

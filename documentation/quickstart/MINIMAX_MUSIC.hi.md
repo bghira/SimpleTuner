@@ -137,6 +137,8 @@ datasets/minimaxmusic-audio/
 └── track_01.lyrics
 ```
 
+Training prompt की तैयारी dataset के `audio.max_duration_seconds` को लागू करती है। सीमा बदलने पर संबंधित embeddings नई cache keys के साथ फिर बनते हैं।
+
 ## Validation
 
 - **`validation_prompt`**: music description या tags।
