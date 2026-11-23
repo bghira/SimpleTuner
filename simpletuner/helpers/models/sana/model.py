@@ -294,16 +294,6 @@ class Sana(ImageModelFoundation):
             self.AUTOENCODER_SCALING_FACTOR = getattr(self.vae.config, "scaling_factor", 1.0)
             logger.info(f"Sana VAE scaling factor set to {self.AUTOENCODER_SCALING_FACTOR}")
 
-    LATENT_RESCALE = 0.5
-
-    def prepare_batch(self, batch: dict, state: dict) -> dict:
-        """
-        Apply a calibrated latent rescale for Sana to align training variance with the reference recipe.
-        """
-        if batch.get("latent_batch") is not None:
-            batch["latent_batch"] = batch["latent_batch"] * self.LATENT_RESCALE
-        return super().prepare_batch(batch, state)
-
     def setup_training_noise_schedule(self):
         """
         Sana training uses its native flow-matching scheduler table and ignores shift overrides.
