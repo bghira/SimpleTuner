@@ -1,10 +1,9 @@
 import unittest
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import torch
 
-from simpletuner.helpers.models.common import ModelFoundation
 from simpletuner.helpers.models.sana.model import Sana
 from simpletuner.helpers.training.explorative_modeling import ExplorativeModelingConfig
 
@@ -37,14 +36,57 @@ class SanaModelTests(unittest.TestCase):
             block_size=0,
         )
 
-    def test_prepare_batch_preserves_the_vae_cache_scale(self):
-        vae = SimpleNamespace(config=SimpleNamespace(scaling_factor=0.41407))
-        cached = self.model.scale_vae_latents_for_cache(torch.ones(1, 32, 2, 2), vae)
+    def test_vae_cache_and_training_use_checkpoint_latent_scale_once(self):
+        from diffusers import AutoencoderDC, FlowMatchEulerDiscreteScheduler
 
-        with patch.object(ModelFoundation, "prepare_batch", autospec=True, side_effect=lambda model, batch, state: batch):
-            prepared = self.model.prepare_batch({"latent_batch": cached}, {})
+        from simpletuner.helpers.caching.vae import VAECache
+        from simpletuner.helpers.data_backend.dataset_types import DatasetType
 
-        torch.testing.assert_close(prepared["latent_batch"], torch.full_like(cached, 0.41407))
+        vae = AutoencoderDC(
+            latent_channels=4,
+            encoder_block_out_channels=(8,),
+            decoder_block_out_channels=(8,),
+            encoder_layers_per_block=(1,),
+            decoder_layers_per_block=(1,),
+            encoder_qkv_multiscales=((),),
+            decoder_qkv_multiscales=((),),
+            scaling_factor=0.41407,
+        )
+        self.model.vae = vae
+        self.model.post_vae_load_setup()
+        cache = MagicMock(spec=VAECache)
+        cache.model = self.model
+        cache.vae = vae
+        cache.accelerator = self.model.accelerator
+        cache.dataset_type_enum = DatasetType.IMAGE
+        cache._cache_vae_dtype.return_value = torch.float32
+        cache.generate_vae_cache_filename.return_value = ("sample.pt", "sample")
+        cache.prepare_video_latents.side_effect = lambda samples: samples
+        cache.process_video_latents.side_effect = lambda latents: latents
+
+        pixels = torch.randn(3, 8, 8)
+        with torch.no_grad():
+            raw = vae.encode(pixels.unsqueeze(0)).latent
+        fresh = VAECache.encode_images(cache, [pixels], ["sample"], load_from_cache=False)
+        torch.testing.assert_close(torch.stack(fresh), raw)
+        cache.vae_cache_ondemand = False
+        cache.cache_data_backend = MagicMock()
+        cache.cache_data_backend.exists.return_value = True
+        cache._read_from_storage.return_value = raw[0]
+        cached = VAECache.encode_images(cache, [None], ["sample"], load_from_cache=True)
+
+        self.model.config.flow_matching = True
+        self.model.config.weight_dtype = torch.float32
+        self.model.diffusion_blocks_controller = None
+        self.model.noise_schedule = FlowMatchEulerDiscreteScheduler()
+        for samples in (fresh, cached):
+            batch = self.model.prepare_batch({"latent_batch": torch.stack(samples), "prompt_embeds": None}, {})
+            expected = raw * vae.config.scaling_factor
+            torch.testing.assert_close(batch["latents"], expected)
+            torch.testing.assert_close(
+                batch["noisy_latents"], (1 - batch["sigmas"]) * expected + batch["sigmas"] * batch["noise"]
+            )
+            torch.testing.assert_close(self.model.get_prediction_target(batch), batch["noise"] - expected)
 
     def test_model_predict_uses_crepa_capture_block_override(self):
         hidden_states_buffer = {}
