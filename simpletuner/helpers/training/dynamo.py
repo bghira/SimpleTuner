@@ -76,8 +76,11 @@ def dynamo_config_context(config: Any) -> Iterator[None]:
 
 
 def regional_checkpoint_function(checkpoint: Callable) -> Callable:
+    from simpletuner.helpers.training.sdnq_workarounds import capture_sdnq_allocator_context
+
     patches = _REGIONAL_CHECKPOINT_PATCHES.get()
-    if not patches:
+    use_allocator = capture_sdnq_allocator_context()
+    if not patches and use_allocator is None:
         return checkpoint
 
     def checkpoint_region(function, *args, **kwargs):
@@ -85,8 +88,12 @@ def regional_checkpoint_function(checkpoint: Callable) -> Callable:
             return checkpoint(function, *args, **kwargs)
 
         def run_region(*inputs, **options):
-            # Accelerator autograd threads do not inherit the forward thread's Dynamo config.
-            with torch._dynamo.config.patch(patches):
+            # Accelerator autograd threads can replay here without the forward context.
+            with contextlib.ExitStack() as stack:
+                if patches:
+                    stack.enter_context(torch._dynamo.config.patch(patches))
+                if use_allocator is not None:
+                    stack.enter_context(use_allocator())
                 return function(*inputs, **options)
 
         return checkpoint(run_region, *args, **kwargs)
