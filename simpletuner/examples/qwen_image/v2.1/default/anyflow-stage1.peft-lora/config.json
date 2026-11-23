@@ -7,7 +7,7 @@
   "data_backend_config": "config/examples/qwen_image/v2.1/default/anyflow-stage1.peft-lora/dataloader.json",
   "disable_benchmark": false,
   "disable_bucket_pruning": true,
-  "gradient_checkpointing": false,
+  "gradient_checkpointing": true,
   "hub_model_id": "qwen-image-2.1-anyflow-stage1",
   "strict_epoch_limit": false,
   "learning_rate": 1e-05,
