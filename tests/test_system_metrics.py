@@ -6,11 +6,14 @@ import unittest
 from types import SimpleNamespace
 from unittest import mock
 
+from fastapi import HTTPException
+
 from simpletuner.helpers.training.system_metrics import (
     SystemMetricsSampler,
     log_system_metrics_to_trackers,
     should_collect_manual_system_metrics,
 )
+from simpletuner.simpletuner_sdk.server.routes.metrics import get_gpu_health_status
 
 
 class SystemMetricsSamplerTests(unittest.TestCase):
@@ -107,6 +110,22 @@ class SystemMetricsTrackerRoutingTests(unittest.TestCase):
         wandb.log.assert_not_called()
         simpletuner.log.assert_called_once_with({"system/cpu_percent": 33.0}, step=12)
         tensorboard.log.assert_called_once_with({"system/cpu_percent": 33.0}, step=12)
+
+
+class SystemMetricsVisibilityTests(unittest.IsolatedAsyncioTestCase):
+    async def test_worker_selection_is_scoped_to_visible_machines(self):
+        user = mock.Mock(id=7)
+        user.has_permission.return_value = False
+        repository = mock.AsyncMock()
+        repository.list_workers.return_value = []
+        with mock.patch(
+            "simpletuner.simpletuner_sdk.server.services.system_metrics_service.get_worker_repository",
+            return_value=repository,
+        ):
+            with self.assertRaises(HTTPException) as error:
+                await get_gpu_health_status(worker_id="another-worker", user=user)
+        self.assertEqual(error.exception.status_code, 404)
+        repository.list_workers.assert_awaited_once_with(user_id=7, limit=-1)
 
 
 if __name__ == "__main__":

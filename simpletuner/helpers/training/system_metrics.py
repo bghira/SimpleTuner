@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import platform
 import plistlib
@@ -49,7 +50,7 @@ def _gib(value: Optional[float]) -> Optional[float]:
 
 def _put_metric(metrics: dict[str, float], name: str, value: Any, *, digits: int = 3) -> None:
     number = _coerce_number(value)
-    if number is None:
+    if number is None or not math.isfinite(number):
         return
     metrics[name] = round(number, digits)
 

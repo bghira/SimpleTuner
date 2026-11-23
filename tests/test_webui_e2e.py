@@ -1619,6 +1619,58 @@ class CheckpointInferenceFlowTestCase(_TrainerPageMixin, WebUITestCase):
         self.for_each_browser("test_checkpoint_selection_opens_inference_workspace", scenario)
 
 
+class RemoteWorkerSystemMetricsTestCase(_TrainingWorkerFixture, WebUITestCase):
+    SERVER_MODE = ServerMode.UNIFIED
+    MAX_BROWSERS = 1
+
+    def test_workers_with_gpu_zero_keep_separate_history(self):
+        workers = (("gpu-first", "First GPU worker", 47), ("gpu-second", "Second GPU worker", 71))
+        for job_id, worker, temperature in workers:
+            self.register_job(job_id, worker, "L40S")
+            requests.post(
+                f"{self.base_url}/api/workers/heartbeat",
+                headers={"X-Worker-Token": f"{job_id}-token"},
+                json={
+                    "worker_id": f"worker-{job_id}",
+                    "current_job_id": job_id,
+                    "status": "busy",
+                    "system_metrics": {"system/cpu_percent": 25, "system/gpu/0/temperature_celsius": temperature},
+                },
+                timeout=10,
+            ).raise_for_status()
+
+        def scenario(driver, _):
+            driver.get(f"{self.base_url}/web/trainer#metrics")
+            wait = WebDriverWait(driver, 20)
+            wait.until(EC.presence_of_element_located((By.ID, "metrics-tab-content")))
+            self.dismiss_onboarding(driver)
+            wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "[data-testid='system-metrics-tab']"))).click()
+            driver.execute_script("Alpine.$data(document.querySelector('.dashboard-wrapper')).eventDockCollapsed = true;")
+            source = (By.ID, "gpu-metrics-source")
+            for job_id, _, temperature in (*workers, workers[0]):
+                select = wait.until(EC.element_to_be_clickable(source))
+                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", select)
+                worker_id = f"worker-{job_id}"
+                Select(select).select_by_value(worker_id)
+                wait.until(
+                    lambda d: d.execute_script(
+                        "const comp = Alpine.$data(document.getElementById('metrics-tab-content'));"
+                        "return comp.gpuHealthWorkerId === arguments[0] && "
+                        "comp.gpuHealth[0]?.temperature_celsius === arguments[1];",
+                        worker_id,
+                        temperature,
+                    )
+                )
+                self.assertIn(f"{temperature}°C", driver.find_element(By.CSS_SELECTOR, ".temp-display").text)
+            history = driver.execute_script(
+                "return Alpine.$data(document.getElementById('metrics-tab-content')).gpuHistory;"
+            )
+            self.assertEqual([point["temperature"] for point in history["worker-gpu-first:0"]], [47])
+            self.assertEqual([point["temperature"] for point in history["worker-gpu-second:0"]], [71])
+
+        self.for_each_browser("worker_system_metrics", scenario)
+
+
 class MetricsGpuHealthDashboardTestCase(_TrainerPageMixin, WebUITestCase):
     """Test GPU health dashboard toggles."""
 

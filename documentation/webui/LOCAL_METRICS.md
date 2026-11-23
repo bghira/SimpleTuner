@@ -38,7 +38,7 @@ Open **Metrics**, then **Training Runs**. Runs are discovered from saved WebUI e
 - validation galleries grouped by prompt for each training step
 - a link to the offline report
 
-The **System** section retains GPU health and Prometheus configuration.
+In **System**, use **Machine** to select the orchestrator or a worker you can view. Updated workers report GPU readings, CPU usage, and RAM usage with their heartbeats. The GPU chart history is scoped to that machine. The page labels stale readings and shows when a worker has yet to send a sample.
 
 ## Validation image storage
 

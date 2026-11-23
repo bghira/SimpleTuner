@@ -807,9 +807,24 @@ class TestWorkerRepository(unittest.TestCase):
             cursor.execute("SELECT version FROM schema_version LIMIT 1")
             version = cursor.fetchone()
             self.assertIsNotNone(version)
-            self.assertEqual(version["version"], 2)
+            self.assertEqual(version["version"], 3)
         finally:
             conn.close()
+
+    def test_worker_system_sample_round_trips_and_v2_database_migrates(self) -> None:
+        asyncio.run(self.repo.create_worker(self.test_worker))
+        with self.repo.transaction() as conn:
+            conn.execute("ALTER TABLE workers DROP COLUMN system_sample")
+            conn.execute("UPDATE schema_version SET version = 2")
+        self.repo._init_schema()
+
+        updated = asyncio.run(self.repo.get_worker(self.test_worker.worker_id))
+        self.assertIsNone(updated.system_sample)
+        snapshot = {"sampled_at": datetime.now(timezone.utc).isoformat(), "metrics": {"system/cpu_percent": 20.0}}
+        asyncio.run(self.repo.update_worker(self.test_worker.worker_id, {"system_sample": snapshot}))
+        updated = asyncio.run(self.repo.get_worker(self.test_worker.worker_id))
+        self.assertEqual(updated.system_sample, snapshot)
+        self.assertNotIn("system_sample", updated.to_dict())
 
     def test_created_at_ordering(self) -> None:
         """Test that list_workers returns workers ordered by created_at descending."""

@@ -22,7 +22,7 @@ Resume पर records जोड़े जाते हैं। HTML relative me
 
 ## WebUI और API
 
-**Metrics** में **Training Runs** खोलें। यहाँ step या minutes पर scalar, timestep distribution, हर step की validation gallery और offline report देख सकते हैं। **System** में GPU health और Prometheus configuration रहती है।
+**Metrics** में **Training Runs** खोलें। यहाँ step या minutes पर scalar, timestep distribution, हर step की validation gallery और offline report देख सकते हैं। **System** में **Machine** से orchestrator या उस worker को चुनें जिसे देखने की अनुमति है। अपडेट किए गए workers अपने heartbeat के साथ GPU रीडिंग और CPU व RAM का उपयोग भेजते हैं। GPU इतिहास हर मशीन के लिए अलग है। पेज पुरानी रीडिंग और अभी तक कोई नमूना न आने की स्थिति अलग दिखाता है।
 
 ```text
 GET /api/metrics/training/runs
