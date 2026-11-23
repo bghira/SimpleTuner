@@ -168,7 +168,7 @@ class WorkerManager:
     async def _handle_orphaned_job(self, job_id: str, worker):
         """Handle job that was running on offline worker."""
         job = await self.job_store.get_job(job_id)
-        if not job:
+        if not job or job.is_terminal:
             return
 
         if await self._check_job_outputs_exist(job):
@@ -301,25 +301,29 @@ class WorkerManager:
             logger.warning(f"Worker {worker.worker_id} not connected, skipping dispatch")
             return False
 
-        await self.worker_repository.update_worker(
-            worker.worker_id,
-            {
-                "status": WorkerStatus.BUSY,
-                "current_job_id": job.job_id,
-            },
-        )
-
         from datetime import datetime, timezone
 
         # Update job with worker assignment in metadata for status check validation
         updated_metadata = dict(job.metadata or {})
         updated_metadata["worker_id"] = worker.worker_id
-        await self.job_store.update_job(
+        claimed = await self.job_store.update_job(
             job.job_id,
             {
                 "status": "running",
                 "started_at": datetime.now(timezone.utc).isoformat(),
                 "metadata": updated_metadata,
+            },
+            expected_status=job.status,
+        )
+
+        if not claimed:
+            return False
+
+        await self.worker_repository.update_worker(
+            worker.worker_id,
+            {
+                "status": WorkerStatus.BUSY,
+                "current_job_id": job.job_id,
             },
         )
 
@@ -356,7 +360,7 @@ class WorkerManager:
         # same Pod can retry the SSE connection.
         reset_metadata = dict(job.metadata or {})
         if not preserve_binding:
-            reset_metadata.pop("worker_id", None)
+            reset_metadata["worker_id"] = None  # Remove the assignment via JSON Merge Patch.
         await self.job_store.update_job(
             job.job_id,
             {

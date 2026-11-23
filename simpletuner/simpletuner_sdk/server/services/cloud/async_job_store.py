@@ -183,9 +183,9 @@ class AsyncJobStore:
         """Add a new job."""
         await self._jobs.add(job)
 
-    async def update_job(self, job_id: str, updates: Dict[str, Any]) -> bool:
+    async def update_job(self, job_id: str, updates: Dict[str, Any], *, expected_status: Optional[str] = None) -> bool:
         """Update an existing job."""
-        return await self._jobs.update(job_id, updates)
+        return await self._jobs.update(job_id, updates, expected_status=expected_status)
 
     async def get_job(self, job_id: str) -> Optional[UnifiedJob]:
         """Get a job by ID."""

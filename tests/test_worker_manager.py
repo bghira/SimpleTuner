@@ -544,6 +544,19 @@ class TestWorkerManager(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(updates["metadata"]["worker_id"], "worker-1")
         mock_push.assert_called_once()
 
+    async def test_dispatch_skips_job_reclaimed_by_original_worker(self) -> None:
+        job = self._create_job(job_id="job-1", status="pending")
+        worker = self._create_worker(worker_id="idle-worker")
+        self.mock_job_store.update_job.return_value = False
+        with (
+            patch("simpletuner.simpletuner_sdk.server.routes.workers.is_worker_connected", return_value=True),
+            patch("simpletuner.simpletuner_sdk.server.routes.workers.push_to_worker") as push,
+        ):
+            self.assertFalse(await self.worker_manager._dispatch_job_to_worker(job, worker))
+        self.assertEqual(self.mock_job_store.update_job.await_args.kwargs["expected_status"], "pending")
+        self.mock_worker_repository.update_worker.assert_not_awaited()
+        push.assert_not_awaited()
+
     async def test_dispatch_job_to_worker_not_connected(self) -> None:
         """Test dispatching when worker not connected."""
         job = self._create_job(job_id="job-1", status="pending")
@@ -576,7 +589,7 @@ class TestWorkerManager(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(job_update_calls), 2)
         self.assertEqual(job_update_calls[1][0][1]["status"], "pending")
         # Verify worker_id is removed from metadata on failure
-        self.assertNotIn("worker_id", job_update_calls[1][0][1].get("metadata", {}))
+        self.assertIsNone(job_update_calls[1][0][1]["metadata"]["worker_id"])
 
     async def test_dispatch_job_to_worker_routes_not_available(self) -> None:
         """Test dispatching when worker routes not importable."""

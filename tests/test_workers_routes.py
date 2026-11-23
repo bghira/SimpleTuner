@@ -8,8 +8,10 @@ and admin worker management endpoints.
 from __future__ import annotations
 
 import asyncio
+import tempfile
 import unittest
 from datetime import datetime, timezone
+from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
 from fastapi.testclient import TestClient
@@ -282,6 +284,82 @@ class WorkerRegistrationTestCase(APITestCase, unittest.TestCase):
             self.assertIsNotNone(data["resume_job"])
             self.assertEqual(data["resume_job"]["job_id"], "job-456")
             self.assertIsNone(data["abandon_job"])
+
+    def test_reconnect_and_busy_progress_recover_only_the_assigned_retry(self) -> None:
+        from simpletuner.simpletuner_sdk.server.services.cloud.base import JobType, UnifiedJob
+        from simpletuner.simpletuner_sdk.server.services.cloud.storage.job_repository import JobRepository
+
+        class IsolatedJobRepository(JobRepository):
+            pass
+
+        directory = self.enterContext(tempfile.TemporaryDirectory())
+        jobs = IsolatedJobRepository(Path(directory) / "jobs.db")
+        self.addCleanup(jobs.reset_instance)
+        repo = AsyncMock()
+        repo.get_worker_by_token_hash.return_value = self.worker
+        self.enterContext(
+            patch("simpletuner.simpletuner_sdk.server.services.worker_repository.get_worker_repository", return_value=repo)
+        )
+        self.enterContext(
+            patch(
+                "simpletuner.simpletuner_sdk.server.services.cloud.storage.job_repository.get_job_repository",
+                return_value=jobs,
+            )
+        )
+        self.enterContext(patch("simpletuner.simpletuner_sdk.server.routes.workers._record_worker_stats"))
+        now = datetime.now(timezone.utc).isoformat()
+        for job_id, status, owner, retry, should_resume in (
+            ("reconnect", "pending", self.worker.worker_id, 1, True),
+            ("progress", "pending", self.worker.worker_id, 1, True),
+            ("redispatched", "running", "another-worker", 1, False),
+            ("cancelled", "cancelled", self.worker.worker_id, 1, False),
+            ("fresh", "pending", self.worker.worker_id, 0, False),
+        ):
+            with self.subTest(job_id=job_id):
+                job = UnifiedJob(
+                    job_id,
+                    JobType.LOCAL,
+                    "worker",
+                    status,
+                    "training",
+                    now,
+                    started_at=now,
+                    completed_at=now,
+                    error_message="old failure",
+                    metadata={"worker_id": owner, "retry_count": retry, "needs_reconciliation": True},
+                )
+                run_async(jobs.add(job))
+                headers = {"X-Worker-Token": self.token}
+                if job_id == "progress":
+                    reply = self.client.post(
+                        "/api/workers/heartbeat",
+                        headers=headers,
+                        json={
+                            "worker_id": self.worker.worker_id,
+                            "status": "busy",
+                            "current_job_id": job_id,
+                            "job_progress": {"step": 100},
+                        },
+                    )
+                else:
+                    reply = self.client.post(
+                        "/api/workers/register",
+                        headers=headers,
+                        json={"name": "training", "persistent": True, "current_job_id": job_id, "gpu_info": {}},
+                    )
+                self.assertEqual(reply.status_code, 200, reply.text)
+                if job_id != "progress":
+                    self.assertEqual(reply.json()["abandon_job"], None if should_resume else job_id)
+                saved = run_async(jobs.get(job_id))
+                self.assertEqual(saved.status, "running" if should_resume else status)
+                self.assertEqual(saved.metadata["worker_id"], owner)
+                if should_resume:
+                    self.assertIsNone(saved.error_message)
+                    self.assertIsNone(saved.completed_at)
+                    self.assertEqual(saved.started_at, now)
+                    self.assertNotIn("needs_reconciliation", saved.metadata)
+                    self.assertEqual(saved.metadata["retry_count"], retry - 1)
+                    self.assertFalse(run_async(jobs.update(job_id, {"status": "running"}, expected_status="pending")))
 
     def test_register_worker_with_abandon_job(self) -> None:
         """Test registration when worker should abandon a stale job."""

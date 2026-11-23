@@ -296,6 +296,7 @@ class JobRepository(BaseSQLiteStore):
         *,
         worker_id: str | None = None,
         worker_log_tail: str | None = None,
+        expected_status: str | None = None,
     ) -> bool:
         """Update an existing job.
 
@@ -304,6 +305,7 @@ class JobRepository(BaseSQLiteStore):
             updates: Dictionary of field updates.
             worker_id: Require the job to still be assigned to this worker.
             worker_log_tail: Record the worker's final output with its status update.
+            expected_status: Require this status before applying the update.
 
         Returns:
             True if updated, False if not found or no longer assigned.
@@ -333,6 +335,9 @@ class JobRepository(BaseSQLiteStore):
                 if worker_id is not None:
                     query += " AND json_extract(metadata, '$.worker_id') = ?"
                     values.append(worker_id)
+                if expected_status is not None:
+                    query += " AND status = ?"
+                    values.append(expected_status)
                 cursor.execute(query, values)
                 updated = cursor.rowcount > 0
                 if updated and worker_log_tail is not None:

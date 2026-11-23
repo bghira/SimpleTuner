@@ -216,6 +216,34 @@ def get_client_ip(request: Request) -> str:
 # Worker-facing endpoints
 
 
+async def _reported_worker_job(job_repo, job_id, worker):
+    job = await job_repo.get(job_id)
+    if (
+        job
+        and job.status == "pending"
+        and job.provider == "worker"
+        and not worker.is_job_bound
+        and worker.current_job_id in (None, job_id)
+        and (job.metadata or {}).get("worker_id") == worker.worker_id
+        and job.metadata.get("retry_count", 0) > 0
+    ):
+        # The reporting worker kept training through a disconnect. A redispatch
+        # or cancellation may have won since we read the pending record.
+        await job_repo.update(
+            job_id,
+            {
+                "status": "running",
+                "completed_at": None,
+                "error_message": None,
+                "metadata": {"needs_reconciliation": None, "retry_count": job.metadata["retry_count"] - 1},
+            },
+            expected_status="pending",
+            worker_id=worker.worker_id,
+        )
+        job = await job_repo.get(job_id)
+    return job
+
+
 @router.post("/register", response_model=WorkerRegistrationResponse)
 async def register_worker(
     request: WorkerRegistrationRequest,
@@ -288,7 +316,7 @@ async def register_worker(
         from ..services.cloud.storage.job_repository import get_job_repository
 
         job_repo = get_job_repository()
-        job = await job_repo.get(request.current_job_id)
+        job = await _reported_worker_job(job_repo, request.current_job_id, worker)
 
         if worker.is_job_bound and job and job.status in ["pending", "queued"]:
             # The SSE connection triggers the first and only dispatch.
@@ -410,9 +438,9 @@ async def worker_stream(
     )
 
 
-async def _assigned_job(job_repo, job_id: str, worker_id: str):
-    # Get job and verify worker ownership
-    job = await job_repo.get(job_id)
+async def _assigned_job(job_repo, job_id: str, worker, *, reports_progress: bool):
+    worker_id = worker.worker_id
+    job = await _reported_worker_job(job_repo, job_id, worker) if reports_progress else await job_repo.get(job_id)
     if not job:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -494,7 +522,9 @@ async def worker_heartbeat(
     if request.job_progress or request.log_tail is not None:
         if not request.current_job_id:
             raise HTTPException(status_code=422, detail="Job progress and logs require a job ID")
-        job = await _assigned_job(get_job_repository(), request.current_job_id, worker.worker_id)
+        job = await _assigned_job(
+            get_job_repository(), request.current_job_id, worker, reports_progress=request.status == WorkerStatus.BUSY
+        )
         if request.job_progress and not job.is_terminal:
             _record_worker_stats(job, worker, "running", request.job_progress)
 
@@ -579,7 +609,9 @@ async def update_job_status(
     worker = await validate_worker_token(x_worker_token)
     job_repo = get_job_repository()
 
-    job = await _assigned_job(job_repo, job_id, worker.worker_id)
+    job = await _assigned_job(
+        job_repo, job_id, worker, reports_progress=bool(request.progress) and request.status in (None, "training", "running")
+    )
     if not request.status:
         if not request.progress and request.validation is None:
             raise HTTPException(status_code=422, detail="Expected worker status, progress, or validation")
