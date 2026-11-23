@@ -355,6 +355,18 @@ class CallbackServiceTestCase(unittest.TestCase):
         self.service.handle_incoming({"type": "training.progress", "job_id": "sample", "progress": {"step": 13}})
         self.assertIsNone(self.service.training_runs_since(-1)[1][0]["validation"])
 
+    def test_local_startup_is_visible_before_the_first_step(self):
+        stage = {"type": "lifecycle.stage", "stage": {"key": "loading_model", "status": "running"}}
+        with patch.object(callback_service, "_job_context", return_value={"local_worker": True}):
+            self.service.handle_incoming({**stage, "job_id": "new-local"})
+        self.service.handle_incoming(
+            {"type": "training.progress", "job_id": "remote", "progress": {"step": 1}},
+            assigned_worker={"assigned_worker": True, "worker": "Local"},
+        )
+        local, remote = self.service.training_runs_since(-1)[1]
+        self.assertEqual((local["worker"], local["status"], local["is_local"]), ("Local", "starting", True))
+        self.assertEqual((remote["worker"], remote["is_local"]), ("Local", False))
+
     def test_active_snapshots_outlive_event_history_and_respect_ownership(self):
         owner = Mock(id=9)
         owner.has_permission.return_value = False

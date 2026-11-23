@@ -747,8 +747,18 @@ function trainerComponent() {
                 byJob.set(run.job_id, {
                     ...latest, validation_at: phase.validation_at, validation: state.terminal ? null : phase.validation, worker: run.worker || previous.worker, gpu: run.gpu || previous.gpu,
                     config_name: run.config_name || previous.config_name, status: state.status,
+                    terminal: state.terminal, updated_at: state.updated_at, is_local: run.is_local ?? previous.is_local,
                     progress: { ...latest.progress, percent: Math.max(previous.progress.percent, run.progress.percent) }
                 });
+            }
+            // Older trainer and callback servers identify local jobs only by the worker label.
+            const localJobs = [...byJob.values()].filter(run => run.is_local ?? (run.worker === 'Local'));
+            if (localJobs.length > 1) {
+                const latestFinished = localJobs.some(run => !run.terminal) ? null :
+                    localJobs.reduce((latest, run) => run.updated_at >= latest.updated_at ? run : latest);
+                for (const run of localJobs) {
+                    if (run.terminal && run !== latestFinished) byJob.delete(run.job_id);
+                }
             }
             this.trainingRuns = Array.from(byJob.values(), run => {
                 const metrics = run.progress.metrics || {};
@@ -3565,10 +3575,75 @@ function trainerComponent() {
         _serverUptimeTimer: null,
         _beforeUnloadHandler: null,
         _visibilityChangeHandler: null,
+        manualTargets: [],
+        _manualTargetsRequest: 0,
+        localStopPending: false,
+        get localStopTarget() {
+            const local = this.manualTargets.filter(target => !target.worker_id);
+            return local.length === 1 ? local[0] : local.find(target => target.is_current);
+        },
+        async finishLocalStop() {
+            try {
+                await this.refreshManualTargets();
+            } finally {
+                this.localStopPending = false;
+            }
+        },
+        manualMenu: null,
+        manualMenuBelow: false,
+        manualMenuRight: 0,
+        manualPending: false,
+        async refreshManualTargets() {
+            const request = ++this._manualTargetsRequest;
+            try {
+                const response = await ApiClient.fetch('/api/training/control-targets', {cache: 'no-store'}, {forceApi: true});
+                if (!response.ok) throw new Error(response.statusText);
+                const targets = await response.json();
+                if (request !== this._manualTargetsRequest) return;
+                this.manualTargets = targets;
+            } catch (error) {
+                if (request !== this._manualTargetsRequest) return;
+                console.warn('Could not load training nodes:', error);
+                this.manualTargets = [];
+            }
+            if (!this.manualTargets.length) this.manualMenu = null;
+        },
+        toggleManualAction(action, button) {
+            if (this.manualTargets.length === 1 && !this.manualTargets[0].worker_id) {
+                return this.sendManualAction(action, this.manualTargets[0]);
+            }
+            this.manualMenuBelow = window.innerHeight - button.getBoundingClientRect().bottom > window.innerHeight * 0.4 + 8;
+            this.manualMenuRight = 0;
+            this.manualMenu = this.manualMenu === action ? null : action;
+            this.$nextTick(() => {
+                if (this.manualMenu !== action) return;
+                const menu = document.getElementById(button.getAttribute('aria-controls'));
+                this.manualMenuRight = Math.min(0, menu.getBoundingClientRect().left - 8);
+            });
+        },
+        async sendManualAction(action, target) {
+            if (this.manualPending || !target.available) return;
+            this.manualPending = true;
+            this.manualMenu = null;
+            const params = new URLSearchParams({job_id: target.job_id});
+            if (target.worker_id) params.set('worker_id', target.worker_id);
+            try {
+                const response = await ApiClient.fetch(`/api/training/${action}/run?${params}`, {method: 'POST'}, {forceApi: true});
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.detail || response.statusText);
+                window.showToast(data.message, 'success');
+            } catch (error) {
+                window.showToast(error.message, 'error');
+                await this.refreshManualTargets();
+            } finally {
+                this.manualPending = false;
+            }
+        },
         async refreshSystemStatus() {
             if (this.systemStatusLoading) {
                 return;
             }
+            this.refreshManualTargets();
             this.systemStatusLoading = true;
             try {
                 const response = await fetch('/api/system/status', { cache: 'no-store' });
@@ -5956,6 +6031,7 @@ function trainerComponent() {
 <!-- Main App - shown when auth check complete and login not required -->
 <div class="dashboard-wrapper"
      x-data="$store.trainer"
+     @training-status.window="if (localStopTarget && $event.detail?.job_id === localStopTarget.job_id && ['idle', 'completed', 'complete', 'stopped', 'cancelled', 'terminated', 'failed', 'error'].includes($event.detail.status)) refreshManualTargets()"
      x-show="$store.cloudAuth.shouldShowApp"
      x-cloak
      x-init="(async () => {
@@ -7386,7 +7462,7 @@ function trainerComponent() {
                                     <span x-show="run.validation.current != null">Validation step <b x-text="run.validation.current"></b><template x-if="run.validation.total != null"><span> / <b x-text="run.validation.total"></b></span></template></span>
                                 </div>
                             </template>
-                            <div class="training-run-metrics" x-show="!run.validation">
+                            <div class="training-run-metrics" x-show="!run.validation && (run.status !== 'starting' || run.progress.total_steps > 0)">
                                 <span>Step <b x-text="run.progress.step.toLocaleString()"></b> / <b x-text="run.progress.total_steps.toLocaleString()"></b></span>
                                 <span>Epoch <b x-text="run.progress.epoch"></b></span>
                                 <span>Loss <b x-text="run.progress.loss?.toFixed(4) ?? '—'"></b></span>
@@ -7625,20 +7701,32 @@ function trainerComponent() {
                     </template>
                 </div>
                 <div class="event-dock-actions">
-                    <button type="button" class="btn btn-sm btn-outline-light"
-                            x-show="showTrainingProgress"
-                            title="Trigger checkpoint save after next gradient sync"
-                            aria-label="Trigger checkpoint save"
-                            @click="window.triggerManualCheckpoint()">
-                        <i class="fas fa-save"></i> Trigger Checkpoint
-                    </button>
-                    <button type="button" class="btn btn-sm btn-outline-light"
-                            x-show="showTrainingProgress"
-                            title="Trigger validation run after next gradient sync"
-                            aria-label="Trigger validation run"
-                            @click="window.triggerManualValidation()">
-                        <i class="fas fa-check-circle"></i> Trigger Validation
-                    </button>
+                    {% for action, label, icon in [('checkpoint', 'Trigger Checkpoint', 'fa-save'), ('validation', 'Trigger Validation', 'fa-check-circle')] %}
+                    <div class="manual-action" x-show="manualTargets.length" x-cloak
+                         @click.outside="if (manualMenu === '{{ action }}') manualMenu = null"
+                         @keydown.escape="if (manualMenu === '{{ action }}') { manualMenu = null; $refs.{{ action }}Button.focus(); $event.stopPropagation() }">
+                        <button type="button" class="btn btn-sm btn-outline-light" x-ref="{{ action }}Button"
+                                aria-label="{{ label }}" title="{{ label }} after the next gradient sync"
+                                :aria-expanded="manualMenu === '{{ action }}'" aria-controls="{{ action }}-targets"
+                                :disabled="manualPending" @click.stop="toggleManualAction('{{ action }}', $el)">
+                            <i class="fas {{ icon }}" aria-hidden="true"></i> <span>{{ label }}</span>
+                            <i x-show="manualTargets.length > 1 || manualTargets[0]?.worker_id" class="fas fa-caret-down" aria-hidden="true"></i>
+                        </button>
+                        <div id="{{ action }}-targets" class="dropdown-menu show manual-target-menu"
+                             role="group" aria-label="{{ label }} on training node" x-cloak x-show="manualMenu === '{{ action }}'"
+                             :style="{right: manualMenuRight + 'px'}"
+                             :class="{'manual-target-menu-below': manualMenuBelow}">
+                            <template x-for="target in manualTargets" :key="target.job_id">
+                                <button type="button" class="dropdown-item" :disabled="!target.available || manualPending"
+                                        @click.stop="sendManualAction('{{ action }}', target)">
+                                    <strong x-text="target.name"></strong>
+                                    <small :title="target.job_id" x-text="[target.gpu, target.config_name || target.job_id].filter(Boolean).join(' · ')"></small>
+                                    <small x-show="!target.available">Worker agent update required</small>
+                                </button>
+                            </template>
+                        </div>
+                    </div>
+                    {% endfor %}
                     <button type="button" class="btn btn-sm btn-outline-light"
                             title="Clear events"
                             aria-label="Clear events"
@@ -7881,41 +7969,6 @@ window.showToast = window.showToast || function(message, type) {
     // Fallback toast notification (silent)
 };
 
-// Function to trigger manual validation
-window.triggerManualValidation = async function() {
-    try {
-        const response = await fetch('/api/training/validation/run', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' }
-        });
-        const data = await response.json();
-        if (response.ok) {
-            window.showToast(data.result || 'Validation queued successfully', 'success');
-        } else {
-            window.showToast(data.detail || 'Failed to queue validation', 'error');
-        }
-    } catch (error) {
-        window.showToast('Error triggering validation: ' + error.message, 'error');
-    }
-};
-
-// Function to trigger manual checkpointing
-window.triggerManualCheckpoint = async function() {
-    try {
-        const response = await fetch('/api/training/checkpoint/run', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' }
-        });
-        const data = await response.json();
-        if (response.ok) {
-            window.showToast(data.message || 'Checkpoint queued successfully', 'success');
-        } else {
-            window.showToast(data.detail || 'Failed to queue checkpoint', 'error');
-        }
-    } catch (error) {
-        window.showToast('Error triggering checkpoint: ' + error.message, 'error');
-    }
-};
 </script>
 
 <!-- Validation Prompt Library Modal -->

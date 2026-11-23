@@ -74,6 +74,24 @@ class WorkerAgentJobStartTestCase(unittest.IsolatedAsyncioTestCase):
                 await agent._start_job(event)
 
             config_path = job_dir / "config.json"
+            from simpletuner.train import _build_signal_consumer
+
+            signal_file = create_process.call_args.kwargs["env"]["SIMPLETUNER_ACCELERATE_SIGNAL_FILE"]
+            checkpoint = _build_signal_consumer(signal_file, "manual_checkpoint")
+            validation = _build_signal_consumer(signal_file, "manual_validation")
+
+            def packet(job, action):
+                return "data: " + json.dumps({"type": "job_manual_action", "job_id": job, "action": action})
+
+            with patch.object(agent, "_is_process_running", return_value=True):
+                await agent._handle_sse_line(packet("finished-job", "checkpoint"))
+                self.assertFalse(checkpoint())
+                await agent._handle_sse_line(packet(job_id, "validation"))
+                await agent._handle_sse_line(packet(job_id, "validation"))
+                self.assertFalse(checkpoint())
+                self.assertTrue(validation())
+                self.assertTrue(validation())
+                self.assertFalse(validation())
             self.assertEqual(json.loads(config_path.read_text(encoding="utf-8")), config)
 
             command = create_process.await_args.args

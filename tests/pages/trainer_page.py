@@ -120,6 +120,12 @@ class TrainerPage(BasePage):
                     Object.assign({ status: 200, headers: { 'Content-Type': 'application/json' } }, init)
                   );
 
+                  window.addEventListener('training-status', ({detail}) => {
+                    if (detail.job_id === window.__trainerHarnessLocalJob &&
+                        ['completed', 'failed', 'error', 'stopped', 'cancelled', 'terminated'].includes(detail.status)) {
+                      window.__trainerHarnessLocalJob = null;
+                    }
+                  }, true);
                   window.fetch = function(resource, options) {
                     const url = typeof resource === 'string' ? resource : resource?.url;
                     if (!url) {
@@ -198,6 +204,11 @@ class TrainerPage(BasePage):
                         ],
                         total: 1
                       }));
+                    }
+
+                    if (normalisedPath === '/training/control-targets' && window.__trainerHarnessLocalJob !== undefined) {
+                      const job = window.__trainerHarnessLocalJob;
+                      return Promise.resolve(jsonResponse(job ? [{job_id: job, worker_id: null, available: true}] : []));
                     }
 
                     if (normalisedPath.startsWith('/events')) {
@@ -329,14 +340,8 @@ class TrainerPage(BasePage):
                 '          trainingStatus.innerHTML = `<div class="alert alert-info"><h6><i class="fas fa-cog fa-spin"></i> Training Starting</h6><p class="mb-0"><small>Job ID: harness-job</small></p></div>`;'
                 "        }"
                 "      }"
-                "      const runBtn = document.getElementById('runBtn');"
-                "      if (runBtn) {"
-                "        runBtn.disabled = errors.length === 0;"
-                "      }"
-                "      const cancelBtn = document.getElementById('cancelBtn');"
-                "      if (cancelBtn) {"
-                "        cancelBtn.disabled = !(errors.length === 0);"
-                "      }"
+                "      window.__trainerHarnessLocalJob = errors.length ? null : 'harness-job';"
+                "      store?.refreshManualTargets();"
                 "      if (document && document.body) {"
                 "        document.body.dataset.trainingActive = errors.length === 0 ? 'true' : 'false';"
                 "      }"

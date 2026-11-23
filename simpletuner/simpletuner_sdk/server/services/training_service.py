@@ -1597,9 +1597,10 @@ def terminate_training_job(job_id: Optional[str], *, status: str, clear_job_id: 
 
     terminated = process_keeper.terminate_process(job_id)
     if terminated:
-        APIState.set_state("training_status", status)
-        if clear_job_id:
-            APIState.set_state("current_job_id", None)
+        if APIState.get_state("current_job_id") == job_id:
+            APIState.set_state("training_status", status)
+            if clear_job_id:
+                APIState.set_state("current_job_id", None)
 
         # Release GPUs allocated to this job.
         # Don't process pending jobs on cancellation to avoid starting jobs

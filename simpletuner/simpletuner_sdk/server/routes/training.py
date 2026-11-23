@@ -6,7 +6,8 @@ import asyncio
 import json
 import logging
 from datetime import datetime
-from typing import Any, Mapping
+from html import escape
+from typing import Any, Literal, Mapping
 
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
 
@@ -162,6 +163,8 @@ async def start_training(request: Request, _user: User = Depends(get_current_use
         result = training_service.start_training_job(
             bundle.complete_config,
             env_name=bundle.active_config,
+            user_id=_user.id,
+            org_id=_user.org_id,
         )
 
         if result.status == "rejected":
@@ -176,13 +179,13 @@ async def start_training(request: Request, _user: User = Depends(get_current_use
             return f"""
             <div class="alert alert-info">
                 <h6><i class="fas fa-clock"></i> Training Queued</h6>
-                <p>Your job is queued at position {result.queue_position}.</p>
+                <p>Your job is queued on Local at position {result.queue_position}.</p>
                 <p class="mb-0"><small>Job ID: {result.job_id}</small></p>
             </div>
             """
 
         return f"""
-        <div class="alert alert-info">
+        <div class="alert alert-info" data-local-training-started>
             <h6><i class="fas fa-cog fa-spin"></i> Training Starting</h6>
             <p>Your training job is being initialized.</p>
             <p class="mb-0"><small>Job ID: {result.job_id}</small></p>
@@ -192,7 +195,7 @@ async def start_training(request: Request, _user: User = Depends(get_current_use
         return f"""
         <div class="alert alert-danger">
             <h6><i class="fas fa-exclamation-triangle"></i> Failed to Start Training</h6>
-            <p>{str(exc)}</p>
+            <p>{escape(str(exc))}</p>
         </div>
         """
 
@@ -200,7 +203,7 @@ async def start_training(request: Request, _user: User = Depends(get_current_use
 @router.post("/configuration/run", response_class=HTMLResponse)
 async def configuration_run(request: Request, _user: User = Depends(get_current_user)):
     """Compatibility endpoint mapping to the legacy configuration/run URL."""
-    return await start_training(request)
+    return await start_training(request, _user)
 
 
 @router.post("/stop")
@@ -215,40 +218,101 @@ async def stop_training(_user: User = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
-@router.post("/validation/run")
-async def trigger_manual_validation(_user: User = Depends(get_current_user)):
-    """Request a validation run after the next gradient sync."""
-    job_id = APIState.get_state("current_job_id")
-    if not job_id:
+async def _manual_targets(user: User) -> list[dict]:
+    from ..models.worker import WorkerStatus
+    from ..services.cloud.storage.job_repository import get_job_repository
+    from ..services.worker_repository import get_worker_repository
+    from .workers import manual_control_workers, worker_streams
+
+    jobs = get_job_repository()
+    workers = get_worker_repository()
+    targets = []
+    can_manage_all = user.has_permission("job.cancel.all")
+    can_manage_own = user.has_permission("job.submit")
+    candidates = [
+        (job_id, None)
+        for job_id, process in process_keeper.list_processes(target=training_service.run_trainer_job).items()
+        if process["alive"] and process["status"] == "running"
+    ]
+    for worker_id in tuple(worker_streams):
+        worker = await workers.get_worker(worker_id)
+        if worker and worker.current_job_id and worker.status in (WorkerStatus.BUSY, WorkerStatus.DRAINING):
+            candidates.append((worker.current_job_id, worker))
+    for job_id, worker in candidates:
+        job = await jobs.get(job_id)
+        if not can_manage_all and not (can_manage_own and job and job.user_id == user.id):
+            continue
+        if job and job.is_terminal:
+            continue
+        if worker and (
+            not job
+            or job.status not in {"starting", "running", "training"}
+            or (job.metadata or {}).get("worker_id") != worker.worker_id
+        ):
+            continue
+        targets.append(
+            {
+                "job_id": job_id,
+                "worker_id": worker.worker_id if worker else None,
+                "name": worker.name if worker else "Local",
+                "config_name": job.config_name if job else None,
+                "gpu": (worker.gpu_info or {}).get("name") if worker else None,
+                "available": not worker or worker.worker_id in manual_control_workers,
+                "is_current": worker is None and job_id == APIState.get_state("current_job_id"),
+            }
+        )
+    return targets
+
+
+@router.get("/control-targets")
+async def list_manual_targets(_user: User = Depends(get_current_user)):
+    return await _manual_targets(_user)
+
+
+async def _trigger_manual_action(
+    action: Literal["checkpoint", "validation"], job_id: str | None, worker_id: str | None, user: User
+):
+    from .workers import manual_control_workers, push_to_worker
+
+    selected = job_id if job_id is not None else APIState.get_state("current_job_id")
+    if not selected:
         raise HTTPException(status_code=400, detail="No active training job")
+    targets = await _manual_targets(user)
+    target = next((item for item in targets if item["job_id"] == selected and item["worker_id"] == worker_id), None)
+    if target is None:
+        raise HTTPException(status_code=409, detail="This training job is no longer available.")
+    if worker_id:
+        if worker_id not in manual_control_workers:
+            raise HTTPException(status_code=409, detail="Update the worker agent to enable manual actions.")
+        if not await push_to_worker(worker_id, {"type": "job_manual_action", "job_id": selected, "action": action}):
+            raise HTTPException(status_code=409, detail="The training worker disconnected.")
+    else:
+        request_action = (
+            training_service.request_manual_checkpoint
+            if action == "checkpoint"
+            else training_service.request_manual_validation
+        )
+        try:
+            request_action(selected)
+        except Exception:
+            if process_keeper.get_process_status(selected) != "running":
+                raise HTTPException(status_code=409, detail="The selected training process has stopped.")
+            raise
+    return {"job_id": selected, "message": f"{action.capitalize()} queued for {target['name']} at the next gradient sync."}
 
-    try:
-        training_service.request_manual_validation(job_id)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
 
-    return {
-        "message": "Validation queued for the next gradient sync.",
-        "job_id": job_id,
-    }
+@router.post("/validation/run")
+async def trigger_manual_validation(
+    job_id: str | None = None, worker_id: str | None = None, _user: User = Depends(get_current_user)
+):
+    return await _trigger_manual_action("validation", job_id, worker_id, _user)
 
 
 @router.post("/checkpoint/run")
-async def trigger_manual_checkpoint(_user: User = Depends(get_current_user)):
-    """Request a checkpoint save after the next gradient sync."""
-    job_id = APIState.get_state("current_job_id")
-    if not job_id:
-        raise HTTPException(status_code=400, detail="No active training job")
-
-    try:
-        training_service.request_manual_checkpoint(job_id)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
-
-    return {
-        "message": "Checkpoint queued for the next gradient sync.",
-        "job_id": job_id,
-    }
+async def trigger_manual_checkpoint(
+    job_id: str | None = None, worker_id: str | None = None, _user: User = Depends(get_current_user)
+):
+    return await _trigger_manual_action("checkpoint", job_id, worker_id, _user)
 
 
 @router.post("/cancel", response_class=HTMLResponse)
@@ -258,18 +322,19 @@ async def cancel_training(request: Request, _user: User = Depends(get_current_us
         form_data = await request.form()
         job_id = form_data.get("job_id", APIState.get_state("current_job_id"))
 
-        if training_service.terminate_training_job(job_id, status="cancelled", clear_job_id=True):
+        local_ids = {target["job_id"] for target in await _manual_targets(_user) if target["worker_id"] is None}
+        if job_id in local_ids and training_service.terminate_training_job(job_id, status="cancelled", clear_job_id=True):
             return f"""
-            <div class="alert alert-warning">
+            <div class="alert alert-warning" data-local-training-cancelled>
                 <h6><i class="fas fa-hand-paper"></i> Training Cancelled</h6>
                 <p>Training job has been cancelled successfully.</p>
-                <p class="mb-0"><small>Job ID: {job_id}</small></p>
+                <p class="mb-0"><small>Job ID: {escape(job_id)}</small></p>
             </div>
             """
         return f"""
             <div class="alert alert-info">
                 <h6><i class="fas fa-info-circle"></i> No Active Training</h6>
-                <p>There is no active training job to cancel.</p>
+                <p>The selected local training job is no longer active.</p>
             </div>
             """
     except Exception as exc:

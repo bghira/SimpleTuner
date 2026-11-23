@@ -50,9 +50,10 @@
                 hx-target="#training-status"
                 hx-swap="innerHTML"
                 hx-indicator="#run-spinner"
-                x-bind:disabled="$store.trainer?.activeTab === 'cloud'"
+                x-bind:disabled="$store.trainer?.localStopTarget || $store.trainer?.activeTab === 'cloud'"
                 x-bind:title="$store.trainer?.activeTab === 'cloud' ? 'Use Cloud tab to submit jobs' : 'Start training'"
-                hx-on::before-request="this.disabled = true; document.getElementById('cancelBtn').disabled = false; const validationEl = document.getElementById('validation-results'); if(validationEl) validationEl.innerHTML = '';"
+                hx-disabled-elt="this"
+                hx-on::before-request="const validationEl = document.getElementById('validation-results'); if(validationEl) validationEl.innerHTML = '';"
                 hx-on::after-request="window.__handleTrainerRunAfterRequest?.(this, event)">
             <i class="fas fa-play"></i>
             {% if is_header %}
@@ -71,16 +72,18 @@
         <button type="button"
                 class="trainer-action-btn btn {{ btn_size }}btn-danger"
                 id="cancelBtn"
-                title="Cancel training"
-                aria-label="Cancel training"
+                title="Stop local training"
+                aria-label="Stop local training"
+                :disabled="!$store.trainer.localStopTarget || $store.trainer.localStopPending"
+                :hx-vals="JSON.stringify({job_id: $store.trainer.localStopTarget?.job_id || ''})"
                 disabled
                 hx-post="/api/training/cancel"
                 hx-target="#training-status"
                 hx-swap="innerHTML"
                 hx-indicator="#cancel-spinner"
-                hx-confirm="Are you sure you want to cancel the training?"
-                hx-on::before-request='this.disabled = true; var params = event.detail.parameters || (event.detail.parameters = {}); var field = document.getElementById("job_id") || document.querySelector("[name=\"job_id\"]"); if (field && field.value) { params.job_id = field.value.trim(); } else { delete params.job_id; }'
-                hx-on::after-request="window.__handleTrainerCancelAfterRequest?.(this, event)">
+                hx-confirm="Stop local training?"
+                hx-on::before-request="Alpine.store('trainer').localStopPending = true"
+                hx-on::after-request="Alpine.store('trainer').finishLocalStop()">
             <i class="fas fa-stop"></i>
             {% if is_header %}
                 <span class="btn-text">Stop</span>
@@ -274,7 +277,7 @@
 if (!window.__trainerActionHTMXBound) {
     window.__trainerActionHTMXBound = true;
 
-    const TRAINER_BUTTON_IDS = new Set(['validateBtn', 'runBtn', 'cancelBtn']);
+    const TRAINER_BUTTON_IDS = new Set(['validateBtn', 'cancelBtn']);
     const shutdownState = {
         requestInFlight: false,
         initiated: false,
@@ -451,39 +454,10 @@ if (!window.__trainerActionHTMXBound) {
     });
 
     window.__handleTrainerRunAfterRequest = function(button, evt) {
-        const detail = evt?.detail || {};
-        const cancelBtn = document.getElementById('cancelBtn');
-        const responseText = detail.xhr && typeof detail.xhr.responseText === 'string'
-            ? detail.xhr.responseText
-            : '';
-        const hasErrorAlert = responseText.includes('alert-danger');
-        const hasSuccessAlert = /alert-(info|success)/.test(responseText);
-        const requestSucceeded = detail.successful && !hasErrorAlert && (hasSuccessAlert || !responseText.trim());
-
-        if (requestSucceeded) {
-            button.disabled = true;
-            if (cancelBtn) cancelBtn.disabled = false;
+        button.disabled = window.Alpine?.store('trainer')?.activeTab === 'cloud';
+        if (evt.detail.successful && evt.detail.xhr.responseText.includes('data-local-training-started')) {
+            window.Alpine.store('trainer').refreshManualTargets();
             window.initSSE?.();
-        } else {
-            button.disabled = false;
-            if (cancelBtn) cancelBtn.disabled = true;
-        }
-    };
-
-    window.__handleTrainerCancelAfterRequest = function(button, evt) {
-        const detail = evt?.detail || {};
-        const runBtn = document.getElementById('runBtn');
-        const responseText = detail.xhr && typeof detail.xhr.responseText === 'string'
-            ? detail.xhr.responseText
-            : '';
-        const hasErrorAlert = responseText.includes('alert-danger');
-
-        if (detail.successful && !hasErrorAlert) {
-            button.disabled = true;
-            if (runBtn) runBtn.disabled = false;
-            window.closeSSE?.();
-        } else {
-            button.disabled = false;
         }
     };
 
@@ -531,16 +505,9 @@ if (!window.__trainerActionHTMXBound) {
             button.classList.add('success-pulse');
             setTimeout(() => button.classList.remove('success-pulse'), 1000);
 
-            if (!window.trainerMain && window.showToast && button.id !== 'validateBtn') {
-                const actionMap = {
-                    'runBtn': 'Training started successfully!',
-                    'cancelBtn': 'Training cancelled successfully!'
-                };
-                const message = actionMap[button.id];
-                if (message) {
-                    window.showToast(message, 'success');
-                    window.__trainerActionToastFallback = true;
-                }
+            if (!window.trainerMain && window.showToast && button.id === 'cancelBtn' && responseText.includes('data-local-training-cancelled')) {
+                window.showToast('Training cancelled successfully!', 'success');
+                window.__trainerActionToastFallback = true;
             }
         } else {
             button.classList.add('error-pulse');

@@ -252,6 +252,227 @@ class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
 
         self.for_each_browser("training_progress_list", scenario)
 
+    def test_previous_local_results_yield_to_active_jobs_from_either_feed(self):
+        def scenario(driver, browser):
+            driver.get(f"{self.base_url}/web")
+            wait = WebDriverWait(driver, 15)
+            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".training-progress-section")))
+            driver.execute_script(
+                """
+                for (const name of ['training-runs', 'worker-training-runs']) {
+                    window.addEventListener(name, event => event.stopImmediatePropagation(), true);
+                }
+                Alpine.store('trainer').updateTrainingRuns('worker', []);
+                """
+            )
+
+            def run(job, status, timestamp, *, local=True, worker="Local"):
+                return {
+                    "job_id": job,
+                    "worker": worker,
+                    "is_local": local,
+                    "status": status,
+                    "terminal": status == "completed",
+                    "updated_at": timestamp,
+                    "progress": {
+                        "step": 0 if status == "starting" else 1,
+                        "total_steps": 0 if status == "starting" else 10,
+                        "percent": 0 if status == "starting" else 10,
+                    },
+                }
+
+            def feed(source, runs):
+                driver.execute_script("Alpine.store('trainer').updateTrainingRuns(arguments[0], arguments[1])", source, runs)
+
+            def rows(expected):
+                wait.until(
+                    lambda d: {
+                        r.get_attribute("aria-label")
+                        for r in d.find_elements(By.CSS_SELECTOR, ".training-progress-section article.training-run")
+                    }
+                    == set(expected)
+                )
+
+            first, second = run("first", "completed", 1), run("second", "completed", 2)
+            remote = run("remote", "completed", 1, local=False)
+            # Already-running servers send the worker label without the locality field.
+            del first["is_local"]
+            feed("callback", [second, first, remote])
+            rows(["second", "remote"])
+            startup = run("startup", "starting", 3)
+            feed("worker", [startup])
+            rows(["startup", "remote"])
+            live = run("concurrent", "running", 4)
+            feed("callback", [first, second, remote, live])
+            rows(["startup", "concurrent", "remote"])
+            # A delayed callback with more metrics cannot reverse a terminal worker report.
+            stale = run("startup", "running", 6)
+            stale["progress"]["step"] = 4
+            feed("callback", [first, second, remote, live, stale])
+            feed("worker", [run("startup", "completed", 5)])
+            rows(["concurrent", "remote"])
+            feed("callback", [first, second, remote, run("concurrent", "completed", 7), stale])
+            rows(["concurrent", "remote"])
+
+        self.for_each_browser("local_run_rollover", scenario)
+
+    def test_local_stop_tracks_the_local_job_through_remote_updates(self):
+        def scenario(driver, browser):
+            remote = f"remote-{browser}"
+
+            def report_remote(step):
+                requests.post(
+                    f"{self.base_url}/callback",
+                    json={
+                        "type": "training.status",
+                        "job_id": remote,
+                        "data": {"status": "running", "worker": "L40S"},
+                        "progress": {"current": step, "total": 10},
+                    },
+                    timeout=5,
+                ).raise_for_status()
+
+            report_remote(1)
+            driver.get(f"{self.base_url}/web")
+            wait = WebDriverWait(driver, 20)
+
+            def wait_for_remote(step):
+                wait.until(
+                    lambda d: f"Step {step} / 10"
+                    in d.find_element(By.CSS_SELECTOR, f'.training-run[aria-label="{remote}"]').text
+                )
+
+            def controls(local_active):
+                return driver.execute_script(
+                    """
+                    const stop = [...document.querySelectorAll('[hx-post="/api/training/cancel"]')];
+                    const run = [...document.querySelectorAll('[hx-post="/api/training/start"]')];
+                    return stop.length && run.length && stop.every(b => b.disabled !== arguments[0]) &&
+                        run.every(b => b.disabled === arguments[0]);
+                """,
+                    local_active,
+                )
+
+            wait_for_remote(1)
+            wait.until(lambda _: controls(False))
+            # Supply a local process snapshot without starting a training subprocess.
+            driver.execute_script(
+                """
+                const fetch = ApiClient.fetch.bind(ApiClient);
+                window.localAlive = true;
+                ApiClient.fetch = (path, ...args) => {
+                    if (path !== '/api/training/control-targets') return fetch(path, ...args);
+                    const targets = [{job_id: arguments[0], worker_id: 'worker-1'}];
+                    if (window.localAlive) targets.push({job_id: 'local-stop-test', worker_id: null});
+                    return Promise.resolve(Response.json(targets));
+                };
+                Alpine.store('trainer').refreshManualTargets();
+            """,
+                remote,
+            )
+            wait.until(lambda _: controls(True))
+            report_remote(2)
+            wait_for_remote(2)
+            self.assertTrue(controls(True))
+
+            driver.execute_script(
+                """
+                document.body.addEventListener('htmx:beforeRequest', event => {
+                    if (event.detail.elt.id !== 'cancelBtn') return;
+                    window.stopTarget = event.detail.requestConfig.parameters.job_id;
+                });
+                window.confirm = () => true;
+                document.getElementById('cancelBtn').click();
+            """
+            )
+            self.assertEqual(driver.execute_script("return window.stopTarget"), "local-stop-test")
+
+            wait.until(EC.text_to_be_present_in_element((By.ID, "training-status"), "No Active Training"))
+            wait.until(lambda _: controls(True))
+
+            # Completion prompts a fresh target lookup, even between periodic polls.
+            driver.execute_script(
+                """
+                window.localAlive = false;
+                window.dispatchEvent(new CustomEvent('training-status', {
+                    detail: {status: 'completed', job_id: 'local-stop-test'}
+                }));
+            """
+            )
+            wait.until(lambda _: controls(False))
+            report_remote(3)
+            wait_for_remote(3)
+            self.assertTrue(controls(False))
+            driver.refresh()
+            wait_for_remote(3)
+            wait.until(lambda _: controls(False))
+
+        self.for_each_browser("local_stop_remote_progress", scenario)
+
+    def test_dock_actions_address_only_the_selected_connected_worker(self):
+        from contextlib import ExitStack
+
+        def scenario(driver, browser):
+            with ExitStack() as connections:
+                jobs = [f"action-{browser}-{name}" for name in ("L40S", "H200", "Legacy")]
+                streams = []
+                for job in jobs:
+                    self.register_job(job, job.rsplit("-", 1)[1], "GPU")
+                    stream = connections.enter_context(
+                        requests.get(
+                            f"{self.base_url}/api/workers/stream",
+                            params={
+                                "worker_id": f"worker-{job}",
+                                "manual_controls": str(not job.endswith("Legacy")).lower(),
+                            },
+                            headers={"X-Worker-Token": job + "-token"},
+                            stream=True,
+                            timeout=20,
+                        )
+                    )
+                    stream.raise_for_status()
+                    streams.append(stream.iter_lines(chunk_size=1))
+                driver.set_window_size(720, 900)
+                driver.get(f"{self.base_url}/web")
+                self.dismiss_onboarding(driver)
+                wait = WebDriverWait(driver, 15)
+                for action, idx in (("checkpoint", 1), ("validation", 0)):
+                    button = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, f'[aria-controls="{action}-targets"]')))
+                    self.dismiss_onboarding(driver)
+                    if action == "validation":
+                        wait.until(EC.invisibility_of_element_located((By.CSS_SELECTOR, ".toast.show")))
+                        driver.set_window_size(390, 800)
+                        if browser == "chrome":
+                            driver.execute_cdp_cmd(
+                                "Emulation.setDeviceMetricsOverride",
+                                {"width": 390, "height": 800, "deviceScaleFactor": 1, "mobile": False},
+                            )
+                    button.click()
+                    menu = wait.until(EC.visibility_of_element_located((By.ID, action + "-targets")))
+                    choices = menu.find_elements(By.TAG_NAME, "button")
+                    self.assertEqual(len(choices), 3)
+                    self.assertFalse(next(item for item in choices if "Legacy" in item.text).is_enabled())
+                    self.assertGreaterEqual(menu.rect["x"], 0)
+                    self.assertLessEqual(menu.rect["x"] + menu.rect["width"], driver.execute_script("return innerWidth"))
+                    expected = jobs[idx].rsplit("-", 1)[1]
+                    next(item for item in choices if expected in item.text).click()
+                    message = next(line for line in streams[idx] if line.startswith(b"data: "))
+                    self.assertEqual(
+                        json.loads(message[6:]), {"type": "job_manual_action", "job_id": jobs[idx], "action": action}
+                    )
+                    self.assertFalse(menu.is_displayed())
+
+                if browser == "chrome":
+                    driver.execute_cdp_cmd("Emulation.clearDeviceMetricsOverride", {})
+                mismatch = requests.post(
+                    f"{self.base_url}/api/training/validation/run",
+                    params={"job_id": jobs[0], "worker_id": f"worker-{jobs[1]}"},
+                    timeout=5,
+                )
+                self.assertEqual(mismatch.status_code, 409)
+
+        self.for_each_browser("manual_training_target", scenario)
+
     def test_interleaved_workers_survive_reload_and_terminal_status(self):
         def report(job, status, progress, **data):
             response = requests.post(
