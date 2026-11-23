@@ -12,6 +12,9 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, List, Optional, Tuple
 
+from simpletuner.helpers.utils.log_text import strip_ansi
+from simpletuner.worker_protocol import WORKER_LOG_TAIL_SIZE
+
 from .base import JobType
 from .external_ids import get_external_job_id
 from .factory import ProviderFactory
@@ -20,6 +23,9 @@ if TYPE_CHECKING:
     from .base import UnifiedJob
 
 logger = logging.getLogger(__name__)
+
+_WORKER_LOG_BREAK = re.compile(r"\r\n?|\n")
+_TRAINING_PROGRESS = re.compile(r"^(Epoch \d+/\d+, Steps:)\s*\d+%\|[^|]*\|\s*(\d+/\d+)\s*\[")
 
 
 @dataclass
@@ -101,12 +107,35 @@ async def fetch_job_logs(job: "UnifiedJob", max_bytes: int = 50000) -> str:
         log_tail = await get_job_repository().get_worker_log_tail(job.job_id)
         if not log_tail:
             return "(No logs received from the remote worker)"
-        return log_tail.encode("utf-8")[-max_bytes:].decode("utf-8", errors="ignore")
+        return _format_worker_log_tail(log_tail, max_bytes)
     if job.job_type == JobType.CLOUD and job.provider:
         return await _fetch_cloud_logs(job)
     elif job.job_type == JobType.LOCAL:
         return _fetch_local_logs(job, max_bytes)
     return ""
+
+
+def _format_worker_log_tail(log_tail: str, max_bytes: int) -> str:
+    frames = _WORKER_LOG_BREAK.split(log_tail)
+    if len(log_tail) >= WORKER_LOG_TAIL_SIZE and len(frames) > 1:
+        # The tail can start inside a line or an ANSI escape.
+        frames = frames[1:]
+
+    lines = []
+    previous_step = None
+    for frame in frames:
+        line = strip_ansi(frame)
+        if line != frame and not line.strip():
+            continue
+        match = _TRAINING_PROGRESS.match(line)
+        step = match.groups() if match else None
+        if step is not None and step == previous_step:
+            lines[-1] = line
+        else:
+            lines.append(line)
+        previous_step = step
+
+    return "\n".join(lines).encode("utf-8")[-max_bytes:].decode("utf-8", errors="ignore")
 
 
 async def _fetch_cloud_logs(job: "UnifiedJob") -> str:

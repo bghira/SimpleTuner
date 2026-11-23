@@ -1,10 +1,11 @@
 import logging
 import os
-import re
 import sys
 import warnings
 
 import torch
+
+from simpletuner.helpers.utils.log_text import strip_ansi as strip_ansi
 
 # Force colors if requested (e.g., when running in subprocess with piped stdout)
 FORCE_COLORS = os.environ.get("FORCE_COLOR", "").lower() in ("1", "true", "yes") or os.environ.get(
@@ -28,15 +29,6 @@ if not DISABLE_COLORS:
         DISABLE_COLORS = True
 else:
     COLORAMA_AVAILABLE = False
-
-
-# Pattern for stripping ANSI escape codes from text
-_ANSI_ESCAPE_PATTERN = re.compile(r"\x1b\[[0-9;]*m")
-
-
-def strip_ansi(text: str) -> str:
-    """Remove ANSI escape codes from text."""
-    return _ANSI_ESCAPE_PATTERN.sub("", text)
 
 
 class ColorizedFormatter(logging.Formatter):

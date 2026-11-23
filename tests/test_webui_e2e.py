@@ -145,7 +145,10 @@ class RemoteWorkerJobQueueTestCase(_TrainingWorkerFixture, WebUITestCase):
     def test_running_worker_shows_remote_logs_and_clears_local_pid_error(self):
         job_id = "remote-log-queue"
         worker_name = "Remote test worker"
-        log_text = "Step 42 entered validation"
+        progress = "Epoch 1/4, Steps:   1%|          | 42/4000 [00:42<1:05:58, step_loss=0.0198]"
+        redraw = progress.replace("0.0198", "0.0516")
+        raw_log = f"\x1b[0m\r{redraw}\x1b[0m\r{progress}\x1b[0m\r{progress}\x1b[0m\rStep 42 entered validation"
+        log_text = f"{progress}\nStep 42 entered validation"
         self.register_job(job_id, worker_name, "L40S", error_message="Job orphaned (no PID tracked)")
 
         heartbeat_url = f"{self.base_url}/api/workers/heartbeat"
@@ -158,9 +161,7 @@ class RemoteWorkerJobQueueTestCase(_TrainingWorkerFixture, WebUITestCase):
         self.assertIsNone(job["completed_at"])
         self.assertEqual(job["status"], "running")
 
-        requests.post(
-            heartbeat_url, json={**heartbeat, "log_tail": log_text}, headers=headers, timeout=10
-        ).raise_for_status()
+        requests.post(heartbeat_url, json={**heartbeat, "log_tail": raw_log}, headers=headers, timeout=10).raise_for_status()
 
         def scenario(driver, _):
             driver.get(f"{self.base_url}/web/trainer#job_queue")
@@ -177,20 +178,18 @@ class RemoteWorkerJobQueueTestCase(_TrainingWorkerFixture, WebUITestCase):
             self.assertFalse(driver.find_elements(By.CSS_SELECTOR, ".error-section"))
             button.click()
             log = wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "#jobLogsModal .logs-content")))
-            self.assertEqual(log.text, log_text)
+            self.assertEqual(log.get_property("textContent"), log_text)
 
         self.for_each_browser("remote_worker_job_logs", scenario)
 
         final_log = log_text + "\nTraining finished"
         requests.post(
             f"{self.base_url}/api/workers/job/{job_id}/status",
-            json={"status": "completed", "log_tail": final_log},
+            json={"status": "completed", "log_tail": raw_log + "\nTraining finished"},
             headers=headers,
             timeout=10,
         ).raise_for_status()
-        requests.post(
-            heartbeat_url, json={**heartbeat, "log_tail": log_text}, headers=headers, timeout=10
-        ).raise_for_status()
+        requests.post(heartbeat_url, json={**heartbeat, "log_tail": raw_log}, headers=headers, timeout=10).raise_for_status()
         logs = requests.get(f"{self.base_url}/api/cloud/jobs/{job_id}/logs", timeout=10).json()["logs"]
         self.assertEqual(logs, final_log)
 
