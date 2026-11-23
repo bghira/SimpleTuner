@@ -110,7 +110,7 @@ from simpletuner.helpers.training.quantisation import (
     mark_torchao_ddp_ignore_params,
     mark_transformerengine_ddp_ignore_params,
 )
-from simpletuner.helpers.training.reporting import normalize_report_to, report_to_contains
+from simpletuner.helpers.training.reporting import normalize_report_to, report_to_contains, report_to_tokens
 from simpletuner.helpers.training.script_runner import run_hook_script
 from simpletuner.helpers.training.sdnq_compile import configure_sdnq_compile_mode
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -6904,6 +6904,16 @@ class Trainer:
                 noise_scheduler=self._get_noise_schedule(),
             )
 
+    def _collect_timestep_samples(self, batch):
+        if not getattr(self.config, "log_timestep_distribution", False) or not self.accelerator.is_main_process:
+            return
+        if not {"wandb", "simpletuner"}.intersection(report_to_tokens(self.config.report_to)):
+            return
+        timesteps = batch["timesteps"]
+        if torch.is_tensor(timesteps) and timesteps.ndim > 1:
+            timesteps = timesteps.detach().float().mean(dim=tuple(range(1, timesteps.ndim)))
+        self.timesteps_buffer.extend((self.state["global_step"], timestep) for timestep in timesteps.tolist())
+
     def train(self):
         self.init_trackers()
         self._train_initial_msg()
@@ -6936,6 +6946,11 @@ class Trainer:
         current_epoch_step = 0 if self.state.get("resume_epoch_boundary") is not None else None
         self.bf = None
         loss_window = []
+        log_twinflow_trajectory = (
+            getattr(self.config, "twinflow_enabled", False)
+            and self.accelerator.is_main_process
+            and report_to_contains(self.config.report_to, "wandb")
+        )
         iterator_fn = random_dataloader_iterator
         # Context-parallel batch synchronization: ensures all ranks in a CP group
         # receive the same batch data before it's split along the sequence dimension
@@ -7119,15 +7134,9 @@ class Trainer:
                             f"Received {bsz} {batch_label}, but expected {expected_batch_size}. " "Processing short batch."
                         )
                     training_logger.debug(f"Working on batch size: {bsz}")
-                    # Prepare the data for the scatter plot
                     if self.model.uses_noise_schedule():
-                        timesteps_for_logging = prepared_batch["timesteps"]
-                        if torch.is_tensor(timesteps_for_logging) and timesteps_for_logging.ndim > 1:
-                            reduce_dims = tuple(range(1, timesteps_for_logging.ndim))
-                            timesteps_for_logging = timesteps_for_logging.detach().float().mean(dim=reduce_dims)
-                        for timestep in timesteps_for_logging.tolist():
-                            self.timesteps_buffer.append((self.state["global_step"], timestep))
-                        if getattr(self.config, "twinflow_enabled", False):
+                        self._collect_timestep_samples(prepared_batch)
+                        if log_twinflow_trajectory:
                             sigmas = prepared_batch.get("sigmas")
                             tt = prepared_batch.get("twinflow_tt")
                             time_sign = prepared_batch.get("twinflow_time_sign")
@@ -7498,7 +7507,7 @@ class Trainer:
                             else:
                                 wandb_logs["twinflow_traj_table"] = self._twinflow_traj_table
 
-                    if report_to_contains(self.config.report_to, "simpletuner") and self.accelerator.is_main_process:
+                    if self.timesteps_buffer:
                         record_timestep_distribution(self.config, self.timesteps_buffer)
 
                     # Clear buffers

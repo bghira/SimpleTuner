@@ -24,7 +24,7 @@
 
     ---
 
-    Guarda gráficas y comparaciones de validación con cada entrenamiento
+    Guarda métricas escalares, gráficos opcionales de pasos de difusión y comparaciones de validación con cada entrenamiento
 
     [:octicons-arrow-right-24: Métricas locales](webui/LOCAL_METRICS.md)
 

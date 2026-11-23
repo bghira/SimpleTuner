@@ -41,6 +41,23 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
 
     registry._add_field(
         ConfigField(
+            name="log_timestep_distribution",
+            arg_name="--log_timestep_distribution",
+            ui_label="Track timestep distribution",
+            field_type=FieldType.CHECKBOX,
+            tab="basic",
+            section="project_settings",
+            subsection="advanced",
+            default_value=False,
+            help_text="Record the main process's sampled timesteps for the W&B or SimpleTuner scatter plot.",
+            importance=ImportanceLevel.ADVANCED,
+            order=6,
+            documentation="OPTIONS.md#--log_timestep_distribution",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
             name="custom_tracker",
             arg_name="--custom_tracker",
             ui_label="Custom Tracker Module",

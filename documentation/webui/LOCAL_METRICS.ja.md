@@ -13,7 +13,7 @@
 - `training_metrics.jsonl`: step ごとの追記専用スカラー記録
 - `training_metrics.json`: 状態、メトリクス名、設定を含むアトミックなマニフェスト
 - `validation_media.jsonl`: 検証画像・動画・音声のインデックス
-- `timestep_distribution.jsonl`: global step ごとにまとめた timestep サンプル
+- `timestep_distribution.jsonl`: `log_timestep_distribution` が有効な場合に、グローバルステップごとに記録されるタイムステップのサンプル
 - `training_report.html`: サーバーなしで開ける自己完結レポート
 
 再開時は既存履歴へ追記します。HTML は相対メディアパスを使うため、出力ディレクトリと一緒に保存してください。

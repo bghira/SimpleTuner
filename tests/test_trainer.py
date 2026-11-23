@@ -617,6 +617,34 @@ except ImportError:
 
 
 class TestTrainer(unittest.TestCase):
+    def test_unused_timestep_plot_does_not_read_the_batch(self):
+        trainer = object.__new__(Trainer)
+        for enabled, tracker, main in (
+            (False, "wandb", True),
+            (False, "simpletuner", True),
+            (True, "none", True),
+            (True, "comet_ml", True),
+            (True, "wandb,simpletuner", False),
+        ):
+            with self.subTest(enabled=enabled, tracker=tracker, main=main):
+                trainer.config = SimpleNamespace(log_timestep_distribution=enabled, report_to=tracker)
+                trainer.accelerator = SimpleNamespace(is_main_process=main)
+                trainer.timesteps_buffer = []
+                trainer._collect_timestep_samples({})
+                self.assertEqual(trainer.timesteps_buffer, [])
+
+    def test_opted_in_tracker_collects_each_microbatch_once(self):
+        trainer = object.__new__(Trainer)
+        trainer.accelerator = SimpleNamespace(is_main_process=True)
+        trainer.state = {"global_step": 7}
+        for trackers in ("wandb", "simpletuner", ["wandb", "simpletuner"]):
+            with self.subTest(trackers=trackers):
+                trainer.config = SimpleNamespace(log_timestep_distribution=True, report_to=trackers)
+                trainer.timesteps_buffer = []
+                trainer._collect_timestep_samples({"timesteps": torch.tensor([4, 8])})
+                trainer._collect_timestep_samples({"timesteps": torch.tensor([[4, 6], [2, 4]])})
+                self.assertEqual(trainer.timesteps_buffer, [(7, 4), (7, 8), (7, 5), (7, 3)])
+
     def test_abort_signals_bindings_on_registered_datasets(self):
         from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 

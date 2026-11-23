@@ -13,7 +13,7 @@ SimpleTuner 可以在不使用外部服务的情况下记录训练指标：
 - `training_metrics.jsonl`：按 step 追加的标量记录。
 - `training_metrics.json`：原子写入的运行清单、状态和指标名称。
 - `validation_media.jsonl`：验证图像、视频和音频索引。
-- `timestep_distribution.jsonl`：按 global step 分组的 timestep 样本。
+- `timestep_distribution.jsonl`：启用 `log_timestep_distribution` 后，按全局训练步分组记录的时间步样本。
 - `training_report.html`：无需服务器即可打开的独立报告。
 
 恢复训练时会追加记录。HTML 使用相对媒体路径，因此应与输出目录一起归档。

@@ -2086,6 +2086,10 @@ Upstream option mapping (LayerSync → SimpleTuner):
 - **Why**: स्थानीय या external monitoring चालू करता है। `simpletuner`, `output_dir` में JSONL, manifest, validation media metadata और self-contained HTML report लिखता है। multiple trackers के लिए comma-separated values उपयोग करें।
 - **Choices**: simpletuner, wandb, tensorboard, swanlab, comet_ml, custom-tracker, none
 
+### `--log_timestep_distribution`
+
+W&B या SimpleTuner के स्थानीय ट्रैकर में टाइमस्टेप का स्कैटर प्लॉट चालू करता है। डिफ़ॉल्ट रूप से प्रशिक्षण के दौरान हर सैंपल का टाइमस्टेप CPU पर कॉपी नहीं होता। विकल्प चालू करने पर केवल मुख्य प्रोसेस सैंपल दर्ज करता है।
+
 ### `--validation_image_format`
 
 - **What**: `output_dir/validation_images` में save होने वाली images का format।

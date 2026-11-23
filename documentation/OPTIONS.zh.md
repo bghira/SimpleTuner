@@ -2091,6 +2091,10 @@ LayerSync 通过在同一 Transformer 内让“学生”层对齐更强的“教
 - **原因**：启用本地或外部监控。`simpletuner` 会在 `output_dir` 中写入 JSONL、运行清单、验证媒体元数据和独立 HTML 报告。多个 tracker 使用逗号分隔。
 - **选项**：simpletuner, wandb, tensorboard, swanlab, comet_ml, custom-tracker, none
 
+### `--log_timestep_distribution`
+
+为 W&B 或 SimpleTuner 本地跟踪器启用时间步散点图。默认情况下，训练时会跳过将每个样本的时间步复制到 CPU 的操作。启用后，仅主进程记录样本。
+
 ### `--validation_image_format`
 
 - **内容**：保存到 `output_dir/validation_images` 的图像格式。
