@@ -34,7 +34,7 @@ class JobStoreProtocol(Protocol):
         """Add a new job."""
         ...
 
-    async def update_job(self, job_id: str, updates: Dict[str, Any]) -> bool:
+    async def update_job(self, job_id: str, updates: Dict[str, Any], *, expected_status: Optional[str] = None) -> bool:
         """Update an existing job."""
         ...
 
