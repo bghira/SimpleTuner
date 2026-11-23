@@ -236,6 +236,7 @@ class TrainingProgressRestoreTestCase(_TrainingWorkerFixture, WebUITestCase):
                 )
                 click((By.CSS_SELECTOR, "[data-testid='restore-training-progress']"))
                 wait.until(EC.visibility_of_element_located(card(job_id)))
+                wait.until(lambda d: d.switch_to.active_element.get_attribute("aria-label") == job_id)
 
             driver.get(f"{self.base_url}/web/trainer#job_queue")
             wait_for_queue()
@@ -254,7 +255,6 @@ class TrainingProgressRestoreTestCase(_TrainingWorkerFixture, WebUITestCase):
             filter_field.send_keys("First worker")
             restore(job_ids[1])
             self.assertEqual(filter_field.get_property("value"), "")
-            self.assertEqual(driver.switch_to.active_element.get_attribute("aria-label"), job_ids[1])
 
             driver.refresh()
             wait_for_queue()
