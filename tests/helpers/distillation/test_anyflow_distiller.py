@@ -549,6 +549,18 @@ class AnyFlowDistillerTests(unittest.TestCase):
                 config={"model_type": "lora", "diffusion_target": "base_prediction"},
             )
 
+    def test_beta08_weight_uses_nearest_shifted_scheduler_timestep(self):
+        distiller = AnyFlowDistiller(
+            teacher_model=_FlowModel(),
+            noise_scheduler=SimpleNamespace(config=SimpleNamespace(num_train_timesteps=4)),
+            config={"model_type": "lora", "schedule_shift": 2.0},
+        )
+        grid = torch.tensor([1.0, 6 / 7, 2 / 3, 2 / 5])
+        weights = grid * (1 - grid).sqrt()
+        expected = (weights / weights.mean())[[0, 1, 2, 3]]
+        actual = distiller._meanflow_timestep_weight(torch.tensor([0.99, 0.81, 0.75, 0.02]))
+        torch.testing.assert_close(actual, expected)
+
     def test_frozen_base_target_uses_base_flow_residual_for_adaptive_weighting(self):
         model = _FlowModel()
         distiller = AnyFlowDistiller(
