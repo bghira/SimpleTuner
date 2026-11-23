@@ -185,6 +185,29 @@ class TestLongCatVideoTransformerShapes(unittest.TestCase):
 
         self.assertEqual(out.shape, latents.shape)
 
+    def test_cross_attention_preserves_conditioned_prefix(self):
+        from simpletuner.helpers.models.longcat_video.transformer import MultiHeadCrossAttention
+
+        torch.manual_seed(17)
+        attn = MultiHeadCrossAttention(dim=32, num_heads=4)
+        grid = (3, 2, 3)
+        x = torch.randn(2, 18, 32, requires_grad=True)
+        caption = torch.randn(1, 9, 32, requires_grad=True)
+        lengths = [5, 4]
+        unrestricted = attn(x, caption, lengths)
+
+        for frames in (0, 1, 2, 3):
+            with self.subTest(frames=frames):
+                result = attn(x, caption, lengths, num_cond_latents=frames, shape=grid)
+                boundary = frames * grid[1] * grid[2]
+                self.assertEqual(result.shape, x.shape)
+                self.assertEqual(torch.count_nonzero(result[:, :boundary]).item(), 0)
+                torch.testing.assert_close(result[:, boundary:], unrestricted[:, boundary:])
+                if 0 < frames < grid[0]:
+                    grad = torch.autograd.grad(result.sum(), x)[0]
+                    self.assertEqual(torch.count_nonzero(grad[:, :boundary]).item(), 0)
+                    self.assertGreater(grad[:, boundary:].abs().sum().item(), 0)
+
     def test_forward_accepts_tokenwise_timesteps(self):
         transformer = LongCatVideoTransformer3DModel(
             in_channels=16,

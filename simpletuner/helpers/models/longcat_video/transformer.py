@@ -872,6 +872,16 @@ class MultiHeadCrossAttention(nn.Module):
                 f"Cross-attn dim mismatch: x {tuple(x.shape)}, cond {tuple(cond.shape)}, expected dim {self.dim}"
             )
 
+        prefix_tokens = 0
+        if num_cond_latents is not None and num_cond_latents > 0:
+            if shape is None or num_cond_latents > shape[0]:
+                raise ValueError("Conditioned cross-attention requires a latent grid containing every conditioned frame.")
+            prefix_tokens = num_cond_latents * (N // shape[0])
+            if prefix_tokens == N:
+                return torch.zeros_like(x)
+            x = x[:, prefix_tokens:]
+            N = x.shape[1]
+
         cond_B, cond_S, _ = cond.shape
         kv_list = [int(s) for s in kv_seqlen] if kv_seqlen is not None else None
 
@@ -916,6 +926,8 @@ class MultiHeadCrossAttention(nn.Module):
         attn_output = self._process_cross_attn(q, k, v, kv_list)
         attn_output = attn_output.transpose(1, 2).reshape(B, N, C)
         attn_output = self.proj(attn_output)
+        if prefix_tokens:
+            attn_output = F.pad(attn_output, (0, 0, prefix_tokens, 0))
         return attn_output
 
 
