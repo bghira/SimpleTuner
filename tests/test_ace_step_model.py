@@ -335,6 +335,17 @@ class TestACEStepModel(unittest.TestCase):
         self.assertEqual(encoded["prompt_embeds"].dtype, self.config.weight_dtype)
         self.assertTrue(torch.equal(encoded["attention_masks"], torch.tensor([[1, 1]], dtype=torch.long)))
 
+    def test_v15_timestep_sampling_matches_checkpoint(self):
+        self.model.model = SimpleNamespace(config=SimpleNamespace(timestep_mu=-0.7, timestep_sigma=0.8))
+        self.model.unwrap_model = lambda model: model
+        with torch.random.fork_rng(devices=[]):
+            torch.manual_seed(17)
+            first = (torch.randn(7) * 0.8 - 0.7).sigmoid()
+            second = (torch.randn(7) * 0.8 - 0.7).sigmoid()
+            torch.manual_seed(17)
+            actual = self.model._sample_v15_timesteps(7, torch.device("cpu"), torch.float32)
+        torch.testing.assert_close(actual, torch.maximum(first, second), rtol=0, atol=0)
+
     def test_prepare_batch_v15_uses_latent_time_axis(self):
         self.model._v15_layout = {"variant_path": "dummy"}
         self.model._embed_v15_lyrics_batch = MagicMock(

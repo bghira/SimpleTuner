@@ -679,9 +679,13 @@ class ACEStep(AudioModelFoundation):
         model_config = getattr(full_model, "config", None)
         timestep_mu = getattr(model_config, "timestep_mu", -0.4)
         timestep_sigma = getattr(model_config, "timestep_sigma", 1.0)
-        return torch.sigmoid(
-            torch.randn((batch_size,), device=device, dtype=dtype) * float(timestep_sigma) + float(timestep_mu)
-        )
+
+        def draw():
+            return torch.sigmoid(
+                torch.randn((batch_size,), device=device, dtype=dtype) * float(timestep_sigma) + float(timestep_mu)
+            )
+
+        return torch.maximum(draw(), draw())
 
     def _infer_v15_latent_lengths(
         self,
@@ -2199,7 +2203,7 @@ class ACEStep(AudioModelFoundation):
             return (
                 "\n"
                 "    - Scheduler: native ACE-Step v1.5 continuous flow matching\n"
-                "    - Timestep sampling: sigmoid-normal using model config (`timestep_mu`, `timestep_sigma`)\n"
+                "    - Timestep sampling: maximum of two independent sigmoid-normal draws using model config (`timestep_mu`, `timestep_sigma`)\n"
                 "    - Objective: decoder predicts flow target `noise - x0` on 1D Oobleck latents\n"
             )
         return (
