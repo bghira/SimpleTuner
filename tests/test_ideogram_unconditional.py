@@ -127,6 +127,17 @@ class IdeogramUnconditionalLoadTests(unittest.TestCase):
 
 
 class IdeogramUnconditionalDispatchTests(unittest.TestCase):
+    def test_training_timesteps_below_one_use_scheduler_units(self):
+        model = self._make_predict_model()
+
+        single = model._prepare_model_predict_timesteps(torch.tensor([0.5]), batch_size=1)
+        mixed = model._prepare_model_predict_timesteps(torch.tensor([0.5, 2.0]), batch_size=2)
+        reference = model._prepare_flowmap_model_predict_batch({"flowmap_r_timesteps": torch.tensor([0.5])}, batch_size=1)
+
+        torch.testing.assert_close(single, torch.tensor([0.9995]))
+        torch.testing.assert_close(single, mixed[:1])
+        torch.testing.assert_close(reference["flowmap_r_timesteps"], single)
+
     def _make_predict_model(self, with_uncond: bool = True):
         from simpletuner.helpers.models.ideogram.model import Ideogram4
 
