@@ -76,6 +76,20 @@ class TestLongCatVideoTrainingLatents(unittest.TestCase):
 
 
 class TestLongCatVideoTransformerShapes(unittest.TestCase):
+    def test_dispatched_self_attention_matches_per_head_sdpa(self):
+        from simpletuner.helpers.models.longcat_video.transformer import Attention
+
+        attention = Attention(dim=32, num_heads=4, enable_flashattn2=True)
+        torch.manual_seed(91)
+        for query_tokens, key_tokens in ((6, 6), (4, 6)):
+            with self.subTest(query_tokens=query_tokens, key_tokens=key_tokens):
+                q = torch.randn(2, 4, query_tokens, 8)
+                k = torch.randn(2, 4, key_tokens, 8)
+                v = torch.randn_like(k)
+                output = attention._flash_or_sdp_attention(q, k, v, (1, 2, 3))
+                expected = torch.nn.functional.scaled_dot_product_attention(q, k, v)
+                torch.testing.assert_close(output, expected)
+
     def test_forward_preserves_5d_shape(self):
         transformer = LongCatVideoTransformer3DModel(
             in_channels=16,

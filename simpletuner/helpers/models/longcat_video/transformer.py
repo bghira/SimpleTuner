@@ -602,12 +602,12 @@ class Attention(nn.Module):
         if attn_output is None:
             try:
                 attn_output = dispatch_attention_fn(
-                    q,
-                    k,
-                    v,
+                    q.transpose(1, 2),
+                    k.transpose(1, 2),
+                    v.transpose(1, 2),
                     attn_mask=None,
                     backend=getattr(self, "_attention_backend", None),
-                )
+                ).transpose(1, 2)
             except Exception:
                 attn_output = None
 
