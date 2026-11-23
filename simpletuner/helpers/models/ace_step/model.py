@@ -598,7 +598,9 @@ class ACEStep(AudioModelFoundation):
             device=text_hidden_states.device,
             dtype=text_hidden_states.dtype,
         )
-        refer_audio_order_mask = torch.zeros(text_hidden_states.shape[0], device=text_hidden_states.device, dtype=torch.long)
+        refer_audio_order_mask = torch.arange(
+            text_hidden_states.shape[0], device=text_hidden_states.device, dtype=torch.long
+        )
         full_model.encoder.eval()
         model_config = getattr(full_model, "config", None)
         original_attn_implementation = getattr(model_config, "_attn_implementation", None)
