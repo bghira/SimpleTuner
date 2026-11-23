@@ -34,6 +34,26 @@ class TestConfigTemplateExpansion(unittest.TestCase):
         self.assertEqual(result[0]["instance_data_dir"], "/mnt/data/flux/train-set")
         self.assertEqual(result[0]["cache_dir_vae"], "/tmp/run/cache/train-set")
 
+    def test_webshart_cache_paths_expand_the_global_rank(self):
+        config = [
+            {
+                "webshart": {
+                    "cache_dir": "../path/to/thing_{global_rank}",
+                    "shard_cache_dir": "{env:CACHE_ROOT}/bar/{global_rank}",
+                }
+            }
+        ]
+        for env, rank in [({}, 0), ({"RANK": "11", "LOCAL_RANK": "3"}, 11)]:
+            with self.subTest(rank=rank), patch.dict("os.environ", {"CACHE_ROOT": "../foo", **env}, clear=True):
+                result = fill_variables_in_config_paths(args={}, config=config)
+                self.assertEqual(
+                    result[0]["webshart"],
+                    {
+                        "cache_dir": f"../path/to/thing_{rank}",
+                        "shard_cache_dir": f"../foo/bar/{rank}",
+                    },
+                )
+
     def test_modelspec_comment_runtime_placeholders_are_resolved(self):
         rendered = render_modelspec_comment(
             "step={current_step} epoch={current_epoch} ts={timestamp}",

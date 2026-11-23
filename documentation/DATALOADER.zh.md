@@ -1449,6 +1449,7 @@ Webshart 数据集通过 `webshart` 包加载 WebDataset 风格的 tar shards。
 - 按窗口顺序训练远程 Parquet 数据时，支持 `sequential_prefill` 的 Webshart 会依次预取后续分片，直到再加入一个分片就会超过 `shard_cache_gb`。每个共享缓存由一个工作进程负责，最多同时执行 `parallel_downloads` 个下载。恢复训练时从已保存的窗口开始，已用完的分片可被缓存淘汰。 恢复训练时，可以用 `SIMPLETUNER_WEBSHART_PREFILL_DOWNLOADS` 单独调整后台并发下载数。
 - `webshart.metadata_cache_dir` 存放分片目录和采集清单索引。默认位于 `webshart.cache_dir` 下的 `metadata_cache`。
 - `webshart.shard_cache_dir` 存放已下载的分片。默认位于 `webshart.cache_dir` 下的 `shard_cache`。
+- 在缓存路径中使用 `{global_rank}` 可为每个训练进程分配独立目录（单进程时为 `0`）。如需共享已准备好的元数据，只需将 `webshart.shard_cache_dir` 设为 `{env:CACHE_ROOT}/shards_{global_rank}` 这样的路径。`shard_cache_gb` 限制分别应用于每个分片目录。
 - 为远程 Parquet 启用整分片缓存时，每个后端在两次读取之间保留一个已缓存分片的读取器。除 `shard_cache_gb` 外，还需为并发下载和仍被读取器锁定的分片预留磁盘空间。Webshart 先将下载内容写入临时文件，再清理旧分片。
 - 将 `webshart.sampling_policy` 设为 `global`，可在每个准备好的宽高比分桶内打乱样本顺序。设为 `shard_local` 时，批次优先从存储位置相近的样本组成，从而减少 DataComp 等远程数据集的分片缓存换入换出。省略此字段可保留现有采样器。
 - 使用 Parquet 分片局部采样时，`webshart.sampling_order` 默认为 `sequential`。此模式按存储顺序访问分片窗口，并在每个宽高比分桶内保留原始行顺序。若要在局部采样中打乱样本，或从引入此选项之前创建的检查点恢复，请设为 `shuffled`。恢复时请保持相同的顺序设置。

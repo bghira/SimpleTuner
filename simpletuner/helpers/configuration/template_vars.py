@@ -5,6 +5,8 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any
 
+from simpletuner.helpers.data_backend.dataset_types import get_arg_value
+from simpletuner.helpers.training.multi_process import _get_rank
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 _PLACEHOLDER_PATTERN = re.compile(r"\{([^{}]+)\}")
@@ -40,6 +42,19 @@ def resolve_value_placeholders(value: Any, *, variables: Mapping[str, object] | 
     if isinstance(value, dict):
         return {key: resolve_value_placeholders(item, variables=variables) for key, item in value.items()}
     return value
+
+
+def resolve_dataset_config_placeholders(backend: dict, args) -> dict:
+    """Resolve dataset templates in the process that opens the backend."""
+    return resolve_value_placeholders(
+        backend,
+        variables={
+            "model_family": get_arg_value(args, "model_family", ""),
+            "output_dir": get_arg_value(args, "output_dir") or os.path.join(os.getcwd(), ".simpletuner_output"),
+            "id": backend.get("id") or "",
+            "global_rank": _get_rank(),
+        },
+    )
 
 
 def render_modelspec_comment(value: Any, *, variables: Mapping[str, object] | None = None) -> str | None:
