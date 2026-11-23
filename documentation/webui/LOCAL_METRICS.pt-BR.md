@@ -8,6 +8,8 @@ O SimpleTuner pode registrar métricas sem um serviço externo. Configure:
 
 Use valores separados por virgula, como `report_to=simpletuner,wandb`, para ativar o tracker local junto com um externo. Ele funciona com todas as famílias de modelos e, em DDP, somente o processo principal grava os arquivos.
 
+**Training Runs** também mostra os últimos 30 minutos de progresso dos workers ativos, inclusive quando `report_to: none`. Selecione o job para ver gráficos de perda, taxa de aprendizado e rendimento. O histórico fica no servidor em execução e recomeça após uma reinicialização. Relatórios, mídias de validação e distribuições de timesteps continuam disponíveis na saída salva do ambiente.
+
 ## Arquivos de saída
 
 - `training_metrics.jsonl`: escalares por etapa, somente anexados.
@@ -26,11 +28,12 @@ Abra **Metrics** e **Training Runs** para selecionar escalares por etapa ou minu
 
 ```text
 GET /api/metrics/training/runs
+GET /api/metrics/training/jobs/{job_id}
 GET /api/metrics/training/runs/{environment}?max_points=2000&metric=train_loss
 GET /api/metrics/training/runs/{environment}/media/{path}
 GET /api/metrics/training/runs/{environment}/report
 ```
 
-A API resolve apenas diretórios de ambientes configurados. Para reduzir o arquivo, use `validation_image_format=webp` e `validation_image_quality=90`; PNG continua sendo o padrão.
+Os endpoints de execuções locais resolvem apenas diretórios de ambientes configurados. Para reduzir o arquivo, use `validation_image_format=webp` e `validation_image_quality=90`; PNG continua sendo o padrão.
 
 Para salvar em JPEG XL, defina `validation_image_format=jxl`. Instale o extra `simpletuner[jxl]` e abra a galeria ou o relatório em um navegador que decodifique `image/jxl`.

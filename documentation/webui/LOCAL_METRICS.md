@@ -10,6 +10,8 @@ SimpleTuner can record training metrics without an external tracking service. Se
 
 Use comma-separated values such as `report_to=simpletuner,wandb` to enable the local tracker alongside an external tracker. The tracker is model-independent and receives the same scalar calls used by the other Accelerate trackers.
 
+**Training Runs** also shows the last 30 minutes of progress reported by active workers, including jobs using `report_to: none`. Select the worker job to chart the reported loss, learning rate, or throughput. This history lives in the running server and starts again after a restart. Offline reports, validation media, and timestep distributions remain available through the saved environment output.
+
 ## Output contract
 
 The training output directory contains:
@@ -61,9 +63,10 @@ All endpoints require normal WebUI authentication:
 
 ```text
 GET /api/metrics/training/runs
+GET /api/metrics/training/jobs/{job_id}
 GET /api/metrics/training/runs/{environment}?max_points=2000&metric=train_loss
 GET /api/metrics/training/runs/{environment}/media/{path}
 GET /api/metrics/training/runs/{environment}/report
 ```
 
-The API resolves output directories from configured environments. It does not accept arbitrary filesystem paths. Scalar reads can be bounded by `start_step`, `end_step`, `max_points`, and repeated `metric` parameters.
+The local run endpoints resolve output directories from configured environments. They accept configured environment names. Scalar reads can be bounded by `start_step`, `end_step`, `max_points`, and repeated `metric` parameters.

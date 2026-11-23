@@ -24,7 +24,7 @@
 
     ---
 
-    Store scalar charts, optional timestep plots, and validation comparisons with each training run
+    View live worker progress and keep scalar charts, optional timestep plots, and validation comparisons with saved training runs.
 
     [:octicons-arrow-right-24: Local Training Metrics](webui/LOCAL_METRICS.md)
 

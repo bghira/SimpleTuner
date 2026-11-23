@@ -24,7 +24,7 @@
 
     ---
 
-    Guarda métricas escalares, gráficos opcionales de pasos de difusión y comparaciones de validación con cada entrenamiento
+    Consulta el progreso de workers activos y guarda gráficos y comparaciones de validación con cada entrenamiento.
 
     [:octicons-arrow-right-24: Métricas locales](webui/LOCAL_METRICS.md)
 

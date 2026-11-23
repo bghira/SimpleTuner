@@ -38,18 +38,19 @@
         <div class="training-metrics-toolbar">
             <div>
                 <h2>Training Runs</h2>
-                <p>Scalar history and validation outputs saved with each environment.</p>
+                <p>Saved environment metrics and recent worker progress.</p>
             </div>
             <div class="training-run-actions">
-                <label class="visually-hidden" for="training-run-select">Training environment</label>
+                <label class="visually-hidden" for="training-run-select">Training run</label>
                 <select id="training-run-select"
                         class="form-select form-select-sm"
-                        :value="selectedTrainingEnvironment"
+                        :value="selectedTrainingRunKey"
                         @change="selectTrainingRun($event.target.value)"
                         :disabled="trainingMetricsLoading || !trainingRuns.length"
                         data-testid="training-run-select">
-                    <template x-for="run in trainingRuns" :key="run.environment">
-                        <option :value="run.environment" x-text="run.run_name + ' · ' + run.environment"></option>
+                    <template x-for="run in trainingRuns" :key="trainingRunKey(run)">
+                        <option :value="trainingRunKey(run)"
+                                x-text="run.worker ? run.run_name + ' · ' + run.worker + ' · ' + run.job_id : run.run_name + ' · ' + run.environment"></option>
                     </template>
                 </select>
                 <button type="button"
@@ -79,7 +80,7 @@
             <div class="training-metrics-empty">
                 <i class="fas fa-chart-line"></i>
                 <div>
-                    <strong>No local training runs</strong>
+                    <strong>No training runs with metrics</strong>
                     <span>Set <code>report_to=simpletuner</code> in a training environment to record one.</span>
                 </div>
             </div>
@@ -88,6 +89,10 @@
         <template x-if="trainingRunData">
             <div>
                 <div class="training-run-summary">
+                    <div x-show="trainingRunData.run.worker">
+                        <span>Live worker</span>
+                        <strong x-text="trainingRunData.run.worker"></strong>
+                    </div>
                     <div>
                         <span>Status</span>
                         <strong x-text="trainingRunData.run.status"></strong>
@@ -107,7 +112,7 @@
                 </div>
 
                 <div class="training-metrics-layout"
-                     :class="{ 'validation-collapsed': trainingMediaPanelCollapsed }">
+                     :class="{ 'validation-collapsed': trainingMediaPanelCollapsed, 'scalar-only': trainingRunData.run.job_id }">
                     <section class="training-chart-workspace" aria-label="Scalar charts">
                         <div class="training-chart-layout-toolbar">
                             <div class="training-chart-layout-controls">
@@ -278,7 +283,7 @@
                         </template>
                     </section>
 
-                    <section class="training-media-tool"
+                    <section class="training-media-tool" x-show="!trainingRunData.run.job_id"
                              :class="{ 'collapsed': trainingMediaPanelCollapsed }"
                              aria-label="Validation media">
                         <div class="training-tool-header">

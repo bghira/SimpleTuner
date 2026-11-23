@@ -52,10 +52,32 @@ def _call_training_metrics_service(func, *args, **kwargs):
 
 @router.get("/training/runs")
 async def list_training_runs(
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    """List saved environments containing SimpleTuner local metrics."""
-    return _call_training_metrics_service(TRAINING_METRICS_SERVICE.list_runs)
+    """List local metrics and active worker runs."""
+    local = _call_training_metrics_service(TRAINING_METRICS_SERVICE.list_runs)
+    runs = [*local["runs"], *await TRAINING_METRICS_SERVICE.list_worker_runs(user)]
+    runs.sort(key=lambda run: run.get("updated_at") or "", reverse=True)
+    return {"runs": runs, "count": len(runs)}
+
+
+@router.get("/training/jobs/{job_id}")
+async def get_worker_training_run(
+    job_id: str,
+    start_step: Optional[int] = Query(None, ge=0),
+    end_step: Optional[int] = Query(None, ge=0),
+    max_points: int = Query(2000, ge=2, le=10000),
+    metric: Optional[List[str]] = Query(None),
+    user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
+    if start_step is not None and end_step is not None and start_step > end_step:
+        raise HTTPException(status_code=400, detail="start_step must be less than or equal to end_step.")
+    try:
+        return await TRAINING_METRICS_SERVICE.get_worker_run(
+            job_id, user, start_step=start_step, end_step=end_step, max_points=max_points, metric_names=metric
+        )
+    except TrainingMetricsServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
 
 @router.get("/training/runs/{environment}")

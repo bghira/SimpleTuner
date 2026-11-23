@@ -22,6 +22,11 @@ from simpletuner.helpers.training.local_metrics import (
 from simpletuner.simpletuner_sdk.server.services.config_store import ConfigStore
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore
 
+from .cloud.auth.models import User
+from .cloud.base import UnifiedJob
+from .cloud.storage.job_repository import get_job_repository
+from .worker_run_metrics import ACTIVE_STATUSES, WORKER_RUN_METRICS
+
 SUPPORTED_MEDIA_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".jxl", ".gif", ".mp4", ".webm", ".mov", ".wav"}
 
 
@@ -30,6 +35,22 @@ class TrainingMetricsServiceError(Exception):
         super().__init__(message)
         self.message = message
         self.status_code = status_code
+
+
+def _select_records(records: list[dict], start_step, end_step, max_points, metric_names) -> list[dict]:
+    requested_metrics = set(metric_names or [])
+    selected = []
+    for record in records:
+        step = int(record.get("step", 0))
+        if (start_step is not None and step < start_step) or (end_step is not None and step > end_step):
+            continue
+        if requested_metrics:
+            record = {
+                **record,
+                "metrics": {name: value for name, value in record.get("metrics", {}).items() if name in requested_metrics},
+            }
+        selected.append(record)
+    return downsample_records(selected, max_points=max_points) if selected else []
 
 
 class TrainingMetricsService:
@@ -101,21 +122,7 @@ class TrainingMetricsService:
                 status.HTTP_404_NOT_FOUND,
             )
 
-        requested_metrics = set(metric_names or [])
-        records = []
-        for record in read_metric_records(output_dir):
-            step = int(record.get("step", 0))
-            if start_step is not None and step < start_step:
-                continue
-            if end_step is not None and step > end_step:
-                continue
-            if requested_metrics:
-                record = dict(record)
-                record["metrics"] = {
-                    name: value for name, value in record.get("metrics", {}).items() if name in requested_metrics
-                }
-            records.append(record)
-        records = downsample_records(records, max_points=max_points) if records else []
+        records = _select_records(read_metric_records(output_dir), start_step, end_step, max_points, metric_names)
 
         media = []
         for record in read_media_records(output_dir):
@@ -150,6 +157,65 @@ class TrainingMetricsService:
                 "timesteps": TIMESTEP_DISTRIBUTION_FILENAME,
                 "report": REPORT_FILENAME,
             },
+        }
+
+    async def list_worker_runs(self, user: User) -> list[dict]:
+        user_id = None if user.has_permission("job.view.all") else user.id
+        jobs = await get_job_repository().list(job_ids=WORKER_RUN_METRICS.job_ids(), user_id=user_id)
+        runs = []
+        for job in jobs:
+            if snapshot := self._worker_run(job):
+                runs.append(snapshot[0])
+        return runs
+
+    @staticmethod
+    def _worker_run(job: UnifiedJob) -> tuple[dict, list[dict], list[str]] | None:
+        if job.status not in ACTIVE_STATUSES or not (snapshot := WORKER_RUN_METRICS.snapshot(job)):
+            return None
+        worker_name, records = snapshot
+        config = (job.metadata or {}).get("config") or {}
+        if not isinstance(config, dict):
+            config = {}
+        metric_names = sorted({name for record in records for name in record["metrics"]})
+        environment = job.config_name
+        run = {
+            "job_id": job.job_id,
+            "environment": environment,
+            "worker": worker_name,
+            "run_name": config.get("--tracker_run_name") or config.get("tracker_run_name") or environment or job.job_id,
+            "model_family": config.get("--model_family") or config.get("model_family"),
+            "status": "running",
+            "last_step": records[-1]["step"],
+            "record_count": len(records),
+            "metric_count": len(metric_names),
+            "updated_at": records[-1]["timestamp"],
+            "has_report": False,
+        }
+        return run, records, metric_names
+
+    async def get_worker_run(
+        self,
+        job_id: str,
+        user: User,
+        *,
+        start_step: Optional[int] = None,
+        end_step: Optional[int] = None,
+        max_points: int = 2000,
+        metric_names: Optional[list[str]] = None,
+    ) -> dict:
+        job = await get_job_repository().get(job_id)
+        if job is None or not job.can_access(user.id, user.has_permission("job.view.all")):
+            raise TrainingMetricsServiceError("Worker training run not found.", status.HTTP_404_NOT_FOUND)
+        snapshot = self._worker_run(job)
+        if snapshot is None:
+            raise TrainingMetricsServiceError("Worker training run not found.", status.HTTP_404_NOT_FOUND)
+        run, records, available_metrics = snapshot
+        return {
+            "run": run,
+            "records": _select_records(records, start_step, end_step, max_points, metric_names),
+            "available_metrics": available_metrics,
+            "media": [],
+            "timesteps": [],
         }
 
     def media_path(self, environment: str, relative_path: str) -> Path:
