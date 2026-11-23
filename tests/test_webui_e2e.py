@@ -1880,7 +1880,8 @@ class RemoteWorkerTrainingMetricsTestCase(_TrainingWorkerFixture, WebUITestCase)
         ).raise_for_status()
 
     def test_shared_environment_workers_have_separate_training_runs(self):
-        for job_id, worker, loss in (("progress-first", "First worker", 0.1), ("progress-second", "Second worker", 0.2)):
+        runs = (("progress-first", "First worker", 0.1), ("progress-second", "Second worker", 0.2))
+        for job_id, worker, loss in runs:
             self.register_job(job_id, worker, "L40S")
             self.addCleanup(self._complete_run, job_id)
             requests.post(
@@ -1890,13 +1891,19 @@ class RemoteWorkerTrainingMetricsTestCase(_TrainingWorkerFixture, WebUITestCase)
                 timeout=10,
             ).raise_for_status()
 
+        requests.post(
+            f"{self.base_url}/api/webui/ui-state/training-metrics",
+            json={"environments": {"large-batch": {"charts": [{"name": "Loss", "metrics": ["loss"]}]}}},
+            timeout=10,
+        ).raise_for_status()
+
         def scenario(driver, _):
             driver.get(f"{self.base_url}/web/trainer#metrics")
             wait = WebDriverWait(driver, 20)
             wait.until(EC.presence_of_element_located((By.ID, "metrics-tab-content")))
             self.dismiss_onboarding(driver)
             selector = (By.ID, "training-run-select")
-            for job_id, worker, loss in (("progress-first", "First worker", 0.1), ("progress-second", "Second worker", 0.2)):
+            for job_id, worker, loss in (*runs, runs[0]):
                 select = wait.until(EC.element_to_be_clickable(selector))
                 driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", select)
                 Select(select).select_by_value(f"worker:{job_id}")
@@ -1909,8 +1916,19 @@ class RemoteWorkerTrainingMetricsTestCase(_TrainingWorkerFixture, WebUITestCase)
                     )
                 )
                 self.assertIn(worker, driver.find_element(By.CSS_SELECTOR, ".training-run-summary").text)
-                self.assertTrue(
-                    driver.find_element(By.CSS_SELECTOR, "[data-testid='training-metrics-canvas']").is_displayed()
+                wait.until(
+                    lambda d: d.execute_script(
+                        """
+                        const canvas = document.querySelector('[data-testid="training-metrics-canvas"]');
+                        if (!canvas) return false;
+                        const {left, top} = canvas.getBoundingClientRect();
+                        canvas.dispatchEvent(new PointerEvent('pointermove', {clientX: left + 80, clientY: top + 30}));
+                        const state = Alpine.$data(document.getElementById('metrics-tab-content'));
+                        return state.trainingChartHover[canvas.dataset.trainingChartId]?.record.metrics.loss === arguments[0];
+                        """,
+                        loss,
+                    ),
+                    f"The visible chart for {worker} did not display its loss sample",
                 )
 
         self.for_each_browser("worker_training_metrics", scenario)

@@ -8,7 +8,7 @@ O SimpleTuner pode registrar métricas sem um serviço externo. Configure:
 
 Use valores separados por virgula, como `report_to=simpletuner,wandb`, para ativar o tracker local junto com um externo. Ele funciona com todas as famílias de modelos e, em DDP, somente o processo principal grava os arquivos.
 
-**Training Runs** também mostra os últimos 30 minutos de progresso dos workers ativos, inclusive quando `report_to: none`. Selecione o job para ver gráficos de perda, taxa de aprendizado e rendimento. O histórico fica no servidor em execução e recomeça após uma reinicialização. Relatórios, mídias de validação e distribuições de timesteps continuam disponíveis na saída salva do ambiente.
+**Training Runs** também mostra o progresso informado pelos workers ativos, inclusive quando `report_to: none`. Selecione o job para ver gráficos de perda, taxa de aprendizado e rendimento. O servidor mantém as amostras recentes com resolução de cinco segundos quando disponíveis e espaça as amostras antigas à medida que o treinamento avança. O histórico recomeça após a reinicialização do servidor. Relatórios, mídias de validação e distribuições de timesteps continuam disponíveis na saída salva do ambiente.
 
 ## Arquivos de saída
 

@@ -10,7 +10,7 @@ SimpleTuner can record training metrics without an external tracking service. Se
 
 Use comma-separated values such as `report_to=simpletuner,wandb` to enable the local tracker alongside an external tracker. The tracker is model-independent and receives the same scalar calls used by the other Accelerate trackers.
 
-**Training Runs** also shows the last 30 minutes of progress reported by active workers, including jobs using `report_to: none`. Select the worker job to chart the reported loss, learning rate, or throughput. This history lives in the running server and starts again after a restart. Offline reports, validation media, and timestep distributions remain available through the saved environment output.
+**Training Runs** also shows progress reported by active workers, including jobs using `report_to: none`. Select the worker job to chart the reported loss, learning rate, or throughput. The server keeps recent samples at five-second resolution when available and samples older progress more sparsely as the run grows. History starts again after a server restart. Offline reports, validation media, and timestep distributions remain available through the saved environment output.
 
 ## Output contract
 
