@@ -165,7 +165,10 @@ class TestTREADTransformers(unittest.TestCase):
         for block in (*model.transformer_blocks, *model.single_transformer_blocks):
             self.addCleanup(block.register_forward_pre_hook(record_inputs, with_kwargs=True).remove)
 
-        with patch.object(router, "end_route", wraps=router.end_route) as end_route:
+        with (
+            patch.object(router, "get_mask", wraps=router.get_mask) as choose_mask,
+            patch.object(router, "end_route", wraps=router.end_route) as end_route,
+        ):
             output = model(
                 hidden_states=image_tokens,
                 encoder_hidden_states=text_tokens,
@@ -177,7 +180,8 @@ class TestTREADTransformers(unittest.TestCase):
             ).sample
 
         self.assertEqual(output.shape, image_tokens.shape)
-        self.assertEqual(end_route.call_count, 2)
+        choose_mask.assert_called_once()
+        end_route.assert_called_once()
         double_stream, single_stream, restored_stream = block_inputs
         self.assertEqual(double_stream["hidden_states"].shape[:2], (2, 2))
         self.assertEqual(double_stream["encoder_hidden_states"].shape[:2], (2, 2))
@@ -186,14 +190,13 @@ class TestTREADTransformers(unittest.TestCase):
 
         image_rope = model.pos_embed(image_ids)
         text_rope = model.pos_embed(text_ids)
-        for block, restore_call in zip((double_stream, single_stream), end_route.call_args_list):
-            _, mask_info, _ = restore_call.args
-            self.assertTrue(torch.equal(~mask_info.mask, force_keep))
+        routed, mask_info, original = end_route.call_args.args
+        self.assertTrue(torch.equal(~mask_info.mask, force_keep))
+        for block in (double_stream, single_stream):
             for actual, text_table, image_table in zip(block["image_rotary_emb"], text_rope, image_rope):
                 expected = torch.cat((text_table.expand(2, -1, -1), image_table[mask_info.ids_keep]), dim=1)
                 torch.testing.assert_close(actual, expected)
 
-        routed, mask_info, original = end_route.call_args.args
         expected = original.scatter(1, mask_info.ids_keep.unsqueeze(-1).expand_as(routed), routed)
         torch.testing.assert_close(restored_stream["hidden_states"][:, 2:], expected)
 

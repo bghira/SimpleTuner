@@ -1277,6 +1277,7 @@ class Flux2Transformer2DModel(
         )
 
         router = self._tread_router if self.training else None
+        active_route = None
         tread_mask_info = None
         saved_image_tokens = None
         current_concat_rotary_emb = concat_rotary_emb
@@ -1352,7 +1353,14 @@ class Flux2Transformer2DModel(
             if router is not None:
                 route = self._get_tread_route_for_layer(global_layer_idx)
 
-                if route is not None and tread_mask_info is None:
+                if active_route is not None and route is not active_route:
+                    hidden_states = router.end_route(hidden_states, tread_mask_info, saved_image_tokens)
+                    tread_mask_info = None
+                    saved_image_tokens = None
+                    current_concat_rotary_emb = concat_rotary_emb
+                    current_double_mod_img = double_stream_mod_img
+
+                if route is not None and route is not active_route:
                     tread_mask_info = router.get_mask(
                         hidden_states, mask_ratio=route["selection_ratio"], force_keep=force_keep_mask
                     )
@@ -1364,13 +1372,7 @@ class Flux2Transformer2DModel(
                             tuple(router.start_route(param, tread_mask_info) for param in mod)
                             for mod in double_stream_mod_img
                         )
-
-                elif route is None and tread_mask_info is not None:
-                    hidden_states = router.end_route(hidden_states, tread_mask_info, saved_image_tokens)
-                    tread_mask_info = None
-                    saved_image_tokens = None
-                    current_concat_rotary_emb = concat_rotary_emb
-                    current_double_mod_img = double_stream_mod_img
+                active_route = route
 
             if checkpoint_this_block:
 
@@ -1413,17 +1415,19 @@ class Flux2Transformer2DModel(
             _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
             capture_idx += 1
 
-        # Unroute before concatenation if still active
-        if tread_mask_info is not None:
-            hidden_states = router.end_route(hidden_states, tread_mask_info, saved_image_tokens)
-            tread_mask_info = None
-            saved_image_tokens = None
-
-        # Concatenate text and image streams for single-block inference
+        # Concatenate the streams while preserving any route across the boundary.
         hidden_states = torch.cat([encoder_hidden_states, hidden_states], dim=1)
 
-        current_concat_pe = concat_rotary_emb
-        current_single_mod = single_stream_mod
+        def route_single_modulation(mask_info):
+            if temb_single.ndim != 3:
+                return single_stream_mod
+            return tuple(
+                torch.cat((param[:, :num_txt_tokens], router.start_route(param[:, num_txt_tokens:], mask_info)), dim=1)
+                for param in single_stream_mod
+            )
+
+        current_concat_pe = current_concat_rotary_emb
+        current_single_mod = route_single_modulation(tread_mask_info) if active_route is not None else single_stream_mod
 
         # 5. Single Stream Transformer Blocks
         if use_segmented_checkpointing:
@@ -1466,24 +1470,7 @@ class Flux2Transformer2DModel(
             if router is not None:
                 route = self._get_tread_route_for_layer(global_layer_idx)
 
-                if route is not None and tread_mask_info is None:
-                    saved_image_tokens = hidden_states[:, num_txt_tokens:]
-                    tread_mask_info = router.get_mask(
-                        saved_image_tokens, mask_ratio=route["selection_ratio"], force_keep=force_keep_mask
-                    )
-                    routed_image_tokens = router.start_route(saved_image_tokens, tread_mask_info)
-                    hidden_states = torch.cat((hidden_states[:, :num_txt_tokens], routed_image_tokens), dim=1)
-                    current_concat_pe = _route_rotary_emb(image_rotary_emb, text_rotary_emb, tread_mask_info)
-                    if temb_single.ndim == 3:
-                        current_single_mod = tuple(
-                            torch.cat(
-                                (param[:, :num_txt_tokens], router.start_route(param[:, num_txt_tokens:], tread_mask_info)),
-                                dim=1,
-                            )
-                            for param in single_stream_mod
-                        )
-
-                elif route is None and tread_mask_info is not None:
+                if active_route is not None and route is not active_route:
                     restored_image_tokens = router.end_route(
                         hidden_states[:, num_txt_tokens:], tread_mask_info, saved_image_tokens
                     )
@@ -1492,6 +1479,17 @@ class Flux2Transformer2DModel(
                     saved_image_tokens = None
                     current_concat_pe = concat_rotary_emb
                     current_single_mod = single_stream_mod
+
+                if route is not None and route is not active_route:
+                    saved_image_tokens = hidden_states[:, num_txt_tokens:]
+                    tread_mask_info = router.get_mask(
+                        saved_image_tokens, mask_ratio=route["selection_ratio"], force_keep=force_keep_mask
+                    )
+                    routed_image_tokens = router.start_route(saved_image_tokens, tread_mask_info)
+                    hidden_states = torch.cat((hidden_states[:, :num_txt_tokens], routed_image_tokens), dim=1)
+                    current_concat_pe = _route_rotary_emb(image_rotary_emb, text_rotary_emb, tread_mask_info)
+                    current_single_mod = route_single_modulation(tread_mask_info)
+                active_route = route
 
             if checkpoint_this_block:
 
