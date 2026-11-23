@@ -1020,6 +1020,10 @@
     grid-template-columns: minmax(0, 1fr) 2.75rem;
 }
 
+.training-metrics-layout.scalar-only {
+    grid-template-columns: minmax(0, 1fr);
+}
+
 .training-chart-workspace,
 .training-media-tool {
     min-width: 0;

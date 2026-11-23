@@ -1674,6 +1674,55 @@ class MetricsGpuHealthDashboardTestCase(_TrainerPageMixin, WebUITestCase):
         self.for_each_browser("test_gpu_history_toggle_series", scenario)
 
 
+class RemoteWorkerTrainingMetricsTestCase(_TrainingWorkerFixture, WebUITestCase):
+    SERVER_MODE = ServerMode.UNIFIED
+    MAX_BROWSERS = 1
+
+    def _complete_run(self, job_id):
+        requests.post(
+            f"{self.base_url}/api/workers/job/{job_id}/status",
+            json={"status": "completed"},
+            headers={"X-Worker-Token": f"{job_id}-token"},
+            timeout=10,
+        ).raise_for_status()
+
+    def test_shared_environment_workers_have_separate_training_runs(self):
+        for job_id, worker, loss in (("progress-first", "First worker", 0.1), ("progress-second", "Second worker", 0.2)):
+            self.register_job(job_id, worker, "L40S")
+            self.addCleanup(self._complete_run, job_id)
+            requests.post(
+                f"{self.base_url}/api/workers/job/{job_id}/status",
+                json={"progress": {"current": 25, "metrics": {"loss": loss}}},
+                headers={"X-Worker-Token": f"{job_id}-token"},
+                timeout=10,
+            ).raise_for_status()
+
+        def scenario(driver, _):
+            driver.get(f"{self.base_url}/web/trainer#metrics")
+            wait = WebDriverWait(driver, 20)
+            wait.until(EC.presence_of_element_located((By.ID, "metrics-tab-content")))
+            self.dismiss_onboarding(driver)
+            selector = (By.ID, "training-run-select")
+            for job_id, worker, loss in (("progress-first", "First worker", 0.1), ("progress-second", "Second worker", 0.2)):
+                select = wait.until(EC.element_to_be_clickable(selector))
+                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", select)
+                Select(select).select_by_value(f"worker:{job_id}")
+                wait.until(
+                    lambda d: d.execute_script(
+                        "const data = Alpine.$data(document.getElementById('metrics-tab-content')).trainingRunData;"
+                        "return data?.run.worker === arguments[0] && data.records[0].metrics.loss === arguments[1];",
+                        worker,
+                        loss,
+                    )
+                )
+                self.assertIn(worker, driver.find_element(By.CSS_SELECTOR, ".training-run-summary").text)
+                self.assertTrue(
+                    driver.find_element(By.CSS_SELECTOR, "[data-testid='training-metrics-canvas']").is_displayed()
+                )
+
+        self.for_each_browser("worker_training_metrics", scenario)
+
+
 class JpegXlMetricsTestCase(_ImagesEnabledBrowserMixin, _TrainerPageMixin, WebUITestCase):
     def test_jpeg_xl_displays_in_metrics_and_local_report(self):
         from types import SimpleNamespace

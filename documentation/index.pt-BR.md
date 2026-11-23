@@ -24,7 +24,7 @@
 
     ---
 
-    Salve gráficos de métricas escalares, gráficos opcionais de passos de difusão e comparações de validação a cada treinamento
+    Acompanhe o progresso dos workers ativos e guarde gráficos e comparações de validação com os treinamentos salvos.
 
     [:octicons-arrow-right-24: Métricas locais](webui/LOCAL_METRICS.md)
 

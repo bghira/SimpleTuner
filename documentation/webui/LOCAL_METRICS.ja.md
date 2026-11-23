@@ -8,6 +8,8 @@
 
 `report_to=simpletuner,wandb` のようにカンマ区切りで指定すると、ローカルトラッカーと外部 tracker を同時に有効にできます。全モデルファミリーで共通に動作し、DDP ではメインプロセスだけが書き込みます。
 
+**Training Runs** では、`report_to: none` のジョブも含め、稼働中のワーカーが報告した直近 30 分の進捗を確認できます。ジョブを選ぶと、損失、学習率、スループットをグラフに表示できます。履歴はサーバーの実行中に保持され、再起動すると記録を再開します。レポート、検証メディア、timestep 分布は保存済みの環境出力から参照できます。
+
 ## 出力ファイル
 
 - `training_metrics.jsonl`: step ごとの追記専用スカラー記録
@@ -26,6 +28,7 @@ tracker が system telemetry を標準で収集しない場合、SimpleTuner は
 
 ```text
 GET /api/metrics/training/runs
+GET /api/metrics/training/jobs/{job_id}
 GET /api/metrics/training/runs/{environment}?max_points=2000&metric=train_loss
 GET /api/metrics/training/runs/{environment}/media/{path}
 GET /api/metrics/training/runs/{environment}/report

@@ -468,6 +468,8 @@ class JobRepository(BaseSQLiteStore):
         status: Optional[str] = None,
         user_id: Optional[int] = None,
         provider: Optional[str] = None,
+        *,
+        job_ids: Optional[List[str]] = None,
     ) -> List[UnifiedJob]:
         """List jobs with optional filtering and pagination.
 
@@ -478,10 +480,13 @@ class JobRepository(BaseSQLiteStore):
             status: Filter by job status.
             user_id: Filter by user ID (for job isolation).
             provider: Filter by cloud provider (e.g., 'runpod', 'lambda').
+            job_ids: Limit the result to these jobs.
 
         Returns:
             List of UnifiedJob objects.
         """
+        if job_ids == []:
+            return []
         loop = asyncio.get_running_loop()
 
         def _list():
@@ -503,6 +508,11 @@ class JobRepository(BaseSQLiteStore):
                 if provider:
                     query += " AND provider = ?"
                     params.append(provider)
+
+                if job_ids:
+                    placeholders = ", ".join("?" for _ in job_ids)
+                    query += f" AND job_id IN ({placeholders})"
+                    params.extend(job_ids)
 
                 query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
                 params.append(limit)

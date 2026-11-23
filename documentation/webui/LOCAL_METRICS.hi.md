@@ -8,6 +8,8 @@ SimpleTuner बाहरी सेवा के बिना प्रशिक�
 
 `report_to=simpletuner,wandb` जैसे comma-separated values से local tracker और external tracker साथ में चालू करें। यह सभी model families पर लागू है; DDP में केवल main process फाइलें लिखता है।
 
+**Training Runs** सक्रिय workers से मिले पिछले 30 मिनट के प्रगति नमूने भी दिखाता है, जिनमें `report_to: none` वाले jobs शामिल हैं। loss, learning rate या throughput के लिए job चुनें। इतिहास चल रहे सर्वर में रहता है और पुनः आरंभ करने के बाद फिर से बनता है। रिपोर्ट, validation media और timestep distribution सहेजे गए environment आउटपुट से उपलब्ध रहते हैं।
+
 ## आउटपुट फाइलें
 
 - `training_metrics.jsonl`: हर step के append-only scalar records।
@@ -26,11 +28,12 @@ Resume पर records जोड़े जाते हैं। HTML relative me
 
 ```text
 GET /api/metrics/training/runs
+GET /api/metrics/training/jobs/{job_id}
 GET /api/metrics/training/runs/{environment}?max_points=2000&metric=train_loss
 GET /api/metrics/training/runs/{environment}/media/{path}
 GET /api/metrics/training/runs/{environment}/report
 ```
 
-API केवल configured environments के output directories पढ़ती है। छोटी archive के लिए `validation_image_format=webp` और `validation_image_quality=90` उपयोग करें; default PNG है।
+स्थानीय runs के API endpoints केवल configured environments की output directories पढ़ते हैं। छोटी archive के लिए `validation_image_format=webp` और `validation_image_quality=90` उपयोग करें; default PNG है।
 
 JPEG XL में सेव करने के लिए `validation_image_format=jxl` सेट करें। `simpletuner[jxl]` एक्स्ट्रा इंस्टॉल करें और गैलरी या रिपोर्ट को ऐसे ब्राउज़र में खोलें जिसमें `image/jxl` सपोर्ट हो।

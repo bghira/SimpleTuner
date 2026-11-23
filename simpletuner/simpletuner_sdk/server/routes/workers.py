@@ -25,6 +25,7 @@ from ..services.callback_events import StageStatus
 from ..services.callback_service import get_default_callback_service
 from ..services.cloud.auth import User, get_optional_user
 from ..services.worker_credentials import generate_worker_token, hash_token
+from ..services.worker_run_metrics import ACTIVE_STATUSES, WORKER_RUN_METRICS
 
 logger = logging.getLogger(__name__)
 
@@ -458,6 +459,8 @@ async def _assigned_job(job_repo, job_id: str, worker, *, reports_progress: bool
 
 
 def _record_worker_stats(job, worker, status: str, progress: dict | None, validation: WorkerValidationUpdate | None = None):
+    if progress and status in ACTIVE_STATUSES:
+        WORKER_RUN_METRICS.record(job, worker.name, progress)
     event = {
         "type": "training.status",
         "job_id": job.job_id,

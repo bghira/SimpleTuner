@@ -8,6 +8,8 @@ SimpleTuner 可以在不使用外部服务的情况下记录训练指标：
 
 使用逗号分隔值（例如 `report_to=simpletuner,wandb`）可同时启用本地 tracker 和外部 tracker。它适用于所有模型系列；在 DDP 下仅主进程写入文件。
 
+**Training Runs** 也会显示活跃 worker 最近 30 分钟上报的进度，包括使用 `report_to: none` 的任务。选择任务即可查看损失、学习率和吞吐量曲线。历史数据保存在运行中的服务内存中，服务重启后重新收集。离线报告、验证媒体和 timestep 分布仍从环境保存的输出中读取。
+
 ## 输出文件
 
 - `training_metrics.jsonl`：按 step 追加的标量记录。
@@ -26,11 +28,12 @@ SimpleTuner 可以在不使用外部服务的情况下记录训练指标：
 
 ```text
 GET /api/metrics/training/runs
+GET /api/metrics/training/jobs/{job_id}
 GET /api/metrics/training/runs/{environment}?max_points=2000&metric=train_loss
 GET /api/metrics/training/runs/{environment}/media/{path}
 GET /api/metrics/training/runs/{environment}/report
 ```
 
-API 只解析已配置 environment 的输出目录。若要减小归档大小，可设置 `validation_image_format=webp` 和 `validation_image_quality=90`；默认仍为 PNG。
+本地运行的 API 只解析已配置 environment 的输出目录。若要减小归档大小，可设置 `validation_image_format=webp` 和 `validation_image_quality=90`；默认仍为 PNG。
 
 将 `validation_image_format` 设置为 `jxl` 即可保存 JPEG XL。请安装 `simpletuner[jxl]` 可选依赖，并使用支持 `image/jxl` 的浏览器查看图库或报告。

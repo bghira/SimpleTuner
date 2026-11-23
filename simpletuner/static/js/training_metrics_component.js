@@ -79,6 +79,7 @@
         return {
             activeMetricsSection: 'training',
             trainingRuns: [],
+            selectedTrainingRunKey: '',
             selectedTrainingEnvironment: '',
             trainingRunData: null,
             trainingMetricsLoading: false,
@@ -230,15 +231,14 @@
                     const data = await response.json();
                     this.trainingRuns = Array.isArray(data.runs) ? data.runs : [];
                     if (!this.trainingRuns.length) {
+                        this.selectedTrainingRunKey = '';
                         this.selectedTrainingEnvironment = '';
                         this.trainingRunData = null;
                         return;
                     }
-                    const selectedStillExists = this.trainingRuns.some(
-                        (run) => run.environment === this.selectedTrainingEnvironment,
-                    );
-                    if (!selectedStillExists) this.selectedTrainingEnvironment = this.trainingRuns[0].environment;
-                    await this.loadTrainingRun({ silent, preserveSelections: silent });
+                    const selected = this.trainingRuns.find((run) => this.trainingRunKey(run) === this.selectedTrainingRunKey);
+                    this.setSelectedTrainingRun(selected || this.trainingRuns[0]);
+                    await this.loadTrainingRun({ silent, preserveSelections: silent && Boolean(selected) });
                 } catch (error) {
                     this.trainingMetricsError = error.message || 'Unable to load training runs';
                 } finally {
@@ -246,14 +246,28 @@
                 }
             },
 
-            async selectTrainingRun(environment) {
-                if (!environment || environment === this.selectedTrainingEnvironment) return;
-                this.selectedTrainingEnvironment = environment;
+            trainingRunKey(run) {
+                return run.job_id ? 'worker:' + run.job_id : 'local:' + run.environment;
+            },
+
+            setSelectedTrainingRun(run) {
+                this.selectedTrainingRunKey = this.trainingRunKey(run);
+                this.selectedTrainingEnvironment = run.environment || '';
+            },
+
+            async selectTrainingRun(key) {
+                if (!key || key === this.selectedTrainingRunKey) return;
+                const run = this.trainingRuns.find((item) => this.trainingRunKey(item) === key);
+                if (!run) return;
+                this.setSelectedTrainingRun(run);
+                this.trainingRunData = null;
                 await this.loadTrainingRun();
             },
 
             async loadTrainingRun(options = {}) {
-                if (!this.selectedTrainingEnvironment) return;
+                const key = this.selectedTrainingRunKey;
+                const run = this.trainingRuns.find((item) => this.trainingRunKey(item) === key);
+                if (!run?.job_id && !this.selectedTrainingEnvironment) return;
                 const { silent = false, preserveSelections = false } = options;
                 if (!silent) {
                     this.trainingMetricsLoading = true;
@@ -262,10 +276,14 @@
                     return;
                 }
                 try {
-                    const environment = encodeURIComponent(this.selectedTrainingEnvironment);
-                    const response = await fetch(`/api/metrics/training/runs/${environment}?max_points=4000`);
+                    const endpoint = run?.job_id
+                        ? 'jobs/' + encodeURIComponent(run.job_id)
+                        : 'runs/' + encodeURIComponent(this.selectedTrainingEnvironment);
+                    const response = await fetch('/api/metrics/training/' + endpoint + '?max_points=4000');
                     if (!response.ok) throw new Error(`Unable to load run metrics (HTTP ${response.status})`);
-                    this.trainingRunData = await response.json();
+                    const data = await response.json();
+                    if (key !== this.selectedTrainingRunKey) return;
+                    this.trainingRunData = data;
                     const available = this.trainingRunData.available_metrics || [];
                     this.syncTrainingCharts(available, preserveSelections);
                     this.selectDefaultTrainingMedia({ preserveSelection: preserveSelections });
@@ -274,10 +292,11 @@
                         this.renderTimestepDistributionChart();
                     });
                 } catch (error) {
+                    if (key !== this.selectedTrainingRunKey) return;
                     this.trainingMetricsError = error.message || 'Unable to load run metrics';
                     this.trainingRunData = null;
                 } finally {
-                    if (!silent) this.trainingMetricsLoading = false;
+                    if (!silent && key === this.selectedTrainingRunKey) this.trainingMetricsLoading = false;
                 }
             },
 
@@ -803,7 +822,7 @@
                     if (this.activeMetricsSection !== 'training') return;
                     if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
                     const status = this.trainingRunData && this.trainingRunData.run && this.trainingRunData.run.status;
-                    if (status !== 'running') return;
+                    if (status && status !== 'running') return;
                     this.loadTrainingRuns({ silent: true });
                 }, this.trainingMetricsPollMs);
             },
