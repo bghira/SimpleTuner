@@ -1036,10 +1036,11 @@ class LongCatSingleStreamBlock(nn.Module):
                     self.pre_crs_attn_norm(x), y, y_seqlen, num_cond_latents=num_cond_latents, shape=latent_shape
                 )
 
-        x = modulate_fp32(self.mod_norm_ffn, x.view(B, T, -1, C), shift_mlp, scale_mlp).view(B, N, C)
+        ffn_input = modulate_fp32(self.mod_norm_ffn, x.view(B, T, -1, C), shift_mlp, scale_mlp).view(B, N, C)
+        ffn_output = self.ffn(ffn_input)
 
         with torch.autocast(device_type=t.device.type, dtype=torch.float32, enabled=t.device.type == "cuda"):
-            x = x + (gate_mlp * self.ffn(x.view(B, T, spatial_tokens, C))).view(B, -1, C)
+            x = x + (gate_mlp * ffn_output.view(B, T, spatial_tokens, C)).view(B, -1, C)
         x = x.to(x_dtype)
 
         if return_kv:
