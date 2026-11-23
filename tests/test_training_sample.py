@@ -149,6 +149,32 @@ class TestTrainingSample(unittest.TestCase):
                 np.testing.assert_array_equal(np.asarray(sample.image), np.asarray(expected))
                 self.assertNotIn(ExifTags.Base.Orientation, sample.image.getexif())
 
+    def test_truncated_exif_header_keeps_decoded_pixels(self):
+        pixels = np.arange(18, dtype=np.uint8).reshape(2, 3, 3)
+        for raw in (b"Exif\x00\x00II*\x00", b"Exif\x00\x00BAD!"):
+            with self.subTest(raw=raw):
+                image = Image.fromarray(pixels)
+                image.info["exif"] = raw
+                sample = TrainingSample(image, self.data_backend_id, {"original_size": image.size})
+                np.testing.assert_array_equal(np.asarray(sample.image), pixels)
+                self.assertNotIn("exif", sample.image.info)
+
+    def test_ascii_gps_version_preserves_orientation(self):
+        pixels = np.arange(18, dtype=np.uint8).reshape(2, 3, 3)
+        image = Image.fromarray(pixels)
+        image.info["exif"] = b"Exif\x00\x00" + b"".join(
+            (
+                struct.pack("<2sHIH", b"II", 42, 8, 2),
+                struct.pack("<HHIHH", 274, 3, 1, 6, 0),
+                struct.pack("<HHIII", 34853, 4, 1, 38, 0),
+                struct.pack("<HHHIII", 1, 0, 2, 7, 56, 0),
+                b"abcdef\x00",
+            )
+        )
+        sample = TrainingSample(image, self.data_backend_id, {"original_size": image.size})
+        np.testing.assert_array_equal(np.asarray(sample.image), np.rot90(pixels, k=-1))
+        self.assertNotIn(ExifTags.Base.Orientation, sample.image.getexif())
+
     def test_image_initialization(self):
         """Test that the image is correctly initialized and converted."""
         sample = TrainingSample(self.image, self.data_backend_id, self.image_metadata)
