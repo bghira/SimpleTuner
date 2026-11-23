@@ -111,11 +111,16 @@ class WorkerAgentJobStartTestCase(unittest.IsolatedAsyncioTestCase):
 
     async def test_start_job_materializes_dataloader_json(self) -> None:
         """Verify dispatched dataset content becomes the active config path."""
+        for provider in ("kubeflow", "worker"):
+            with self.subTest(provider=provider):
+                await self._check_dataset_snapshot(provider)
+
+    async def _check_dataset_snapshot(self, provider: str) -> None:
         job_id = f"test-{uuid.uuid4().hex}"
         event = {
             "type": "job_submit",
             "job_id": job_id,
-            "provider": "kubeflow",
+            "provider": provider,
             "config": {"model_family": "sdxl"},
             "dataloader": [{"id": "dataset", "type": "local"}],
             "upload_endpoint": "/api/cloud/storage",
@@ -145,6 +150,7 @@ class WorkerAgentJobStartTestCase(unittest.IsolatedAsyncioTestCase):
         try:
             with (
                 patch.object(agent, "_report_job_status", new=AsyncMock()),
+                patch("simpletuner.worker_agent.subprocess.Popen"),
                 patch(
                     "simpletuner.worker_agent.asyncio.create_subprocess_exec",
                     new_callable=AsyncMock,

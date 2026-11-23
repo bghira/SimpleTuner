@@ -325,12 +325,27 @@ class TrainingAPITestCase(_WebUIBaseTestCase):
             self.assertIn("Configuration saved", response.text)
 
     def test_start_training(self) -> None:
-        form_data = {"--model_type": "lora", "--model_family": "flux", "--resolution": "1024"}
-        with patch("simpletuner.simpletuner_sdk.server.routes.training.process_keeper") as mock_pk:
-            mock_pk.submit_job = Mock()
-            response = self.client.post("/api/training/start", data=form_data)
-            self.assertEqual(response.status_code, 200)
-            # If the route chooses not to queue a job (e.g. validation failure), we just ensure no crash.
+        from simpletuner.simpletuner_sdk.server.routes import training
+
+        with (
+            patch.object(training, "_launch_workers", return_value=[]),
+            patch.object(training.training_service, "start_training_job") as local,
+        ):
+            response = self.client.post("/api/training/start", headers={"X-Training-Destination": "worker-disconnected"})
+            self.assertIn("selected worker is unavailable", response.text)
+            local.assert_not_called()
+            local.return_value.status = "running"
+            local.return_value.job_id = "local-job"
+            for target in (None, "local", "local-only"):
+                with self.subTest(target=target):
+                    response = self.client.post(
+                        "/api/training/start",
+                        headers={"X-Training-Destination": target} if target else {},
+                        data={"--tracker_project_name": "edited", "--output_dir": "/test/output", "--num_train_epochs": "1"},
+                    )
+                    self.assertIn("Training Starting", response.text)
+                    self.assertEqual(local.call_args.args[0]["--tracker_project_name"], "edited")
+            self.assertEqual(local.call_count, 3)
 
     def test_cancel_addresses_only_an_active_local_target(self) -> None:
         from simpletuner.simpletuner_sdk.server.routes import training

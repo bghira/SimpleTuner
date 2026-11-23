@@ -50,6 +50,7 @@ class WorkerManager:
         self.ephemeral_cleanup_timeout = timedelta(seconds=ephemeral_cleanup_timeout)
         self._task: Optional[asyncio.Task] = None
         self._stop_event = asyncio.Event()
+        self._dispatch_lock = asyncio.Lock()
 
     async def start(self):
         """Start the background health check loop."""
@@ -223,23 +224,28 @@ class WorkerManager:
 
     async def dispatch_pending_jobs(self):
         """Try to dispatch pending jobs to idle workers."""
-        try:
-            pending_jobs = await self.job_store.list_jobs(
-                status="pending",
-                provider="worker",
-            )
-        except TypeError:
-            pending_jobs = await self.job_store.list_jobs(status="pending")
-            pending_jobs = [j for j in pending_jobs if getattr(j, "provider", None) == "worker"]
-
-        for job in pending_jobs:
-            worker = await self._find_available_worker(job)
-            if worker:
-                await self._dispatch_job_to_worker(job, worker)
+        async with self._dispatch_lock:
+            try:
+                pending_jobs = await self.job_store.list_jobs(status="pending", provider="worker", limit=-1)
+            except TypeError:
+                pending_jobs = await self.job_store.list_jobs(status="pending")
+                pending_jobs = [job for job in pending_jobs if job.provider == "worker"]
+            for job in reversed(pending_jobs):
+                worker = await self._find_available_worker(job)
+                if worker:
+                    await self._dispatch_job_to_worker(job, worker)
 
     async def _find_available_worker(self, job):
         """Find an idle worker that can handle the job."""
         metadata = job.metadata or {}
+        if worker_id := metadata.get("target_worker_id"):
+            from ..models.worker import WorkerStatus
+
+            worker = await self.worker_repository.get_worker(worker_id)
+            if worker and worker.status == WorkerStatus.IDLE and not worker.current_job_id and not worker.is_job_bound:
+                return worker
+            return None
+
         required_gpu = metadata.get("required_gpu", {})
         required_labels = metadata.get("required_labels", {})
 
@@ -325,10 +331,10 @@ class WorkerManager:
                 "type": "job_submit",
                 "job_id": job.job_id,
                 "config": config,
-                "dataloader": config.get("dataloader_config"),
+                "dataloader": job_metadata.get("dataloader", config.get("dataloader_config")),
                 "provider": getattr(job, "provider", None),
                 "upload_endpoint": "/api/cloud/storage",
-                "upload_token": getattr(job, "upload_token", None),
+                "upload_token": job.upload_token or "",
                 "hf_token": job_metadata.get("hf_token"),
             },
         )
