@@ -782,13 +782,13 @@ class TestAnimaModel(unittest.TestCase):
         model.config = SimpleNamespace(weight_dtype=torch.float32, crepa_self_flow_mask_ratio=0.5)
         model.model = MagicMock(config=SimpleNamespace(patch_size=(1, 2, 2)))
         model.unwrap_model = lambda model=None, wrapped=None: model if model is not None else wrapped
-        model.sample_flow_sigmas = MagicMock(return_value=(torch.tensor([0.8]), torch.tensor([800.0])))
+        model.sample_flow_sigmas = MagicMock(return_value=(torch.tensor([0.8]), torch.tensor([0.8])))
 
         batch = {
             "latents": torch.zeros(1, 16, 1, 4, 4, dtype=torch.float32),
             "input_noise": torch.ones(1, 16, 1, 4, 4, dtype=torch.float32),
             "sigmas": torch.tensor([0.2], dtype=torch.float32),
-            "timesteps": torch.tensor([200.0], dtype=torch.float32),
+            "timesteps": torch.tensor([0.2], dtype=torch.float32),
         }
         fake_mask_rand = torch.tensor([[[[0.2, 0.7], [0.9, 0.1]]]], dtype=torch.float32)
 
@@ -812,7 +812,7 @@ class TestAnimaModel(unittest.TestCase):
 
         def _forward(hidden_states, timestep, encoder_hidden_states, **kwargs):
             kwargs["hidden_states_buffer"]["layer_7"] = captured
-            torch.testing.assert_close(timestep, torch.tensor([[0.1, 0.9, 0.1, 0.9]], dtype=torch.float32))
+            torch.testing.assert_close(timestep, torch.tensor([[0.1, 1.003, 0.1, 0.9]], dtype=torch.float32))
             return (torch.randn(1, 16, 1, 4, 4),)
 
         model.model = MagicMock(side_effect=_forward, config=SimpleNamespace(patch_size=(1, 2, 2)))
@@ -822,7 +822,7 @@ class TestAnimaModel(unittest.TestCase):
 
         prepared_batch = {
             "noisy_latents": torch.randn(1, 16, 1, 4, 4),
-            "timesteps": torch.tensor([[100.0, 900.0, 100.0, 900.0]], dtype=torch.float32),
+            "timesteps": torch.tensor([[0.1, 1.003, 0.1, 0.9]], dtype=torch.float32),
             "encoder_hidden_states": torch.randn(1, 3, 8),
             "crepa_capture_block_index": 7,
             "t5xxl_ids": None,
@@ -851,6 +851,10 @@ class TestAnimaModel(unittest.TestCase):
         torch.testing.assert_close(sigmas, torch.tensor([0.25, 0.75]))
         torch.testing.assert_close(timesteps, torch.tensor([0.25, 0.75]))
 
+        extrapolated = torch.tensor([1.003])
+        converted = model.flow_matching_timesteps_from_sigmas(extrapolated, reference_timesteps=torch.tensor([0.998]))
+        torch.testing.assert_close(converted, extrapolated)
+
     def test_model_predict_preserves_frame_axis_to_match_flow_target(self):
         from simpletuner.helpers.models.anima.model import Anima
 
@@ -867,7 +871,7 @@ class TestAnimaModel(unittest.TestCase):
             "latents": torch.randn(1, 16, 1, 4, 4),
             "noise": torch.randn(1, 16, 1, 4, 4),
             "noisy_latents": torch.randn(1, 16, 1, 4, 4),
-            "timesteps": torch.tensor([500.0], dtype=torch.float32),
+            "timesteps": torch.tensor([0.5], dtype=torch.float32),
             "encoder_hidden_states": torch.randn(1, 3, 8),
             "t5xxl_ids": None,
             "t5xxl_weights": None,
@@ -951,7 +955,7 @@ class TestAnimaModel(unittest.TestCase):
 
         prepared_batch = {
             "noisy_latents": torch.randn(1, 16, 1, 147, 110),
-            "timesteps": torch.tensor([500.0], dtype=torch.float32),
+            "timesteps": torch.tensor([0.5], dtype=torch.float32),
             "encoder_hidden_states": torch.randn(1, 3, 8),
             "t5xxl_ids": None,
             "t5xxl_weights": None,
