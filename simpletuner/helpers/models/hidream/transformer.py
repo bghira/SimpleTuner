@@ -26,7 +26,7 @@ from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.gradient_checkpointing_interval import should_checkpoint_block
 from simpletuner.helpers.training.grounding.gligen_layers import apply_grounding_fuser
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
-from simpletuner.helpers.training.tread import TREADRouter
+from simpletuner.helpers.training.tread import TREADRouteMasks, TREADRouter
 from simpletuner.helpers.utils.patching import MutableModuleList, PatchableModule
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -1645,7 +1645,26 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
         # TREAD initialization
         routes = self._tread_routes or []
         router = self._tread_router
-        use_routing = self.training and len(routes) > 0 and torch.is_grad_enabled()
+        masks = (
+            TREADRouteMasks(router, routes, total_blocks, force_keep_mask)
+            if self.training and routes and torch.is_grad_enabled()
+            else None
+        )
+        image_tokens_seq_len = hidden_states.size(1)
+
+        def route_block_inputs(index, image, attention_mask):
+            mask = masks.for_block(index, image) if masks is not None else None
+            if mask is None:
+                return image, attention_mask, adaln_input, rope, mask
+            batch = torch.arange(batch_size, device=image.device)[:, None]
+            kept = mask.ids_keep
+            block_rope = torch.cat((rope[batch, kept], rope[:, image_tokens_seq_len:]), dim=1)
+            if attention_mask is not None:
+                attention_mask = torch.cat((attention_mask[batch, kept], attention_mask[:, image_tokens_seq_len:]), dim=1)
+            modulation = adaln_input
+            if modulation.ndim == 3 and modulation.size(1) != 1:
+                modulation = modulation[batch, kept]
+            return router.start_route(image, mask), attention_mask, modulation, block_rope, mask
 
         # Prepare initial combined embeddings for first set of blocks
         initial_encoder_hidden_states = torch.cat(
@@ -1683,24 +1702,10 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
                     hidden_states.device,
                     checkpointed=checkpoint_this_block,
                 )
-            # TREAD routing for this layer
-            if use_routing:
-                # Check if this layer should use routing
-                for route in routes:
-                    start_idx = route["start_layer_idx"]
-                    end_idx = route["end_layer_idx"]
-                    # Handle negative indices
-                    if start_idx < 0:
-                        start_idx = len(self.double_stream_blocks) + start_idx
-                    if end_idx < 0:
-                        end_idx = len(self.double_stream_blocks) + end_idx
-
-                    if start_idx <= bid <= end_idx:
-                        mask_info = router.get_mask(
-                            hidden_states.shape[1], route["selection_ratio"], force_keep_mask=force_keep_mask
-                        )
-                        hidden_states = router.start_route(hidden_states, mask_info)
-                        break
+            original_image = hidden_states
+            hidden_states, block_mask, block_modulation, block_rope, mask = route_block_inputs(
+                block_id, original_image, image_tokens_masks
+            )
 
             # Get the current Llama embedding for this block with safe indexing
             safe_idx = block_id % len(processed_llama_embeddings)
@@ -1735,19 +1740,19 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
                 hidden_states, initial_encoder_hidden_states = checkpoint_fn(
                     create_custom_forward(block),
                     hidden_states,
-                    image_tokens_masks,
+                    block_mask,
                     cur_encoder_hidden_states,
-                    adaln_input,
-                    rope,
+                    block_modulation,
+                    block_rope,
                     **ckpt_kwargs,
                 )
             else:
                 hidden_states, initial_encoder_hidden_states = block(
                     image_tokens=hidden_states,
-                    image_tokens_masks=image_tokens_masks,
+                    image_tokens_masks=block_mask,
                     text_tokens=cur_encoder_hidden_states,
-                    adaln_input=adaln_input,
-                    rope=rope,
+                    adaln_input=block_modulation,
+                    rope=block_rope,
                 )
 
             if grounding_objs is not None and hasattr(block, "fuser"):
@@ -1756,24 +1761,8 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
             # Keep consistent encoder states length
             initial_encoder_hidden_states = initial_encoder_hidden_states[:, :initial_encoder_hidden_states_seq_len]
 
-            # TREAD end routing for this layer
-            if use_routing:
-                # Check if this layer should end routing
-                for route in routes:
-                    start_idx = route["start_layer_idx"]
-                    end_idx = route["end_layer_idx"]
-                    # Handle negative indices
-                    if start_idx < 0:
-                        start_idx = len(self.double_stream_blocks) + start_idx
-                    if end_idx < 0:
-                        end_idx = len(self.double_stream_blocks) + end_idx
-
-                    if start_idx <= bid <= end_idx:
-                        mask_info = router.get_mask(
-                            hidden_states.shape[1], route["selection_ratio"], force_keep_mask=force_keep_mask
-                        )
-                        hidden_states = router.end_route(hidden_states, mask_info)
-                        break
+            if mask is not None:
+                hidden_states = router.end_route(hidden_states, mask, original_x=original_image)
 
             # Add ControlNet residual for double stream blocks
             if controlnet_block_samples is not None and len(controlnet_block_samples) > 0:
@@ -1789,9 +1778,7 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
             capture_idx += 1
 
         # 6. Prepare for single stream blocks
-        image_tokens_seq_len = hidden_states.shape[1]
         hidden_states = torch.cat([hidden_states, initial_encoder_hidden_states], dim=1)
-        hidden_states_seq_len = hidden_states.shape[1]
 
         # Update attention masks for combined hidden states
         if image_tokens_masks is not None:
@@ -1819,33 +1806,13 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
                     hidden_states.device,
                     checkpointed=checkpoint_this_block,
                 )
-            # TREAD routing for single stream layers
-            if use_routing:
-                # Check if this layer should use routing
-                for route in routes:
-                    start_idx = route["start_layer_idx"]
-                    end_idx = route["end_layer_idx"]
-                    # Handle negative indices - adjust for combined block count
-                    total_blocks = len(self.double_stream_blocks) + len(self.single_stream_blocks)
-                    if start_idx < 0:
-                        start_idx = total_blocks + start_idx
-                    if end_idx < 0:
-                        end_idx = total_blocks + end_idx
-
-                    current_layer_id = len(self.double_stream_blocks) + bid
-                    if start_idx <= current_layer_id <= end_idx:
-                        # Only apply routing to image tokens portion
-                        image_portion = hidden_states[:, :image_tokens_seq_len]
-                        mask_info = router.get_mask(
-                            image_portion.shape[1],
-                            route["selection_ratio"],
-                            force_keep_mask=(
-                                force_keep_mask[:, : image_portion.shape[1]] if force_keep_mask is not None else None
-                            ),
-                        )
-                        image_portion = router.start_route(image_portion, mask_info)
-                        hidden_states = torch.cat([image_portion, hidden_states[:, image_tokens_seq_len:]], dim=1)
-                        break
+            original_image = hidden_states[:, :image_tokens_seq_len]
+            block_image, block_mask, block_modulation, block_rope, mask = route_block_inputs(
+                block_id, original_image, image_tokens_masks
+            )
+            if mask is not None:
+                hidden_states = torch.cat((block_image, hidden_states[:, image_tokens_seq_len:]), dim=1)
+            retained_length = hidden_states.size(1)
 
             # Get the current Llama embedding for this block with safe indexing
             safe_idx = block_id % len(processed_llama_embeddings)
@@ -1853,6 +1820,10 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
 
             # Concatenate for processing
             hidden_states = torch.cat([hidden_states, cur_llama_embedding], dim=1)
+            if block_modulation.ndim == 3 and block_modulation.size(1) != 1:
+                text_count = hidden_states.size(1) - block_image.size(1)
+                text_modulation = adaln_input.mean(dim=1, keepdim=True).expand(-1, text_count, -1)
+                block_modulation = torch.cat((block_modulation, text_modulation), dim=1)
 
             # Process through the block with optional gradient checkpointing
             if checkpoint_this_block:
@@ -1877,54 +1848,31 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
                 hidden_states = checkpoint_fn(
                     create_custom_forward(block),
                     hidden_states,
-                    image_tokens_masks,
+                    block_mask,
                     None,
-                    adaln_input,
-                    rope,
+                    block_modulation,
+                    block_rope,
                     **ckpt_kwargs,
                 )
             else:
                 hidden_states = block(
                     image_tokens=hidden_states,
-                    image_tokens_masks=image_tokens_masks,
+                    image_tokens_masks=block_mask,
                     text_tokens=None,
-                    adaln_input=adaln_input,
-                    rope=rope,
+                    adaln_input=block_modulation,
+                    rope=block_rope,
                 )
 
             # Maintain consistent hidden state length
-            hidden_states = hidden_states[:, :hidden_states_seq_len]
+            hidden_states = hidden_states[:, :retained_length]
 
             if grounding_objs is not None and hasattr(block, "fuser"):
                 hidden_states = apply_grounding_fuser(block.fuser, hidden_states, grounding_objs)
 
-            # TREAD end routing for single stream layers
-            if use_routing:
-                # Check if this layer should end routing
-                for route in routes:
-                    start_idx = route["start_layer_idx"]
-                    end_idx = route["end_layer_idx"]
-                    # Handle negative indices - adjust for combined block count
-                    total_blocks = len(self.double_stream_blocks) + len(self.single_stream_blocks)
-                    if start_idx < 0:
-                        start_idx = total_blocks + start_idx
-                    if end_idx < 0:
-                        end_idx = total_blocks + end_idx
-
-                    current_layer_id = len(self.double_stream_blocks) + bid
-                    if start_idx <= current_layer_id <= end_idx:
-                        # Only apply routing to image tokens portion
-                        image_portion = hidden_states[:, :image_tokens_seq_len]
-                        mask_info = router.get_mask(
-                            image_portion.shape[1],
-                            route["selection_ratio"],
-                            force_keep_mask=(
-                                force_keep_mask[:, : image_portion.shape[1]] if force_keep_mask is not None else None
-                            ),
-                        )
-                        image_portion = router.end_route(image_portion, mask_info)
-                        hidden_states = torch.cat([image_portion, hidden_states[:, image_tokens_seq_len:]], dim=1)
-                        break
+            if mask is not None:
+                n_image = block_image.size(1)
+                restored = router.end_route(hidden_states[:, :n_image], mask, original_x=original_image)
+                hidden_states = torch.cat((restored, hidden_states[:, n_image:]), dim=1)
 
             # Add ControlNet residual for single stream blocks
             if controlnet_single_block_samples is not None and len(controlnet_single_block_samples) > 0:

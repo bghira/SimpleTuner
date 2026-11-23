@@ -21,9 +21,12 @@ class TestHardwarePricingConfig(unittest.IsolatedAsyncioTestCase):
         BaseSQLiteStore._instances.clear()
 
         # Clear hardware cache
+        from simpletuner.simpletuner_sdk.server.services.cloud.cache import get_provider_config_cache
         from simpletuner.simpletuner_sdk.server.services.cloud.replicate_client import clear_hardware_info_cache
 
         clear_hardware_info_cache()
+        get_provider_config_cache().clear()
+        self.addCleanup(get_provider_config_cache().clear)
 
         # Create temp directory
         self.temp_dir = tempfile.mkdtemp()

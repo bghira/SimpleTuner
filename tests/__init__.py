@@ -5,6 +5,7 @@
 # threading._register_atexit (which fires inside threading._shutdown,
 # *before* _thread_shutdown waits on non-daemon threads) to force an
 # immediate exit and bypass the hang.
+import multiprocessing as _multiprocessing
 import os as _os
 import sys as _sys
 import threading as _threading
@@ -13,16 +14,22 @@ _original_exit = _sys.exit
 
 
 def _capturing_exit(code=0):
-    _sys._test_exit_code = code if isinstance(code, int) else 1
+    if code is None:
+        _sys._test_exit_code = 0
+    else:
+        _sys._test_exit_code = code if isinstance(code, int) else 1
     _original_exit(code)
 
 
 _sys.exit = _capturing_exit
-_sys._test_exit_code = 0
+_sys._test_exit_code = None
 
 
 def _force_exit_after_tests():
-    _os._exit(getattr(_sys, "_test_exit_code", 0))
+    # A multiprocessing worker sets its exit code after threading shutdown.
+    # Let its bootstrap propagate failures, and only expedite an explicit runner exit.
+    if _multiprocessing.parent_process() is None and _sys._test_exit_code is not None:
+        _os._exit(_sys._test_exit_code)
 
 
 _threading._register_atexit(_force_exit_after_tests)

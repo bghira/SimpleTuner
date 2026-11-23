@@ -84,7 +84,18 @@ class RouteInclusionTestCase(unittest.TestCase):
 
     def test_trainer_mode_routes_only(self) -> None:
         app = create_app(mode=ServerMode.TRAINER)
+        for name, path in (
+            ("browse_directories", "/api/datasets/browse"),
+            ("worker_heartbeat", "/api/workers/heartbeat"),
+            ("list_workers", "/api/admin/workers"),
+            ("get_hints_status", "/api/cloud/hints/status"),
+        ):
+            with self.subTest(name=name):
+                self.assertEqual(app.url_path_for(name), path)
         with TestClient(app) as client:
+            metrics = client.get("/api/cloud/metrics/config")
+            self.assertEqual(metrics.status_code, 200)
+            self.assertEqual(metrics.json()["endpoint_url"], "/api/metrics/prometheus")
             response = client.get("/health")
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json()["mode"], "trainer")

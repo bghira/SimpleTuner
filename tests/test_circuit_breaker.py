@@ -10,9 +10,7 @@ Tests cover:
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import time
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -76,6 +74,8 @@ class TestCircuitBreakerStateTransitions(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
+        self.clock = self.enterContext(patch("simpletuner.simpletuner_sdk.server.services.cloud.resilience.time"))
+        self.clock.time.return_value = 100.0
         self.config = CircuitBreakerConfig(
             failure_threshold=3,
             success_threshold=2,
@@ -132,7 +132,7 @@ class TestCircuitBreakerStateTransitions(unittest.TestCase):
         self.assertEqual(self.breaker.state, CircuitState.OPEN)
 
         # Wait for timeout
-        time.sleep(self.config.timeout_seconds + 0.05)
+        self.clock.time.return_value += self.config.timeout_seconds + 0.05
 
         self.assertEqual(self.breaker.state, CircuitState.HALF_OPEN)
 
@@ -144,7 +144,7 @@ class TestCircuitBreakerStateTransitions(unittest.TestCase):
                 with self.breaker:
                     raise RuntimeError("fail")
 
-        time.sleep(self.config.timeout_seconds + 0.05)
+        self.clock.time.return_value += self.config.timeout_seconds + 0.05
         self.assertEqual(self.breaker.state, CircuitState.HALF_OPEN)
 
         # Succeed enough times to close
@@ -162,7 +162,7 @@ class TestCircuitBreakerStateTransitions(unittest.TestCase):
                 with self.breaker:
                     raise RuntimeError("fail")
 
-        time.sleep(self.config.timeout_seconds + 0.05)
+        self.clock.time.return_value += self.config.timeout_seconds + 0.05
         self.assertEqual(self.breaker.state, CircuitState.HALF_OPEN)
 
         # Fail in half-open
@@ -510,6 +510,10 @@ class TestAsyncCircuitBreakerWithBackend(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
         """Set up test fixtures."""
+        self.clock = self.enterContext(
+            patch("simpletuner.simpletuner_sdk.server.services.cloud.state_backend.adapters.circuit_breaker.time")
+        )
+        self.clock.time.return_value = 100.0
         reset_circuit_breakers()
         self.backend = MemoryStateBackend()
 
@@ -622,7 +626,7 @@ class TestAsyncCircuitBreakerWithBackend(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await breaker.get_state(), AsyncCircuitState.OPEN)
 
         # Wait for timeout
-        await asyncio.sleep(0.15)
+        self.clock.time.return_value += 0.15
 
         state = await breaker.get_state()
         self.assertEqual(state, AsyncCircuitState.HALF_OPEN)
@@ -639,7 +643,7 @@ class TestAsyncCircuitBreakerWithBackend(unittest.IsolatedAsyncioTestCase):
 
         # Open and wait for half-open
         await breaker.record_failure()
-        await asyncio.sleep(0.15)
+        self.clock.time.return_value += 0.15
         self.assertEqual(await breaker.get_state(), AsyncCircuitState.HALF_OPEN)
 
         # Record successes
@@ -660,7 +664,7 @@ class TestAsyncCircuitBreakerWithBackend(unittest.IsolatedAsyncioTestCase):
 
         # Open and wait for half-open
         await breaker.record_failure()
-        await asyncio.sleep(0.15)
+        self.clock.time.return_value += 0.15
         self.assertEqual(await breaker.get_state(), AsyncCircuitState.HALF_OPEN)
 
         # Fail in half-open
@@ -751,7 +755,7 @@ class TestAsyncCircuitBreakerWithBackend(unittest.IsolatedAsyncioTestCase):
 
         # Open and wait for half-open
         await breaker.record_failure()
-        await asyncio.sleep(0.15)
+        self.clock.time.return_value += 0.15
 
         # First two calls should be allowed
         self.assertTrue(await breaker.is_available())
@@ -865,6 +869,10 @@ class TestCircuitBreakerIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
         """Set up test fixtures."""
+        self.clock = self.enterContext(
+            patch("simpletuner.simpletuner_sdk.server.services.cloud.state_backend.adapters.circuit_breaker.time")
+        )
+        self.clock.time.return_value = 100.0
         reset_circuit_breakers()
         self.backend = MemoryStateBackend()
         self.call_count = 0
@@ -906,7 +914,7 @@ class TestCircuitBreakerIntegration(unittest.IsolatedAsyncioTestCase):
                 pass
 
         # Wait for timeout
-        await asyncio.sleep(0.25)
+        self.clock.time.return_value += 0.25
 
         # Should be half-open
         self.assertEqual(await breaker.get_state(), AsyncCircuitState.HALF_OPEN)
@@ -949,6 +957,10 @@ class TestCircuitBreakerHalfOpenEdgeCases(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
         """Set up test fixtures."""
+        self.clock = self.enterContext(
+            patch("simpletuner.simpletuner_sdk.server.services.cloud.state_backend.adapters.circuit_breaker.time")
+        )
+        self.clock.time.return_value = 100.0
         reset_circuit_breakers()
         self.backend = MemoryStateBackend()
 
@@ -973,7 +985,7 @@ class TestCircuitBreakerHalfOpenEdgeCases(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await breaker.get_state(), AsyncCircuitState.OPEN)
 
         # Wait for transition to half-open
-        await asyncio.sleep(0.15)
+        self.clock.time.return_value += 0.15
         self.assertEqual(await breaker.get_state(), AsyncCircuitState.HALF_OPEN)
 
         # First call should be allowed
@@ -1002,7 +1014,7 @@ class TestCircuitBreakerHalfOpenEdgeCases(unittest.IsolatedAsyncioTestCase):
 
         # Open and transition to half-open
         await breaker.record_failure()
-        await asyncio.sleep(0.15)
+        self.clock.time.return_value += 0.15
         self.assertEqual(await breaker.get_state(), AsyncCircuitState.HALF_OPEN)
 
         # Check initial state
@@ -1034,7 +1046,7 @@ class TestCircuitBreakerHalfOpenEdgeCases(unittest.IsolatedAsyncioTestCase):
 
         # Open and transition to half-open
         await breaker.record_failure()
-        await asyncio.sleep(0.15)
+        self.clock.time.return_value += 0.15
         self.assertEqual(await breaker.get_state(), AsyncCircuitState.HALF_OPEN)
 
         # First test call fails
@@ -1058,7 +1070,7 @@ class TestCircuitBreakerHalfOpenEdgeCases(unittest.IsolatedAsyncioTestCase):
 
         # Open and transition to half-open
         await breaker.record_failure()
-        await asyncio.sleep(0.15)
+        self.clock.time.return_value += 0.15
         self.assertEqual(await breaker.get_state(), AsyncCircuitState.HALF_OPEN)
 
         # First success - should stay half-open
@@ -1089,21 +1101,18 @@ class TestCircuitBreakerHalfOpenEdgeCases(unittest.IsolatedAsyncioTestCase):
         )
 
         # Open the circuit
-        start_time = time.time()
         await breaker.record_failure()
         self.assertEqual(await breaker.get_state(), AsyncCircuitState.OPEN)
 
         # Check state before timeout expires
-        await asyncio.sleep(0.3)
+        self.clock.time.return_value += 0.3
         self.assertEqual(await breaker.get_state(), AsyncCircuitState.OPEN)
 
         # Check state after timeout expires
-        await asyncio.sleep(0.3)  # Total: 0.6s
-        elapsed = time.time() - start_time
+        self.clock.time.return_value += 0.3  # Total: 0.6s
 
         state = await breaker.get_state()
         self.assertEqual(state, AsyncCircuitState.HALF_OPEN)
-        self.assertGreaterEqual(elapsed, 0.5)
 
     async def test_half_open_to_open_resets_timeout(self):
         """Test transition from HALF_OPEN back to OPEN resets the timeout."""
@@ -1116,7 +1125,7 @@ class TestCircuitBreakerHalfOpenEdgeCases(unittest.IsolatedAsyncioTestCase):
 
         # Open the circuit
         await breaker.record_failure()
-        await asyncio.sleep(0.25)
+        self.clock.time.return_value += 0.25
 
         # Transition to half-open
         self.assertEqual(await breaker.get_state(), AsyncCircuitState.HALF_OPEN)
@@ -1133,11 +1142,11 @@ class TestCircuitBreakerHalfOpenEdgeCases(unittest.IsolatedAsyncioTestCase):
         first_reopen_time = data["last_state_change"]
 
         # Wait a bit, should still be open
-        await asyncio.sleep(0.1)
+        self.clock.time.return_value += 0.1
         self.assertEqual(await breaker.get_state(), AsyncCircuitState.OPEN)
 
         # Wait for another timeout
-        await asyncio.sleep(0.15)
+        self.clock.time.return_value += 0.15
         self.assertEqual(await breaker.get_state(), AsyncCircuitState.HALF_OPEN)
 
     async def test_half_open_concurrent_call_tracking(self):
@@ -1153,7 +1162,7 @@ class TestCircuitBreakerHalfOpenEdgeCases(unittest.IsolatedAsyncioTestCase):
 
         # Open and transition to half-open
         await breaker.record_failure()
-        await asyncio.sleep(0.15)
+        self.clock.time.return_value += 0.15
 
         # Verify we're in half-open
         self.assertEqual(await breaker.get_state(), AsyncCircuitState.HALF_OPEN)
@@ -1183,7 +1192,7 @@ class TestCircuitBreakerHalfOpenEdgeCases(unittest.IsolatedAsyncioTestCase):
 
         # Open and transition to half-open
         await breaker.record_failure()
-        await asyncio.sleep(0.15)
+        self.clock.time.return_value += 0.15
 
         # Accumulate successes to close
         async with breaker:

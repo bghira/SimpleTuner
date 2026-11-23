@@ -43,7 +43,7 @@ from simpletuner.helpers.models.flowmap import (
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.gradient_checkpointing_interval import should_checkpoint_block
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
-from simpletuner.helpers.training.tread import TREADRouter
+from simpletuner.helpers.training.tread import TREADRouteMasks, TREADRouter
 from simpletuner.helpers.utils.patching import MutableModuleList, PatchableModule
 
 logger = logging.get_logger(__name__)
@@ -287,10 +287,14 @@ class CosmosAttnProcessor2_0:
 
         # 3. Apply RoPE
         if image_rotary_emb is not None:
-            from diffusers.models.embeddings import apply_rotary_emb
+            # Dense tables are [S, D]; routed samples carry their own [B, 1, K, D] positions.
+            cos, sin = (table.to(query.device) for table in image_rotary_emb)
 
-            query = apply_rotary_emb(query, image_rotary_emb, use_real=True, use_real_unbind_dim=-2)
-            key = apply_rotary_emb(key, image_rotary_emb, use_real=True, use_real_unbind_dim=-2)
+            def rotate(x):
+                first, second = x.float().chunk(2, dim=-1)
+                return (x.float() * cos + torch.cat((-second, first), dim=-1) * sin).to(x.dtype)
+
+            query, key = rotate(query), rotate(key)
 
         # 4. Prepare for GQA
         if torch.onnx.is_in_onnx_export():
@@ -867,7 +871,11 @@ class CosmosTransformer3DModel(PatchableModule, ModelMixin, ConfigMixin, FromOri
         # TREAD initialization
         routes = self._tread_routes or []
         router = self._tread_router
-        use_routing = self.training and len(routes) > 0 and torch.is_grad_enabled()
+        masks = (
+            TREADRouteMasks(router, routes, len(self.transformer_blocks), force_keep_mask)
+            if self.training and routes and torch.is_grad_enabled()
+            else None
+        )
 
         grad_enabled = torch.is_grad_enabled()
         musubi_manager = self._musubi_block_swap
@@ -877,24 +885,18 @@ class CosmosTransformer3DModel(PatchableModule, ModelMixin, ConfigMixin, FromOri
 
         capture_idx = 0
         for bid, block in enumerate(self.transformer_blocks):
-            # TREAD routing for this layer
-            if use_routing:
-                # Check if this layer should use routing
-                for route in routes:
-                    start_idx = route["start_layer_idx"]
-                    end_idx = route["end_layer_idx"]
-                    # Handle negative indices
-                    if start_idx < 0:
-                        start_idx = len(self.transformer_blocks) + start_idx
-                    if end_idx < 0:
-                        end_idx = len(self.transformer_blocks) + end_idx
-
-                    if start_idx <= bid <= end_idx:
-                        mask_info = router.get_mask(
-                            hidden_states.shape[1], route["selection_ratio"], force_keep_mask=force_keep_mask
-                        )
-                        hidden_states = router.start_route(hidden_states, mask_info)
-                        break
+            mask = masks.for_block(bid, hidden_states) if masks is not None else None
+            block_rope, block_pos = image_rotary_emb, extra_pos_emb
+            block_temb, block_timestep = temb, embedded_timestep
+            if mask is not None:
+                original = hidden_states
+                hidden_states = router.start_route(original, mask)
+                block_rope = tuple(table[mask.ids_keep].unsqueeze(1) for table in image_rotary_emb)
+                if extra_pos_emb is not None:
+                    block_pos = router.start_route(extra_pos_emb, mask)
+                if embedded_timestep.ndim == 3:
+                    block_timestep = router.start_route(embedded_timestep, mask)
+                    block_temb = router.start_route(temb, mask)
             checkpoint_this_block = (
                 grad_enabled
                 and self.gradient_checkpointing
@@ -912,41 +914,25 @@ class CosmosTransformer3DModel(PatchableModule, ModelMixin, ConfigMixin, FromOri
                     block,
                     hidden_states,
                     encoder_hidden_states,
-                    embedded_timestep,
-                    temb,
-                    image_rotary_emb,
-                    extra_pos_emb,
+                    block_timestep,
+                    block_temb,
+                    block_rope,
+                    block_pos,
                     attention_mask,
                 )
             else:
                 hidden_states = block(
                     hidden_states=hidden_states,
                     encoder_hidden_states=encoder_hidden_states,
-                    embedded_timestep=embedded_timestep,
-                    temb=temb,
-                    image_rotary_emb=image_rotary_emb,
-                    extra_pos_emb=extra_pos_emb,
+                    embedded_timestep=block_timestep,
+                    temb=block_temb,
+                    image_rotary_emb=block_rope,
+                    extra_pos_emb=block_pos,
                     attention_mask=attention_mask,
                 )
 
-            # TREAD end routing for this layer
-            if use_routing:
-                # Check if this layer should end routing
-                for route in routes:
-                    start_idx = route["start_layer_idx"]
-                    end_idx = route["end_layer_idx"]
-                    # Handle negative indices
-                    if start_idx < 0:
-                        start_idx = len(self.transformer_blocks) + start_idx
-                    if end_idx < 0:
-                        end_idx = len(self.transformer_blocks) + end_idx
-
-                    if start_idx <= bid <= end_idx:
-                        mask_info = router.get_mask(
-                            hidden_states.shape[1], route["selection_ratio"], force_keep_mask=force_keep_mask
-                        )
-                        hidden_states = router.end_route(hidden_states, mask_info)
-                        break
+            if mask is not None:
+                hidden_states = router.end_route(hidden_states, mask, original_x=original)
 
             if musubi_offload_active and musubi_manager.is_managed_block(bid):
                 musubi_manager.stream_out(block)

@@ -15,6 +15,31 @@ class MaskInfo:
     ids_restore: torch.LongTensor  # inverse permutation
 
 
+class TREADRouteMasks:
+    """Reuse each route's sampled image tokens across its inclusive range of blocks."""
+
+    def __init__(self, router: "TREADRouter", routes: list[dict], depth: int, force_keep: Optional[torch.Tensor]):
+        def index(i: int) -> int:
+            return depth + i if i < 0 else i
+
+        self.routes = [(index(r["start_layer_idx"]), index(r["end_layer_idx"]), r["selection_ratio"]) for r in routes]
+        self.router = router
+        self.force_keep = force_keep
+        self.active = None
+        self.mask = None
+
+    def for_block(self, index: int, tokens: torch.Tensor) -> Optional[MaskInfo]:
+        for route in self.routes:
+            start, end, ratio = route
+            if start <= index <= end:
+                if route != self.active:
+                    self.mask = self.router.get_mask(tokens, mask_ratio=ratio, force_keep=self.force_keep)
+                    self.active = route
+                return self.mask
+        self.active = self.mask = None
+        return None
+
+
 class TREADRouter:
     """
     Minimal implementation of the token router used in TREAD.

@@ -13,29 +13,20 @@ from __future__ import annotations
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from fastapi.testclient import TestClient
+from simpletuner.simpletuner_sdk.server.routes.cloud.metrics_config import router
+from tests.unittest_support import APITestCase, create_router_client
 
-from tests.unittest_support import APITestCase
+
+def metrics_config_client():
+    return create_router_client(router, prefix="/api/cloud/metrics/config")
 
 
 class TestMetricsConfigRoutes(APITestCase, unittest.TestCase):
     """Tests for metrics configuration API routes."""
 
-    def setUp(self):
-        super().setUp()
-
-    def tearDown(self):
-        super().tearDown()
-
-    def _get_client(self):
-        from simpletuner.simpletuner_sdk.server import ServerMode, create_app
-
-        app = create_app(mode=ServerMode.UNIFIED)
-        return TestClient(app)
-
     def test_get_metrics_config(self):
         """GET /api/cloud/metrics/config should return current config."""
-        with self._get_client() as client:
+        with metrics_config_client() as client:
             response = client.get("/api/cloud/metrics/config")
             self.assertEqual(response.status_code, 200)
             data = response.json()
@@ -54,7 +45,7 @@ class TestMetricsConfigRoutes(APITestCase, unittest.TestCase):
 
     def test_update_metrics_config_enable(self):
         """PUT /api/cloud/metrics/config should enable prometheus."""
-        with self._get_client() as client:
+        with metrics_config_client() as client:
             response = client.put(
                 "/api/cloud/metrics/config",
                 json={"prometheus_enabled": True},
@@ -65,7 +56,7 @@ class TestMetricsConfigRoutes(APITestCase, unittest.TestCase):
 
     def test_update_metrics_config_categories(self):
         """PUT /api/cloud/metrics/config should update categories."""
-        with self._get_client() as client:
+        with metrics_config_client() as client:
             # Update with valid categories
             response = client.put(
                 "/api/cloud/metrics/config",
@@ -78,7 +69,7 @@ class TestMetricsConfigRoutes(APITestCase, unittest.TestCase):
 
     def test_update_metrics_config_filters_invalid_categories(self):
         """PUT should filter out invalid category names."""
-        with self._get_client() as client:
+        with metrics_config_client() as client:
             # Include both valid and invalid categories
             response = client.put(
                 "/api/cloud/metrics/config",
@@ -96,21 +87,9 @@ class TestMetricsConfigRoutes(APITestCase, unittest.TestCase):
 class TestMetricCategories(APITestCase, unittest.TestCase):
     """Tests for metric category listing."""
 
-    def setUp(self):
-        super().setUp()
-
-    def tearDown(self):
-        super().tearDown()
-
-    def _get_client(self):
-        from simpletuner.simpletuner_sdk.server import ServerMode, create_app
-
-        app = create_app(mode=ServerMode.UNIFIED)
-        return TestClient(app)
-
     def test_list_categories(self):
         """GET /api/cloud/metrics/config/categories should list all categories."""
-        with self._get_client() as client:
+        with metrics_config_client() as client:
             response = client.get("/api/cloud/metrics/config/categories")
             self.assertEqual(response.status_code, 200)
             data = response.json()
@@ -130,7 +109,7 @@ class TestMetricCategories(APITestCase, unittest.TestCase):
 
     def test_expected_categories_present(self):
         """Should include expected metric categories."""
-        with self._get_client() as client:
+        with metrics_config_client() as client:
             response = client.get("/api/cloud/metrics/config/categories")
             data = response.json()
 
@@ -145,21 +124,9 @@ class TestMetricCategories(APITestCase, unittest.TestCase):
 class TestMetricTemplates(APITestCase, unittest.TestCase):
     """Tests for metric preset templates."""
 
-    def setUp(self):
-        super().setUp()
-
-    def tearDown(self):
-        super().tearDown()
-
-    def _get_client(self):
-        from simpletuner.simpletuner_sdk.server import ServerMode, create_app
-
-        app = create_app(mode=ServerMode.UNIFIED)
-        return TestClient(app)
-
     def test_list_templates(self):
         """GET /api/cloud/metrics/config/templates should list all templates."""
-        with self._get_client() as client:
+        with metrics_config_client() as client:
             response = client.get("/api/cloud/metrics/config/templates")
             self.assertEqual(response.status_code, 200)
             data = response.json()
@@ -179,7 +146,7 @@ class TestMetricTemplates(APITestCase, unittest.TestCase):
 
     def test_expected_templates_present(self):
         """Should include expected preset templates."""
-        with self._get_client() as client:
+        with metrics_config_client() as client:
             response = client.get("/api/cloud/metrics/config/templates")
             data = response.json()
 
@@ -192,7 +159,7 @@ class TestMetricTemplates(APITestCase, unittest.TestCase):
 
     def test_apply_template_minimal(self):
         """POST /api/cloud/metrics/config/apply-template/minimal should apply minimal template."""
-        with self._get_client() as client:
+        with metrics_config_client() as client:
             response = client.post("/api/cloud/metrics/config/apply-template/minimal")
             self.assertEqual(response.status_code, 200)
             data = response.json()
@@ -204,7 +171,7 @@ class TestMetricTemplates(APITestCase, unittest.TestCase):
 
     def test_apply_template_standard(self):
         """POST should apply standard template with jobs, http, health."""
-        with self._get_client() as client:
+        with metrics_config_client() as client:
             response = client.post("/api/cloud/metrics/config/apply-template/standard")
             self.assertEqual(response.status_code, 200)
             data = response.json()
@@ -216,7 +183,7 @@ class TestMetricTemplates(APITestCase, unittest.TestCase):
 
     def test_apply_template_full(self):
         """POST should apply full template with all categories."""
-        with self._get_client() as client:
+        with metrics_config_client() as client:
             # First get all available categories
             cat_response = client.get("/api/cloud/metrics/config/categories")
             all_categories = [c["id"] for c in cat_response.json()["categories"]]
@@ -232,7 +199,7 @@ class TestMetricTemplates(APITestCase, unittest.TestCase):
 
     def test_apply_template_not_found(self):
         """POST with invalid template ID should return 404."""
-        with self._get_client() as client:
+        with metrics_config_client() as client:
             response = client.post("/api/cloud/metrics/config/apply-template/nonexistent")
             self.assertEqual(response.status_code, 404)
 
@@ -240,21 +207,9 @@ class TestMetricTemplates(APITestCase, unittest.TestCase):
 class TestMetricsPreview(APITestCase, unittest.TestCase):
     """Tests for Prometheus export preview."""
 
-    def setUp(self):
-        super().setUp()
-
-    def tearDown(self):
-        super().tearDown()
-
-    def _get_client(self):
-        from simpletuner.simpletuner_sdk.server import ServerMode, create_app
-
-        app = create_app(mode=ServerMode.UNIFIED)
-        return TestClient(app)
-
     def test_preview_export(self):
         """POST /api/cloud/metrics/config/preview should return export preview."""
-        with self._get_client() as client:
+        with metrics_config_client() as client:
             response = client.post(
                 "/api/cloud/metrics/config/preview",
                 params={"categories": ["jobs"]},
@@ -272,7 +227,7 @@ class TestMetricsPreview(APITestCase, unittest.TestCase):
 
     def test_preview_export_default_categories(self):
         """POST without categories should use configured categories."""
-        with self._get_client() as client:
+        with metrics_config_client() as client:
             # First set some categories
             client.put(
                 "/api/cloud/metrics/config",
@@ -292,21 +247,9 @@ class TestMetricsPreview(APITestCase, unittest.TestCase):
 class TestMetricsHints(APITestCase, unittest.TestCase):
     """Tests for metrics hint management."""
 
-    def setUp(self):
-        super().setUp()
-
-    def tearDown(self):
-        super().tearDown()
-
-    def _get_client(self):
-        from simpletuner.simpletuner_sdk.server import ServerMode, create_app
-
-        app = create_app(mode=ServerMode.UNIFIED)
-        return TestClient(app)
-
     def test_dismiss_hint(self):
         """POST /api/cloud/metrics/config/dismiss-hint should dismiss hint."""
-        with self._get_client() as client:
+        with metrics_config_client() as client:
             response = client.post("/api/cloud/metrics/config/dismiss-hint/hero")
             self.assertEqual(response.status_code, 200)
             data = response.json()
@@ -316,7 +259,7 @@ class TestMetricsHints(APITestCase, unittest.TestCase):
 
     def test_show_hint(self):
         """POST /api/cloud/metrics/config/show-hint should re-show hint."""
-        with self._get_client() as client:
+        with metrics_config_client() as client:
             # First dismiss
             client.post("/api/cloud/metrics/config/dismiss-hint/hero")
 
@@ -330,7 +273,7 @@ class TestMetricsHints(APITestCase, unittest.TestCase):
 
     def test_dismiss_hint_idempotent(self):
         """Dismissing same hint twice should be idempotent."""
-        with self._get_client() as client:
+        with metrics_config_client() as client:
             # Dismiss twice
             response1 = client.post("/api/cloud/metrics/config/dismiss-hint/test-hint")
             response2 = client.post("/api/cloud/metrics/config/dismiss-hint/test-hint")

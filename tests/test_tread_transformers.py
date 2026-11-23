@@ -49,14 +49,6 @@ class TestTREADTransformers(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
-        self.device = "cpu"
-        self.batch_size = 2
-        self.seq_len = 128
-        self.hidden_dim = 768
-        self.num_heads = 12
-        self.head_dim = 64
-
-        # Create mock router and routes
         self.mock_router = Mock(spec=TREADRouter)
         self.test_routes = [
             {
@@ -66,71 +58,37 @@ class TestTREADTransformers(unittest.TestCase):
             }
         ]
 
-        # Create test tensors
-        self.hidden_states = torch.randn(self.batch_size, self.seq_len, self.hidden_dim)
-        self.encoder_hidden_states = torch.randn(self.batch_size, 77, self.hidden_dim)
-        self.timestep = torch.randint(0, 1000, (self.batch_size,))
-        self.force_keep_mask = torch.randint(0, 2, (self.batch_size, self.seq_len)).bool()
-
-        # Mock mask info
-        self.mock_mask_info = Mock()
-        self.mock_mask_info.ids_shuffle = torch.randperm(self.seq_len).unsqueeze(0).expand(self.batch_size, -1)
-
     def test_auraflow_tread_integration(self):
-        """Test TREAD integration in AuraFlow transformer."""
-        with patch("simpletuner.helpers.models.auraflow.transformer.TREADRouter"):
-            from simpletuner.helpers.models.auraflow.transformer import AuraFlowTransformer2DModel
+        from simpletuner.helpers.models.auraflow.transformer import AuraFlowTransformer2DModel
 
-            # Create model with minimal config
-            model = AuraFlowTransformer2DModel(
-                sample_size=64,
-                patch_size=2,
-                in_channels=4,
-                num_mmdit_layers=2,
-                num_single_dit_layers=2,
-                attention_head_dim=64,
-                num_attention_heads=12,
-                joint_attention_dim=2048,
-                caption_projection_dim=1024,
-                out_channels=4,
-                pos_embed_max_size=512,
-            )
-
-            # Test set_router method
-            model.set_router(self.mock_router, self.test_routes)
-            self.assertEqual(model._tread_router, self.mock_router)
-            self.assertEqual(model._tread_routes, self.test_routes)
-
-            # Test forward pass with TREAD routing
-            model.train()
-            model._tread_router = self.mock_router
-            model._tread_routes = self.test_routes
-
-            # Mock router methods
-            self.mock_router.get_mask.return_value = self.mock_mask_info
-            routed_tokens = self.hidden_states[:, :64, :]  # Simulate 50% reduction
-            self.mock_router.start_route.return_value = routed_tokens
-            self.mock_router.end_route.return_value = self.hidden_states
-
-            # Prepare inputs
-            hidden_states = torch.randn(self.batch_size, 4, 64, 64)
-            encoder_hidden_states = torch.randn(self.batch_size, 128, 2048)
-            timestep = torch.randint(0, 1000, (self.batch_size,))
-
-            # Test forward pass doesn't crash
-            with torch.no_grad():
-                try:
-                    output = model(
-                        hidden_states=hidden_states,
-                        encoder_hidden_states=encoder_hidden_states,
-                        timestep=timestep,
-                        force_keep_mask=self.force_keep_mask[:, : hidden_states.shape[2] * hidden_states.shape[3] // 4],
-                    )
-                    self.assertIsNotNone(output)
-                except Exception as e:
-                    # It's OK if forward fails due to missing dependencies,
-                    # we mainly want to test TREAD integration doesn't break things
-                    pass
+        model = AuraFlowTransformer2DModel(
+            sample_size=8,
+            patch_size=2,
+            in_channels=4,
+            out_channels=4,
+            num_mmdit_layers=1,
+            num_single_dit_layers=1,
+            attention_head_dim=8,
+            num_attention_heads=2,
+            joint_attention_dim=16,
+            caption_projection_dim=16,
+            pos_embed_max_size=16,
+        )
+        router = TREADRouter(device="cpu")
+        model.set_router(router, [{"selection_ratio": 0.5, "start_layer_idx": -2, "end_layer_idx": -1}])
+        image = torch.randn(1, 4, 8, 8)
+        context = torch.randn(1, 3, 16)
+        for training in (True, False):
+            with self.subTest(training=training), patch.object(router, "end_route", wraps=router.end_route) as restore:
+                model.train(training)
+                output = model(image, context, torch.tensor([1.0])).sample
+                self.assertEqual(output.shape, image.shape)
+                if training:
+                    restore.assert_called_once()
+                    self.assertEqual(restore.call_args.args[0].shape[1], 8)
+                    self.assertEqual(restore.call_args.kwargs["original_x"].shape[1], 16)
+                else:
+                    restore.assert_not_called()
 
     def test_flux2_routes_both_streams_with_per_sample_rotary_positions(self):
         from simpletuner.helpers.models.flux2.transformer import Flux2Transformer2DModel
@@ -267,39 +225,6 @@ class TestTREADTransformers(unittest.TestCase):
             self.assertIsNotNone(model._tread_router)
             self.assertIsNotNone(model._tread_routes)
 
-    def test_tread_route_negative_indices(self):
-        """Test handling of negative route indices."""
-        with patch("simpletuner.helpers.models.auraflow.transformer.TREADRouter"):
-            from simpletuner.helpers.models.auraflow.transformer import AuraFlowTransformer2DModel
-
-            model = AuraFlowTransformer2DModel(
-                sample_size=64,
-                patch_size=2,
-                in_channels=4,
-                num_mmdit_layers=2,
-                num_single_dit_layers=2,
-                attention_head_dim=64,
-                num_attention_heads=12,
-                joint_attention_dim=2048,
-                caption_projection_dim=1024,
-                out_channels=4,
-                pos_embed_max_size=512,
-            )
-
-            # Test routes with negative indices
-            negative_routes = [
-                {
-                    "selection_ratio": 0.5,
-                    "start_layer_idx": -2,  # Should become total_layers - 2
-                    "end_layer_idx": -1,  # Should become total_layers - 1
-                }
-            ]
-
-            model.set_router(self.mock_router, negative_routes)
-
-            # The routes should be stored as-is initially
-            self.assertEqual(model._tread_routes, negative_routes)
-
     def test_tread_force_keep_mask(self):
         """Test force_keep_mask parameter handling."""
         with patch("simpletuner.helpers.models.sd3.transformer.TREADRouter"):
@@ -359,36 +284,6 @@ class TestTREADTransformers(unittest.TestCase):
             self.assertEqual(output.shape, image_tokens.shape)
             torch.testing.assert_close(~restore.call_args.args[1].mask, force_keep)
 
-    def test_tread_disabled_in_eval_mode(self):
-        """Test that TREAD routing is disabled in eval mode."""
-        with patch("simpletuner.helpers.models.auraflow.transformer.TREADRouter"):
-            from simpletuner.helpers.models.auraflow.transformer import AuraFlowTransformer2DModel
-
-            model = AuraFlowTransformer2DModel(
-                sample_size=64,
-                patch_size=2,
-                in_channels=4,
-                num_mmdit_layers=1,
-                num_single_dit_layers=1,
-                attention_head_dim=64,
-                num_attention_heads=12,
-                joint_attention_dim=2048,
-                caption_projection_dim=1024,
-                out_channels=4,
-                pos_embed_max_size=512,
-            )
-
-            model.set_router(self.mock_router, self.test_routes)
-
-            # Set model to eval mode
-            model.eval()
-
-            # In eval mode, routing should be disabled even if routes are configured
-            # This would be tested during actual forward pass, but we can verify
-            # the setup doesn't break in eval mode
-            self.assertIsNotNone(model._tread_router)
-            self.assertIsNotNone(model._tread_routes)
-
     def test_empty_routes_handling(self):
         """Test handling when no routes are configured."""
         with patch("simpletuner.helpers.models.pixart.transformer.TREADRouter"):
@@ -423,57 +318,96 @@ class TestTREADTransformers(unittest.TestCase):
             self.assertEqual(model._tread_routes, None)
 
     def test_hidream_tread_integration(self):
-        """Test TREAD integration in HiDream transformer."""
-        with patch("simpletuner.helpers.models.hidream.transformer.TREADRouter"):
-            from simpletuner.helpers.models.hidream.transformer import HiDreamImageTransformer2DModel
+        from simpletuner.helpers.models.hidream.transformer import HiDreamImageTransformer2DModel
 
-            # Create model with minimal config
-            model = HiDreamImageTransformer2DModel(
-                patch_size=2,
-                in_channels=16,
-                out_channels=16,
-                num_layers=2,
-                num_single_layers=2,
-                attention_head_dim=128,
-                num_attention_heads=20,
-                caption_channels=[2304, 4096],
-                text_emb_dim=2048,
-            )
-
-            # Test set_router method
-            model.set_router(self.mock_router, self.test_routes)
-            self.assertEqual(model._tread_router, self.mock_router)
-            self.assertEqual(model._tread_routes, self.test_routes)
-
-            # Test TREAD attributes exist
-            self.assertIsNotNone(model._tread_router)
-            self.assertIsNotNone(model._tread_routes)
+        model = HiDreamImageTransformer2DModel(
+            patch_size=2,
+            in_channels=4,
+            out_channels=4,
+            num_layers=1,
+            num_single_layers=1,
+            attention_head_dim=16,
+            num_attention_heads=2,
+            caption_channels=[16, 16],
+            text_emb_dim=16,
+            num_routed_experts=0,
+            llama_layers=[0],
+            axes_dims_rope=(4, 6, 6),
+            max_resolution=(4, 4),
+        )
+        # Fresh HiDream gates and the output head are zero, so routing mistakes would be invisible.
+        for block in [*model.double_stream_blocks, *model.single_stream_blocks]:
+            block.block.adaLN_modulation[1].reset_parameters()
+        model.final_layer.linear.reset_parameters()
+        image = torch.randn(2, 4, 4, 4, requires_grad=True)
+        self._check_routed_forward(
+            model,
+            image,
+            dict(
+                timesteps=torch.tensor([[1.0, 2.0, 3.0, 4.0], [4.0, 3.0, 2.0, 1.0]]),
+                t5_hidden_states=torch.randn(2, 3, 16),
+                llama_hidden_states=torch.randn(1, 2, 2, 16),
+                pooled_embeds=torch.randn(2, 16),
+            ),
+        )
 
     def test_cosmos_tread_integration(self):
-        """Test TREAD integration in Cosmos transformer."""
-        with patch("simpletuner.helpers.models.cosmos.transformer.TREADRouter"):
-            from simpletuner.helpers.models.cosmos.transformer import CosmosTransformer3DModel
+        from simpletuner.helpers.models.cosmos.transformer import CosmosTransformer3DModel
 
-            # Create model with minimal config
-            model = CosmosTransformer3DModel(
-                in_channels=16,
-                out_channels=16,
-                num_attention_heads=32,
-                attention_head_dim=128,
-                num_layers=2,
-                mlp_ratio=4.0,
-                text_embed_dim=1024,
-                adaln_lora_dim=256,
-            )
+        model = CosmosTransformer3DModel(
+            in_channels=4,
+            out_channels=4,
+            num_attention_heads=2,
+            attention_head_dim=16,
+            num_layers=2,
+            mlp_ratio=2,
+            text_embed_dim=16,
+            adaln_lora_dim=8,
+            max_size=(1, 4, 4),
+            concat_padding_mask=False,
+        )
+        image = torch.randn(2, 4, 1, 4, 4, requires_grad=True)
+        self._check_routed_forward(
+            model,
+            image,
+            dict(
+                timestep=torch.tensor([[1.0, 2.0, 3.0, 4.0], [4.0, 3.0, 2.0, 1.0]]),
+                encoder_hidden_states=torch.randn(2, 3, 16),
+            ),
+        )
 
-            # Test set_router method
-            model.set_router(self.mock_router, self.test_routes)
-            self.assertEqual(model._tread_router, self.mock_router)
-            self.assertEqual(model._tread_routes, self.test_routes)
+    def _check_routed_forward(self, model, image, conditioning):
+        router = TREADRouter(device="cpu")
+        model.set_router(router, [{"selection_ratio": 0.5, "start_layer_idx": 0, "end_layer_idx": -1}])
+        keep = torch.tensor([[True, False, True, False], [False, True, False, True]])
+        with (
+            patch.object(router, "get_mask", wraps=router.get_mask) as select,
+            patch.object(router, "end_route", wraps=router.end_route) as restore,
+        ):
+            output = model(hidden_states=image, force_keep_mask=keep, **conditioning).sample
+        select.assert_called_once()
+        routed_tokens, mask = restore.call_args.args
+        self.assertEqual(routed_tokens.shape[:2], (2, 2))
+        torch.testing.assert_close(~mask.mask, keep)
+        self.assertEqual(output.shape, image.shape)
+        grad = torch.autograd.grad(output.square().mean(), image)[0]
+        self.assertTrue(torch.isfinite(grad).all())
+        self.assertGreater(grad.abs().sum().item(), 0)
 
-            # Test TREAD attributes exist
-            self.assertIsNotNone(model._tread_router)
-            self.assertIsNotNone(model._tread_routes)
+        model.enable_gradient_checkpointing()
+        checkpointed = model(hidden_states=image, force_keep_mask=keep, **conditioning).sample
+        torch.testing.assert_close(checkpointed, output)
+        torch.testing.assert_close(torch.autograd.grad(checkpointed.square().mean(), image)[0], grad)
+        model.disable_gradient_checkpointing()
+
+        # Keeping all tokens permutes image positions. RoPE, conditioning and text
+        # must stay aligned for the routed result to match the unrouted forward.
+        model.set_router(router, [])
+        reference = model(hidden_states=image, **conditioning).sample
+        self.assertFalse(torch.allclose(output, reference))
+        model.set_router(router, [{"selection_ratio": 0.0, "start_layer_idx": 0, "end_layer_idx": -1}])
+        permuted = model(hidden_states=image, **conditioning).sample
+        torch.testing.assert_close(permuted, reference, rtol=1e-4, atol=1e-5)
 
     def test_sana_tread_integration(self):
         """Test TREAD integration in SANA transformer."""

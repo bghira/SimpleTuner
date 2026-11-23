@@ -15,9 +15,9 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from simpletuner.simpletuner_sdk.server import ServerMode
+from simpletuner.simpletuner_sdk.server.routes.datasets import router
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIDefaults, WebUIStateStore
-from tests.unittest_support import APITestCase
+from tests.unittest_support import APITestCase, create_router_client
 
 
 class DatasetBrowseTestCase(APITestCase, unittest.TestCase):
@@ -52,7 +52,7 @@ class DatasetBrowseTestCase(APITestCase, unittest.TestCase):
         self.state_store.save_defaults(defaults)
 
         # Trainer app client
-        self.client: TestClient = self.create_test_client(ServerMode.TRAINER)
+        self.client: TestClient = create_router_client(router)
 
     def tearDown(self) -> None:
         self.client.close()
@@ -219,7 +219,7 @@ class DatasetDetectTestCase(APITestCase, unittest.TestCase):
         self.state_store.save_defaults(defaults)
 
         # Trainer app client
-        self.client: TestClient = self.create_test_client(ServerMode.TRAINER)
+        self.client: TestClient = create_router_client(router)
 
     def tearDown(self) -> None:
         self.client.close()

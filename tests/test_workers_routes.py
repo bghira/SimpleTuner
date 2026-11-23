@@ -14,18 +14,19 @@ from unittest.mock import AsyncMock, Mock, patch
 
 from fastapi.testclient import TestClient
 
-from simpletuner.simpletuner_sdk.server import ServerMode
 from simpletuner.simpletuner_sdk.server.models.worker import Worker, WorkerStatus, WorkerType
 from simpletuner.simpletuner_sdk.server.routes.workers import (
+    admin_router,
     generate_worker_token,
     hash_token,
     is_worker_connected,
     push_to_worker,
+    router,
     validate_worker_token,
     worker_streams,
 )
 from simpletuner.simpletuner_sdk.server.services.cloud.auth.models import User
-from tests.unittest_support import APITestCase, run_async
+from tests.unittest_support import APITestCase, create_router_client, run_async
 
 
 class WorkerHelperFunctionsTestCase(unittest.TestCase):
@@ -166,7 +167,7 @@ class WorkerRegistrationTestCase(APITestCase, unittest.TestCase):
 
     def setUp(self) -> None:
         super().setUp()
-        self.client: TestClient = self.create_test_client(ServerMode.TRAINER)
+        self.client: TestClient = create_router_client(router, admin_router)
 
         # Create a test token and worker
         self.token = generate_worker_token()
@@ -322,7 +323,7 @@ class WorkerHeartbeatTestCase(APITestCase, unittest.TestCase):
 
     def setUp(self) -> None:
         super().setUp()
-        self.client: TestClient = self.create_test_client(ServerMode.TRAINER)
+        self.client: TestClient = create_router_client(router, admin_router)
 
         self.token = generate_worker_token()
         self.token_hash = hash_token(self.token)
@@ -431,7 +432,7 @@ class WorkerJobStatusTestCase(APITestCase, unittest.TestCase):
 
     def setUp(self) -> None:
         super().setUp()
-        self.client: TestClient = self.create_test_client(ServerMode.TRAINER)
+        self.client: TestClient = create_router_client(router, admin_router)
 
         self.token = generate_worker_token()
         self.token_hash = hash_token(self.token)
@@ -599,7 +600,7 @@ class AdminListWorkersTestCase(APITestCase, unittest.TestCase):
 
     def setUp(self) -> None:
         super().setUp()
-        self.client: TestClient = self.create_test_client(ServerMode.TRAINER)
+        self.client: TestClient = create_router_client(router, admin_router)
 
         # Create mock user with admin.workers permission
         self.admin_user = User(
@@ -685,7 +686,7 @@ class AdminCreateWorkerTestCase(APITestCase, unittest.TestCase):
 
     def setUp(self) -> None:
         super().setUp()
-        self.client: TestClient = self.create_test_client(ServerMode.TRAINER)
+        self.client: TestClient = create_router_client(router, admin_router)
 
         self.admin_user = User(
             id=1,
@@ -796,7 +797,7 @@ class AdminDeleteWorkerTestCase(APITestCase, unittest.TestCase):
 
     def setUp(self) -> None:
         super().setUp()
-        self.client: TestClient = self.create_test_client(ServerMode.TRAINER)
+        self.client: TestClient = create_router_client(router, admin_router)
 
         self.admin_user = User(
             id=1,
@@ -925,7 +926,7 @@ class AdminDrainWorkerTestCase(APITestCase, unittest.TestCase):
 
     def setUp(self) -> None:
         super().setUp()
-        self.client: TestClient = self.create_test_client(ServerMode.TRAINER)
+        self.client: TestClient = create_router_client(router, admin_router)
 
         self.admin_user = User(
             id=1,
@@ -995,7 +996,7 @@ class AdminRotateTokenTestCase(APITestCase, unittest.TestCase):
 
     def setUp(self) -> None:
         super().setUp()
-        self.client: TestClient = self.create_test_client(ServerMode.TRAINER)
+        self.client: TestClient = create_router_client(router, admin_router)
 
         self.admin_user = User(
             id=1,

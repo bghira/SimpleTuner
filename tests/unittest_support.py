@@ -9,10 +9,24 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
 
+from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 
 from simpletuner.simpletuner_sdk.api_state import APIState
 from simpletuner.simpletuner_sdk.server import ServerMode, create_app
+
+
+def create_router_client(*routers: APIRouter, prefix: str = "") -> TestClient:
+    """Exercise HTTP routing, security middleware and error serialization for a handler suite."""
+    from simpletuner.simpletuner_sdk.server.middleware import setup_security_middleware
+    from simpletuner.simpletuner_sdk.server.services.cloud.exceptions import register_exception_handlers
+
+    app = FastAPI()
+    setup_security_middleware(app)
+    register_exception_handlers(app)
+    for router in routers:
+        app.include_router(router, prefix=prefix)
+    return TestClient(app)
 
 
 class _APIStateGuard:

@@ -34,10 +34,13 @@ class CompileDiskSpaceTests(unittest.TestCase):
                 patch("simpletuner.helpers.training.disk_space.time") as clock,
                 dynamo_config_context(self.config),
             ):
-                compiled = torch.compile(lambda x: x.sin() + 1, backend="inductor", dynamic=False)
-                for size in (3, 5):
+                # A view exercises real Inductor specialization without building an arithmetic kernel.
+                compiled = torch.compile(lambda x: x.view(1, -1), backend="inductor", dynamic=False)
+                self.assertEqual(clock.sleep.call_count, 1)
+                for checks, size in enumerate((3, 5), start=2):
                     value = torch.arange(size, dtype=torch.float32)
-                    torch.testing.assert_close(compiled(value), value.sin() + 1)
+                    torch.testing.assert_close(compiled(value), value.view(1, size))
+                    self.assertEqual(clock.sleep.call_count, checks)
                 # Reusing an already compiled shape does not check disk again.
                 compiled(value)
                 self.assertEqual(clock.sleep.call_count, 3)
