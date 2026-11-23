@@ -294,6 +294,15 @@ class Sana(ImageModelFoundation):
             self.AUTOENCODER_SCALING_FACTOR = getattr(self.vae.config, "scaling_factor", 1.0)
             logger.info(f"Sana VAE scaling factor set to {self.AUTOENCODER_SCALING_FACTOR}")
 
+    def scale_vae_latents_for_cache(self, latents, vae):
+        # Sana caches raw AutoencoderDC latents, including caches from earlier releases.
+        return latents
+
+    def prepare_batch(self, batch: dict, state: dict) -> dict:
+        if batch and torch.is_tensor(latents := batch.get("latent_batch")):
+            batch = {**batch, "latent_batch": latents * self.AUTOENCODER_SCALING_FACTOR}
+        return super().prepare_batch(batch, state)
+
     def setup_training_noise_schedule(self):
         """
         Sana training uses its native flow-matching scheduler table and ignores shift overrides.
