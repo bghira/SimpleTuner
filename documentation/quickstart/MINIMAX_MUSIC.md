@@ -178,6 +178,8 @@ datasets/minimaxmusic-audio/
 
 The `.txt` file is the music description. The `.lyrics` file is passed into the Qwen3 conditioning path. Structure tags such as `[verse]` and `[chorus]` are useful and should be on their own lines.
 
+Training prompt preparation applies `audio.max_duration_seconds` from the dataset. Changing the limit rebuilds the affected prompt embeddings under new cache keys.
+
 ## Validation Settings
 
 - **`validation_prompt`**: the music description or tags.

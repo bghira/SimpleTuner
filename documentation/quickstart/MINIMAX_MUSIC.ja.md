@@ -137,6 +137,8 @@ datasets/minimaxmusic-audio/
 └── track_01.lyrics
 ```
 
+学習プロンプトの準備には、データセットの `audio.max_duration_seconds` が適用されます。上限を変更すると、対象の埋め込みが新しいキャッシュキーで再生成されます。
+
 ## 検証設定
 
 - **`validation_prompt`**: 音楽の説明や tags。

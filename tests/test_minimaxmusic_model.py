@@ -470,6 +470,31 @@ class MiniMaxMusicModelTests(unittest.TestCase):
         self.assertEqual(metadata["duration_seconds"], 1.0)
         self.assertEqual(metadata["bucket_duration_seconds"], 1.0)
 
+    def test_text_cache_respects_dataset_duration_limit_with_matching_keys(self):
+        model = self._build_model()
+        source_metadata = {"duration_seconds": 236.0, "bucket_duration_seconds": 236.0}
+        common = {"prompt": "bright synth pop", "data_backend_id": "music", "dataset_relative_path": "song.wav"}
+
+        with patch.object(StateTracker, "get_data_backend_config", return_value={"audio": {"max_duration_seconds": 40}}):
+            prepared = model.text_embed_cache_metadata_for_preparation(
+                read_metadata=lambda _: source_metadata, image_path="song.wav", **common
+            )
+            observed = model.text_embed_cache_metadata_for_sample(
+                example={**source_metadata, "duration_seconds": 40.0}, latent=None, **common
+            )
+        self.assertEqual(model._audio_duration_for_context(prepared), 40.0)
+        self.assertEqual(model._audio_duration_for_context(observed), 40.0)
+        self.assertEqual(model._audio_duration_for_context({**prepared, "duration_seconds": 18.0}), 18.0)
+        self.assertEqual(model._audio_duration_for_context(source_metadata), 236.0)
+
+        def key(metadata, prompt=common["prompt"]):
+            return model.text_embed_cache_key_value(prompt=prompt, default_key="music:song.wav", metadata=metadata)
+
+        self.assertEqual(key(prepared), key(observed))
+        self.assertNotEqual(key(prepared), key(source_metadata))
+        self.assertNotEqual(key(prepared), key({**prepared, "audio_duration_limit_seconds": 60.0}))
+        self.assertNotEqual(key(prepared, prompt=""), key(prepared))
+
     def test_audio_duration_for_context_accepts_audio_bucket_duration(self):
         model = self._build_model()
         model.config.validation_audio_duration = 30.0

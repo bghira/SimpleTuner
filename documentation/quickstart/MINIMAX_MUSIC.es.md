@@ -137,6 +137,8 @@ datasets/minimaxmusic-audio/
 └── track_01.lyrics
 ```
 
+La preparación de prompts de entrenamiento aplica `audio.max_duration_seconds` del conjunto de datos. Al cambiar el límite, se regeneran los embeddings afectados con nuevas claves de caché.
+
 ## Validación
 
 - **`validation_prompt`**: descripción musical o tags.
