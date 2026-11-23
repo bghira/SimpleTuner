@@ -325,7 +325,8 @@ class LongCatVideoPipeline(DiffusionPipeline, LongCatLoraLoaderMixin):
         self.latents_mean = latents_mean
         self.latents_std = latents_std
 
-    def _resolve_vae_config(self, vae: Optional[AutoencoderKLWan]) -> Tuple[List[float], List[float], int, int, int]:
+    @staticmethod
+    def _resolve_vae_config(vae: Optional[AutoencoderKLWan]) -> Tuple[List[float], List[float], int, int, int]:
         vae_config = getattr(vae, "config", None)
 
         latents_mean = getattr(vae_config, "latents_mean", None) or DEFAULT_VAE_LATENTS_MEAN
