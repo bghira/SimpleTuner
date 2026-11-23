@@ -591,9 +591,7 @@ class Ideogram4(ImageModelFoundation):
             timesteps = raw_timesteps.to(device=self.accelerator.device, dtype=torch.float32)
         if timesteps.ndim == 0:
             timesteps = timesteps.expand(batch_size)
-        if timesteps.max() > 1:
-            timesteps = timesteps / 1000.0
-        return 1.0 - timesteps
+        return 1.0 - timesteps / 1000.0
 
     def _prepare_flowmap_model_predict_batch(self, prepared_batch: dict, batch_size: int) -> dict:
         r_timesteps = prepared_batch.get(self.FLOWMAP_R_TIMESTEP_BATCH_KEY)
