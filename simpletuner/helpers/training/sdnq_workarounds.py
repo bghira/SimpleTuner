@@ -1,4 +1,6 @@
 import logging
+import sys
+from contextlib import contextmanager
 
 import torch
 
@@ -48,6 +50,26 @@ def _install_triton_allocator() -> bool:
     set_allocator(torch_cuda_allocator)
     logger.debug("Registered the PyTorch CUDA caching allocator for SDNQ Triton scratch buffers.")
     return True
+
+
+def capture_sdnq_allocator_context():
+    allocation = sys.modules.get("triton.runtime._allocation")
+    allocator_state = getattr(allocation, "_allocator", None)
+    if allocator_state is None:
+        return None
+    allocator = allocator_state.get()
+    if not getattr(allocator, _TRITON_ALLOCATOR_ATTR, False):
+        return None
+
+    @contextmanager
+    def use_allocator():
+        token = allocator_state.set(allocator)
+        try:
+            yield
+        finally:
+            allocator_state.reset(token)
+
+    return use_allocator
 
 
 def _patch_sdnq_scaled_mm_allocator_context() -> bool:

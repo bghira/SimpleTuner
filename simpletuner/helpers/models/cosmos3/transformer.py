@@ -742,6 +742,12 @@ class Cosmos3OmniTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, Attentio
             if isinstance(module, Cosmos3PackedMoTAttention):
                 module.unfuse_projections()
 
+    def enable_gradient_checkpointing(self, gradient_checkpointing_func=None):
+        from simpletuner.helpers.training.dynamo import regional_checkpoint_function
+
+        super().enable_gradient_checkpointing(gradient_checkpointing_func)
+        self._gradient_checkpointing_func = regional_checkpoint_function(self._gradient_checkpointing_func)
+
     def set_gradient_checkpointing_interval(self, interval: int):
         self.gradient_checkpointing_interval = interval
 

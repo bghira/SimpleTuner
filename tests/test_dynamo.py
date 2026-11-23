@@ -1,7 +1,10 @@
 import os
+import sys
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import ContextVar
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import torch
 
@@ -70,6 +73,39 @@ class DynamoCudagraphWorkaroundTests(unittest.TestCase):
                 worker.submit(loss.backward).result()
             self.assertEqual(observed, [expected, expected])
             self.assertEqual(worker.submit(settings).result(), worker_defaults)
+        torch.testing.assert_close(value.grad, torch.sin(2 * value.detach()))
+
+    def test_regional_checkpoint_replays_sdnq_allocator_on_a_different_thread(self):
+        from torch.utils.checkpoint import checkpoint
+
+        from simpletuner.helpers.training.dynamo import regional_checkpoint_function
+        from simpletuner.helpers.training.sdnq_workarounds import _TRITON_ALLOCATOR_ATTR
+
+        default = object()
+        allocator = SimpleNamespace(**{_TRITON_ALLOCATOR_ATTR: True})
+        allocator_state = ContextVar("sdnq_allocator", default=default)
+        allocation = SimpleNamespace(_allocator=allocator_state)
+        observed = []
+
+        def block(value):
+            observed.append(allocator_state.get())
+            return value.sin().square()
+
+        with (
+            patch.dict(sys.modules, {"triton.runtime._allocation": allocation}),
+            ThreadPoolExecutor(max_workers=1) as worker,
+        ):
+            self.assertIs(allocator_state.get(), default)
+            self.assertIs(regional_checkpoint_function(checkpoint), checkpoint)
+            token = allocator_state.set(allocator)
+            try:
+                value = torch.tensor([0.5], requires_grad=True)
+                loss = regional_checkpoint_function(checkpoint)(block, value, use_reentrant=False).sum()
+                worker.submit(loss.backward).result()
+                self.assertEqual(observed, [allocator, allocator])
+            finally:
+                allocator_state.reset(token)
+            self.assertIs(worker.submit(allocator_state.get).result(), default)
         torch.testing.assert_close(value.grad, torch.sin(2 * value.detach()))
 
     def test_compiled_checkpoint_boundary_supports_fullgraph(self):
