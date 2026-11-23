@@ -68,8 +68,8 @@ class LongCatVideoXMTests(unittest.TestCase):
         model = self._shell(candidate_count=2)
         latents = torch.zeros(4, 1, 1, 1, 1)
         noise = torch.tensor([0.0, 1.0, 2.0, 3.0]).view(4, 1, 1, 1, 1)
-        target = noise - latents
-        prediction = torch.tensor([5.0, 1.0, 2.0, -4.0]).view(4, 1, 1, 1, 1)
+        target = latents - noise
+        prediction = torch.tensor([-5.0, -1.0, -2.0, 4.0]).view(4, 1, 1, 1, 1)
         prepared_batch = {
             "latents": latents,
             "noise": noise,
@@ -93,6 +93,15 @@ class LongCatVideoXMTests(unittest.TestCase):
         self.assertTrue(torch.equal(model_output["hidden_states_buffer"]["layer_0"], hidden[[2, 1]]))
         self.assertEqual(logs["xm_candidate_0_wins"], 1.0)
         self.assertEqual(logs["xm_candidate_1_wins"], 1.0)
+
+    def test_base_training_target_is_dataward_velocity(self):
+        model = self._shell()
+        latents = torch.tensor([3.0, -2.0]).view(1, 2, 1, 1, 1)
+        noise = torch.tensor([1.0, 4.0]).view(1, 2, 1, 1, 1)
+
+        target = model.get_prediction_target({"latents": latents, "noise": noise})
+
+        torch.testing.assert_close(target, latents - noise)
 
     def test_xm_rejects_crepa_self_flow(self):
         model = self._shell(candidate_count=2)

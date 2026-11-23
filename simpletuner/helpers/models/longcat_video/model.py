@@ -189,6 +189,9 @@ class LongCatVideo(VideoModelFoundation):
     DEFAULT_LORA_TARGET = ["qkv", "proj", "q_linear", "kv_linear"]
     VALIDATION_USES_NEGATIVE_PROMPT = True
 
+    def flow_matching_target_direction(self) -> float:
+        return -1.0
+
     def __init__(self, config: dict, accelerator):
         super().__init__(config, accelerator)
         self._validate_xm_support()
