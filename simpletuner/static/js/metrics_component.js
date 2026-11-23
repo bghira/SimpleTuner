@@ -228,6 +228,7 @@ function metricsComponent(initialSettings = {}) {
         },
 
         setActiveGpu(gpuIndex) {
+            this.clearHistoryHover();
             this.activeGpuIndex = gpuIndex;
             this.ensureGpuHistoryState(gpuIndex);
             this.$nextTick(() => {
@@ -235,7 +236,7 @@ function metricsComponent(initialSettings = {}) {
             });
         },
 
-        getActiveGpu() {
+        get activeGpu() {
             if (!Array.isArray(this.gpuHealth) || this.gpuHealth.length === 0) {
                 return null;
             }
@@ -288,7 +289,7 @@ function metricsComponent(initialSettings = {}) {
         },
 
         renderActiveGpuCharts() {
-            const gpu = this.getActiveGpu();
+            const gpu = this.activeGpu;
             if (!gpu) {
                 return;
             }
