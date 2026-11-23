@@ -256,6 +256,17 @@ class TestACEStepModel(unittest.TestCase):
             with patch("simpletuner.helpers.models.ace_step.model.Path.is_dir", side_effect=AssertionError("re-scanned")):
                 self.assertIsNone(self.model._resolve_v15_layout(str(root)))
 
+    def test_v15_encoder_assigns_one_reference_to_each_sample(self):
+        encoder = MagicMock(return_value=(None, None))
+        self.model.model = SimpleNamespace(encoder=encoder)
+        self.model.unwrap_model = lambda model: model
+        text = torch.randn(3, 5, 16)
+        lyrics = torch.randn(3, 4, 16)
+        self.model._run_v15_encoder(text, torch.ones(3, 5), lyrics, torch.ones(3, 4))
+        kwargs = encoder.call_args.kwargs
+        torch.testing.assert_close(kwargs["refer_audio_acoustic_hidden_states_packed"], torch.zeros(3, 1, 64))
+        torch.testing.assert_close(kwargs["refer_audio_order_mask"], torch.arange(3))
+
     def test_embed_v15_lyrics_batch_preserves_integer_attention_mask(self):
         embedding_layer = torch.nn.Embedding(8, 4)
         self.model.text_encoders = [SimpleNamespace(embed_tokens=embedding_layer)]
