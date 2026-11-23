@@ -69,6 +69,12 @@ MINIMAX_H3_MODALITY_NUM = 3
 _H3_MASKED_CONTEXT_PARALLEL_BACKENDS = frozenset({AttentionBackendName.NATIVE})
 
 
+def _rms_norm(norm: nn.RMSNorm, hidden_states: torch.Tensor) -> torch.Tensor:
+    # CUDA autocast promotes RMSNorm to FP32, which also widens the following ConvRot projection.
+    with torch.autocast(device_type=hidden_states.device.type, enabled=False):
+        return norm(hidden_states)
+
+
 def _linear_compute_dtype(linear: nn.Module) -> torch.dtype:
     compute_dtype = getattr(linear, "compute_dtype", None)
     if isinstance(compute_dtype, torch.dtype):
@@ -688,7 +694,7 @@ class MiniMaxH3AdaLayerNormOut(nn.Module):
         temb = nn.functional.silu(temb) if self.apply_silu else temb
         shift, scale = self.linear(temb.to(_linear_compute_dtype(self.linear))).chunk(2, dim=-1)
         activation_dtype = hidden_states.dtype
-        hidden_states = self.norm(hidden_states)
+        hidden_states = _rms_norm(self.norm, hidden_states)
         shift = _select_modulation(shift, timestep_indices).to(dtype=activation_dtype)
         scale = _select_modulation(scale, timestep_indices).to(dtype=activation_dtype)
         # The modulation itself stays at the block stack's precision; `forward` casts to the output heads' dtype.
@@ -724,7 +730,7 @@ class MiniMaxH3AttnProcessor:
         if use_reference_cache:
             query = attn.to_q(hidden_states)
             query = query.unflatten(-1, (attn.heads, -1))
-            query = attn.norm_q(query)
+            query = _rms_norm(attn.norm_q, query)
             if rotary_emb is not None:
                 query = _apply_rotary_emb(query, *rotary_emb)
 
@@ -737,7 +743,7 @@ class MiniMaxH3AttnProcessor:
                 dynamic_hidden_states = hidden_states.index_select(1, dynamic_indices)
                 dynamic_key = attn.to_k(dynamic_hidden_states).unflatten(-1, (attn.heads, -1))
                 dynamic_value = attn.to_v(dynamic_hidden_states).unflatten(-1, (attn.heads, -1))
-                dynamic_key = attn.norm_k(dynamic_key)
+                dynamic_key = _rms_norm(attn.norm_k, dynamic_key)
                 dynamic_rotary_emb = _slice_rotary_emb(rotary_emb, dynamic_indices)
                 if dynamic_rotary_emb is not None:
                     dynamic_key = _apply_rotary_emb(dynamic_key, *dynamic_rotary_emb)
@@ -756,7 +762,7 @@ class MiniMaxH3AttnProcessor:
             if cached is None:
                 reference_key = attn.to_k(reference_hidden_states).unflatten(-1, (attn.heads, -1))
                 reference_value = attn.to_v(reference_hidden_states).unflatten(-1, (attn.heads, -1))
-                reference_key = attn.norm_k(reference_key)
+                reference_key = _rms_norm(attn.norm_k, reference_key)
                 if reference_rotary_emb is not None:
                     reference_key = _apply_rotary_emb(reference_key, *reference_rotary_emb)
                 cached = (reference_key.detach(), reference_value.detach())
@@ -783,8 +789,8 @@ class MiniMaxH3AttnProcessor:
             key = key.unflatten(-1, (attn.heads, -1))
             value = value.unflatten(-1, (attn.heads, -1))
 
-            query = attn.norm_q(query)
-            key = attn.norm_k(key)
+            query = _rms_norm(attn.norm_q, query)
+            key = _rms_norm(attn.norm_k, key)
 
             if rotary_emb is not None:
                 query = _apply_rotary_emb(query, *rotary_emb)
@@ -798,8 +804,8 @@ class MiniMaxH3AttnProcessor:
             key = key.unflatten(-1, (attn.heads, -1))
             value = value.unflatten(-1, (attn.heads, -1))
 
-            query = attn.norm_q(query)
-            key = attn.norm_k(key)
+            query = _rms_norm(attn.norm_q, query)
+            key = _rms_norm(attn.norm_k, key)
 
             if rotary_emb is not None:
                 query = _apply_rotary_emb(query, *rotary_emb)
@@ -950,7 +956,7 @@ class MiniMaxH3TokenRefinerBlock(nn.Module):
         offload_attention: bool = False,
     ) -> torch.Tensor:
         with activation_offload_context(offload_attention, label=f"{self.__class__.__qualname__}:attention"):
-            hidden_states = hidden_states + self.attn(self.norm1(hidden_states), attention_mask=attention_mask)
+            hidden_states = hidden_states + self.attn(_rms_norm(self.norm1, hidden_states), attention_mask=attention_mask)
         if checkpoint_ffn:
             if checkpoint_fn is None:
                 raise ValueError("checkpoint_fn is required when checkpoint_ffn=True")
@@ -961,7 +967,7 @@ class MiniMaxH3TokenRefinerBlock(nn.Module):
         return hidden_states
 
     def _ff_forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        return self.ff(self.norm2(hidden_states))
+        return self.ff(_rms_norm(self.norm2, hidden_states))
 
 
 class MiniMaxH3TokenRefiner(nn.Module):
@@ -1037,7 +1043,7 @@ class MiniMaxH3TokenRefiner(nn.Module):
                     attention_mask=attention_mask,
                     offload_attention=offload_attention,
                 )
-        return self.final_norm(hidden_states)
+        return _rms_norm(self.final_norm, hidden_states)
 
 
 class MiniMaxH3TransformerBlock(nn.Module):
@@ -1115,7 +1121,7 @@ class MiniMaxH3TransformerBlock(nn.Module):
         gate_mlp = _select_modulation(gate_mlp, adaln_indices).to(dtype=activation_dtype)
 
         residual = hidden_states
-        norm_hidden_states = self.norm1(hidden_states)
+        norm_hidden_states = _rms_norm(self.norm1, hidden_states)
         norm_hidden_states = norm_hidden_states * (1.0 + scale_msa) + shift_msa
         with activation_offload_context(offload_attention, label=f"{self.__class__.__qualname__}:attention"):
             attn_output = self.attn(
@@ -1130,7 +1136,7 @@ class MiniMaxH3TransformerBlock(nn.Module):
         hidden_states = residual + gate_msa * attn_output
 
         residual = hidden_states
-        norm_hidden_states = self.norm2(hidden_states)
+        norm_hidden_states = _rms_norm(self.norm2, hidden_states)
         norm_hidden_states = norm_hidden_states * (1.0 + scale_mlp) + shift_mlp
         if checkpoint_ffn:
             if checkpoint_fn is None:

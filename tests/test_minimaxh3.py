@@ -1269,6 +1269,47 @@ class MiniMaxH3Tests(unittest.TestCase):
         self.assertTrue(model.token_refiner.refiner_blocks[0].ff.net[0].gate_first)
         self.assertTrue(model.transformer_blocks[0].ff.net[0].gate_first)
 
+    def test_rms_norm_preserves_native_output_and_gradients_under_autocast(self):
+        from simpletuner.helpers.models.minimaxh3.transformer import _rms_norm
+
+        devices = ["cpu"]
+        if torch.cuda.is_available() and torch.cuda.is_bf16_supported():
+            devices.append("cuda")
+        for device in devices:
+            with self.subTest(device=device):
+                norm = torch.nn.RMSNorm(16, eps=1e-5, device=device, dtype=torch.bfloat16)
+                x = torch.randn(2, 5, 16, device=device, dtype=torch.bfloat16, requires_grad=True)
+                dy = torch.randn_like(x)
+                reference = norm(x)
+                reference_grads = torch.autograd.grad(reference, (x, norm.weight), dy)
+                with torch.autocast(device, dtype=torch.bfloat16):
+                    output = _rms_norm(norm, x)
+                self.assertEqual(output.dtype, x.dtype)
+                torch.testing.assert_close(output, reference, rtol=0, atol=0)
+                grads = torch.autograd.grad(output, (x, norm.weight), dy)
+                for actual, expected in zip(grads, reference_grads, strict=True):
+                    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+
+    def test_transformer_calls_all_rms_norms_at_native_precision(self):
+        model = tiny_h3_transformer(num_layers=1).to(torch.bfloat16)
+        calls = {}
+
+        def observe(module, args, output):
+            calls[module] = (torch.is_autocast_enabled("cpu"), args[0].dtype, output.dtype)
+
+        norms = [module for module in model.modules() if isinstance(module, torch.nn.RMSNorm)]
+        handles = [norm.register_forward_hook(observe) for norm in norms]
+        try:
+            with torch.autocast("cpu", dtype=torch.bfloat16):
+                model(**tiny_inputs())
+        finally:
+            for handle in handles:
+                handle.remove()
+        self.assertEqual(set(calls), set(norms))
+        for enabled, input_dtype, output_dtype in calls.values():
+            self.assertFalse(enabled)
+            self.assertEqual(input_dtype, output_dtype)
+
     def test_transformer_forward_and_ffn_checkpoint(self):
         model = tiny_h3_transformer()
         inputs = tiny_inputs()
