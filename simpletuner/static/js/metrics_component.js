@@ -33,6 +33,12 @@ function metricsComponent(initialSettings = {}) {
 
         // GPU health state
         gpuHealth: [],
+        gpuWorkers: [],
+        gpuHealthWorkerId: '',
+        gpuSampleAt: null,
+        gpuSampleStale: false,
+        gpuHostMetrics: {},
+        _gpuHealthRequest: 0,
         gpuHealthLoading: false,
         activeGpuIndex: null,
         gpuHistory: {},
@@ -134,20 +140,49 @@ function metricsComponent(initialSettings = {}) {
             } else if (this.gpuHealthLoading) {
                 return;
             }
+            const workerId = this.gpuHealthWorkerId;
+            const request = ++this._gpuHealthRequest;
+            const query = workerId ? '?worker_id=' + encodeURIComponent(workerId) : '';
             try {
-                const response = await fetch('/api/metrics/gpu-health');
+                const response = await fetch('/api/metrics/gpu-health' + query);
+                if (request !== this._gpuHealthRequest) return;
+                if (response.status === 404 && workerId) {
+                    await this.selectGpuSource('');
+                    return;
+                }
                 if (response.ok) {
                     const data = await response.json();
+                    if (request !== this._gpuHealthRequest) return;
+                    this.gpuWorkers = data.workers || [];
                     this.gpuHealth = data.gpus || [];
+                    this.gpuSampleAt = data.sampled_at || null;
+                    this.gpuSampleStale = Boolean(data.stale);
+                    this.gpuHostMetrics = data.system || {};
                     this.syncGpuHealthState();
                 }
             } catch (error) {
                 console.error('Failed to load GPU health:', error);
             } finally {
-                if (!silent) {
+                if (!silent && request === this._gpuHealthRequest) {
                     this.gpuHealthLoading = false;
                 }
             }
+        },
+
+        async selectGpuSource(workerId) {
+            if (workerId === this.gpuHealthWorkerId) return;
+            this.gpuHealthWorkerId = workerId;
+            this.gpuHealth = [];
+            this.gpuSampleAt = null;
+            this.gpuSampleStale = false;
+            this.gpuHostMetrics = {};
+            this.activeGpuIndex = null;
+            this.clearHistoryHover();
+            await this.loadGpuHealth();
+        },
+
+        gpuHistoryKey(gpuIndex) {
+            return this.gpuHealthWorkerId ? this.gpuHealthWorkerId + ':' + gpuIndex : gpuIndex;
         },
 
         syncGpuHealthState() {
@@ -211,23 +246,25 @@ function metricsComponent(initialSettings = {}) {
             if (gpuIndex === null || typeof gpuIndex === 'undefined') {
                 return;
             }
-            if (!this.gpuHistory[gpuIndex]) {
-                this.gpuHistory[gpuIndex] = [];
+            if (!this.gpuHistory[this.gpuHistoryKey(gpuIndex)]) {
+                this.gpuHistory[this.gpuHistoryKey(gpuIndex)] = [];
             }
-            if (!this.gpuHistorySettings[gpuIndex]) {
-                this.gpuHistorySettings[gpuIndex] = { showTemp: true, showFan: true };
+            if (!this.gpuHistorySettings[this.gpuHistoryKey(gpuIndex)]) {
+                this.gpuHistorySettings[this.gpuHistoryKey(gpuIndex)] = { showTemp: true, showFan: true };
             }
         },
 
         recordGpuHistory() {
-            const now = Date.now();
+            const now = this.gpuHealthWorkerId ? Date.parse(this.gpuSampleAt) : Date.now();
+            if (!Number.isFinite(now)) return;
             this.gpuHealth.forEach((gpu) => {
                 const gpuIndex = gpu.index;
                 if (gpuIndex === null || typeof gpuIndex === 'undefined') {
                     return;
                 }
                 this.ensureGpuHistoryState(gpuIndex);
-                const history = this.gpuHistory[gpuIndex];
+                const history = this.gpuHistory[this.gpuHistoryKey(gpuIndex)];
+                if (this.gpuHealthWorkerId && history.at(-1)?.timestamp >= now) return;
                 const temperature =
                     typeof gpu.temperature_celsius === 'number' && Number.isFinite(gpu.temperature_celsius)
                         ? gpu.temperature_celsius
@@ -273,8 +310,8 @@ function metricsComponent(initialSettings = {}) {
             if (!canvas) {
                 return;
             }
-            const history = this.gpuHistory[gpuIndex] || [];
-            const settings = this.gpuHistorySettings[gpuIndex] || { showTemp: true, showFan: true };
+            const history = this.gpuHistory[this.gpuHistoryKey(gpuIndex)] || [];
+            const settings = this.gpuHistorySettings[this.gpuHistoryKey(gpuIndex)] || { showTemp: true, showFan: true };
             this.drawHistoryLines(canvas, history, settings);
             this.updateHistoryLatestLabel(gpuIndex);
         },
@@ -479,8 +516,8 @@ function metricsComponent(initialSettings = {}) {
         },
 
         getHistoryLatestLabelInfo(gpuIndex, canvas) {
-            const history = this.gpuHistory[gpuIndex] || [];
-            const settings = this.gpuHistorySettings[gpuIndex] || { showTemp: true, showFan: true };
+            const history = this.gpuHistory[this.gpuHistoryKey(gpuIndex)] || [];
+            const settings = this.gpuHistorySettings[this.gpuHistoryKey(gpuIndex)] || { showTemp: true, showFan: true };
             if (!history.length || (!settings.showTemp && !settings.showFan)) {
                 return null;
             }
@@ -535,8 +572,8 @@ function metricsComponent(initialSettings = {}) {
         },
 
         getHistoryHoverInfo(gpuIndex, canvas, clientX, clientY) {
-            const history = this.gpuHistory[gpuIndex] || [];
-            const settings = this.gpuHistorySettings[gpuIndex] || { showTemp: true, showFan: true };
+            const history = this.gpuHistory[this.gpuHistoryKey(gpuIndex)] || [];
+            const settings = this.gpuHistorySettings[this.gpuHistoryKey(gpuIndex)] || { showTemp: true, showFan: true };
             if (!history.length || (!settings.showTemp && !settings.showFan)) {
                 return null;
             }
@@ -728,7 +765,7 @@ function metricsComponent(initialSettings = {}) {
         },
 
         getHistorySeriesLabel(gpuIndex) {
-            const settings = this.gpuHistorySettings[gpuIndex] || { showTemp: false, showFan: false };
+            const settings = this.gpuHistorySettings[this.gpuHistoryKey(gpuIndex)] || { showTemp: false, showFan: false };
             if (settings.showTemp && settings.showFan) {
                 return 'Temp+Fan';
             }

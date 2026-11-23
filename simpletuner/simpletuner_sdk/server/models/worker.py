@@ -46,6 +46,8 @@ class Worker:
     connected_at: Optional[datetime] = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
+    system_sample: Optional[Dict[str, Any]] = None
+
     @property
     def persistent(self) -> bool:
         """Check if this is a persistent worker."""

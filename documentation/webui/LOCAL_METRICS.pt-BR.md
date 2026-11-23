@@ -22,7 +22,7 @@ Quando um tracker não coleta telemetria do sistema nativamente, o SimpleTuner r
 
 ## WebUI e API
 
-Abra **Metrics** e **Training Runs** para selecionar escalares por etapa ou minutos, ver a distribuição de timesteps, revisar galerias de validação por etapa e abrir o relatório. **System** mantém a saúde das GPUs e a configuração do Prometheus.
+Abra **Metrics** e **Training Runs** para selecionar escalares por etapa ou minutos, ver a distribuição de timesteps, revisar galerias de validação por etapa e abrir o relatório. Em **System**, use **Machine** para selecionar o orquestrador ou um worker que você possa visualizar. Workers atualizados enviam leituras da GPU e uso de CPU e RAM com seus heartbeats. O histórico das GPUs é separado por máquina. A página sinaliza leituras antigas e informa quando uma amostra ainda está pendente.
 
 ```text
 GET /api/metrics/training/runs

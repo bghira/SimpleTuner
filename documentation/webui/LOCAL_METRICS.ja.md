@@ -22,7 +22,7 @@ tracker が system telemetry を標準で収集しない場合、SimpleTuner は
 
 ## WebUI と API
 
-**Metrics** の **Training Runs** で step または分単位のスカラー、timestep 分布、step ごとの検証ギャラリー、オフラインレポートを確認できます。**System** には GPU health と Prometheus 設定があります。
+**Metrics** の **Training Runs** で step または分単位のスカラー、timestep 分布、step ごとの検証ギャラリー、オフラインレポートを確認できます。**System** の **Machine** で、オーケストレーターまたは閲覧権限のあるワーカーを選択できます。更新済みのワーカーはハートビートで GPU の測定値、CPU 使用率、RAM 使用率を送信します。GPU 履歴はマシンごとに表示されます。古い測定値と未受信の状態は区別して表示されます。
 
 ```text
 GET /api/metrics/training/runs

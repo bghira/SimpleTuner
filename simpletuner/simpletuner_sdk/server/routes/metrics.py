@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware import get_current_user
 from simpletuner.simpletuner_sdk.server.services.cloud.auth.models import User
+from simpletuner.simpletuner_sdk.server.services.system_metrics_service import visible_system_workers, worker_system_status
 from simpletuner.simpletuner_sdk.server.services.training_metrics_service import (
     TRAINING_METRICS_SERVICE,
     TrainingMetricsServiceError,
@@ -517,14 +518,19 @@ async def get_circuit_breaker_status(
 
 @router.get("/gpu-health")
 async def get_gpu_health_status(
-    _user: User = Depends(get_current_user),
+    worker_id: str | None = None,
+    user: User = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    """Get GPU health status including thermal throttling warnings.
-
-    Returns per-GPU status with temperature and throttling info,
-    useful for displaying thermal warnings in the WebUI.
-    """
+    """Read local GPU health or a visible worker's last system sample."""
     from simpletuner.helpers.training.gpu_circuit_breaker import get_gpu_circuit_breaker
+
+    workers = await visible_system_workers(user)
+    sources = [{"worker_id": worker.worker_id, "name": worker.name} for worker in workers]
+    if worker_id is not None:
+        worker = next((worker for worker in workers if worker.worker_id == worker_id), None)
+        if worker is None:
+            raise HTTPException(status_code=404, detail="Worker not found.")
+        return {**worker_system_status(worker), "workers": sources}
 
     try:
         breaker = get_gpu_circuit_breaker()
@@ -532,7 +538,8 @@ async def get_gpu_health_status(
         return {
             "gpus": gpu_statuses,
             "total": len(gpu_statuses),
+            "workers": sources,
         }
     except Exception as exc:
         logger.warning("Failed to get GPU health status: %s", exc)
-        return {"gpus": [], "total": 0, "error": str(exc)}
+        return {"gpus": [], "total": 0, "workers": sources, "error": str(exc)}

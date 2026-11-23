@@ -310,6 +310,20 @@ class WorkerAgentJobStartTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(final_update.get("log_tail"), "training output after reconnect\n")
         self.assertIsNone(agent.current_job)
 
+    async def test_heartbeat_reports_system_metrics_while_idle(self) -> None:
+        agent = WorkerAgent(
+            WorkerConfig(orchestrator_url="https://orchestrator.example.com", worker_token="test-token", name="test-worker")
+        )
+        sample = {"system/cpu_percent": 15.0, "system/gpu/0/temperature_celsius": 45.0}
+        with (
+            patch.object(agent._system_metrics, "sample", return_value=sample),
+            patch("simpletuner.worker_agent.httpx.AsyncClient") as client,
+        ):
+            await agent._send_heartbeat()
+            post = client.return_value.__aenter__.return_value.post
+            self.assertEqual(post.await_args.kwargs["json"]["system_metrics"], sample)
+            self.assertEqual(post.await_args.kwargs["json"]["status"], "idle")
+
     async def test_stop_current_job_awaits_async_subprocess(self) -> None:
         """Verify Kubeflow cancellation awaits the asyncio subprocess API."""
         agent = WorkerAgent(

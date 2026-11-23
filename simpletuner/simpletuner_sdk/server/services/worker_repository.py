@@ -20,7 +20,7 @@ from .cloud.storage.base import BaseSQLiteStore, get_default_db_path
 logger = logging.getLogger(__name__)
 
 # Schema version for this repository
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 class WorkerRepository(BaseSQLiteStore):
@@ -54,7 +54,8 @@ class WorkerRepository(BaseSQLiteStore):
                     current_job_id TEXT,
                     last_heartbeat TEXT,
                     connected_at TEXT,
-                    created_at TEXT NOT NULL
+                    created_at TEXT NOT NULL,
+                    system_sample TEXT
                 )
             """
             )
@@ -110,6 +111,10 @@ class WorkerRepository(BaseSQLiteStore):
             columns = {row["name"] for row in cursor.execute("PRAGMA table_info(workers)").fetchall()}
             if "connected_at" not in columns:
                 cursor.execute("ALTER TABLE workers ADD COLUMN connected_at TEXT")
+        if from_version < 3 <= to_version:
+            columns = {row["name"] for row in cursor.execute("PRAGMA table_info(workers)").fetchall()}
+            if "system_sample" not in columns:
+                cursor.execute("ALTER TABLE workers ADD COLUMN system_sample TEXT")
 
     async def create_worker(self, worker: Worker) -> Worker:
         """Create a new worker.
@@ -282,7 +287,7 @@ class WorkerRepository(BaseSQLiteStore):
                 values = []
                 for key, value in updates.items():
                     # Handle special types
-                    if key in ("gpu_info", "labels") and isinstance(value, dict):
+                    if key in ("gpu_info", "labels", "system_sample") and isinstance(value, dict):
                         set_clauses.append(f"{key} = ?")
                         values.append(json.dumps(value))
                     elif key == "last_heartbeat" and isinstance(value, datetime):
@@ -496,6 +501,7 @@ class WorkerRepository(BaseSQLiteStore):
             last_heartbeat=last_heartbeat,
             connected_at=connected_at,
             created_at=created_at,
+            system_sample=json.loads(row["system_sample"]) if row["system_sample"] else None,
         )
 
     @staticmethod

@@ -22,7 +22,7 @@ SimpleTuner 可以在不使用外部服务的情况下记录训练指标：
 
 ## WebUI 与 API
 
-打开 **Metrics** 和 **Training Runs**，可按 step 或分钟查看标量、查看 timestep 分布、按 step 浏览验证图库并打开离线报告。**System** 保留 GPU 健康和 Prometheus 设置。
+打开 **Metrics** 和 **Training Runs**，可按 step 或分钟查看标量、查看 timestep 分布、按 step 浏览验证图库并打开离线报告。在 **System** 中，使用 **Machine** 选择编排服务器或有权查看的 worker。更新后的 worker 会随心跳发送 GPU 读数、CPU 使用率和内存使用率。GPU 图表的历史记录按机器区分，页面会标明数据已过期或尚未收到。
 
 ```text
 GET /api/metrics/training/runs

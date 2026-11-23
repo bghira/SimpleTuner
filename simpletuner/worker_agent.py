@@ -29,7 +29,8 @@ from typing import Any, Dict, Optional
 
 import httpx
 
-from simpletuner.worker_protocol import WORKER_LOG_TAIL_SIZE
+from simpletuner.helpers.training.system_metrics import SystemMetricsSampler
+from simpletuner.worker_protocol import WORKER_HEARTBEAT_SECONDS, WORKER_LOG_TAIL_SIZE
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +126,7 @@ class WorkerAgent:
         self.training_process: Optional[Any] = None
         self._heartbeat_task: Optional[asyncio.Task] = None
         self._log_tail = ""
+        self._system_metrics = SystemMetricsSampler(output_dir=Path.cwd())
 
     @staticmethod
     def _is_async_process(process: Any) -> bool:
@@ -484,10 +486,16 @@ class WorkerAgent:
         """Send periodic heartbeats"""
         while not self.shutdown_requested:
             await self._send_heartbeat()
-            await asyncio.sleep(30)
+            await asyncio.sleep(WORKER_HEARTBEAT_SECONDS)
 
     async def _send_heartbeat(self):
         """Send heartbeat to orchestrator"""
+        system_metrics = None
+        try:
+            system_metrics = await asyncio.to_thread(self._system_metrics.sample)
+        except Exception:
+            logger.warning("Could not sample worker system metrics", exc_info=True)
+
         payload = {
             "worker_id": self.worker_id,
             "status": "busy" if self.current_job else "idle",
@@ -495,6 +503,8 @@ class WorkerAgent:
         }
         if self.current_job and self._log_tail:
             payload["log_tail"] = self._log_tail
+        if system_metrics:
+            payload["system_metrics"] = system_metrics
 
         try:
             async with httpx.AsyncClient() as client:

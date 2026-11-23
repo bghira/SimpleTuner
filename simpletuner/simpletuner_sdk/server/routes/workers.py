@@ -12,11 +12,11 @@ import json
 import logging
 import secrets
 from datetime import datetime, timezone
-from typing import Any, Dict, Literal, Optional
+from typing import Annotated, Any, Dict, Literal, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, FiniteFloat
 
 from simpletuner.worker_protocol import WORKER_LOG_TAIL_SIZE
 
@@ -70,6 +70,9 @@ class HeartbeatRequest(BaseModel):
     log_tail: str | None = Field(default=None, max_length=WORKER_LOG_TAIL_SIZE)
     gpu_utilization: Optional[float] = None
     vram_used_gb: Optional[float] = None
+    system_metrics: dict[Annotated[str, Field(max_length=80)], Annotated[FiniteFloat, Field(ge=-1e12, le=1e12)]] | None = (
+        Field(default=None, max_length=512)
+    )
 
 
 class WorkerValidationUpdate(BaseModel):
@@ -536,6 +539,8 @@ async def worker_heartbeat(
         "status": request.status,
         "last_heartbeat": now,
     }
+    if request.system_metrics:
+        updates["system_sample"] = {"sampled_at": now.isoformat(), "metrics": request.system_metrics}
     if worker.is_job_bound:
         updates["status"] = WorkerStatus.BUSY if request.status == WorkerStatus.BUSY.value else WorkerStatus.CONNECTING
         updates["current_job_id"] = worker.current_job_id
