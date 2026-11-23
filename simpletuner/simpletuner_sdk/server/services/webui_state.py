@@ -160,6 +160,7 @@ class WebUIDefaults:
     datasets_dir: Optional[str] = None
     active_config: Optional[str] = None
     theme: str = "dark"
+    training_progress_visible_jobs: int = 4
     event_polling_interval: int = 5
     event_stream_enabled: bool = True
     auto_preserve_defaults: bool = True

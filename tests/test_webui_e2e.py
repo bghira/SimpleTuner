@@ -139,6 +139,119 @@ class _TrainingWorkerFixture:
 class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
     SERVER_MODE = ServerMode.UNIFIED
 
+    def test_progress_list_filters_dismisses_and_scrolls_at_saved_limit(self):
+        self.with_sample_environment()
+
+        def scenario(driver, browser):
+            wait = WebDriverWait(driver, 15)
+            jobs = [
+                {
+                    "job_id": f"progress-{browser}-{i}",
+                    "worker": f"node-{i}",
+                    "config_name": f"experiment-{i}",
+                    "gpu": "H200" if i < 2 else "L40S",
+                    "status": "running",
+                    "progress": {"step": 1, "total_steps": 10, "percent": 10},
+                }
+                for i in range(6)
+            ]
+
+            def settings_field():
+                field = wait.until(EC.visibility_of_element_located((By.ID, "ui-progress-visible-jobs")))
+                # Keep the test server's initial SSE snapshots from replacing this six-job fixture.
+                driver.execute_script(
+                    """
+                    for (const name of ['training-runs', 'worker-training-runs']) {
+                        window.addEventListener(name, event => event.stopImmediatePropagation(), true);
+                    }
+                    Alpine.store('trainer').updateTrainingRuns('worker', []);
+                """
+                )
+                return field
+
+            def feed():
+                driver.execute_script("Alpine.store('trainer').updateTrainingRuns('callback', arguments[0])", jobs)
+
+            def assert_view(count, limit):
+                # offsetTop is relative to the scrolling list, even after a job scrolls into view.
+                wait.until(
+                    lambda d: d.execute_script(
+                        """
+                    const list = document.querySelector('.training-run-list');
+                    const rows = list.querySelectorAll('article');
+                    if (rows.length !== arguments[0]) return false;
+                    const next = rows[arguments[1]];
+                    return next ? Math.abs(list.clientHeight - next.offsetTop) <= 1 && list.scrollHeight > list.clientHeight
+                                : list.scrollHeight === list.clientHeight;
+                """,
+                        count,
+                        limit,
+                    )
+                )
+
+            driver.get(f"{self.base_url}/web/#ui_settings")
+            number = settings_field()
+            self.dismiss_onboarding(driver)
+            self.assertEqual(number.get_attribute("value"), "4")
+            feed()
+            assert_view(6, 4)
+            number.clear()
+            number.send_keys("2")
+            save = driver.find_element(By.CSS_SELECTOR, "#ui-settings-tab-content .card-footer .btn-primary")
+            save.send_keys(Keys.ENTER)
+            assert_view(6, 2)
+
+            search = driver.find_element(By.CSS_SELECTOR, ".training-progress-header input")
+            for query, count in [("missing", 0), ("NODE-2", 1), ("experiment-3", 1), ("h200", 2)]:
+                search.clear()
+                search.send_keys(query)
+                assert_view(count, 2)
+                if not count:
+                    wait.until(
+                        EC.visibility_of_element_located((By.CSS_SELECTOR, ".training-progress-section [role=status]"))
+                    )
+
+            dismiss = driver.find_element(By.CSS_SELECTOR, ".training-run-dismiss")
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'})", dismiss)
+            wait.until(
+                lambda d: d.execute_script(
+                    """
+                const button = arguments[0], rect = button.getBoundingClientRect();
+                return button.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
+            """,
+                    dismiss,
+                )
+            )
+            dismiss.click()
+            jobs[0]["progress"]["step"] += 1
+            feed()
+            assert_view(1, 2)
+            remaining = driver.find_element(By.CSS_SELECTOR, ".training-run")
+            self.assertEqual(remaining.get_attribute("aria-label"), jobs[1]["job_id"])
+            driver.refresh()
+            number = settings_field()
+            self.assertEqual(number.get_attribute("value"), "2")
+            feed()
+            assert_view(5, 2)
+            self.assertFalse(driver.find_elements(By.CSS_SELECTOR, f'.training-run[aria-label="{jobs[0]["job_id"]}"]'))
+            driver.set_window_size(650, 900)
+            assert_view(5, 2)
+            last = driver.find_elements(By.CSS_SELECTOR, ".training-run-dismiss")[-1]
+            driver.execute_script("arguments[0].focus()", last)
+            self.assertGreater(driver.execute_script("return document.querySelector('.training-run-list').scrollTop"), 0)
+
+            jobs[:] = jobs[:1]
+            feed()
+            assert_view(0, 2)
+            card = (By.CSS_SELECTOR, ".training-progress-section")
+            wait.until(EC.invisibility_of_element_located(card))
+            jobs[0]["job_id"] += "-next"
+            feed()
+            assert_view(1, 2)
+            wait.until(EC.visibility_of_element_located(card))
+
+        self.for_each_browser("training_progress_list", scenario)
+
     def test_interleaved_workers_survive_reload_and_terminal_status(self):
         def report(job, status, progress, **data):
             response = requests.post(
