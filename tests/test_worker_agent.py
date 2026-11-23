@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 import sys
 import unittest
 import uuid
@@ -11,6 +12,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
 from simpletuner.worker_agent import WorkerAgent, WorkerConfig
+from simpletuner.worker_protocol import WORKER_LOG_TAIL_SIZE
 
 
 class WorkerAgentJobStartTestCase(unittest.IsolatedAsyncioTestCase):
@@ -228,8 +230,7 @@ class WorkerAgentJobStartTestCase(unittest.IsolatedAsyncioTestCase):
         )
         process = Mock()
         process.stdout = None
-        process.poll.return_value = 0
-        process.returncode = 0
+        process.wait.return_value = 0
         agent.training_process = process
         agent.current_job = {"job_id": "job-1"}
 
@@ -243,6 +244,34 @@ class WorkerAgentJobStartTestCase(unittest.IsolatedAsyncioTestCase):
         check_queue.assert_awaited_once_with()
         self.assertEqual(report_status.await_args_list[0].args, ("training",))
         self.assertEqual(report_status.await_args_list[1].args, ("completed",))
+
+    async def test_worker_reports_bounded_output_even_after_process_exit(self) -> None:
+        agent = WorkerAgent(
+            WorkerConfig(
+                orchestrator_url="https://orchestrator.example.com",
+                worker_token="test-token",
+                name="test-worker",
+                persistent=True,
+            )
+        )
+        agent.current_job = {"job_id": "job-1"}
+        log_line = "x" * 1000
+        output = (log_line + "\n") * 60 + "last training line\n"
+        with subprocess.Popen(
+            [sys.executable, "-c", "print('last training line')"],
+            stdout=subprocess.PIPE,
+            text=True,
+        ) as process:
+            # A completed process can still have unread output in its pipe.
+            process.wait(timeout=5)
+            agent.training_process = process
+            agent._log_tail = output[: -len("last training line\n")][-WORKER_LOG_TAIL_SIZE:]
+            with patch("simpletuner.worker_agent.httpx.AsyncClient") as client:
+                post = client.return_value.__aenter__.return_value.post
+                await agent._monitor_training(Path("/tmp"))
+
+            self.assertEqual(post.await_args.kwargs["json"]["status"], "completed")
+            self.assertEqual(post.await_args.kwargs["json"]["log_tail"], output[-WORKER_LOG_TAIL_SIZE:])
 
     async def test_stop_current_job_awaits_async_subprocess(self) -> None:
         """Verify Kubeflow cancellation awaits the asyncio subprocess API."""

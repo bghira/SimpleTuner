@@ -29,6 +29,8 @@ from typing import Any, Dict, Optional
 
 import httpx
 
+from simpletuner.worker_protocol import WORKER_LOG_TAIL_SIZE
+
 logger = logging.getLogger(__name__)
 
 
@@ -122,6 +124,7 @@ class WorkerAgent:
         self.shutdown_requested = False
         self.training_process: Optional[Any] = None
         self._heartbeat_task: Optional[asyncio.Task] = None
+        self._log_tail = ""
 
     @staticmethod
     def _is_async_process(process: Any) -> bool:
@@ -300,6 +303,7 @@ class WorkerAgent:
             return
 
         self.current_job = event
+        self._log_tail = ""
         job_id = event["job_id"]
         logger.info(f"Starting job: {job_id}")
 
@@ -385,6 +389,7 @@ class WorkerAgent:
         Args:
             job_dir: Per-job directory containing materialized configuration.
         """
+        job = self.current_job
         process = self.training_process
         if process is None:
             raise RuntimeError("Training process is not initialized")
@@ -397,19 +402,23 @@ class WorkerAgent:
             exit_code = await process.wait()
         else:
             await self._report_job_status("training")
-            while process.poll() is None:
-                if process.stdout:
-                    line = await asyncio.to_thread(process.stdout.readline)
-                    if line:
-                        logger.info("[training] %s", line.rstrip())
-                await asyncio.sleep(0.1)
-            exit_code = process.returncode
+            if process.stdout:
+                while line := await asyncio.to_thread(process.stdout.readline, WORKER_LOG_TAIL_SIZE):
+                    logger.info("[training] %s", line.rstrip())
+                    if self.current_job is job:
+                        self._log_tail = (self._log_tail + line)[-WORKER_LOG_TAIL_SIZE:]
+            exit_code = await asyncio.to_thread(process.wait)
+        if self.current_job is not job:
+            return
         logger.info(f"Training finished with exit code: {exit_code}")
 
         if exit_code == 0:
             await self._report_job_status("completed")
         else:
             await self._report_job_status("failed", error=f"Training exited with code {exit_code}")
+
+        if self.current_job is not job:
+            return
 
         # Cleanup
         self.current_job = None
@@ -456,16 +465,16 @@ class WorkerAgent:
             return
 
         job_id = self.current_job["job_id"]
+        payload = {"status": status, "error": error}
+        if status in ("completed", "failed", "cancelled") and self._log_tail:
+            payload["log_tail"] = self._log_tail
 
         try:
             async with httpx.AsyncClient() as client:
                 await client.post(
                     f"{self.config.orchestrator_url}/api/workers/job/{job_id}/status",
                     headers={"X-Worker-Token": self.config.worker_token},
-                    json={
-                        "status": status,
-                        "error": error,
-                    },
+                    json=payload,
                     timeout=10,
                 )
         except Exception as e:
@@ -479,16 +488,20 @@ class WorkerAgent:
 
     async def _send_heartbeat(self):
         """Send heartbeat to orchestrator"""
+        payload = {
+            "worker_id": self.worker_id,
+            "status": "busy" if self.current_job else "idle",
+            "current_job_id": self.current_job["job_id"] if self.current_job else None,
+        }
+        if self.current_job and self._log_tail:
+            payload["log_tail"] = self._log_tail
+
         try:
             async with httpx.AsyncClient() as client:
                 await client.post(
                     f"{self.config.orchestrator_url}/api/workers/heartbeat",
                     headers={"X-Worker-Token": self.config.worker_token},
-                    json={
-                        "worker_id": self.worker_id,
-                        "status": "busy" if self.current_job else "idle",
-                        "current_job_id": self.current_job["job_id"] if self.current_job else None,
-                    },
+                    json=payload,
                     timeout=10,
                 )
         except Exception as e:

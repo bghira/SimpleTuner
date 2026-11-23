@@ -76,6 +76,15 @@ class JobRepository(BaseSQLiteStore):
             """
             )
 
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS worker_job_logs (
+                    job_id TEXT PRIMARY KEY REFERENCES jobs(job_id) ON DELETE CASCADE,
+                    log_tail TEXT NOT NULL
+                )
+                """
+            )
+
             # Create indexes for common queries
             cursor.execute(
                 """
@@ -280,15 +289,24 @@ class JobRepository(BaseSQLiteStore):
                 logger.debug("Job %s already exists, skipping add", job.job_id)
             return inserted
 
-    async def update(self, job_id: str, updates: Dict[str, Any]) -> bool:
+    async def update(
+        self,
+        job_id: str,
+        updates: Dict[str, Any],
+        *,
+        worker_id: str | None = None,
+        worker_log_tail: str | None = None,
+    ) -> bool:
         """Update an existing job.
 
         Args:
             job_id: The job ID to update.
             updates: Dictionary of field updates.
+            worker_id: Require the job to still be assigned to this worker.
+            worker_log_tail: Record the worker's final output with its status update.
 
         Returns:
-            True if updated, False if not found.
+            True if updated, False if not found or no longer assigned.
         """
         loop = asyncio.get_running_loop()
 
@@ -312,14 +330,66 @@ class JobRepository(BaseSQLiteStore):
 
                 values.append(job_id)
                 query = f"UPDATE jobs SET {', '.join(set_clauses)} WHERE job_id = ?"
+                if worker_id is not None:
+                    query += " AND json_extract(metadata, '$.worker_id') = ?"
+                    values.append(worker_id)
                 cursor.execute(query, values)
+                updated = cursor.rowcount > 0
+                if updated and worker_log_tail is not None:
+                    self._write_worker_log_tail(conn, job_id, worker_log_tail)
                 conn.commit()
-                return cursor.rowcount > 0
+                return updated
             finally:
                 conn.close()
 
         async with self._lock:
             return await loop.run_in_executor(None, _update)
+
+    @staticmethod
+    def _write_worker_log_tail(conn, job_id: str, log_tail: str) -> None:
+        conn.execute(
+            """
+            INSERT INTO worker_job_logs (job_id, log_tail) VALUES (?, ?)
+            ON CONFLICT(job_id) DO UPDATE SET log_tail = excluded.log_tail
+            WHERE worker_job_logs.log_tail != excluded.log_tail
+            """,
+            (job_id, log_tail),
+        )
+
+    async def record_worker_heartbeat(self, job_id: str, worker_id: str, log_tail: str | None) -> None:
+        """Store output and clear a stale local PID error for an active remote job."""
+        orphan_error = "Job orphaned (no PID tracked)"
+
+        def _record(conn):
+            updated = conn.execute(
+                """
+                UPDATE jobs
+                SET error_message = CASE WHEN error_message = ? THEN NULL ELSE error_message END,
+                    completed_at = CASE WHEN error_message = ? THEN NULL ELSE completed_at END
+                WHERE job_id = ? AND provider = 'worker'
+                  AND status IN ('starting', 'training', 'running')
+                  AND json_extract(metadata, '$.worker_id') = ?
+                  AND (error_message = ? OR ? IS NOT NULL)
+                """,
+                (orphan_error, orphan_error, job_id, worker_id, orphan_error, log_tail),
+            ).rowcount
+            if updated and log_tail is not None:
+                self._write_worker_log_tail(conn, job_id, log_tail)
+
+        await self.execute_in_transaction([_record])
+
+    async def get_worker_log_tail(self, job_id: str) -> str | None:
+        """Fetch worker output separately from job metadata and list responses."""
+
+        def _read():
+            conn = self._get_connection()
+            try:
+                row = conn.execute("SELECT log_tail FROM worker_job_logs WHERE job_id = ?", (job_id,)).fetchone()
+                return row["log_tail"] if row else None
+            finally:
+                conn.close()
+
+        return await asyncio.to_thread(_read)
 
     async def get(self, job_id: str) -> Optional[UnifiedJob]:
         """Get a job by ID.
