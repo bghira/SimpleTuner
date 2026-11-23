@@ -8,7 +8,7 @@ SimpleTuner बाहरी सेवा के बिना प्रशिक�
 
 `report_to=simpletuner,wandb` जैसे comma-separated values से local tracker और external tracker साथ में चालू करें। यह सभी model families पर लागू है; DDP में केवल main process फाइलें लिखता है।
 
-**Training Runs** सक्रिय workers से मिले पिछले 30 मिनट के प्रगति नमूने भी दिखाता है, जिनमें `report_to: none` वाले jobs शामिल हैं। loss, learning rate या throughput के लिए job चुनें। इतिहास चल रहे सर्वर में रहता है और पुनः आरंभ करने के बाद फिर से बनता है। रिपोर्ट, validation media और timestep distribution सहेजे गए environment आउटपुट से उपलब्ध रहते हैं।
+**Training Runs** सक्रिय workers से मिले प्रगति नमूने भी दिखाता है, जिनमें `report_to: none` वाले jobs शामिल हैं। loss, learning rate या throughput के लिए job चुनें। उपलब्ध होने पर सर्वर हाल के नमूने पाँच सेकंड के अंतराल पर रखता है। रन बढ़ने के साथ पुराने नमूने बड़े अंतराल पर रखे जाते हैं। सर्वर को दोबारा शुरू करने पर इतिहास फिर से बनता है। रिपोर्ट, validation media और timestep distribution सहेजे गए environment आउटपुट से उपलब्ध रहते हैं।
 
 ## आउटपुट फाइलें
 

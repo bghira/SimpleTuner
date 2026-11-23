@@ -251,7 +251,9 @@
             },
 
             setSelectedTrainingRun(run) {
-                this.selectedTrainingRunKey = this.trainingRunKey(run);
+                const key = this.trainingRunKey(run);
+                if (key !== this.selectedTrainingRunKey) this.trainingChartHover = {};
+                this.selectedTrainingRunKey = key;
                 this.selectedTrainingEnvironment = run.environment || '';
             },
 
@@ -525,8 +527,10 @@
                     const chart = this.trainingCharts.find((candidate) => candidate.id === chartIdValue);
                     if (!chart) return;
                     liveChartIds.add(chartIdValue);
-                    if (!this._trainingMetricsCharts[chartIdValue]) {
-                        this._trainingMetricsCharts[chartIdValue] = new global.TrainingMetricsCharts.TrainingMetricsChart(canvas, {
+                    let instance = this._trainingMetricsCharts[chartIdValue];
+                    if (instance?.canvas !== canvas) {
+                        instance?.destroy();
+                        instance = new global.TrainingMetricsCharts.TrainingMetricsChart(canvas, {
                             onHover: (value) => {
                                 if (value) {
                                     this.trainingChartHover = { ...this.trainingChartHover, [chartIdValue]: value };
@@ -537,8 +541,9 @@
                                 }
                             },
                         });
+                        this._trainingMetricsCharts[chartIdValue] = instance;
                     }
-                    this._trainingMetricsCharts[chartIdValue].setData(
+                    instance.setData(
                         this.trainingRunData.records || [],
                         chart.metrics,
                         { xAxisMode: this.selectedTrainingXAxis, smoothing: chart.smoothing },
@@ -554,7 +559,8 @@
             renderTimestepDistributionChart() {
                 const canvas = this.$refs.timestepDistributionCanvas;
                 if (!canvas || !this.trainingRunData || !global.TrainingMetricsCharts) return;
-                if (!this._trainingTimestepChart) {
+                if (this._trainingTimestepChart?.canvas !== canvas) {
+                    this._trainingTimestepChart?.destroy();
                     this._trainingTimestepChart = new global.TrainingMetricsCharts.TimestepDistributionChart(canvas);
                 }
                 this._trainingTimestepChart.setData(this.trainingRunData.timesteps || []);

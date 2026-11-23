@@ -93,6 +93,32 @@ class TrainingMetricsRoutesTests(APITestCase, unittest.TestCase):
 
 
 class WorkerTrainingMetricsTests(unittest.IsolatedAsyncioTestCase):
+    def test_active_worker_history_keeps_early_and_recent_samples(self):
+        job = UnifiedJob(
+            job_id="long-worker-run",
+            job_type=JobType.LOCAL,
+            provider="worker",
+            status="running",
+            config_name="shared",
+            created_at=datetime.now(timezone.utc).isoformat(),
+            metadata={"worker_id": "worker"},
+        )
+        history = WorkerRunMetrics()
+        with patch("simpletuner.simpletuner_sdk.server.services.worker_run_metrics.monotonic") as clock:
+            for step in range(1, 3001):
+                clock.return_value = step * 5
+                history.record(job, "Worker", {"current": step, "metrics": {"loss": 0.3}})
+            worker_name, records = history.snapshot(job)
+            steps = [record["step"] for record in records]
+            self.assertEqual(worker_name, "Worker")
+            self.assertEqual(steps[0], 1)
+            self.assertEqual(steps[-360:], list(range(2641, 3001)))
+            self.assertEqual(steps, sorted(set(steps)))
+            self.assertLessEqual(len(steps), 720)
+            clock.return_value += 1801
+            self.assertEqual(history.job_ids(), [])
+            self.assertIsNone(history.snapshot(job))
+
     async def test_visible_job_series_is_sampled_and_scoped_to_dispatch(self):
         job = UnifiedJob(
             job_id="worker-run",
