@@ -150,6 +150,19 @@ class TestLongCatVideoTransformerShapes(unittest.TestCase):
 
         self.assertEqual(out.shape, latents.shape)
 
+    def test_zero_gates_preserve_residual_and_input_gradient(self):
+        from simpletuner.helpers.models.longcat_video.transformer import LongCatSingleStreamBlock
+
+        block = LongCatSingleStreamBlock(hidden_size=32, num_heads=4, mlp_ratio=2, adaln_tembed_dim=16)
+        with torch.no_grad():
+            block.adaLN_modulation[1].weight.zero_()
+            block.adaLN_modulation[1].bias.zero_()
+        x = (5.0 + torch.randn(1, 6, 32)).requires_grad_()
+        result = block(x, None, torch.randn(1, 2, 16), None, (2, 1, 3), skip_crs_attn=True)
+        torch.testing.assert_close(result, x, rtol=0, atol=0)
+        grad = torch.randn_like(x)
+        torch.testing.assert_close(torch.autograd.grad(result, x, grad)[0], grad, rtol=0, atol=0)
+
     def test_forward_accepts_framewise_timesteps(self):
         transformer = LongCatVideoTransformer3DModel(
             in_channels=16,
