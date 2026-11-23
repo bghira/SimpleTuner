@@ -178,6 +178,67 @@ class SanaModelTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "CREPA self-flow"):
             self.model._validate_xm_support()
 
+    def test_transformer_matches_diffusers_checkpoint_forward(self):
+        from diffusers import SanaTransformer2DModel as DiffusersSana
+
+        from simpletuner.helpers.models.sana.transformer import SanaTransformer2DModel
+
+        config = dict(
+            in_channels=4,
+            out_channels=4,
+            num_layers=2,
+            num_attention_heads=2,
+            attention_head_dim=8,
+            num_cross_attention_heads=2,
+            cross_attention_head_dim=8,
+            cross_attention_dim=16,
+            caption_channels=16,
+            sample_size=4,
+        )
+        with torch.random.fork_rng(devices=[]), torch.no_grad():
+            torch.manual_seed(71)
+            reference = DiffusersSana(**config).eval()
+            model = SanaTransformer2DModel(**config).eval()
+            model.load_state_dict(reference.state_dict())
+            inputs = dict(
+                hidden_states=torch.randn(2, 4, 4, 6),
+                timestep=torch.tensor([173.0, 932.0]),
+                encoder_hidden_states=torch.randn(2, 5, 16),
+                encoder_attention_mask=torch.tensor([[1, 1, 1, 0, 0], [1, 1, 1, 1, 1]]),
+            )
+            torch.testing.assert_close(model(**inputs).sample, reference(**inputs).sample, rtol=1e-5, atol=1e-6)
+
+    def test_custom_affine_cross_attention_norm_preserves_learned_parameters(self):
+        from simpletuner.helpers.models.sana.transformer import SanaTransformerBlock
+
+        block = SanaTransformerBlock(
+            dim=16,
+            num_attention_heads=2,
+            attention_head_dim=8,
+            num_cross_attention_heads=2,
+            cross_attention_head_dim=8,
+            cross_attention_dim=16,
+            norm_elementwise_affine=True,
+        )
+        checkpoint = block.state_dict()
+        checkpoint["cross_norm.weight"].fill_(0)
+        checkpoint["cross_norm.bias"].fill_(0.25)
+        block.load_state_dict(checkpoint)
+        queries = []
+        with torch.no_grad():
+            hook = block.attn2.register_forward_pre_hook(lambda _, args: queries.append(args[0]))
+            try:
+                block(
+                    torch.randn(1, 4, 16),
+                    timestep=torch.randn(1, 96),
+                    encoder_hidden_states=torch.randn(1, 3, 16),
+                    height=2,
+                    width=2,
+                )
+            finally:
+                hook.remove()
+        torch.testing.assert_close(queries[0], torch.full((1, 4, 16), 0.25))
+
 
 if __name__ == "__main__":
     unittest.main()

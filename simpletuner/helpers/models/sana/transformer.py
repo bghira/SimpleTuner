@@ -168,7 +168,8 @@ class SanaTransformerBlock(PatchableModule):
             if cross_attention_head_dim is None:
                 cross_attention_head_dim = attention_head_dim
 
-            self.cross_norm = nn.LayerNorm(dim, elementwise_affine=norm_elementwise_affine, eps=norm_eps)
+            if norm_elementwise_affine:
+                self.cross_norm = nn.LayerNorm(dim, eps=norm_eps)
             self.attn2 = Attention(
                 query_dim=dim,
                 cross_attention_dim=cross_attention_dim,
@@ -224,11 +225,6 @@ class SanaTransformerBlock(PatchableModule):
 
         # cross attention
         if self.attn2 is not None and encoder_hidden_states is not None:
-            cross_hidden_states = hidden_states
-            if self.cross_norm is not None:
-                cross_hidden_states = self.cross_norm(cross_hidden_states)
-            cross_hidden_states = cross_hidden_states.to(hidden_states.dtype)
-
             encoder_states = encoder_hidden_states
             expected_dim = self.attn2.to_k.in_features
             current_dim = encoder_states.shape[-1]
@@ -246,7 +242,7 @@ class SanaTransformerBlock(PatchableModule):
                 encoder_states = self.cross_attention_projection(encoder_states)
 
             attn_output = self.attn2(
-                cross_hidden_states,
+                self.cross_norm(hidden_states).to(hidden_states.dtype) if self.cross_norm is not None else hidden_states,
                 encoder_hidden_states=encoder_states,
                 attention_mask=encoder_attention_mask,
             )
