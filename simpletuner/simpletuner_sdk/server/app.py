@@ -548,6 +548,7 @@ def create_app(
 
     # Store SSL configuration in app state
     app.state.ssl_no_verify = ssl_no_verify
+    app.state.mode = mode
 
     # Configure security middleware (CORS, rate limiting, security headers)
     if enable_cors:
@@ -785,19 +786,10 @@ def create_unified_app() -> FastAPI:
     app = create_app(mode=ServerMode.UNIFIED)
 
     # Set up shared event store for unified mode
-    import os
+    from .services.callback_service import get_default_callback_service
+    from .services.event_store import get_default_store
 
-    from .services.callback_service import CallbackService
-    from .services.event_store import EventStore
-
-    # Allow configuring event buffer size via environment variable
-    max_events = int(os.environ.get("SIMPLETUNER_EVENT_BUFFER_SIZE", "1000"))
-    event_store = EventStore(max_events=max_events)
-    callback_service = CallbackService(event_store)
-
-    # Store event service in app state for access by routes
-    app.state.event_store = event_store
-    app.state.callback_service = callback_service
-    app.state.mode = ServerMode.UNIFIED
+    app.state.event_store = get_default_store()
+    app.state.callback_service = get_default_callback_service()
 
     return app

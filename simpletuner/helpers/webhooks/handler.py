@@ -84,6 +84,7 @@ class WebhookHandler:
         self.send_video = send_video
         self.video_framerate = video_framerate
         self.stored_response = None
+        self.worker_status_url = os.environ.get("SIMPLETUNER_WORKER_STATUS_URL")
 
         # Handle mock config for testing
         if mock_webhook_config is not None:
@@ -706,6 +707,36 @@ class WebhookHandler:
 
         if "timestamp" not in payload:
             payload["timestamp"] = datetime.now(tz=timezone.utc).isoformat()
+
+        worker_report = None
+        if self.worker_status_url:
+            if payload.get("type") in {"training.status", "training.progress"} and payload.get("progress"):
+                worker_report = {"progress": payload["progress"]}
+            elif payload.get("type") == "lifecycle.stage" and payload.get("stage", {}).get("key") == "validation":
+                stage = payload["stage"]
+                worker_report = {"validation": {"status": stage["status"], "progress": stage.get("progress")}}
+            elif payload.get("type") == "validation.image":
+                data = payload["data"]
+                worker_report = {
+                    "validation": {
+                        "status": "running",
+                        "progress": {"current": data["step"], "total": data.get("total_steps")},
+                    }
+                }
+        if worker_report is not None:
+            if "validation" in worker_report:
+                worker_report["validation"]["timestamp"] = payload["timestamp"]
+            try:
+                response = requests.post(
+                    self.worker_status_url,
+                    headers={"X-Worker-Token": os.environ["SIMPLETUNER_WORKER_TOKEN"]},
+                    json=self._sanitize_for_json(worker_report),
+                    timeout=5,
+                    allow_redirects=False,
+                )
+                response.raise_for_status()
+            except requests.RequestException as exc:
+                logging.warning("Could not report worker training progress: %s", exc)
 
         exclude_urls = set()
         if exclude_webhook_urls:

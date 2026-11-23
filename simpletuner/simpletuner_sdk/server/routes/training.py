@@ -21,6 +21,7 @@ from simpletuner.helpers.utils.checkpoint_manager import CheckpointManager
 from simpletuner.simpletuner_sdk import process_keeper
 from simpletuner.simpletuner_sdk.api_state import APIState
 from simpletuner.simpletuner_sdk.server.services import training_service
+from simpletuner.simpletuner_sdk.server.services.callback_service import get_default_callback_service
 from simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware import get_current_user, get_current_user_ws
 from simpletuner.simpletuner_sdk.server.services.cloud.auth.models import User
 
@@ -397,19 +398,22 @@ async def get_training_status(_user: User = Depends(get_current_user)):
 
 
 @router.get("/events")
-async def get_training_events(since_index: int = 0, _user: User = Depends(get_current_user)):
+async def get_training_events(request: Request, since_index: int = 0, _user: User = Depends(get_current_user)):
     """Get training events since a given index."""
     job_id = APIState.get_state("current_job_id")
 
+    result = {"events": [], "job_id": job_id}
+    if request.app.state.mode.value == "trainer":
+        _, result["training_runs"] = get_default_callback_service().training_runs_since(-1, _user)
     if not job_id:
-        return {"events": [], "job_id": None}
+        return result
 
     try:
         events = process_keeper.get_process_events(job_id, since_index)
-        return {"events": events, "job_id": job_id, "next_index": since_index + len(events)}
+        return {**result, "events": events, "next_index": since_index + len(events)}
     except Exception as e:
         # Job might not exist
-        return {"events": [], "job_id": job_id, "error": str(e)}
+        return {**result, "error": str(e)}
 
 
 @router.websocket("/events/stream")
@@ -419,7 +423,13 @@ async def stream_training_events(websocket: WebSocket, _user: User = Depends(get
 
     try:
         last_index = 0
+        runs_revision = -1
         while True:
+            if websocket.app.state.mode.value == "trainer":
+                runs_revision, runs = get_default_callback_service().training_runs_since(runs_revision, _user)
+                if runs is not None:
+                    await websocket.send_json({"training_runs": runs})
+
             job_id = APIState.get_state("current_job_id")
 
             if job_id:

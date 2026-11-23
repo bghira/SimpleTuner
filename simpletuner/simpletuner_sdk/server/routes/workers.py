@@ -18,6 +18,8 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from ..services.callback_events import StageStatus
+from ..services.callback_service import get_default_callback_service
 from ..services.cloud.auth import User, get_optional_user
 from ..services.worker_credentials import generate_worker_token, hash_token
 
@@ -65,12 +67,19 @@ class HeartbeatRequest(BaseModel):
     vram_used_gb: Optional[float] = None
 
 
+class WorkerValidationUpdate(BaseModel):
+    status: StageStatus
+    progress: Optional[Dict[str, Any]] = None
+    timestamp: datetime
+
+
 class JobStatusUpdate(BaseModel):
     """Job status update from worker."""
 
-    status: str
+    status: str | None = None
     progress: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
+    validation: WorkerValidationUpdate | None = None
 
 
 class CreateWorkerRequest(BaseModel):
@@ -384,6 +393,50 @@ async def worker_stream(
     )
 
 
+async def _assigned_job(job_repo, job_id: str, worker_id: str):
+    # Get job and verify worker ownership
+    job = await job_repo.get(job_id)
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Job not found: {job_id}",
+        )
+
+    # Verify worker is assigned to this job
+    if (job.metadata or {}).get("worker_id") != worker_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Worker not assigned to this job",
+        )
+
+    return job
+
+
+def _record_worker_stats(job, worker, status: str, progress: dict | None, validation: WorkerValidationUpdate | None = None):
+    event = {
+        "type": "training.status",
+        "job_id": job.job_id,
+        "data": {"status": "running" if status == "training" else status, "worker": worker.name},
+        "progress": progress,
+    }
+    if validation is not None:
+        event.update(
+            type="lifecycle.stage",
+            timestamp=validation.timestamp.isoformat(),
+            stage={"key": "validation", "status": validation.status, "progress": validation.progress},
+        )
+    get_default_callback_service().handle_incoming(
+        event,
+        assigned_worker={
+            "assigned_worker": True,
+            "worker": worker.name,
+            "gpu": (worker.gpu_info or {}).get("name") or job.hardware_type,
+            "config_name": job.config_name,
+            "user_id": job.user_id,
+        },
+    )
+
+
 @router.post("/heartbeat")
 async def worker_heartbeat(
     request: HeartbeatRequest,
@@ -419,6 +472,15 @@ async def worker_heartbeat(
             status_code=status.HTTP_409_CONFLICT,
             detail=(f"Worker {worker.worker_id} is bound to job " f"{worker.current_job_id}, not {request.current_job_id}"),
         )
+
+    if request.job_progress:
+        from ..services.cloud.storage.job_repository import get_job_repository
+
+        if not request.current_job_id:
+            raise HTTPException(status_code=422, detail="Job progress requires a job ID")
+        job = await _assigned_job(get_job_repository(), request.current_job_id, worker.worker_id)
+        if not job.is_terminal:
+            _record_worker_stats(job, worker, "running", request.job_progress)
 
     now = datetime.now(timezone.utc)
     updates = {
@@ -472,20 +534,13 @@ async def update_job_status(
     worker = await validate_worker_token(x_worker_token)
     job_repo = get_job_repository()
 
-    # Get job and verify worker ownership
-    job = await job_repo.get(job_id)
-    if not job:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Job not found: {job_id}",
-        )
-
-    # Verify worker is assigned to this job
-    if job.metadata and job.metadata.get("worker_id") != worker.worker_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Worker not assigned to this job",
-        )
+    job = await _assigned_job(job_repo, job_id, worker.worker_id)
+    if not request.status:
+        if not request.progress and request.validation is None:
+            raise HTTPException(status_code=422, detail="Expected worker status, progress, or validation")
+        if not job.is_terminal:
+            _record_worker_stats(job, worker, "running", request.progress, request.validation)
+        return {"success": True}
 
     logger.info(
         "Job %s status update from worker %s: %s",
@@ -527,6 +582,7 @@ async def update_job_status(
         updates["completed_at"] = datetime.now(timezone.utc).isoformat()
 
     await job_repo.update(job_id, updates)
+    _record_worker_stats(job, worker, request.status, request.progress)
 
     # Release an ordinary Worker, or delete a one-shot Kubeflow Worker and its
     # TrainJob after the terminal status is safely persisted.

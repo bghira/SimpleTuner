@@ -421,6 +421,7 @@
     }
 
     function handleLifecycleStageUpdate(data) {
+        if (data?.local === false) return;
         console.log('[SSE-DEBUG] handleLifecycleStageUpdate called with:', JSON.stringify(data, null, 2));
 
         if (!data) {
@@ -1253,6 +1254,7 @@
     }
 
     function handleCallbackEvent(category, payload) {
+        if (payload?.local === false) return;
         const jobId = payload.job_id || payload.raw?.job_id || activeJobId;
         const rawMessageType = String(payload.type || payload.message_type || '').toLowerCase();
         const normalizedMessageType = rawMessageType.replace(/\./g, '_');
@@ -1508,6 +1510,7 @@
         trackListener('connection-status', connectionStatusHandler);
 
         var trainingProgressHandler = function(data) {
+            if (data?.local === false) return;
             if (data && data.reset) {
                 resetTrainingProgressUI(data.status || 'idle', data.job_id || activeJobId);
                 return;
@@ -1554,6 +1557,7 @@
         trackListener('training.status', trainingStatusHandler);
 
         var errorHandler = function(data) {
+            if (data?.local === false) return;
             setStatus('Error', 'danger');
             setTrainingState('error', { job_id: activeJobId });
             const errorMessage = extractPrimaryMessage(data) || 'Training service reported an error.';
@@ -1612,13 +1616,14 @@
     }
 
     function connectFallbackSSE() {
-        const apiBaseUrl = window.ServerConfig?.apiBaseUrl || '';
-        const source = new EventSource(`${apiBaseUrl}/api/events`);
+        const source = new EventSource(window.ServerConfig.getEndpointUrl('/api/events'), { withCredentials: true });
 
         source.addEventListener('message', function(event) {
             try {
                 const data = JSON.parse(event.data);
-                if (data.type === 'training.progress') {
+                if (data.type === 'training.runs') {
+                    window.dispatchEvent(new CustomEvent('training-runs', { detail: data.runs }));
+                } else if (data.type === 'training.progress' && data.local !== false) {
                     const normalized = normalizeProgressPayload({ progress: data });
                     updateProgressCard(normalized, activeJobId);
                 }

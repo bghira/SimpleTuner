@@ -12,6 +12,28 @@ from simpletuner.helpers.training.trainer import Trainer
 class TestTrainerWebhookFileLoading(unittest.TestCase):
     """Test that Trainer.configure_webhook() properly loads webhook_config from files."""
 
+    def test_worker_can_report_without_webhook_config(self):
+        trainer = Trainer.__new__(Trainer)
+        trainer.accelerator = None
+        trainer.model = None
+        trainer.job_id = "worker-job"
+        trainer.webhook_handler = None
+
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("simpletuner.helpers.training.trainer.StateTracker.set_webhook_handler"),
+            patch("simpletuner.helpers.training.trainer.get_gpu_circuit_breaker"),
+            patch("simpletuner.helpers.webhooks.handler.requests.post") as post,
+        ):
+            trainer.configure_webhook(send_startup_message=False, raw_config={})
+            self.assertIsNone(trainer.webhook_handler)
+            url = "https://orchestrator.example/api/workers/job/worker-job/status"
+            os.environ.update(SIMPLETUNER_WORKER_STATUS_URL=url, SIMPLETUNER_WORKER_TOKEN="test-token")
+            trainer.configure_webhook(send_startup_message=False, raw_config={})
+            trainer._emit_event({"type": "training.status", "progress": {"current": 1}})
+            self.assertEqual(post.call_args.args, (url,))
+            self.assertEqual(post.call_args.kwargs["json"], {"progress": {"current": 1}})
+
     def test_configure_webhook_with_file_path(self):
         """Test that configure_webhook loads webhook_config from a file path."""
         webhook_dict = {"webhook_type": "discord", "webhook_url": "http://test.com/webhook", "log_level": "info"}

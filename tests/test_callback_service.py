@@ -38,7 +38,7 @@ class CallbackServiceTestCase(unittest.TestCase):
         if APIState is not None:
             APIState.state = {}
         if callback_service is not None:
-            callback_service._CAPTIONFLOW_JOB_CACHE.clear()
+            callback_service._job_context.cache_clear()
         self._tmpdir.cleanup()
 
     def test_handle_incoming_assigns_index_and_payload(self) -> None:
@@ -287,6 +287,7 @@ class CallbackServiceTestCase(unittest.TestCase):
 
     def test_error_severity_with_failure_status_marks_failed(self) -> None:
         """Error severity notifications with failure status should mark training failed."""
+        APIState.set_state("current_job_id", "test-job-fatal")
         APIState.set_state("training_status", "running")
         APIState.set_state("training_progress", {"percent": 50})
 
@@ -303,6 +304,85 @@ class CallbackServiceTestCase(unittest.TestCase):
         self.assertEqual(APIState.get_state("training_status"), "error")
         self.assertIsNone(APIState.get_state("training_progress"))
 
+    def test_local_controls_and_partial_progress_are_isolated_by_job(self):
+        APIState.set_state("current_job_id", "local-run")
+
+        def report(job, status, progress=None, **data):
+            return self.service.handle_incoming(
+                {"type": "training.status", "job_id": job, "data": {"status": status, **data}, "progress": progress}
+            )
+
+        report("local-run", "running", {"current": 0, "total": 20, "metrics": {"loss": 0}})
+        report("remote-run", "running", {"current": 60, "total": 100, "metrics": {"step_speed_seconds": 3}}, worker="L40S")
+        report(None, "failed")
+        report("remote-run", "failed", {"metrics": {"learning_rate": 0}})
+        self.assertIsNone(report("remote-run", "running", {"current": 65}))
+        report("local-run", "running", {"current": 2})
+        report("local-run", "running", {"current": 1, "metrics": {"loss": 99}})
+        _, snapshots = self.service.training_runs_since(-1)
+        local, remote = snapshots
+        self.assertEqual((local["worker"], local["status"], local["progress"]["loss"]), ("Local", "running", 0))
+        self.assertEqual((remote["worker"], remote["status"], remote["progress"]["step"]), ("L40S", "failed", 60))
+        self.assertEqual(local["progress"]["percent"], 10)
+        self.assertEqual(remote["progress"]["metrics"]["step_speed_seconds"], 3)
+        self.assertIsNone(remote["progress"]["loss"])
+        self.assertEqual(APIState.get_state("current_job_id"), "local-run")
+        self.assertEqual(APIState.get_state("training_progress")["step"], local["progress"]["step"])
+
+    def test_validation_can_precede_training_and_ends_on_skip_cancel_or_training(self):
+        def stage(status):
+            self.service.handle_incoming(
+                {"type": "lifecycle.stage", "job_id": "sample", "stage": {"key": "validation", "status": status}}
+            )
+
+        for status in ("skipped", "cancelled", "failed", "completed"):
+            stage("running")
+            (row,) = self.service.training_runs_since(-1)[1]
+            self.assertEqual(row["validation"], {"current": None, "total": None, "percent": None})
+            stage(status)
+            self.assertEqual(self.service.training_runs_since(-1)[1], [])
+
+        self.service.handle_incoming(
+            {"type": "training.progress", "job_id": "sample", "progress": {"step": 12, "total": 20}}
+        )
+        stage("running")
+        self.service.handle_incoming(
+            {"type": "validation.image", "job_id": "sample", "data": {"step": 3, "step_label": "3/10"}}
+        )
+        (row,) = self.service.training_runs_since(-1)[1]
+        self.assertEqual(row["validation"], {"current": 3, "total": 10, "percent": 30})
+        self.assertEqual(row["progress"]["step"], 12)
+        self.service.handle_incoming({"type": "training.progress", "job_id": "sample", "progress": {"step": 13}})
+        self.assertIsNone(self.service.training_runs_since(-1)[1][0]["validation"])
+
+    def test_active_snapshots_outlive_event_history_and_respect_ownership(self):
+        owner = Mock(id=9)
+        owner.has_permission.return_value = False
+        payload = {"type": "training.progress", "progress": {"step": 1, "total": 50}}
+        with patch.object(callback_service, "_job_context", side_effect=lambda job: {"user_id": 9 if job == "quiet" else 3}):
+            self.service.handle_incoming({**payload, "job_id": "quiet"})
+            for _ in range(self.store.max_events + 1):
+                self.service.handle_incoming({**payload, "job_id": "busy"})
+        revision, rows = self.service.training_runs_since(-1, owner)
+        self.assertEqual([row["job_id"] for row in rows], ["quiet"])
+        self.assertIsNone(self.service.training_runs_since(revision, owner)[1])
+        self.assertIsNone(self.service.latest_for_job("quiet"))
+
+    def test_assigned_worker_final_status_overrides_training_summary(self):
+        context = {"assigned_worker": True, "worker": "H200"}
+        with patch.object(callback_service, "_job_context", return_value=context):
+            self.service.handle_incoming({"type": "training.progress", "job_id": "assigned", "progress": {"step": 5}})
+            self.service.handle_incoming({"type": "training.summary", "job_id": "assigned"})
+            self.service.handle_incoming(
+                {"type": "training.status", "job_id": "assigned", "status": "failed"}, assigned_worker=context
+            )
+            self.assertIsNone(
+                self.service.handle_incoming({"type": "training.status", "job_id": "assigned", "status": "running"})
+            )
+            for service in (self.service, CallbackService(self.store)):
+                (row,) = service.training_runs_since(-1)[1]
+                self.assertEqual((row["status"], row["progress"]["step"]), ("failed", 5))
+
     def test_captionflow_job_detection_is_cached(self) -> None:
         calls = []
 
@@ -318,8 +398,8 @@ class CallbackServiceTestCase(unittest.TestCase):
             "simpletuner.simpletuner_sdk.server.services.cloud.storage.job_repository.get_job_repository",
             return_value=FakeRepository(),
         ):
-            self.assertTrue(callback_service._is_captionflow_job("caption-job"))
-            self.assertTrue(callback_service._is_captionflow_job("caption-job"))
+            self.assertTrue(callback_service._job_context("caption-job")["captionflow"])
+            self.assertTrue(callback_service._job_context("caption-job")["captionflow"])
 
         self.assertEqual(calls, ["caption-job"])
 

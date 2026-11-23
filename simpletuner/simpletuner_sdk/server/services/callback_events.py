@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
@@ -42,6 +43,8 @@ class StageStatus(str, Enum):
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
+    SKIPPED = "skipped"
+    CANCELLED = "cancelled"
 
 
 @dataclass(frozen=True)
@@ -66,7 +69,7 @@ class ProgressData:
         if percent is None:
             return None
         numeric = float(percent)
-        if numeric != numeric:  # NaN guard
+        if not math.isfinite(numeric):
             return None
         return max(0.0, min(100.0, numeric))
 
@@ -90,31 +93,36 @@ class ProgressData:
         label = _safe_str(
             payload.get("label") or payload.get("headline") or payload.get("title") or payload.get("readable_type")
         )
-        current = _maybe_number(
-            payload.get("current")
-            or payload.get("step")
-            or payload.get("current_step")
-            or payload.get("current_estimated_index")
-        )
-        total = _maybe_number(
-            payload.get("total")
-            or payload.get("max_steps")
-            or payload.get("total_steps")
-            or payload.get("total_num_steps")
-            or payload.get("total_elements")
-        )
 
-        percent = _maybe_number(payload.get("percent") or payload.get("progress"))
-        if percent is not None and percent <= 1 and payload.get("progress") is not None:
+        def first_number(*keys: str) -> float | None:
+            return next((parse_number(payload[key]) for key in keys if payload.get(key) is not None), None)
+
+        current = first_number("current", "step", "current_step", "global_step", "current_estimated_index")
+        total = first_number("total", "max_steps", "total_steps", "total_num_steps", "total_elements")
+        percent = first_number("percent", "progress")
+        if percent is not None and percent <= 1 and payload.get("percent") is None:
             percent *= 100
 
-        eta_seconds = _maybe_number(payload.get("eta_seconds") or payload.get("eta"))
+        eta_seconds = first_number("eta_seconds", "eta")
 
         metrics_raw = payload.get("metrics") or {}
         metrics = dict(metrics_raw) if isinstance(metrics_raw, Mapping) else {}
 
         extra_metrics = {}
-        for candidate in ("loss", "learning_rate", "lr", "accuracy"):
+        for candidate in (
+            "loss",
+            "learning_rate",
+            "lr",
+            "accuracy",
+            "epoch",
+            "total_epochs",
+            "step_speed_seconds",
+            "iteration_step_time_seconds",
+            "steps_per_second",
+            "samples_per_second",
+            "effective_batch_size",
+            "total_batch_size",
+        ):
             value = payload.get(candidate)
             if value is not None and candidate not in metrics:
                 extra_metrics[candidate] = value
@@ -344,13 +352,6 @@ class CallbackEvent:
         title = _safe_str(raw.get("title") or raw.get("headline") or raw.get("label"))
         message = _safe_str(raw.get("message") or raw.get("body"))
 
-        job_id = _safe_str(
-            raw.get("job_id")
-            or raw.get("job")
-            or raw.get("extra", {}).get("job_id")
-            or raw.get("progress", {}).get("job_id")
-        )
-
         timestamp = _coerce_timestamp(raw.get("timestamp"))
 
         progress_payload = raw.get("progress")
@@ -422,6 +423,16 @@ class CallbackEvent:
 
         data = raw.get("data") or raw.get("extras") or {}
         data = dict(data) if isinstance(data, Mapping) else {}
+
+        job_id = _safe_str(raw.get("job_id") or raw.get("job") or data.get("job_id"))
+        for source in (
+            raw.get("extra"),
+            progress_payload,
+            progress.metrics if progress else None,
+            stage.metadata if stage else None,
+        ):
+            if not job_id and isinstance(source, Mapping):
+                job_id = _safe_str(source.get("job_id"))
 
         reset_history = bool(raw.get("reset_history"))
 
@@ -508,14 +519,14 @@ def _coerce_timestamp(value: Any) -> datetime:
     return datetime.now(tz=timezone.utc)
 
 
-def _maybe_number(value: Any) -> float | None:
-    if value in (None, "", False):
+def parse_number(value: Any) -> float | None:
+    if value is None or isinstance(value, bool):
         return None
     try:
         numeric = float(value)
     except (TypeError, ValueError):
         return None
-    if numeric != numeric:  # NaN
+    if not math.isfinite(numeric):
         return None
     return numeric
 

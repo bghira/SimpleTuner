@@ -1183,6 +1183,8 @@ logger.info("Subprocess exiting")
         try:
             from simpletuner.simpletuner_sdk.api_state import APIState
 
+            if APIState.get_state("current_job_id") != self.job_id:
+                return
             if normalized == "completed":
                 progress_state = APIState.get_state("training_progress") or {}
                 if isinstance(progress_state, Mapping):

@@ -278,8 +278,15 @@ async def events_stream(request: Request, _user: User = Depends(get_current_user
             # Set up event monitoring task
             async def monitor_events():
                 nonlocal last_index
+                runs_revision = -1
                 while connection.active:
                     try:
+                        runs_revision, runs = callback_service.training_runs_since(runs_revision, _user)
+                        if runs is not None:
+                            await sse_manager.send_to_connection(
+                                connection.connection_id, {"type": "training.runs", "runs": runs}, event_type="message"
+                            )
+
                         # Check for new events
                         events = callback_service.stream_since(last_index)
 
@@ -326,6 +333,7 @@ async def events_stream(request: Request, _user: User = Depends(get_current_user
 
                             # Send non-broadcast events via polling
                             event_type, payload = CallbackPresenter.to_sse(event)
+                            payload["local"] = callback_service.is_local_job(event.job_id)
 
                             await sse_manager.send_to_connection(
                                 connection.connection_id,
