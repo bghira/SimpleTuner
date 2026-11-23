@@ -13,6 +13,7 @@ Categories:
 - health: Uptime, database latency, component status
 - circuit_breakers: Circuit breaker states and counts
 - provider: Cost limits, credit balance
+- workers: Worker hardware and active training telemetry
 """
 
 from __future__ import annotations
@@ -20,8 +21,13 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
+
+if TYPE_CHECKING:
+    from .auth.models import User
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +42,47 @@ ALL_CATEGORIES = {
     "health",
     "circuit_breakers",
     "provider",
+    "workers",
 }
+
+
+_WORKER_HOST_METRICS = {
+    "cpu_percent": ("cpu_percent", "Worker CPU utilization as a percentage"),
+    "memory_percent": ("memory_percent", "Worker host memory usage as a percentage"),
+}
+_WORKER_GPU_METRICS = {
+    "temperature_celsius": ("gpu_temperature_celsius", "Worker GPU temperature in Celsius"),
+    "fan_speed_percent": ("gpu_fan_speed_percent", "Worker GPU fan speed as a percentage"),
+    "gpu_utilization_percent": ("gpu_utilization_percent", "Worker GPU utilization as a percentage"),
+    "memory_utilization_percent": ("gpu_memory_utilization_percent", "Worker GPU memory utilization as a percentage"),
+    "memory_used_percent": ("gpu_memory_used_percent", "Worker GPU memory used as a percentage of capacity"),
+    "memory_used_bytes": ("gpu_memory_used_bytes", "Worker GPU memory used in bytes"),
+    "memory_total_bytes": ("gpu_memory_total_bytes", "Worker GPU memory capacity in bytes"),
+    "power_usage_watts": ("gpu_power_usage_watts", "Worker GPU power usage in watts"),
+}
+_WORKER_TRAINING_METRICS = {
+    "loss": ("training_loss", "Latest worker training loss"),
+    "parent_loss": ("training_parent_loss", "Latest worker training parent loss"),
+    "learning_rate": ("training_learning_rate", "Latest worker training learning rate"),
+    "epoch": ("training_epoch", "Current worker training epoch"),
+    "steps_per_second": ("training_steps_per_second", "Worker training steps per second"),
+    "samples_per_second": ("training_samples_per_second", "Worker training samples per second"),
+    "step_speed_seconds": ("training_step_duration_seconds", "Latest worker training step duration in seconds"),
+    "effective_batch_size": ("training_effective_batch_size", "Effective worker training batch size"),
+}
+_WORKER_METRIC_HELP = {
+    "system_sample_timestamp_seconds": "Server receipt time of the last worker system sample in Unix seconds",
+    "training_sample_timestamp_seconds": "Server receipt time of the last worker training sample in Unix seconds",
+    "training_step": "Latest reported worker training step",
+    **dict(_WORKER_HOST_METRICS.values()),
+    **dict(_WORKER_GPU_METRICS.values()),
+    **dict(_WORKER_TRAINING_METRICS.values()),
+}
+WORKER_METRIC_NAMES = [f"simpletuner_worker_{suffix}" for suffix in _WORKER_METRIC_HELP]
+
+
+def _escape_label(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
 
 
 @dataclass
@@ -66,7 +112,7 @@ class Metric:
 
         for mv in self.values:
             if mv.labels:
-                label_str = ",".join(f'{k}="{v}"' for k, v in sorted(mv.labels.items()))
+                label_str = ",".join(f'{k}="{_escape_label(v)}"' for k, v in sorted(mv.labels.items()))
                 metric_line = f"{self.name}{{{label_str}}} {mv.value}"
             else:
                 metric_line = f"{self.name} {mv.value}"
@@ -126,11 +172,12 @@ class CloudMetricsCollector:
         with self._lock:
             self._rate_limit_violations[endpoint] = self._rate_limit_violations.get(endpoint, 0) + 1
 
-    async def collect(self, categories: Optional[List[str]] = None) -> List[Metric]:
+    async def collect(self, categories: Optional[List[str]] = None, *, user: User | None = None) -> List[Metric]:
         """Collect metrics for specified categories.
 
         Args:
             categories: List of category names to collect. If None, collects all.
+            user: Limits worker telemetry to visible workers and jobs.
 
         Returns:
             List of Metric objects.
@@ -167,6 +214,9 @@ class CloudMetricsCollector:
 
         if "provider" in cats:
             metrics.extend(await self._collect_provider_metrics())
+
+        if "workers" in cats and user is not None:
+            metrics.extend(await self._collect_worker_metrics(user))
 
         return metrics
 
@@ -573,16 +623,54 @@ class CloudMetricsCollector:
 
         return metrics
 
-    async def export_prometheus(self, categories: Optional[List[str]] = None) -> str:
+    async def _collect_worker_metrics(self, user: User) -> List[Metric]:
+        from ..system_metrics_service import visible_system_workers, worker_system_status
+        from ..training_metrics_service import TRAINING_METRICS_SERVICE
+
+        values: dict[str, list[MetricValue]] = defaultdict(list)
+
+        def append_readings(readings, definitions, labels):
+            for source_key, (suffix, _) in definitions.items():
+                if (reading := readings.get(source_key)) is not None:
+                    values[suffix].append(MetricValue(reading, labels))
+
+        for worker in await visible_system_workers(user):
+            snapshot = worker_system_status(worker)
+            labels = {"worker_id": worker.worker_id}
+            if sampled_at := snapshot["sampled_at"]:
+                values["system_sample_timestamp_seconds"].append(
+                    MetricValue(datetime.fromisoformat(sampled_at).timestamp(), labels)
+                )
+            if snapshot["stale"]:
+                continue
+            append_readings(snapshot["system"], _WORKER_HOST_METRICS, labels)
+            for gpu in snapshot["gpus"]:
+                append_readings(gpu, _WORKER_GPU_METRICS, {**labels, "gpu_index": str(gpu["index"])})
+
+        for sample in await TRAINING_METRICS_SERVICE.latest_worker_samples(user):
+            labels = {"worker_id": sample["worker_id"], "job_id": sample["job_id"]}
+            values["training_step"].append(MetricValue(sample["step"], labels))
+            values["training_sample_timestamp_seconds"].append(
+                MetricValue(datetime.fromisoformat(sample["timestamp"]).timestamp(), labels)
+            )
+            append_readings(sample["metrics"], _WORKER_TRAINING_METRICS, labels)
+
+        return [
+            Metric(f"simpletuner_worker_{suffix}", _WORKER_METRIC_HELP[suffix], "gauge", points)
+            for suffix, points in sorted(values.items())
+        ]
+
+    async def export_prometheus(self, categories: Optional[List[str]] = None, *, user: User | None = None) -> str:
         """Export metrics in Prometheus text format.
 
         Args:
             categories: List of categories to export. If None, exports all.
+            user: Limits worker telemetry to visible workers and jobs.
 
         Returns:
             Prometheus-formatted metrics string.
         """
-        metrics = await self.collect(categories=categories)
+        metrics = await self.collect(categories=categories, user=user)
         if not metrics:
             return "# No metrics available\n"
         return "\n\n".join(m.to_prometheus() for m in metrics) + "\n"

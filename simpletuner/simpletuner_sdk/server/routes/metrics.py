@@ -448,7 +448,7 @@ async def readiness_check(
 
 @router.get("/prometheus")
 async def prometheus_metrics(
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
     """Export metrics in Prometheus text format.
 
@@ -473,6 +473,7 @@ async def prometheus_metrics(
     - health: Uptime, database latency, component status
     - circuit_breakers: Circuit breaker states
     - provider: Cost limits, credit balance
+    - workers: Worker hardware and active training telemetry
     """
     from fastapi.responses import PlainTextResponse
 
@@ -493,7 +494,7 @@ async def prometheus_metrics(
     categories = defaults.metrics_prometheus_categories
 
     collector = get_metrics_collector()
-    content = await collector.export_prometheus(categories=categories)
+    content = await collector.export_prometheus(categories=categories, user=user)
 
     return PlainTextResponse(
         content=content,

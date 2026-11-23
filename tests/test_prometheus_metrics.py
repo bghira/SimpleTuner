@@ -9,7 +9,10 @@ Tests the prometheus_metrics module:
 """
 
 import unittest
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
+
+from tests.unittest_support import APITestCase, create_router_client, run_async
 
 
 class TestMetricValue(unittest.TestCase):
@@ -87,6 +90,12 @@ class TestMetric(unittest.TestCase):
         output = metric.to_prometheus()
 
         self.assertIn("gauge_metric 3.14 1609459200000", output)
+
+    def test_to_prometheus_escapes_label_values(self):
+        from simpletuner.simpletuner_sdk.server.services.cloud.prometheus_metrics import Metric, MetricValue
+
+        metric = Metric("example", "An example", "gauge", [MetricValue(1, {"job_id": 'run"\\a\nb'})])
+        self.assertIn(r'example{job_id="run\"\\a\nb"} 1', metric.to_prometheus())
 
     def test_to_prometheus_label_sorting(self):
         """Test labels are sorted alphabetically for consistency."""
@@ -274,9 +283,116 @@ class TestAllCategories(unittest.TestCase):
             "health",
             "circuit_breakers",
             "provider",
+            "workers",
         }
 
         self.assertEqual(ALL_CATEGORIES, expected)
+
+
+class WorkerPrometheusExportTests(APITestCase, unittest.TestCase):
+    def test_scrape_and_preview_export_only_visible_worker_samples(self):
+        from simpletuner.simpletuner_sdk.server.models.worker import Worker, WorkerStatus, WorkerType
+        from simpletuner.simpletuner_sdk.server.routes.cloud import router as cloud_router
+        from simpletuner.simpletuner_sdk.server.routes.metrics import router as metrics_router
+        from simpletuner.simpletuner_sdk.server.routes.workers import router as workers_router
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth import User, get_current_user, get_optional_user
+        from simpletuner.simpletuner_sdk.server.services.cloud.base import JobType, UnifiedJob
+        from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.storage.job_repository import JobRepository
+        from simpletuner.simpletuner_sdk.server.services.worker_repository import WorkerRepository
+
+        user = User(id=1, username="scraper", email="scraper@example.com")
+        now = datetime.now(timezone.utc)
+
+        with patch.dict(BaseSQLiteStore._instances, clear=True):
+            workers = WorkerRepository(self.tmp_path / "workers.db")
+            jobs = JobRepository(self.tmp_path / "jobs.db")
+            with (
+                patch("simpletuner.simpletuner_sdk.server.services.worker_repository._worker_repository", workers),
+                patch("simpletuner.simpletuner_sdk.server.services.cloud.storage.job_repository._job_repository", jobs),
+                patch.dict("os.environ", {"SIMPLETUNER_WEB_UI_CONFIG": str(self.tmp_path / "webui")}),
+                create_router_client(metrics_router, workers_router, cloud_router) as client,
+            ):
+                client.app.dependency_overrides[get_current_user] = lambda: user
+                client.app.dependency_overrides[get_optional_user] = lambda: user
+                for owner in (1, 2):
+                    worker_id, job_id, token = f"metrics-worker-{owner}", f"metrics-job-{owner}", f"token-{owner}"
+                    run_async(
+                        workers.create_worker(
+                            Worker(
+                                worker_id=worker_id,
+                                name=f"Worker {owner}",
+                                worker_type=WorkerType.PERSISTENT,
+                                status=WorkerStatus.BUSY,
+                                token_hash=WorkerRepository.hash_token(token),
+                                user_id=owner,
+                                current_job_id=job_id,
+                            )
+                        )
+                    )
+                    run_async(
+                        jobs.add(
+                            UnifiedJob(
+                                job_id=job_id,
+                                job_type=JobType.LOCAL,
+                                provider="worker",
+                                status="running",
+                                config_name="shared",
+                                created_at=now.isoformat(),
+                                metadata={"worker_id": worker_id},
+                                user_id=owner,
+                            )
+                        )
+                    )
+                    headers = {"X-Worker-Token": token}
+                    client.post(
+                        "/api/workers/heartbeat",
+                        headers=headers,
+                        json={
+                            "worker_id": worker_id,
+                            "current_job_id": job_id,
+                            "status": "busy",
+                            "system_metrics": {"system/cpu_percent": 21, "system/gpu/0/temperature_celsius": 55},
+                        },
+                    ).raise_for_status()
+                    client.post(
+                        f"/api/workers/job/{job_id}/status",
+                        headers=headers,
+                        json={"progress": {"current": 42, "metrics": {"loss": 0.2}}},
+                    ).raise_for_status()
+
+                settings = {"prometheus_enabled": True, "prometheus_categories": ["workers"]}
+                client.put("/api/metrics/config", json=settings).raise_for_status()
+                self.assertEqual(client.get("/api/metrics/config").json()["prometheus_categories"], ["workers"])
+
+                scrape = client.get("/api/metrics/prometheus").raise_for_status().text
+                self.assertIn(
+                    'simpletuner_worker_gpu_temperature_celsius{gpu_index="0",worker_id="metrics-worker-1"} 55.0', scrape
+                )
+                self.assertIn(
+                    'simpletuner_worker_training_loss{job_id="metrics-job-1",worker_id="metrics-worker-1"} 0.2', scrape
+                )
+                self.assertNotIn("metrics-worker-2", scrape)
+                self.assertNotIn("metrics-job-2", scrape)
+
+                preview = client.post("/api/metrics/config/preview", json=["workers"]).raise_for_status().json()
+                self.assertEqual(preview["content"], scrape)
+                self.assertEqual(client.get("/api/cloud/metrics/prometheus").raise_for_status().text, scrape)
+                client.app.dependency_overrides[get_optional_user] = lambda: None
+                self.assertNotIn("simpletuner_worker_", client.get("/api/cloud/metrics/prometheus").raise_for_status().text)
+                self.assertNotIn(
+                    "simpletuner_worker_",
+                    client.post("/api/metrics/config/preview", json=["workers"]).raise_for_status().json()["content"],
+                )
+
+                worker = run_async(workers.get_worker("metrics-worker-1"))
+                stale_sample = {**worker.system_sample, "sampled_at": (now - timedelta(minutes=10)).isoformat()}
+                run_async(workers.update_worker(worker.worker_id, {"system_sample": stale_sample}))
+                run_async(jobs.mark_completed("metrics-job-1"))
+                scrape = client.get("/api/metrics/prometheus").raise_for_status().text
+                self.assertIn("simpletuner_worker_system_sample_timestamp_seconds", scrape)
+                self.assertNotIn("simpletuner_worker_gpu_temperature_celsius", scrape)
+                self.assertNotIn("simpletuner_worker_training_loss", scrape)
 
 
 if __name__ == "__main__":

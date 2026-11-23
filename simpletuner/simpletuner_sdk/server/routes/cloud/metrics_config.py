@@ -5,9 +5,11 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
+from ...services.cloud.auth import User, get_optional_user
+from ...services.cloud.prometheus_metrics import WORKER_METRIC_NAMES
 from ...services.webui_state import WebUIStateStore
 
 logger = logging.getLogger(__name__)
@@ -89,6 +91,11 @@ METRIC_CATEGORIES = {
             "simpletuner_credit_balance_usd",
             "simpletuner_estimated_jobs_remaining",
         ],
+    },
+    "workers": {
+        "name": "Workers",
+        "description": "Remote worker hardware and active training telemetry",
+        "metrics": WORKER_METRIC_NAMES,
     },
 }
 
@@ -272,13 +279,14 @@ async def apply_template(template_id: str) -> MetricsConfigResponse:
 
 
 @router.post("/preview", response_model=PreviewResponse)
-async def preview_export(categories: Optional[List[str]] = None) -> PreviewResponse:
+async def preview_export(
+    categories: Optional[List[str]] = None, user: User | None = Depends(get_optional_user)
+) -> PreviewResponse:
     """Preview Prometheus export output.
 
     If categories is not provided, uses the current configuration.
     """
     from ...services.cloud.prometheus_metrics import get_metrics_collector
-    from ..cloud.metrics import get_job_store
 
     store = WebUIStateStore()
     defaults = store.load_defaults()
@@ -292,7 +300,7 @@ async def preview_export(categories: Optional[List[str]] = None) -> PreviewRespo
 
     # Get metrics collector and export
     collector = get_metrics_collector()
-    content = await collector.export_prometheus(categories=cats)
+    content = await collector.export_prometheus(categories=cats, user=user)
 
     # Count metrics (lines starting with simpletuner_ that aren't HELP or TYPE)
     metric_count = sum(1 for line in content.split("\n") if line.startswith("simpletuner_") and not line.startswith("# "))
