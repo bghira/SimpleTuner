@@ -10,7 +10,9 @@ import asyncio
 import tempfile
 import time
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 
 class TestMemoryStateBackend(unittest.IsolatedAsyncioTestCase):
@@ -50,14 +52,17 @@ class TestMemoryStateBackend(unittest.IsolatedAsyncioTestCase):
 
     async def test_set_with_ttl(self):
         """Test TTL expiration."""
+        from simpletuner.simpletuner_sdk.server.services.cloud.state_backend.backends import memory
+
+        clock = self.enterContext(patch.object(memory, "time"))
+        clock.time.return_value = 100.0
         # Set with 1 second TTL
         await self.backend.set("ttl_key", b"expires_soon", ttl=1)
 
         # Should exist immediately
         self.assertEqual(await self.backend.get("ttl_key"), b"expires_soon")
 
-        # Wait for expiration
-        await asyncio.sleep(1.1)
+        clock.time.return_value += 1.1
 
         # Should be expired
         self.assertIsNone(await self.backend.get("ttl_key"))
@@ -223,10 +228,15 @@ class TestSQLiteStateBackend(unittest.IsolatedAsyncioTestCase):
 
     async def test_ttl_expiration(self):
         """Test TTL works with SQLite."""
+        from simpletuner.simpletuner_sdk.server.services.cloud.state_backend.backends import sqlite
+
+        clock = self.enterContext(patch.object(sqlite, "datetime", wraps=datetime))
+        start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        clock.now.return_value = start
         await self.backend.set("ttl_key", b"expires", ttl=1)
         self.assertEqual(await self.backend.get("ttl_key"), b"expires")
 
-        await asyncio.sleep(1.1)
+        clock.now.return_value = start + timedelta(seconds=1.1)
         self.assertIsNone(await self.backend.get("ttl_key"))
 
     async def test_counter_persistence(self):
@@ -239,10 +249,15 @@ class TestSQLiteStateBackend(unittest.IsolatedAsyncioTestCase):
 
     async def test_hash_with_ttl(self):
         """Test hash with TTL."""
+        from simpletuner.simpletuner_sdk.server.services.cloud.state_backend.backends import sqlite
+
+        clock = self.enterContext(patch.object(sqlite, "datetime", wraps=datetime))
+        start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        clock.now.return_value = start
         await self.backend.hset_with_ttl("hash_key", "field", b"value", ttl=1)
         self.assertEqual(await self.backend.hget("hash_key", "field"), b"value")
 
-        await asyncio.sleep(1.1)
+        clock.now.return_value = start + timedelta(seconds=1.1)
         self.assertIsNone(await self.backend.hget("hash_key", "field"))
 
 
@@ -371,12 +386,15 @@ class TestAsyncCircuitBreaker(unittest.IsolatedAsyncioTestCase):
 
     async def test_transitions_to_half_open(self):
         """Test circuit transitions to half-open after timeout."""
+        from simpletuner.simpletuner_sdk.server.services.cloud.state_backend.adapters import circuit_breaker
+
+        clock = self.enterContext(patch.object(circuit_breaker, "time"))
+        clock.time.return_value = 100.0
         # Open the circuit
         for _ in range(3):
             await self.breaker.record_failure()
 
-        # Wait for timeout
-        await asyncio.sleep(1.1)
+        clock.time.return_value += 1.1
 
         # Should be half-open now
         state = await self.breaker.get_state()
@@ -384,12 +402,15 @@ class TestAsyncCircuitBreaker(unittest.IsolatedAsyncioTestCase):
 
     async def test_closes_after_successes(self):
         """Test circuit closes after success threshold in half-open."""
+        from simpletuner.simpletuner_sdk.server.services.cloud.state_backend.adapters import circuit_breaker
+
+        clock = self.enterContext(patch.object(circuit_breaker, "time"))
+        clock.time.return_value = 100.0
         # Open the circuit
         for _ in range(3):
             await self.breaker.record_failure()
 
-        # Wait for half-open
-        await asyncio.sleep(1.1)
+        clock.time.return_value += 1.1
 
         # Record successes
         await self.breaker.record_success()
@@ -466,10 +487,14 @@ class TestAsyncTTLCache(unittest.IsolatedAsyncioTestCase):
 
     async def test_ttl_expiration(self):
         """Test cache TTL."""
+        from simpletuner.simpletuner_sdk.server.services.cloud.state_backend.backends import memory
+
+        clock = self.enterContext(patch.object(memory, "time"))
+        clock.time.return_value = 100.0
         await self.cache.set("key1", {"foo": "bar"}, ttl=1)
         self.assertIsNotNone(await self.cache.get("key1"))
 
-        await asyncio.sleep(1.1)
+        clock.time.return_value += 1.1
         self.assertIsNone(await self.cache.get("key1"))
 
     async def test_get_or_set(self):
@@ -613,6 +638,10 @@ class TestOIDCStateStore(unittest.IsolatedAsyncioTestCase):
 
     async def test_pending_state_expiration(self):
         """Test pending state expires."""
+        from simpletuner.simpletuner_sdk.server.services.cloud.state_backend.backends import memory
+
+        clock = self.enterContext(patch.object(memory, "time"))
+        clock.time.return_value = 100.0
         # Use short TTL store
         from simpletuner.simpletuner_sdk.server.services.cloud.state_backend.adapters.oidc_state import OIDCStateStore
 
@@ -626,8 +655,7 @@ class TestOIDCStateStore(unittest.IsolatedAsyncioTestCase):
         # Should exist
         self.assertIsNotNone(await short_store.get_pending_state(pending.state))
 
-        # Wait for expiration
-        await asyncio.sleep(1.1)
+        clock.time.return_value += 1.1
 
         # Should be expired
         self.assertIsNone(await short_store.get_pending_state(pending.state))

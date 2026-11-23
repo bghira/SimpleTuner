@@ -14,16 +14,12 @@ from simpletuner.helpers.training.save_hooks import LORA_SAFETENSORS_FILENAME, S
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 
-def _concurrent_writer(directory, barrier, iterations, errors):
+def _concurrent_writer(directory, barrier, iterations):
     from simpletuner.helpers.training.state_tracker import StateTracker as tracker
 
     for _ in range(iterations):
         barrier.wait()
-        try:
-            tracker.save_ramtorch_prefetch_orders(directory)
-        except FileNotFoundError:
-            with errors.get_lock():
-                errors.value += 1
+        tracker.save_ramtorch_prefetch_orders(directory)
 
 
 class SaveHookManagerTests(unittest.TestCase):
@@ -251,18 +247,23 @@ class RamtorchPrefetchOrderWriterTests(unittest.TestCase):
         ctx = multiprocessing.get_context("spawn")
         with tempfile.TemporaryDirectory() as tmpdir:
             barrier = ctx.Barrier(2, timeout=60)
-            errors = ctx.Value("i", 0)
-            workers = [ctx.Process(target=_concurrent_writer, args=(tmpdir, barrier, 30, errors)) for _ in range(2)]
-            for worker in workers:
-                worker.start()
-            for worker in workers:
-                worker.join(120)
+            workers = [ctx.Process(target=_concurrent_writer, args=(tmpdir, barrier, 30)) for _ in range(2)]
+            try:
+                for worker in workers:
+                    worker.start()
+                for worker in workers:
+                    worker.join(120)
+                    self.assertEqual(worker.exitcode, 0, "Concurrent save worker timed out or failed")
+            finally:
+                for worker in workers:
+                    if worker.is_alive():
+                        worker.kill()
+                        worker.join()
 
-            self.assertEqual(errors.value, 0)
             entries = sorted(p.name for p in Path(tmpdir).iterdir())
             self.assertEqual(entries, ["ramtorch_prefetch_orders.json"])
             with (Path(tmpdir) / "ramtorch_prefetch_orders.json").open() as handle:
-                json.load(handle)
+                self.assertEqual(json.load(handle), {"version": 1, "components": {}})
 
 
 if __name__ == "__main__":

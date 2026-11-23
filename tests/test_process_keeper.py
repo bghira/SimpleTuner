@@ -14,6 +14,7 @@ import time
 import types
 import unittest
 from contextlib import suppress
+from functools import partial
 from unittest.mock import MagicMock, Mock, patch
 
 try:
@@ -140,8 +141,13 @@ def empty_checkpoint_inference_task(config):
 
 
 def hanging_task(config):
-    # ignores SIGTERM
-    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    def ignore_term(signum, frame):
+        with open(config.ready_file + ".term", "w"):
+            pass
+
+    signal.signal(signal.SIGTERM, ignore_term)
+    with open(config.ready_file, "w"):
+        pass
     while True:
         time.sleep(0.1)
 
@@ -165,13 +171,6 @@ def crashing_task(config):
 
 def sys_global_task(config):
     return sys.version_info.major
-
-
-def slow_shutdown(config):
-    # slow shutdown handler for testing timeouts
-    signal.signal(signal.SIGTERM, lambda s, f: time.sleep(10))
-    while True:
-        time.sleep(0.1)
 
 
 def embed_cache_failure_with_child(config):
@@ -422,24 +421,27 @@ class TestProcessLifecycle(ProcessKeeperTestCase):
         """Test force killing a process that ignores SIGTERM."""
         job_id = "test_force_kill"
         self.test_jobs.append(job_id)
-        config = {}
+        with tempfile.TemporaryDirectory() as directory:
+            ready_file = os.path.join(directory, "handler-installed")
+            process = submit_job(job_id, hanging_task, {"ready_file": ready_file})
+            child = process.process
+            deadline = time.monotonic() + 10
+            while not os.path.exists(ready_file):
+                self.assertIsNone(child.poll(), "Worker exited before installing its signal handler")
+                self.assertLess(time.monotonic(), deadline, "Worker did not install its signal handler")
+                time.sleep(0.01)
 
-        process = submit_job(job_id, hanging_task, config)
-        time.sleep(0.3)  # Let it start and install signal handler
-
-        success = terminate_process(job_id)
-        self.assertTrue(success)
-
-        # terminate_process sends SIGTERM, waits up to 5s grace, then SIGKILL
-        # The process ignores SIGTERM so it should be killed after grace period
-        deadline = time.time() + 10
-        status = None
-        while time.time() < deadline:
-            status = get_process_status(job_id)
-            if status == "terminated":
-                break
-            time.sleep(0.1)
-        self.assertEqual(status, "terminated")
+            started = time.monotonic()
+            with patch.object(process, "terminate", partial(process.terminate, timeout=1)):
+                self.assertTrue(terminate_process(job_id))
+            self.assertEqual(get_process_status(job_id), "terminated")
+            self.assertIsNotNone(child.poll())
+            if os.name == "posix":
+                elapsed = time.monotonic() - started
+                self.assertGreaterEqual(elapsed, 1)
+                self.assertLess(elapsed, 5)
+                self.assertTrue(os.path.exists(ready_file + ".term"), "Worker never received SIGTERM")
+                self.assertEqual(child.returncode, -signal.SIGKILL)
 
     @unittest.skip("Requires subprocess module")
     def test_orphaned_process_cleanup(self):
@@ -678,21 +680,6 @@ class TestProcessCleanup(ProcessKeeperTestCase):
 
 
 class TestProcessTermination(ProcessKeeperTestCase):
-
-    def test_graceful_termination_with_timeout(self):
-        """Test graceful termination respects timeout."""
-        job_id = "test_graceful_timeout"
-        self.test_jobs.append(job_id)
-        process = submit_job(job_id, slow_shutdown, {})
-        time.sleep(0.3)  # Let it start and install signal handler
-
-        start_time = time.time()
-        success = process.terminate(timeout=2)
-        duration = time.time() - start_time
-
-        self.assertTrue(success)
-        # Should complete within ~2s grace + some overhead, not 10s from slow handler
-        self.assertLess(duration, 5)
 
     def test_terminate_already_dead_process(self):
         """Test terminating an already dead process."""

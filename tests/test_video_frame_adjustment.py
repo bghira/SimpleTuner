@@ -797,7 +797,7 @@ class TestAdjustVideoFramesForModel(unittest.TestCase):
 
     def test_none_model_returns_unchanged(self):
         """When model_class is None, video should be unchanged"""
-        video = np.random.rand(100, 480, 640, 3)
+        video = np.arange(100 * 3 * 5 * 3, dtype=np.int32).reshape(100, 3, 5, 3)
         adjusted, original, was_adjusted = adjust_video_frames_for_model(video, None)
         np.testing.assert_array_equal(adjusted, video)
         self.assertEqual(original, 100)
@@ -805,7 +805,7 @@ class TestAdjustVideoFramesForModel(unittest.TestCase):
 
     def test_model_without_method_returns_unchanged(self):
         """When model doesn't have adjust_video_frames, video should be unchanged"""
-        video = np.random.rand(100, 480, 640, 3)
+        video = np.arange(100 * 3 * 5 * 3, dtype=np.int32).reshape(100, 3, 5, 3)
         mock_model = MagicMock(spec=[])
         adjusted, original, was_adjusted = adjust_video_frames_for_model(video, mock_model)
         np.testing.assert_array_equal(adjusted, video)
@@ -814,7 +814,7 @@ class TestAdjustVideoFramesForModel(unittest.TestCase):
 
     def test_no_adjustment_needed(self):
         """When video already satisfies constraint, should be unchanged"""
-        video = np.random.rand(49, 480, 640, 3)
+        video = np.arange(49 * 3 * 5 * 3, dtype=np.int32).reshape(49, 3, 5, 3)
         mock_model = MagicMock()
         mock_model.adjust_video_frames = MagicMock(return_value=49)
         adjusted, original, was_adjusted = adjust_video_frames_for_model(video, mock_model)
@@ -824,7 +824,7 @@ class TestAdjustVideoFramesForModel(unittest.TestCase):
 
     def test_adjustment_trims_video(self):
         """When adjustment is needed, video should be trimmed"""
-        video = np.random.rand(119, 480, 640, 3)
+        video = np.arange(119 * 3 * 5 * 3, dtype=np.int32).reshape(119, 3, 5, 3)
         mock_model = MagicMock()
         mock_model.adjust_video_frames = MagicMock(return_value=113)
         adjusted, original, was_adjusted = adjust_video_frames_for_model(video, mock_model)
@@ -836,7 +836,7 @@ class TestAdjustVideoFramesForModel(unittest.TestCase):
 
     def test_ltxvideo2_adjustment_via_helper(self):
         """Test adjustment via helper with actual LTXVideo2 model"""
-        video = np.random.rand(119, 480, 640, 3)
+        video = np.arange(119 * 3 * 5 * 3, dtype=np.int32).reshape(119, 3, 5, 3)
         adjusted, original, was_adjusted = adjust_video_frames_for_model(video, LTXVideo2)
         self.assertEqual(adjusted.shape[0], 113)
         self.assertEqual(original, 119)
@@ -844,10 +844,10 @@ class TestAdjustVideoFramesForModel(unittest.TestCase):
 
     def test_adjustment_preserves_shape_except_frames(self):
         """Adjustment should only change frame dimension"""
-        video = np.random.rand(100, 480, 640, 3)
+        video = np.arange(100 * 3 * 5 * 3, dtype=np.int32).reshape(100, 3, 5, 3)
         adjusted, _, _ = adjust_video_frames_for_model(video, LTXVideo2)
-        self.assertEqual(adjusted.shape[1], 480)  # Height unchanged
-        self.assertEqual(adjusted.shape[2], 640)  # Width unchanged
+        self.assertEqual(adjusted.shape[1], 3)  # Height unchanged
+        self.assertEqual(adjusted.shape[2], 5)  # Width unchanged
         self.assertEqual(adjusted.shape[3], 3)  # Channels unchanged
 
     def test_adjustment_preserves_frame_order(self):
@@ -886,10 +886,12 @@ class TestFrameAdjustmentIntegration(unittest.TestCase):
         ]
         for shape in dimensions:
             with self.subTest(shape=shape):
-                video = np.random.rand(*shape)
+                frames = np.arange(shape[0], dtype=np.uint8)[:, None, None, None]
+                video = np.broadcast_to(frames, shape)
                 adjusted, original, was_adjusted = adjust_video_frames_for_model(video, LTXVideo2)
                 self.assertEqual(adjusted.shape[0], 113)
                 self.assertEqual(adjusted.shape[1:], video.shape[1:])
+                np.testing.assert_array_equal(adjusted[:, 0, 0, 0], np.arange(113))
 
 
 if __name__ == "__main__":

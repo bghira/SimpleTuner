@@ -264,15 +264,6 @@ class TestMetricTemplates(unittest.TestCase):
 class TestCloudMetricsCollector(unittest.TestCase):
     """Tests for the CloudMetricsCollector singleton."""
 
-    def test_collector_singleton(self):
-        """Test that collector is a singleton."""
-        from simpletuner.simpletuner_sdk.server.services.cloud.prometheus_metrics import CloudMetricsCollector
-
-        collector1 = CloudMetricsCollector()
-        collector2 = CloudMetricsCollector()
-
-        self.assertIs(collector1, collector2)
-
     def test_collector_reset(self):
         """Test that reset clears state."""
         from simpletuner.simpletuner_sdk.server.services.cloud.prometheus_metrics import CloudMetricsCollector

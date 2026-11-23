@@ -6,7 +6,6 @@ Provides common setUp/tearDown methods, fixtures, and helper methods.
 import os
 import unittest
 from typing import Any, Dict, List, Optional, Tuple
-from unittest.mock import MagicMock, Mock, patch
 
 import torch
 import torch.nn as nn
@@ -52,20 +51,9 @@ class TransformerBaseTest(unittest.TestCase):
         # Create common test tensors
         self._create_common_tensors()
 
-        # Create mock components
-        self._create_mock_components()
-
-        # Set up patches for common imports
-        self._setup_patches()
-
     def tearDown(self):
-        """Clean up after each test."""
-        # Clean up CUDA memory if available
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-
-        # Stop any remaining patches
-        self._cleanup_patches()
 
     def _create_common_tensors(self):
         """Create commonly used test tensors."""
@@ -80,34 +68,6 @@ class TransformerBaseTest(unittest.TestCase):
         self.image_rotary_emb = self.tensor_gen.create_image_rotary_emb(self.seq_len, self.head_dim, self.device)
         self.pooled_projections = self.tensor_gen.create_pooled_projections(self.batch_size, 768, self.device)
         self.guidance = self.tensor_gen.create_guidance(self.batch_size, self.device)
-
-    def _create_mock_components(self):
-        """Create commonly used mock components."""
-        self.mock_attention = MockComponents.create_mock_attention()
-        self.mock_norm = MockComponents.create_mock_norm_layer()
-        self.mock_feed_forward = MockComponents.create_mock_feed_forward()
-        self.mock_embedding = MockComponents.create_mock_embedding()
-
-    def _setup_patches(self):
-        """Set up common patches."""
-        self.patches = []
-
-        # Patch TREADRouter to avoid import issues in tests
-        tread_patch = patch("simpletuner.helpers.training.tread.TREADRouter")
-        self.mock_tread_router = tread_patch.start()
-        self.patches.append(tread_patch)
-
-        # Mock TREADRouter instance
-        self.mock_tread_instance = Mock()
-        self.mock_tread_instance.should_route.return_value = False
-        self.mock_tread_instance.get_routing_mask.return_value = None
-        self.mock_tread_router.return_value = self.mock_tread_instance
-
-    def _cleanup_patches(self):
-        """Clean up all patches."""
-        for patch_obj in self.patches:
-            patch_obj.stop()
-        self.patches.clear()
 
     def create_mock_config(self, **overrides) -> MockDiffusersConfig:
         """Create a mock configuration with optional overrides."""
@@ -236,30 +196,6 @@ class TransformerBaseTest(unittest.TestCase):
         inputs.update(overrides)
         return inputs
 
-    def test_basic_instantiation(self):
-        """Test basic model instantiation - to be overridden by subclasses."""
-        pass
-
-    def test_forward_pass_minimal(self):
-        """Test minimal forward pass - to be overridden by subclasses."""
-        pass
-
-    def test_forward_pass_full(self):
-        """Test full forward pass - to be overridden by subclasses."""
-        pass
-
-    def test_typo_prevention(self):
-        """Test typo prevention - to be overridden by subclasses."""
-        pass
-
-    def test_edge_cases(self):
-        """Test edge cases - to be overridden by subclasses."""
-        pass
-
-    def test_error_handling(self):
-        """Test error handling - to be overridden by subclasses."""
-        pass
-
 
 class AttentionProcessorTestMixin:
     """Mixin for testing attention processors."""
@@ -277,7 +213,7 @@ class AttentionProcessorTestMixin:
         self.assertTrue(callable(processor))
 
         # Create mock attention and test inputs
-        mock_attn = self.mock_attention
+        mock_attn = MockComponents.create_mock_attention()
         hidden_states = self.hidden_states
 
         # Test basic call

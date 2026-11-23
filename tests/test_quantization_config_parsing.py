@@ -275,6 +275,7 @@ class TestQuantizationConfigParsing(unittest.TestCase):
 
         modules = {
             "sdnq": sdnq_module,
+            "sdnq.common": SimpleNamespace(use_torch_compile=False, compile_func=Mock()),
             "sdnq.dequantizer": dequantizer_module,
             "sdnq.layers": layers_module,
             "sdnq.quant_utils": quant_utils_module,

@@ -1,14 +1,16 @@
+import io
 import json
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import torch
 from safetensors import safe_open
 from safetensors.torch import load_file, save_file
 
-from scripts.convert_krea2_lokr_to_comfyui import split_fused_lokr
+from scripts.convert_krea2_lokr_to_comfyui import main, split_fused_lokr
 
 
 class Krea2LoKRExportTests(unittest.TestCase):
@@ -129,6 +131,16 @@ class Krea2LoKRExportTests(unittest.TestCase):
             with self.subTest(keys=list(changes)), self.assertRaises(ValueError):
                 split_fused_lokr(valid | changes, self.config, {prefix: torch.ones(48, 32)})
 
+    def assert_cli_usage_error(self, args, message):
+        with (
+            patch("sys.argv", args),
+            patch("sys.stderr", new_callable=io.StringIO) as stderr,
+            self.assertRaises(SystemExit) as error,
+        ):
+            main()
+        self.assertEqual(error.exception.code, 2)
+        self.assertIn(message, stderr.getvalue())
+
     def test_cli_preserves_metadata_and_native_checkpoint(self):
         import sys
 
@@ -155,7 +167,7 @@ class Krea2LoKRExportTests(unittest.TestCase):
             with safe_open(target, framework="pt") as checkpoint:
                 self.assertEqual(checkpoint.metadata(), {"format": "pt", "modelspec.title": "test"})
             command[command.index(str(target))] = str(source)
-            self.assertNotEqual(subprocess.run(command, capture_output=True).returncode, 0)
+            self.assert_cli_usage_error(command[1:], "output must differ from the native checkpoint")
             self.assertEqual(source.read_bytes(), original)
 
     def test_cli_materializes_fused_and_unfused_dora_against_original_base(self):
@@ -199,8 +211,7 @@ class Krea2LoKRExportTests(unittest.TestCase):
                 base_path,
             )
             config.write_text(json.dumps(self.config))
-            command = [
-                sys.executable,
+            args = [
                 "scripts/convert_krea2_lokr_to_comfyui.py",
                 "--input",
                 str(source),
@@ -209,8 +220,9 @@ class Krea2LoKRExportTests(unittest.TestCase):
                 "--transformer-config",
                 str(config),
             ]
-            self.assertNotEqual(subprocess.run(command, capture_output=True).returncode, 0)
-            subprocess.run(command + ["--base-model", str(base_path)], capture_output=True, check=True)
+            self.assert_cli_usage_error(args, "DoRA export requires --base-model")
+            with patch.object(sys, "argv", args + ["--base-model", str(base_path)]):
+                main()
             converted = load_file(target)
             self.assertFalse(any(key.endswith(".dora_scale") for key in converted))
             for name, original in ((prefix, base), (other, base_other)):

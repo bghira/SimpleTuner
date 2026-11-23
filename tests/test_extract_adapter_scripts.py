@@ -1,4 +1,3 @@
-import subprocess
 import sys
 import tempfile
 import unittest
@@ -11,6 +10,8 @@ from safetensors.torch import load_file, safe_open, save_file
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 from extract_adapter_common import TensorSource  # noqa: E402
+from extract_lycoris_adapter import main as extract_lycoris
+from extract_peft_lora import main as extract_peft
 
 
 class ExtractAdapterScriptsTests(unittest.TestCase):
@@ -36,10 +37,11 @@ class ExtractAdapterScriptsTests(unittest.TestCase):
             base_path, target_path, delta = self._write_pair(tmpdir)
             output_path = tmpdir / "adapter.safetensors"
 
-            subprocess.run(
+            with patch.object(
+                sys,
+                "argv",
                 [
-                    sys.executable,
-                    str(REPO_ROOT / "scripts" / "extract_peft_lora.py"),
+                    "extract_peft_lora.py",
                     str(base_path),
                     str(target_path),
                     str(output_path),
@@ -50,9 +52,8 @@ class ExtractAdapterScriptsTests(unittest.TestCase):
                     "--target-modules",
                     "all-linear",
                 ],
-                cwd=REPO_ROOT,
-                check=True,
-            )
+            ):
+                extract_peft()
 
             state = load_file(output_path)
             self.assertEqual(
@@ -72,10 +73,11 @@ class ExtractAdapterScriptsTests(unittest.TestCase):
             base_path, target_path, delta = self._write_pair(tmpdir)
             output_path = tmpdir / "adapter.safetensors"
 
-            subprocess.run(
+            with patch.object(
+                sys,
+                "argv",
                 [
-                    sys.executable,
-                    str(REPO_ROOT / "scripts" / "extract_lycoris_adapter.py"),
+                    "extract_lycoris_adapter.py",
                     str(base_path),
                     str(target_path),
                     str(output_path),
@@ -86,9 +88,8 @@ class ExtractAdapterScriptsTests(unittest.TestCase):
                     "--target-modules",
                     "all-linear",
                 ],
-                cwd=REPO_ROOT,
-                check=True,
-            )
+            ):
+                extract_lycoris()
 
             state = load_file(output_path)
             self.assertEqual(

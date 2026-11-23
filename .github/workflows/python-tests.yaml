@@ -28,8 +28,12 @@ on:
 
 jobs:
   python-tests:
-    name: Python Tests
+    name: Python Tests (${{ matrix.letters }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        letters: [a-p, q-z]
 
     steps:
     - uses: actions/checkout@v4
@@ -41,8 +45,8 @@ jobs:
 
     - name: Install Dependencies
       run: |
-        python -m pip install --upgrade pip
-        python -m pip install -e '.[test,cpu]' --extra-index-url https://download.pytorch.org/whl/cpu
+        python -m pip install uv==0.13.9
+        uv pip install --system --torch-backend=cpu -e '.[test,cpu]'
 
     - name: Verify CPU PyTorch dependencies
       run: |
@@ -56,7 +60,7 @@ jobs:
         PY
 
     - name: Run Tests
-      run: python -m unittest discover -v tests/
+      run: python -m unittest discover -v tests/ -p 'test_[${{ matrix.letters }}]*.py'
 
   js-tests:
     name: JavaScript Tests

@@ -132,38 +132,22 @@ class TestTransformerTestSuiteIntegration(unittest.TestCase):
 
     def test_consistent_test_method_patterns(self):
         """Test that shared-framework transformer tests keep the standard method patterns."""
-        required_patterns = ["test_basic_instantiation", "test_forward_pass", "test_typo_prevention"]
-
         for test_file in self.test_files:
             with self.subTest(test_file=os.path.basename(test_file)):
-                with open(test_file, "r") as f:
-                    content = f.read()
-
-                if "TransformerBaseTest" not in content:
+                module = self._load_test_module(test_file)
+                classes = [
+                    cls
+                    for cls in vars(module).values()
+                    if isinstance(cls, type) and cls.__module__ == module.__name__ and issubclass(cls, TransformerBaseTest)
+                ]
+                if not classes:
                     continue
 
-                module = self._load_test_module(test_file)
-
-                # Get all test methods
-                test_methods = []
-                for name in dir(module):
-                    obj = getattr(module, name)
-                    if isinstance(obj, type) and issubclass(obj, unittest.TestCase) and obj.__module__ == module.__name__:
-                        for method_name in dir(obj):
-                            if method_name.startswith("test_"):
-                                test_methods.append(method_name)
-
-                # Check for required patterns
-                found_patterns = set()
-                for method in test_methods:
-                    for pattern in required_patterns:
-                        if pattern in method:
-                            found_patterns.add(pattern)
-
-                missing_patterns = set(required_patterns) - found_patterns
-                self.assertEqual(
-                    len(missing_patterns), 0, f"Missing test patterns in {os.path.basename(test_file)}: {missing_patterns}"
-                )
+                methods = {
+                    name for cls in classes for name in unittest.defaultTestLoader.getTestCaseNames(cls) if name in vars(cls)
+                }
+                for pattern in ("instantiation", "forward_pass", "typo"):
+                    self.assertTrue(any(pattern in name for name in methods), f"No concrete {pattern} test")
 
     def test_helper_utilities_consistency(self):
         """Test that files using the shared framework import the shared helpers."""

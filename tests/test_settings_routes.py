@@ -18,29 +18,21 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from fastapi.testclient import TestClient
+from simpletuner.simpletuner_sdk.server import ServerMode
+from simpletuner.simpletuner_sdk.server.routes.cloud.settings import router
+from tests.unittest_support import APITestCase, create_router_client
 
-from tests.unittest_support import APITestCase
+
+def settings_client():
+    return create_router_client(router, prefix="/api/cloud")
 
 
 class TestHintsRoutes(APITestCase, unittest.TestCase):
     """Tests for UI hints management."""
 
-    def setUp(self):
-        super().setUp()
-
-    def tearDown(self):
-        super().tearDown()
-
-    def _get_client(self):
-        from simpletuner.simpletuner_sdk.server import ServerMode, create_app
-
-        app = create_app(mode=ServerMode.UNIFIED)
-        return TestClient(app)
-
     def test_get_hints_status(self):
         """GET /api/cloud/hints/status should return hint status."""
-        with self._get_client() as client:
+        with settings_client() as client:
             response = client.get("/api/cloud/hints/status")
             self.assertEqual(response.status_code, 200)
             data = response.json()
@@ -52,7 +44,7 @@ class TestHintsRoutes(APITestCase, unittest.TestCase):
 
     def test_get_all_hints(self):
         """GET /api/cloud/hints should return all dismissed hints."""
-        with self._get_client() as client:
+        with settings_client() as client:
             response = client.get("/api/cloud/hints")
             self.assertEqual(response.status_code, 200)
             data = response.json()
@@ -62,7 +54,7 @@ class TestHintsRoutes(APITestCase, unittest.TestCase):
 
     def test_dismiss_dataloader_hint(self):
         """POST /api/cloud/hints/dismiss/dataloader should dismiss hint."""
-        with self._get_client() as client:
+        with settings_client() as client:
             response = client.post("/api/cloud/hints/dismiss/dataloader")
             self.assertEqual(response.status_code, 200)
             data = response.json()
@@ -76,7 +68,7 @@ class TestHintsRoutes(APITestCase, unittest.TestCase):
 
     def test_dismiss_git_hint(self):
         """POST /api/cloud/hints/dismiss/git should dismiss git hint."""
-        with self._get_client() as client:
+        with settings_client() as client:
             response = client.post("/api/cloud/hints/dismiss/git")
             self.assertEqual(response.status_code, 200)
             data = response.json()
@@ -86,7 +78,7 @@ class TestHintsRoutes(APITestCase, unittest.TestCase):
 
     def test_show_dataloader_hint(self):
         """POST /api/cloud/hints/show/dataloader should re-show hint."""
-        with self._get_client() as client:
+        with settings_client() as client:
             # First dismiss
             client.post("/api/cloud/hints/dismiss/dataloader")
 
@@ -103,7 +95,7 @@ class TestHintsRoutes(APITestCase, unittest.TestCase):
 
     def test_dismiss_admin_hint(self):
         """POST should support admin hints with admin_ prefix."""
-        with self._get_client() as client:
+        with settings_client() as client:
             response = client.post("/api/cloud/hints/dismiss/admin_overview")
             self.assertEqual(response.status_code, 200)
             data = response.json()
@@ -113,7 +105,7 @@ class TestHintsRoutes(APITestCase, unittest.TestCase):
 
     def test_dismiss_unknown_hint_error(self):
         """POST with unknown hint should return 400."""
-        with self._get_client() as client:
+        with settings_client() as client:
             response = client.post("/api/cloud/hints/dismiss/unknown_hint_type")
             self.assertEqual(response.status_code, 400)
             self.assertIn("Unknown hint", response.json()["detail"])
@@ -122,21 +114,9 @@ class TestHintsRoutes(APITestCase, unittest.TestCase):
 class TestDataConsentRoutes(APITestCase, unittest.TestCase):
     """Tests for data consent settings."""
 
-    def setUp(self):
-        super().setUp()
-
-    def tearDown(self):
-        super().tearDown()
-
-    def _get_client(self):
-        from simpletuner.simpletuner_sdk.server import ServerMode, create_app
-
-        app = create_app(mode=ServerMode.UNIFIED)
-        return TestClient(app)
-
     def test_get_data_consent_setting(self):
         """GET /api/cloud/data-consent/setting should return consent mode."""
-        with self._get_client() as client:
+        with settings_client() as client:
             response = client.get("/api/cloud/data-consent/setting")
             self.assertEqual(response.status_code, 200)
             data = response.json()
@@ -146,7 +126,7 @@ class TestDataConsentRoutes(APITestCase, unittest.TestCase):
 
     def test_set_data_consent_allow(self):
         """PUT /api/cloud/data-consent/setting should update to allow."""
-        with self._get_client() as client:
+        with settings_client() as client:
             response = client.put(
                 "/api/cloud/data-consent/setting",
                 json={"consent": "allow"},
@@ -163,7 +143,7 @@ class TestDataConsentRoutes(APITestCase, unittest.TestCase):
 
     def test_set_data_consent_deny(self):
         """PUT should update to deny."""
-        with self._get_client() as client:
+        with settings_client() as client:
             response = client.put(
                 "/api/cloud/data-consent/setting",
                 json={"consent": "deny"},
@@ -173,7 +153,7 @@ class TestDataConsentRoutes(APITestCase, unittest.TestCase):
 
     def test_set_data_consent_ask(self):
         """PUT should update to ask."""
-        with self._get_client() as client:
+        with settings_client() as client:
             response = client.put(
                 "/api/cloud/data-consent/setting",
                 json={"consent": "ask"},
@@ -183,7 +163,7 @@ class TestDataConsentRoutes(APITestCase, unittest.TestCase):
 
     def test_set_data_consent_invalid_value(self):
         """PUT with invalid consent value should return 400."""
-        with self._get_client() as client:
+        with settings_client() as client:
             response = client.put(
                 "/api/cloud/data-consent/setting",
                 json={"consent": "invalid"},
@@ -205,15 +185,9 @@ class TestDataUploadPreview(APITestCase, unittest.TestCase):
         shutil.rmtree(self._data_dir, ignore_errors=True)
         super().tearDown()
 
-    def _get_client(self):
-        from simpletuner.simpletuner_sdk.server import ServerMode, create_app
-
-        app = create_app(mode=ServerMode.UNIFIED)
-        return TestClient(app)
-
     def test_preview_empty_config(self):
         """POST with empty config should indicate no upload needed."""
-        with self._get_client() as client:
+        with settings_client() as client:
             response = client.post("/api/cloud/data-consent/preview", json=[])
             self.assertEqual(response.status_code, 200)
             data = response.json()
@@ -229,7 +203,7 @@ class TestDataUploadPreview(APITestCase, unittest.TestCase):
         (dataset_path / "image1.png").write_bytes(b"x" * (1024 * 1024))  # 1 MB
         (dataset_path / "image2.png").write_bytes(b"y" * (1024 * 1024))  # 1 MB
 
-        with self._get_client() as client:
+        with settings_client() as client:
             # Ensure consent is set to "ask" (not "deny")
             client.put("/api/cloud/data-consent/setting", json={"consent": "ask"})
 
@@ -254,7 +228,7 @@ class TestDataUploadPreview(APITestCase, unittest.TestCase):
 
     def test_preview_nonlocal_dataset_skipped(self):
         """POST with non-local datasets should skip them."""
-        with self._get_client() as client:
+        with settings_client() as client:
             response = client.post(
                 "/api/cloud/data-consent/preview",
                 json=[
@@ -271,7 +245,7 @@ class TestDataUploadPreview(APITestCase, unittest.TestCase):
 
     def test_preview_when_consent_denied(self):
         """POST should indicate uploads disabled when consent is deny."""
-        with self._get_client() as client:
+        with settings_client() as client:
             # First set consent to deny
             client.put("/api/cloud/data-consent/setting", json={"consent": "deny"})
 
@@ -290,21 +264,9 @@ class TestDataUploadPreview(APITestCase, unittest.TestCase):
 class TestPollingRoutes(APITestCase, unittest.TestCase):
     """Tests for job polling settings."""
 
-    def setUp(self):
-        super().setUp()
-
-    def tearDown(self):
-        super().tearDown()
-
-    def _get_client(self):
-        from simpletuner.simpletuner_sdk.server import ServerMode, create_app
-
-        app = create_app(mode=ServerMode.UNIFIED)
-        return TestClient(app)
-
     def test_get_polling_status(self):
         """GET /api/cloud/polling/status should return polling status."""
-        with self._get_client() as client:
+        with settings_client() as client:
             response = client.get("/api/cloud/polling/status")
             self.assertEqual(response.status_code, 200)
             data = response.json()
@@ -315,7 +277,7 @@ class TestPollingRoutes(APITestCase, unittest.TestCase):
 
     def test_update_polling_setting(self):
         """PUT /api/cloud/polling/setting should update preference."""
-        with self._get_client() as client:
+        with settings_client() as client:
             # Enable polling
             response = client.put(
                 "/api/cloud/polling/setting",
@@ -329,7 +291,7 @@ class TestPollingRoutes(APITestCase, unittest.TestCase):
 
     def test_disable_polling(self):
         """PUT should disable polling."""
-        with self._get_client() as client:
+        with settings_client() as client:
             response = client.put(
                 "/api/cloud/polling/setting",
                 json={"enabled": False},
@@ -344,21 +306,9 @@ class TestPollingRoutes(APITestCase, unittest.TestCase):
 class TestLocalUploadConfig(APITestCase, unittest.TestCase):
     """Tests for local upload configuration."""
 
-    def setUp(self):
-        super().setUp()
-
-    def tearDown(self):
-        super().tearDown()
-
-    def _get_client(self):
-        from simpletuner.simpletuner_sdk.server import ServerMode, create_app
-
-        app = create_app(mode=ServerMode.UNIFIED)
-        return TestClient(app)
-
     def test_get_local_upload_config_disabled(self):
         """GET should return disabled when no webhook configured."""
-        with self._get_client() as client:
+        with self.client_session(ServerMode.UNIFIED) as client:
             response = client.get("/api/cloud/local-upload/config")
             self.assertEqual(response.status_code, 200)
             data = response.json()
@@ -372,21 +322,9 @@ class TestLocalUploadConfig(APITestCase, unittest.TestCase):
 class TestSystemStatus(APITestCase, unittest.TestCase):
     """Tests for system status endpoint."""
 
-    def setUp(self):
-        super().setUp()
-
-    def tearDown(self):
-        super().tearDown()
-
-    def _get_client(self):
-        from simpletuner.simpletuner_sdk.server import ServerMode, create_app
-
-        app = create_app(mode=ServerMode.UNIFIED)
-        return TestClient(app)
-
     def test_get_system_status_structure(self):
         """GET /api/cloud/system-status should return expected structure."""
-        with self._get_client() as client:
+        with settings_client() as client:
             response = client.get("/api/cloud/system-status")
             self.assertEqual(response.status_code, 200)
             data = response.json()
@@ -401,21 +339,9 @@ class TestSystemStatus(APITestCase, unittest.TestCase):
 class TestPublishingStatus(APITestCase, unittest.TestCase):
     """Tests for publishing status endpoint."""
 
-    def setUp(self):
-        super().setUp()
-
-    def tearDown(self):
-        super().tearDown()
-
-    def _get_client(self):
-        from simpletuner.simpletuner_sdk.server import ServerMode, create_app
-
-        app = create_app(mode=ServerMode.UNIFIED)
-        return TestClient(app)
-
     def test_get_publishing_status(self):
         """GET /api/cloud/publishing-status should return status."""
-        with self._get_client() as client:
+        with settings_client() as client:
             response = client.get("/api/cloud/publishing-status")
             self.assertEqual(response.status_code, 200)
             data = response.json()
@@ -434,21 +360,9 @@ class TestPublishingStatus(APITestCase, unittest.TestCase):
 class TestCredentialSecuritySettings(APITestCase, unittest.TestCase):
     """Tests for credential security settings."""
 
-    def setUp(self):
-        super().setUp()
-
-    def tearDown(self):
-        super().tearDown()
-
-    def _get_client(self):
-        from simpletuner.simpletuner_sdk.server import ServerMode, create_app
-
-        app = create_app(mode=ServerMode.UNIFIED)
-        return TestClient(app)
-
     def test_get_credential_settings(self):
         """GET /api/cloud/settings/credentials should return settings."""
-        with self._get_client() as client:
+        with settings_client() as client:
             response = client.get("/api/cloud/settings/credentials")
             self.assertEqual(response.status_code, 200)
             data = response.json()
@@ -463,7 +377,7 @@ class TestCredentialSecuritySettings(APITestCase, unittest.TestCase):
 
     def test_update_credential_settings(self):
         """PUT /api/cloud/settings/credentials should update settings."""
-        with self._get_client() as client:
+        with settings_client() as client:
             response = client.put(
                 "/api/cloud/settings/credentials",
                 json={
@@ -481,7 +395,7 @@ class TestCredentialSecuritySettings(APITestCase, unittest.TestCase):
 
     def test_update_credential_settings_partial(self):
         """PUT should allow partial updates."""
-        with self._get_client() as client:
+        with settings_client() as client:
             # Update only threshold
             response = client.put(
                 "/api/cloud/settings/credentials",
@@ -494,7 +408,7 @@ class TestCredentialSecuritySettings(APITestCase, unittest.TestCase):
 
     def test_credential_settings_persist(self):
         """Settings should persist across requests."""
-        with self._get_client() as client:
+        with settings_client() as client:
             # Set values
             client.put(
                 "/api/cloud/settings/credentials",
