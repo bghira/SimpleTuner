@@ -8,6 +8,7 @@ import subprocess
 import sys
 import unittest
 import uuid
+from io import StringIO
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -272,6 +273,42 @@ class WorkerAgentJobStartTestCase(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(post.await_args.kwargs["json"]["status"], "completed")
             self.assertEqual(post.await_args.kwargs["json"]["log_tail"], output[-WORKER_LOG_TAIL_SIZE:])
+
+    async def test_reconnect_preserves_training_log_capture_and_completion(self) -> None:
+        agent = WorkerAgent(
+            WorkerConfig(
+                orchestrator_url="https://orchestrator.example.com",
+                worker_token="test-token",
+                name="test-worker",
+                persistent=True,
+            )
+        )
+        agent.current_job = {"job_id": "job-1"}
+        agent.training_process = Mock(stdout=StringIO("training output after reconnect\n"))
+        agent.training_process.wait.return_value = 0
+        response = Mock()
+        response.json.return_value = {
+            "worker_id": "worker-1",
+            "resume_job": {"job_id": "job-1", "status": "running"},
+        }
+
+        async def post_request(url, *, json, **kwargs):
+            if json.get("status") == "training":
+                await agent._register()
+            return response
+
+        with (
+            patch("simpletuner.worker_agent.detect_gpu_info", return_value={}),
+            patch("simpletuner.worker_agent.httpx.AsyncClient") as client,
+        ):
+            post = client.return_value.__aenter__.return_value.post
+            post.side_effect = post_request
+            await agent._monitor_training(Path("/tmp"))
+
+        final_update = post.await_args.kwargs["json"]
+        self.assertEqual(final_update.get("status"), "completed")
+        self.assertEqual(final_update.get("log_tail"), "training output after reconnect\n")
+        self.assertIsNone(agent.current_job)
 
     async def test_stop_current_job_awaits_async_subprocess(self) -> None:
         """Verify Kubeflow cancellation awaits the asyncio subprocess API."""
