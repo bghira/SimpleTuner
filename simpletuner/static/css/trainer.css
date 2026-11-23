@@ -1686,6 +1686,25 @@ body {
     font-variant-numeric: tabular-nums;
 }
 
+.training-progress-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-sm);
+}
+
+.training-progress-header input {
+    width: min(12rem, 100%);
+    margin-inline-start: auto;
+}
+
+.training-run-list {
+    position: relative;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+}
+
 .training-progress-section h5 {
     margin: 0;
     font-size: 1rem;
@@ -1693,7 +1712,27 @@ body {
 
 .training-run {
     container-type: inline-size;
+    position: relative;
     padding-block: var(--spacing-sm);
+    padding-inline-end: 1.75rem;
+}
+
+.training-run-dismiss {
+    position: absolute;
+    inset-block-start: var(--spacing-sm);
+    inset-inline-end: 0;
+    width: 1.5rem;
+    height: 1.5rem;
+    padding: 0;
+    border: 0;
+    border-radius: var(--border-radius-sm);
+    background: transparent;
+    color: var(--text-secondary);
+}
+
+.training-run-dismiss:is(:hover, :focus-visible) {
+    color: var(--text-primary);
+    background: var(--field-bg);
 }
 
 .training-run:last-child {

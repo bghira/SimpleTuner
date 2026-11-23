@@ -391,6 +391,7 @@ class DefaultsUpdate(BaseModel):
     datasets_dir: Optional[str] = None
     active_config: Optional[str] = None
     theme: Optional[str] = None
+    training_progress_visible_jobs: Optional[int] = Field(default=None, ge=1)
     event_polling_interval: Optional[int] = None
     event_stream_enabled: Optional[bool] = None
     auto_preserve_defaults: Optional[bool] = None
@@ -453,6 +454,8 @@ async def update_defaults(payload: DefaultsUpdate, _user: User = Depends(get_cur
             theme = payload.theme.strip().lower()
             theme_service = ThemeService.get_instance()
             defaults.theme = theme if theme_service.is_valid_theme(theme) else "dark"
+        if payload.training_progress_visible_jobs is not None:
+            defaults.training_progress_visible_jobs = payload.training_progress_visible_jobs
         if payload.event_polling_interval is not None:
             try:
                 interval = int(payload.event_polling_interval)

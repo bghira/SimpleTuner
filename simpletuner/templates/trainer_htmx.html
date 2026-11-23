@@ -55,6 +55,34 @@ function trainerNextFrame() {
 
 // Initialize Alpine store early to prevent race conditions
 document.addEventListener('alpine:init', () => {
+    // Size the scroll area from the rendered rows, including wrapped metrics and validation details.
+    Alpine.directive('visible-jobs', (list, { expression }, { evaluateLater, effect, cleanup }) => {
+        const readLimit = evaluateLater(expression);
+        const rows = list.getElementsByTagName('article');
+        let limit;
+        const measure = () => {
+            list.style.maxHeight = rows.length > limit ? `${rows[limit].offsetTop}px` : '';
+        };
+        const resizeObserver = new ResizeObserver(measure);
+        function trackRows() {
+            resizeObserver.disconnect();
+            if (rows.length > limit) {
+                for (let i = 0; i < limit; i++) resizeObserver.observe(rows[i]);
+            }
+            measure();
+        }
+        const changes = new MutationObserver(trackRows);
+        changes.observe(list, { childList: true });
+        effect(() => readLimit(value => {
+            limit = value;
+            trackRows();
+        }));
+        cleanup(() => {
+            resizeObserver.disconnect();
+            changes.disconnect();
+        });
+    });
+
     Alpine.store('trainer', trainerComponent());
 
     // Shared dataloader configs store
@@ -389,6 +417,32 @@ const sanitizeConfigEntry = (entry) => {
 
 window.sanitizeConfigName = sanitizeConfigName;
 window.sanitizeConfigEntry = sanitizeConfigEntry;
+
+function trainingProgressList() {
+    const storageKey = 'simpletuner.dismissedTrainingJobs';
+    const readDismissed = () => JSON.parse(localStorage.getItem(storageKey) || '[]');
+    return {
+        query: '',
+        dismissed: readDismissed(),
+        syncDismissed(event) {
+            if (event.key === storageKey || event.key === null) this.dismissed = readDismissed();
+        },
+        dismiss(jobId) {
+            this.dismissed = [...new Set([...readDismissed(), jobId])];
+            localStorage.setItem(storageKey, JSON.stringify(this.dismissed));
+            if (!this.remainingRuns.length) this.query = '';
+        },
+        get remainingRuns() {
+            return this.trainingRuns.filter(run => !this.dismissed.includes(run.job_id));
+        },
+        get matchingRuns() {
+            const query = this.query.trim().toLowerCase();
+            if (!query) return this.remainingRuns;
+            return this.remainingRuns.filter(run => [run.worker, run.config_name, run.gpu, run.job_id]
+                .some(value => value?.toLowerCase().includes(query)));
+        },
+    };
+}
 
 function trainerComponent() {
     return {
@@ -7287,50 +7341,63 @@ function trainerComponent() {
 
             <!-- Training Progress -->
             <section class="training-progress-section" @training-runs.window="updateTrainingRuns('callback', $event.detail)"
-                     @worker-training-runs.window="updateTrainingRuns('worker', $event.detail)" x-show="trainingRuns.length" x-cloak aria-label="Training Progress">
-                <h5><i class="fas fa-chart-line" aria-hidden="true"></i> Training Progress</h5>
-                <template x-for="run in trainingRuns" :key="run.job_id">
-                    <article class="training-run" :aria-label="run.job_id">
-                        <dl class="training-run-heading">
-                            <div class="training-run-worker">
-                                <dt x-text="run.worker ? 'Worker' : 'Job'"></dt>
-                                <dd :title="run.job_id" x-text="run.worker || run.job_id"></dd>
+                     @worker-training-runs.window="updateTrainingRuns('worker', $event.detail)"
+                     x-data="trainingProgressList()" @storage.window="syncDismissed($event)"
+                     x-show="remainingRuns.length" x-cloak aria-label="Training Progress">
+                <div class="training-progress-header">
+                    <h5><i class="fas fa-chart-line" aria-hidden="true"></i> Training Progress</h5>
+                    <input type="search" class="form-control form-control-sm" x-model="query"
+                           placeholder="Worker, env, or GPU…" aria-label="Filter jobs by worker, environment, GPU, or job ID">
+                </div>
+                <div class="training-run-list" x-visible-jobs="defaults?.training_progress_visible_jobs ?? 4">
+                    <template x-for="run in matchingRuns" :key="run.job_id">
+                        <article class="training-run" :aria-label="run.job_id">
+                            <button type="button" class="training-run-dismiss" title="Dismiss from Training Progress"
+                                    :aria-label="'Dismiss job ' + run.job_id" @click="dismiss(run.job_id)">
+                                <i class="fas fa-times" aria-hidden="true"></i>
+                            </button>
+                            <dl class="training-run-heading">
+                                <div class="training-run-worker">
+                                    <dt x-text="run.worker ? 'Worker' : 'Job'"></dt>
+                                    <dd :title="run.job_id" x-text="run.worker || run.job_id"></dd>
+                                </div>
+                                <div class="training-run-gpu">
+                                    <dt>GPU</dt>
+                                    <dd x-text="run.gpu || '—'"></dd>
+                                </div>
+                                <div class="training-run-env">
+                                    <dt>Environment</dt>
+                                    <dd x-text="run.config_name || '—'"></dd>
+                                </div>
+                                <div class="training-run-progress">
+                                    <dt x-text="run.validation ? 'Validation' : 'Progress'"></dt>
+                                    <dd>
+                                        <progress max="100"
+                                                  x-effect="if (run.displayPercent == null) { $el.removeAttribute('value') } else { $el.value = run.displayPercent }"
+                                                  :aria-label="(run.validation ? 'Validation progress for ' : 'Training progress for ') + run.job_id"></progress>
+                                        <b x-show="run.displayPercent != null" x-text="Math.round(run.displayPercent * 100) / 100 + '%'"></b>
+                                    </dd>
+                                    <dd x-show="!run.validation && run.status !== 'running'" x-text="run.status"></dd>
+                                </div>
+                            </dl>
+                            <template x-if="run.validation">
+                                <div class="training-run-metrics">
+                                    <span x-show="run.validation.current == null">Running validation…</span>
+                                    <span x-show="run.validation.current != null">Validation step <b x-text="run.validation.current"></b><template x-if="run.validation.total != null"><span> / <b x-text="run.validation.total"></b></span></template></span>
+                                </div>
+                            </template>
+                            <div class="training-run-metrics" x-show="!run.validation">
+                                <span>Step <b x-text="run.progress.step.toLocaleString()"></b> / <b x-text="run.progress.total_steps.toLocaleString()"></b></span>
+                                <span>Epoch <b x-text="run.progress.epoch"></b></span>
+                                <span>Loss <b x-text="run.progress.loss?.toFixed(4) ?? '—'"></b></span>
+                                <span>LR <b x-text="run.progress.learning_rate?.toExponential(2) ?? '—'"></b></span>
+                                <span><b x-text="run.stepSpeed?.toFixed(2) ?? '—'"></b> s/step</span>
+                                <span><b x-text="run.samplesPerSecond?.toLocaleString(undefined, { maximumFractionDigits: 2 }) ?? '—'"></b> samples/s</span>
                             </div>
-                            <div class="training-run-gpu">
-                                <dt>GPU</dt>
-                                <dd x-text="run.gpu || '—'"></dd>
-                            </div>
-                            <div class="training-run-env">
-                                <dt>Environment</dt>
-                                <dd x-text="run.config_name || '—'"></dd>
-                            </div>
-                            <div class="training-run-progress">
-                                <dt x-text="run.validation ? 'Validation' : 'Progress'"></dt>
-                                <dd>
-                                    <progress max="100"
-                                              x-effect="if (run.displayPercent == null) { $el.removeAttribute('value') } else { $el.value = run.displayPercent }"
-                                              :aria-label="(run.validation ? 'Validation progress for ' : 'Training progress for ') + run.job_id"></progress>
-                                    <b x-show="run.displayPercent != null" x-text="Math.round(run.displayPercent * 100) / 100 + '%'"></b>
-                                </dd>
-                                <dd x-show="!run.validation && run.status !== 'running'" x-text="run.status"></dd>
-                            </div>
-                        </dl>
-                        <template x-if="run.validation">
-                            <div class="training-run-metrics">
-                                <span x-show="run.validation.current == null">Running validation…</span>
-                                <span x-show="run.validation.current != null">Validation step <b x-text="run.validation.current"></b><template x-if="run.validation.total != null"><span> / <b x-text="run.validation.total"></b></span></template></span>
-                            </div>
-                        </template>
-                        <div class="training-run-metrics" x-show="!run.validation">
-                            <span>Step <b x-text="run.progress.step.toLocaleString()"></b> / <b x-text="run.progress.total_steps.toLocaleString()"></b></span>
-                            <span>Epoch <b x-text="run.progress.epoch"></b></span>
-                            <span>Loss <b x-text="run.progress.loss?.toFixed(4) ?? '—'"></b></span>
-                            <span>LR <b x-text="run.progress.learning_rate?.toExponential(2) ?? '—'"></b></span>
-                            <span><b x-text="run.stepSpeed?.toFixed(2) ?? '—'"></b> s/step</span>
-                            <span><b x-text="run.samplesPerSecond?.toLocaleString(undefined, { maximumFractionDigits: 2 }) ?? '—'"></b> samples/s</span>
-                        </div>
-                    </article>
-                </template>
+                        </article>
+                    </template>
+                </div>
+                <p class="text-muted small mb-0" x-show="!matchingRuns.length" role="status">No matching jobs.</p>
             </section>
 
             {% with placement='panel' %}
