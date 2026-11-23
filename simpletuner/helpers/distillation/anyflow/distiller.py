@@ -791,12 +791,12 @@ class AnyFlowDistiller(DistillationBase):
     def _meanflow_timestep_weight(self, t_sigmas: torch.Tensor) -> torch.Tensor:
         if self.config["meanflow_weight_type"] == "uniform":
             return torch.ones_like(t_sigmas)
-        weight = t_sigmas * torch.sqrt((1.0 - t_sigmas).clamp_min(0.0))
         grid = torch.linspace(1.0, 0.0, int(self.num_train_timesteps) + 1, device=t_sigmas.device)[:-1]
         shifted_grid = self._apply_scheduler_shift(grid)
         grid_weight = shifted_grid * torch.sqrt((1.0 - shifted_grid).clamp_min(0.0))
         normalization = grid_weight.numel() / grid_weight.sum().clamp_min(torch.finfo(grid_weight.dtype).eps)
-        return weight * normalization.to(dtype=weight.dtype)
+        nearest = (t_sigmas.unsqueeze(-1) - shifted_grid).abs().argmin(dim=-1)
+        return (grid_weight[nearest] * normalization).to(dtype=t_sigmas.dtype)
 
     # ------------------------------------------------------------------
     # NVIDIA on-policy DMD / Flow Map Backward Simulation stage
