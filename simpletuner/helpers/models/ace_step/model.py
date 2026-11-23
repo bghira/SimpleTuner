@@ -249,8 +249,10 @@ class ACEStep(AudioModelFoundation):
 
     def __init__(self, config: dict, accelerator):
         super().__init__(config, accelerator)
-        default_text_length = 77 if str(getattr(self.config, "model_flavour", "")).startswith("v15") else 256
-        self.text_tokenizer_max_length = int(getattr(self.config, "tokenizer_max_length", None) or default_text_length)
+        self.text_tokenizer_max_length = int(getattr(self.config, "tokenizer_max_length", None) or 256)
+        self._text_encoder_source = self._get_optional_config_model_path(
+            "qwen_text_encoder_model_name_or_path"
+        ) or self._get_optional_config_model_path("pretrained_model_name_or_path")
         self.mert_model = None
         self.hubert_model = None
         self.resampler_mert = None
@@ -496,19 +498,48 @@ class ACEStep(AudioModelFoundation):
                 PreTrainedModel.get_init_context = original_get_init_context
                 PreTrainedModel.named_non_persistent_buffers = original_named_non_persistent_buffers
 
-    def _build_v15_text_prompt(self, prompt: str, prompt_context: Optional[dict]) -> str:
-        metadata = prompt_context or {}
+    def _uses_v15_text_cache(self):
+        return self._is_v15_layout_active() or self._looks_like_v15_source()
+
+    def text_embed_cache_namespace(self):
+        if not self._uses_v15_text_cache():
+            return super().text_embed_cache_namespace()
+        return f"ace-step-v15-qwen:{self._text_encoder_source}:{self.text_tokenizer_max_length}"
+
+    @staticmethod
+    def _v15_prompt_metadata(metadata):
+        metadata = metadata or {}
         if isinstance(metadata.get("metadata"), dict):
             metadata = metadata["metadata"]
-        bpm = metadata.get("bpm") or "N/A"
-        timesignature = metadata.get("timesignature") or "N/A"
-        keyscale = metadata.get("keyscale") or "N/A"
-        duration = metadata.get("duration") or "N/A"
+        return {
+            "bpm": metadata.get("bpm"),
+            "timesignature": metadata.get("timesignature"),
+            "keyscale": metadata.get("keyscale"),
+            "duration": metadata.get("duration_seconds") or metadata.get("audio_duration") or metadata.get("duration"),
+        }
+
+    def text_embed_cache_metadata_for_preparation(self, *, read_metadata, image_path, prompt, **kwargs):
+        if self._uses_v15_text_cache() and prompt:
+            return self._v15_prompt_metadata(read_metadata(image_path))
+        return {}
+
+    def text_embed_cache_metadata_for_sample(self, *, example, prompt, **kwargs):
+        if self._uses_v15_text_cache() and prompt:
+            return self._v15_prompt_metadata(example)
+        return {}
+
+    def text_embed_cache_context_key(self, metadata, *, prompt=None):
+        if self._uses_v15_text_cache() and prompt:
+            return self._build_v15_text_prompt("", metadata)
+        return None
+
+    def _build_v15_text_prompt(self, prompt: str, prompt_context: Optional[dict]) -> str:
+        metadata = self._v15_prompt_metadata(prompt_context)
         metas_str = (
-            f"- bpm: {bpm}\n"
-            f"- timesignature: {timesignature}\n"
-            f"- keyscale: {keyscale}\n"
-            f"- duration: {duration} seconds\n"
+            f"- bpm: {metadata['bpm'] or 'N/A'}\n"
+            f"- timesignature: {metadata['timesignature'] or 'N/A'}\n"
+            f"- keyscale: {metadata['keyscale'] or 'N/A'}\n"
+            f"- duration: {metadata['duration'] or 'N/A'} seconds\n"
         )
         return self.V15_SFT_GEN_PROMPT.format(self.V15_DEFAULT_DIT_INSTRUCTION, prompt or "", metas_str)
 
@@ -1059,9 +1090,11 @@ class ACEStep(AudioModelFoundation):
         if not isinstance(prompts, (list, tuple)):
             prompts = [prompts]
         if self._is_v15_layout_active():
-            prompt_contexts = getattr(self, "_current_prompt_contexts", None)
-            if prompt_contexts and len(prompt_contexts) == len(prompts):
-                prompts = [self._build_v15_text_prompt(prompt, prompt_contexts[idx]) for idx, prompt in enumerate(prompts)]
+            prompt_contexts = self._current_prompt_contexts or [{} for _ in prompts]
+            prompts = [
+                self._build_v15_text_prompt(prompt, context) if prompt else ""
+                for prompt, context in zip(prompts, prompt_contexts, strict=True)
+            ]
         tokenizer = self.tokenizers[0]
         text_encoder = self.text_encoders[0]
         tokenizer_kwargs = {
@@ -1082,7 +1115,11 @@ class ACEStep(AudioModelFoundation):
             text_encoder.to(self.accelerator.device, dtype=self.config.weight_dtype)
         text_encoder.eval()
         with torch.no_grad():
-            encoder_outputs = text_encoder(**text_inputs)
+            if self._is_v15_layout_active():
+                # The condition encoder consumes Qwen's padding states and the mask separately.
+                encoder_outputs = text_encoder(input_ids=text_inputs["input_ids"])
+            else:
+                encoder_outputs = text_encoder(**text_inputs)
         prompt_embeds = encoder_outputs.last_hidden_state.to(dtype=self.config.weight_dtype)
         attention_mask = text_inputs.get("attention_mask")
         return {

@@ -300,6 +300,53 @@ class TestACEStepModel(unittest.TestCase):
         self.assertTrue(torch.equal(mask, expected_mask))
         self.assertFalse(embeddings.requires_grad)
 
+    def test_v15_caption_cache_keys_match_encoded_audio_context(self):
+        from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
+
+        cache = TextEmbeddingCache.__new__(TextEmbeddingCache)
+        cache.model_type = "ace_step"
+        cache.model = self.model
+        cache.key_type = self.model.text_embed_cache_key()
+        cache._requires_path_based_keys = False
+
+        def digest(prompt, meta):
+            return cache.create_hash(prompt, prompt=prompt, metadata=meta)
+
+        first = {"duration_seconds": 30, "bpm": 120, "timesignature": "3/4", "keyscale": "D minor"}
+        second = {**first, "duration_seconds": 12}
+        legacy = digest("song", first)
+        self.assertEqual(legacy, digest("song", second))
+        self.config.model_flavour = "v15-base"
+        self.model._v15_layout = {"variant_path": "base"}
+        warm = self.model.text_embed_cache_metadata_for_preparation(
+            read_metadata=lambda _: first, image_path="song.wav", prompt="song"
+        )
+        live = self.model.text_embed_cache_metadata_for_sample(example=first, prompt="song")
+        self.assertEqual(warm, live)
+        raw_row = {**first, "audio_duration": first["duration_seconds"]}
+        del raw_row["duration_seconds"]
+        self.assertEqual(warm, self.model.text_embed_cache_metadata_for_sample(example=raw_row, prompt="song"))
+        self.assertEqual(digest("song", warm), digest("song", live))
+        self.assertNotEqual(digest("song", warm), legacy)
+        self.assertNotEqual(digest("song", first), digest("song", second))
+        self.assertEqual(digest("song", first), digest("song", {**first, "image_path": "copy.wav"}))
+        self.assertEqual(digest("", first), digest("", {}))
+        base_key = digest("song", warm)
+        self.config.model_flavour = "v15-turbo"
+        self.assertEqual(digest("song", warm), base_key)
+        tokens = {"input_ids": torch.tensor([[1, 2, 0], [0, 0, 0]]), "attention_mask": torch.tensor([[1, 1, 0], [0, 0, 0]])}
+        self.model.tokenizers = [MagicMock(return_value=tokens)]
+        self.model.text_encoders = [MagicMock(device=self.mock_accelerator.device)]
+        self.model.text_encoders[0].return_value.last_hidden_state = torch.zeros(2, 3, 4)
+        with self.model._use_prompt_contexts([live, first]):
+            encoded = self.model._encode_prompts(["song", ""])
+        self.model.text_encoders[0].assert_called_once_with(input_ids=tokens["input_ids"])
+        torch.testing.assert_close(encoded["attention_masks"], tokens["attention_mask"])
+        prompts = self.model.tokenizers[0].call_args.args[0]
+        self.assertIn("- duration: 30 seconds", prompts[0])
+        self.assertIn("- bpm: 120", prompts[0])
+        self.assertEqual(prompts[1], "")
+
     def test_encode_prompts_moves_text_encoder_when_only_parameter_device_is_available(self):
         class DummyTextEncoder:
             def __init__(self):

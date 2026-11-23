@@ -414,7 +414,7 @@ class ACEStepPipeline(LoraLoaderMixin):
             if encoder_device != self.device:
                 self.text_encoder_model.to(self.device, dtype=self.dtype)
             with torch.no_grad():
-                encoder_outputs = self.text_encoder_model(**text_inputs)
+                encoder_outputs = self.text_encoder_model(input_ids=text_inputs["input_ids"])
             encoder_text_hidden_states = encoder_outputs.last_hidden_state.to(dtype=self.dtype)
             text_attention_mask = text_inputs["attention_mask"]
         else:

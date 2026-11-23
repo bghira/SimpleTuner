@@ -24,8 +24,7 @@ class DummyTextEncoder(torch.nn.Module):
         super().__init__()
         self.embed_tokens = torch.nn.Embedding(8, 4)
 
-    def forward(self, input_ids=None, **kwargs):
-        del kwargs
+    def forward(self, input_ids):
         return SimpleNamespace(last_hidden_state=self.embed_tokens(input_ids) + 1.0)
 
 
