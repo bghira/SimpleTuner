@@ -171,10 +171,17 @@ class BooguImage(ImageModelFoundation):
             local_files_only=getattr(self.config, "local_files_only", False),
         )
 
+    def flow_matching_timesteps_from_sigmas(
+        self,
+        sigmas: torch.Tensor,
+        *,
+        reference_timesteps: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        return 1.0 - sigmas
+
     def sample_flow_sigmas(self, batch: dict, state: dict) -> tuple[torch.Tensor, torch.Tensor]:
         noise_sigmas, _ = super().sample_flow_sigmas(batch=batch, state=state)
-        boogu_timesteps = 1.0 - noise_sigmas
-        return noise_sigmas, boogu_timesteps
+        return noise_sigmas, self.flow_matching_timesteps_from_sigmas(noise_sigmas)
 
     def flow_matching_target_direction(self) -> float:
         return -1.0
