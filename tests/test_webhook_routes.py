@@ -38,6 +38,7 @@ class WebhookRoutesTestCase(_WebUIBaseTestCase, unittest.TestCase):
         self._instances_backup = ConfigStore._instances.copy()
         ConfigStore._instances = {}
 
+        self.routers = (configs_routes.router,)
         super().setUp()
 
         # Create config root and webhooks directory
