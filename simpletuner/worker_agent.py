@@ -213,8 +213,8 @@ class WorkerAgent:
 
         # Handle reconciliation instructions
         if data.get("resume_job"):
+            # The training monitor still owns the active job.
             logger.info(f"Resuming job: {data['resume_job']['job_id']}")
-            self.current_job = data["resume_job"]
         elif data.get("abandon_job"):
             logger.info(f"Abandoning job: {data['abandon_job']}")
             await self._stop_current_job()
