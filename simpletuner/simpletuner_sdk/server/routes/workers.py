@@ -18,6 +18,8 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from simpletuner.worker_protocol import WORKER_LOG_TAIL_SIZE
+
 from ..models.worker import WorkerStatus
 from ..services.callback_events import StageStatus
 from ..services.callback_service import get_default_callback_service
@@ -65,6 +67,7 @@ class HeartbeatRequest(BaseModel):
     status: str
     current_job_id: Optional[str] = None
     job_progress: Optional[Dict[str, Any]] = None
+    log_tail: str | None = Field(default=None, max_length=WORKER_LOG_TAIL_SIZE)
     gpu_utilization: Optional[float] = None
     vram_used_gb: Optional[float] = None
 
@@ -81,6 +84,7 @@ class JobStatusUpdate(BaseModel):
     status: str | None = None
     progress: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
+    log_tail: str | None = Field(default=None, max_length=WORKER_LOG_TAIL_SIZE)
     validation: WorkerValidationUpdate | None = None
 
 
@@ -487,12 +491,15 @@ async def worker_heartbeat(
             detail=(f"Worker {worker.worker_id} is bound to job " f"{worker.current_job_id}, not {request.current_job_id}"),
         )
 
-    if request.job_progress:
+    if request.job_progress or request.log_tail is not None:
         if not request.current_job_id:
-            raise HTTPException(status_code=422, detail="Job progress requires a job ID")
+            raise HTTPException(status_code=422, detail="Job progress and logs require a job ID")
         job = await _assigned_job(get_job_repository(), request.current_job_id, worker.worker_id)
-        if not job.is_terminal:
+        if request.job_progress and not job.is_terminal:
             _record_worker_stats(job, worker, "running", request.job_progress)
+
+    if request.status == WorkerStatus.BUSY and request.current_job_id and not worker.is_job_bound:
+        await get_job_repository().record_worker_heartbeat(request.current_job_id, worker.worker_id, request.log_tail)
 
     now = datetime.now(timezone.utc)
     updates = {
@@ -619,7 +626,14 @@ async def update_job_status(
     if request.status in ["completed", "failed", "cancelled"]:
         updates["completed_at"] = datetime.now(timezone.utc).isoformat()
 
-    await job_repo.update(job_id, updates)
+    updated = await job_repo.update(
+        job_id,
+        updates,
+        worker_id=worker.worker_id,
+        worker_log_tail=request.log_tail if job.provider == "worker" else None,
+    )
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Job assignment changed")
     _record_worker_stats(job, worker, request.status, request.progress)
 
     if worker.is_job_bound and request.status in ["completed", "failed", "cancelled"]:

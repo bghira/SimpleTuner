@@ -26,6 +26,10 @@ from simpletuner.simpletuner_sdk.server.routes.workers import (
     worker_streams,
 )
 from simpletuner.simpletuner_sdk.server.services.cloud.auth.models import User
+from simpletuner.simpletuner_sdk.server.services.cloud.base import JobType, UnifiedJob
+from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
+from simpletuner.simpletuner_sdk.server.services.cloud.storage.job_repository import get_job_repository
+from simpletuner.simpletuner_sdk.server.services.worker_repository import get_worker_repository
 from tests.unittest_support import APITestCase, create_router_client, run_async
 
 
@@ -426,6 +430,51 @@ class WorkerHeartbeatTestCase(APITestCase, unittest.TestCase):
             call_args = mock_repo_instance.update_worker.call_args
             updates = call_args[0][1]
             self.assertEqual(updates["current_job_id"], "job-456")
+
+    @patch.dict(BaseSQLiteStore._instances, clear=True)
+    @patch("simpletuner.simpletuner_sdk.server.services.cloud.storage.job_repository._job_repository", None)
+    @patch("simpletuner.simpletuner_sdk.server.services.worker_repository._worker_repository", None)
+    def test_heartbeat_only_repairs_active_jobs_assigned_to_its_worker(self) -> None:
+        jobs = get_job_repository()
+        worker = self.worker
+        worker.current_job_id = "job-456"
+        run_async(get_worker_repository().create_worker(worker))
+        orphan_error = "Job orphaned (no PID tracked)"
+        run_async(
+            jobs.add(
+                UnifiedJob(
+                    job_id=worker.current_job_id,
+                    job_type=JobType.LOCAL,
+                    provider="worker",
+                    status="running",
+                    created_at=datetime.now(timezone.utc).isoformat(),
+                    config_name="remote-training",
+                    metadata={"worker_id": "worker-999"},
+                    error_message=orphan_error,
+                )
+            )
+        )
+        heartbeat = {"worker_id": worker.worker_id, "status": "busy", "current_job_id": worker.current_job_id}
+        headers = {"X-Worker-Token": self.token}
+
+        response = self.client.post(
+            "/api/workers/heartbeat", json={**heartbeat, "log_tail": "foreign output"}, headers=headers
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertIsNone(run_async(jobs.get_worker_log_tail(worker.current_job_id)))
+
+        for status, error in (("running", orphan_error), ("failed", orphan_error), ("running", "CUDA out of memory")):
+            with self.subTest(status=status, error=error):
+                assigned_worker = "worker-999" if (status, error) == ("running", orphan_error) else worker.worker_id
+                run_async(
+                    jobs.update(
+                        worker.current_job_id,
+                        {"status": status, "error_message": error, "metadata": {"worker_id": assigned_worker}},
+                    )
+                )
+                response = self.client.post("/api/workers/heartbeat", json=heartbeat, headers=headers)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(run_async(jobs.get(worker.current_job_id)).error_message, error)
 
 
 class WorkerJobStatusTestCase(APITestCase, unittest.TestCase):

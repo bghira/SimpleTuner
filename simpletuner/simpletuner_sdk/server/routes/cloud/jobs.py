@@ -19,6 +19,7 @@ from ...services.cloud import CloudJobStatus, JobType, UnifiedJob
 from ...services.cloud.auth import get_optional_user
 from ...services.cloud.auth.models import User
 from ...services.cloud.commands import CommandContext, SubmitJobCommand
+from ...services.cloud.exceptions import PermissionDeniedError
 from ...services.cloud.external_ids import get_external_job_id
 from ...services.cloud.factory import ProviderFactory
 from ...services.cloud.job_logs import fetch_job_logs
@@ -145,18 +146,14 @@ async def get_job(
     user: Optional[User] = Depends(get_optional_user),
 ) -> JobResponse:
     """Get details for a specific job."""
-    from ...services.cloud.exceptions import JobNotFoundError, PermissionDeniedError
+    from ...services.cloud.exceptions import JobNotFoundError
 
     store = get_job_store()
     job = await store.get_job(job_id)
     if job is None:
         raise JobNotFoundError(job_id)
 
-    if user:
-        is_own_job = job.user_id == user.id
-        can_view_all = user.has_permission("job.view.all")
-        if not is_own_job and not can_view_all:
-            raise PermissionDeniedError("job.view.all")
+    _require_job_view(job, user)
 
     enriched = await enrich_jobs_with_queue_info([job])
     return JobResponse(job=enriched[0])
@@ -400,8 +397,13 @@ async def delete_job(
     return {"success": True, "job_id": job_id}
 
 
+def _require_job_view(job: UnifiedJob, user: User | None) -> None:
+    if user and job.user_id != user.id and not user.has_permission("job.view.all"):
+        raise PermissionDeniedError("job.view.all")
+
+
 @router.get("/jobs/{job_id}/logs")
-async def get_job_logs(job_id: str) -> Dict[str, Any]:
+async def get_job_logs(job_id: str, user: Optional[User] = Depends(get_optional_user)) -> Dict[str, Any]:
     """Fetch logs for a job."""
     store = get_job_store()
     job = await store.get_job(job_id)
@@ -409,6 +411,7 @@ async def get_job_logs(job_id: str) -> Dict[str, Any]:
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job not found: {job_id}")
 
+    _require_job_view(job, user)
     logs = await fetch_job_logs(job)
     return {"job_id": job_id, "logs": logs}
 

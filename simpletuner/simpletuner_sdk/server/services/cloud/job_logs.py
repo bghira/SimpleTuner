@@ -83,7 +83,7 @@ async def fetch_job_logs(job: "UnifiedJob", max_bytes: int = 50000) -> str:
 
     Args:
         job: The job to fetch logs for
-        max_bytes: Maximum bytes to read from log file (for local jobs)
+        max_bytes: Maximum bytes to return for local and worker jobs
 
     Returns:
         Log content as a string
@@ -95,6 +95,13 @@ async def fetch_job_logs(job: "UnifiedJob", max_bytes: int = 50000) -> str:
         if service is None:
             return "(Kubeflow service is unavailable)"
         return await service.get_logs(job)
+    if job.provider == "worker":
+        from .storage.job_repository import get_job_repository
+
+        log_tail = await get_job_repository().get_worker_log_tail(job.job_id)
+        if not log_tail:
+            return "(No logs received from the remote worker)"
+        return log_tail.encode("utf-8")[-max_bytes:].decode("utf-8", errors="ignore")
     if job.job_type == JobType.CLOUD and job.provider:
         return await _fetch_cloud_logs(job)
     elif job.job_type == JobType.LOCAL:

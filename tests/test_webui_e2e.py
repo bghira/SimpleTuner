@@ -99,7 +99,7 @@ class _TrainerPageMixin:
 
 class _TrainingWorkerFixture:
 
-    def register_job(self, job_id, worker_name, gpu):
+    def register_job(self, job_id, worker_name, gpu, *, error_message=None):
         import asyncio
         from datetime import datetime, timezone
         from unittest.mock import patch
@@ -130,10 +130,69 @@ class _TrainingWorkerFixture:
             status="running",
             config_name="large-batch",
             created_at=datetime.now(timezone.utc).isoformat(),
+            completed_at=datetime.now(timezone.utc).isoformat() if error_message else None,
+            error_message=error_message,
             metadata={"worker_id": worker.worker_id},
         )
         with patch.dict(JobRepository._instances, clear=True):
             asyncio.run(JobRepository(cloud_dir / "jobs.db").add(job))
+
+
+class RemoteWorkerJobQueueTestCase(_TrainingWorkerFixture, WebUITestCase):
+    SERVER_MODE = ServerMode.UNIFIED
+    MAX_BROWSERS = 1
+
+    def test_running_worker_shows_remote_logs_and_clears_local_pid_error(self):
+        job_id = "remote-log-queue"
+        worker_name = "Remote test worker"
+        log_text = "Step 42 entered validation"
+        self.register_job(job_id, worker_name, "L40S", error_message="Job orphaned (no PID tracked)")
+
+        heartbeat_url = f"{self.base_url}/api/workers/heartbeat"
+        heartbeat = {"worker_id": f"worker-{job_id}", "status": "busy", "current_job_id": job_id}
+        headers = {"X-Worker-Token": f"{job_id}-token"}
+        # An agent already running an older build still clears the stale error.
+        requests.post(heartbeat_url, json=heartbeat, headers=headers, timeout=10).raise_for_status()
+        job = requests.get(f"{self.base_url}/api/cloud/jobs/{job_id}", timeout=10).json()["job"]
+        self.assertIsNone(job["error_message"])
+        self.assertIsNone(job["completed_at"])
+        self.assertEqual(job["status"], "running")
+
+        requests.post(
+            heartbeat_url, json={**heartbeat, "log_tail": log_text}, headers=headers, timeout=10
+        ).raise_for_status()
+
+        def scenario(driver, _):
+            driver.get(f"{self.base_url}/web/trainer#job_queue")
+            wait = WebDriverWait(driver, 20)
+            wait.until(EC.presence_of_element_located((By.ID, "job-queue-tab-content")))
+            self.dismiss_onboarding(driver)
+            driver.execute_script("Alpine.$data(document.querySelector('.dashboard-wrapper')).eventDockCollapsed = true;")
+            row = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, ".job-queue-item.job-running")))
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", row)
+            row.click()
+            button = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, ".job-actions button")))
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", button)
+            self.assertEqual(button.text, "View Logs")
+            self.assertFalse(driver.find_elements(By.CSS_SELECTOR, ".error-section"))
+            button.click()
+            log = wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "#jobLogsModal .logs-content")))
+            self.assertEqual(log.text, log_text)
+
+        self.for_each_browser("remote_worker_job_logs", scenario)
+
+        final_log = log_text + "\nTraining finished"
+        requests.post(
+            f"{self.base_url}/api/workers/job/{job_id}/status",
+            json={"status": "completed", "log_tail": final_log},
+            headers=headers,
+            timeout=10,
+        ).raise_for_status()
+        requests.post(
+            heartbeat_url, json={**heartbeat, "log_tail": log_text}, headers=headers, timeout=10
+        ).raise_for_status()
+        logs = requests.get(f"{self.base_url}/api/cloud/jobs/{job_id}/logs", timeout=10).json()["logs"]
+        self.assertEqual(logs, final_log)
 
 
 class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
