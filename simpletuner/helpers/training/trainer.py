@@ -48,7 +48,7 @@ from simpletuner.helpers.data_backend.factory import configure_multi_databackend
 from simpletuner.helpers.data_backend.runtime import BatchFetcher, random_dataloader_iterator
 from simpletuner.helpers.data_backend.runtime.context_parallel_sync import (
     ContextParallelBatchSynchronizer,
-    gather_sample_weighted_scalar,
+    reduce_accumulated_losses,
 )
 from simpletuner.helpers.data_backend.runtime.dataloader_iterator import DatasetMixer, agree_training_batch_counts
 from simpletuner.helpers.data_backend.runtime.schedule import (
@@ -481,23 +481,6 @@ class Trainer:
                     raise
             if original_exception_type is None and status.item():
                 raise RuntimeError("FSDP2 full-model export failed on another rank.")
-
-    def _any_rank_reached_epoch_end(self, reached_epoch_end: bool, *, batch_error: Exception | None = None) -> bool:
-        status = 2 if batch_error is not None else int(reached_epoch_end)
-        if self._distributed_collectives_ready():
-            device = getattr(self.accelerator, "device", None)
-            if device is None:
-                device = (
-                    torch.device("cuda", torch.cuda.current_device()) if torch.cuda.is_available() else torch.device("cpu")
-                )
-            local_flag = torch.tensor(status, device=device, dtype=torch.int32)
-            torch.distributed.all_reduce(local_flag, op=torch.distributed.ReduceOp.MAX)
-            status = int(local_flag.item())
-        if status == 2:
-            if batch_error is not None:
-                raise batch_error
-            raise RuntimeError("Another training rank failed while fetching its batch.")
-        return status == 1
 
     def _write_train_stage_breadcrumb(self, stage: str, step: int) -> None:
         output_dir = os.environ.get("SIMPLETUNER_TRAIN_STAGE_TRACE_DIR")
@@ -6888,6 +6871,14 @@ class Trainer:
             if dataset.training_dataloader is not None and name not in eval_ids
         }
 
+    def _record_accumulated_losses(self, loss_window):
+        train_loss, diffusion_loss = reduce_accumulated_losses(
+            loss_window, self.config.gradient_accumulation_steps, self.accelerator
+        )
+        self.train_loss += train_loss
+        self.train_diffusion_loss += diffusion_loss
+        loss_window.clear()
+
     def _acknowledge_training_batch(self, dataset_id, epoch, *, mixer_state, dataset, continuation):
         if mixer_state is not None:
             StateTracker.consumed_dataset_mixer = mixer_state
@@ -6944,6 +6935,7 @@ class Trainer:
         step = self.state["global_step"]
         current_epoch_step = 0 if self.state.get("resume_epoch_boundary") is not None else None
         self.bf = None
+        loss_window = []
         iterator_fn = random_dataloader_iterator
         # Context-parallel batch synchronization: ensures all ranks in a CP group
         # receive the same batch data before it's split along the sequence dimension
@@ -7045,15 +7037,12 @@ class Trainer:
                 self.bf.start_fetching()
                 iterator_fn = self.bf.next_response
 
-            batch_error = None
-
-            def fetch_or_signal_error(step, *args):
-                nonlocal batch_error
-                try:
-                    return iterator_fn(step, *args)
-                except Exception as error:
-                    batch_error = error
-                    return False
+            if should_prefetch and not cp_batch_synchronizer.is_cp_enabled and self._distributed_collectives_ready():
+                fetch_training_batch = partial(
+                    self.bf.next_response, agree_on_count=cp_batch_synchronizer.agree_on_batch_count
+                )
+            else:
+                fetch_training_batch = partial(cp_batch_synchronizer.fetch_training_batch, iterator_fn, iterator_args)
 
             while True:
                 checkpoint_saved_this_step = False
@@ -7065,11 +7054,22 @@ class Trainer:
                 # This ensures all ranks in a CP group receive the same batch before the
                 # model's _cp_plan splits it along the sequence dimension.
                 self._write_train_stage_breadcrumb("fetch_batch:start", step)
-                raw_batch = cp_batch_synchronizer.fetch_batch(fetch_or_signal_error, step, *iterator_args)
+                raw_batch = fetch_training_batch(step)
+                self._write_train_stage_breadcrumb("fetch_batch:done", step)
+                if raw_batch is False:
+                    epoch_validation_boundary_reached = True
+                    if (
+                        self._should_checkpoint_epoch(epoch)
+                        and not last_step_saved_checkpoint
+                        and self.state["global_step"] > self.state["global_resume_step"]
+                    ):
+                        epoch_checkpoint_pending = True
+                    logger.debug(f"Reached the end of epoch {epoch}")
+                    break
+
                 mixer_state = raw_batch.pop("dataset_mixer_state", None) if isinstance(raw_batch, dict) else None
                 continuation = raw_batch.pop("dataset_continuation", None) if isinstance(raw_batch, dict) else None
                 continuation_dataset = training_datasets[raw_batch["data_backend_id"]] if continuation is not None else None
-                self._write_train_stage_breadcrumb("fetch_batch:done", step)
                 with cp_batch_synchronizer.synchronized_rng(getattr(self.config, "seed", None), step):
                     prepared_batch = self.prepare_batch(raw_batch)
                 training_logger.debug(f"Iterator: {iterator_fn}")
@@ -7080,24 +7080,6 @@ class Trainer:
                     progress_bar.set_description(
                         f"Epoch {self.state['current_epoch']}/{self.config.num_train_epochs}, Steps"
                     )
-
-                local_epoch_end = prepared_batch is False
-                self._write_train_stage_breadcrumb("epoch_end_sync:start", step)
-                epoch_end_reached = self._any_rank_reached_epoch_end(local_epoch_end, batch_error=batch_error)
-                self._write_train_stage_breadcrumb("epoch_end_sync:done", step)
-                # If any rank receives False from the enumerator, all ranks must leave the step loop together.
-                if epoch_end_reached:
-                    if not local_epoch_end:
-                        training_logger.debug("Reached the end of epoch because another rank exhausted its dataloader.")
-                    epoch_validation_boundary_reached = True
-                    if (
-                        self._should_checkpoint_epoch(epoch)
-                        and not last_step_saved_checkpoint
-                        and self.state["global_step"] > self.state["global_resume_step"]
-                    ):
-                        epoch_checkpoint_pending = True
-                    logger.debug(f"Reached the end of epoch {epoch}")
-                    break
 
                 if prepared_batch is None:
                     import traceback
@@ -7220,12 +7202,9 @@ class Trainer:
                             f"filepaths={batch_filepaths}, loss_logs={loss_logs_context})."
                         )
 
-                    # Keep metric collectives fixed-shape when ranks use different dataset batch sizes.
-                    avg_loss = gather_sample_weighted_scalar(loss, int(bsz), self.accelerator)
-                    self.train_loss += avg_loss.item() / self.config.gradient_accumulation_steps
-                    if aux_loss_logs is not None:
-                        avg_diffusion_loss = gather_sample_weighted_scalar(diffusion_loss, int(bsz), self.accelerator)
-                        self.train_diffusion_loss += avg_diffusion_loss.item() / self.config.gradient_accumulation_steps
+                    loss_window.append(
+                        (loss.detach(), diffusion_loss.detach() if aux_loss_logs is not None else None, int(bsz))
+                    )
                     # Backpropagate
                     self.grad_norm = None
                     if not self.config.disable_accelerator:
@@ -7393,6 +7372,7 @@ class Trainer:
                 # Checks if the accelerator has performed an optimization step behind the scenes
                 wandb_logs = {}
                 if self.accelerator.sync_gradients:
+                    self._record_accumulated_losses(loss_window)
                     try:
                         if self.config.peft_lora_mode == "singlora":
                             update_singlora_global_step(
@@ -7672,7 +7652,7 @@ class Trainer:
                     )
                 if step_checkpoint_path:
                     self._populate_checkpoint_assets(step_checkpoint_path)
-                self.accelerator.wait_for_everyone()
+                    self.accelerator.wait_for_everyone()
                 if step_checkpoint_path and upload_to_hub:
                     self._schedule_checkpoint_hub_upload(step_checkpoint_path)
                 if torch_profiler is not None:
@@ -7687,6 +7667,8 @@ class Trainer:
                     )
                     # Note: training_complete event is emitted after final validation and model save
                     break
+            if loss_window:
+                self._record_accumulated_losses(loss_window)
             epoch_checkpoint_dir = None
             epoch_upload_to_hub = False
             if epoch_checkpoint_pending:

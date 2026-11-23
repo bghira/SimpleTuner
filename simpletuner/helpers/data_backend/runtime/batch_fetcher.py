@@ -59,6 +59,7 @@ class BatchFetcher:
         self._finished = threading.Event()
         self._space_available = threading.Event()
         self._error = None
+        self._agreed_batches_remaining = 0
         self.step = step
         self._next_fetch_step = step
         self.device_prefetcher = None
@@ -119,18 +120,41 @@ class BatchFetcher:
                 type(self).keep_running = DEFAULT_KEEP_RUNNING_PROPERTY
             prefetch_log_debug("Exiting retrieval thread.")
 
-    def next_response(self, step: int) -> Any:
-        self.step = step
+    def _dequeue(self):
         while True:
             try:
                 item = self.queue.get(timeout=0.1)
                 self._space_available.set()
-                break
+                return item
             except queue.Empty:
                 if self._finished.is_set() and self.queue.empty():
                     if self._error is not None:
                         raise self._error
                     return False
+
+    def next_response(self, step: int, *, agree_on_count=None) -> Any:
+        self.step = step
+        if agree_on_count is not None and self._agreed_batches_remaining == 0:
+            batch_error = None
+            try:
+                item = self._dequeue()
+            except Exception as error:
+                batch_error = error
+                item = False
+            count = 0
+            if item is not False:
+                # The producer only appends, and False can only be the last item.
+                with self.queue.mutex:
+                    queued = self.queue.queue
+                    count = 1 + len(queued) - int(bool(queued) and queued[-1] is False)
+            self._agreed_batches_remaining = agree_on_count(count, batch_error=batch_error)
+            if self._agreed_batches_remaining == 0:
+                return False
+        else:
+            item = self._dequeue()
+
+        if agree_on_count is not None:
+            self._agreed_batches_remaining -= 1
         if self.device_prefetcher is not None:
             item = self.device_prefetcher.consume(item)
         _set_epoch_step_for_training_step(step)
