@@ -266,6 +266,20 @@ class TestJobLogLookup(unittest.TestCase):
         result = _fetch_local_logs(job)
         self.assertIn("no output directory recorded", result.lower())
 
+    def test_worker_log_tail_skips_partial_frame_and_keeps_diagnostics(self):
+        from simpletuner.simpletuner_sdk.server.services.cloud.job_logs import _format_worker_log_tail
+        from simpletuner.worker_protocol import WORKER_LOG_TAIL_SIZE
+
+        warning = "Warning: waiting for data"
+        traceback = "Traceback (most recent call last):\n    run_training()\nRuntimeError: literal [0m"
+        progress = "Epoch 1/4, Steps:  10%|#         | 1/10 [00:01<00:09, step_loss=0.01]"
+        next_step = progress.replace("1/10", "2/10")
+        raw_log = f"\r{progress}\r{warning}\r\n{warning}\n{progress}\r{next_step}\n\n\x1b[31m{traceback}\x1b[0m\n"
+        tail = "x" * (WORKER_LOG_TAIL_SIZE - len(raw_log)) + raw_log
+        expected = f"{progress}\n{warning}\n{warning}\n{progress}\n{next_step}\n\n{traceback}\n"
+
+        self.assertEqual(_format_worker_log_tail(tail, WORKER_LOG_TAIL_SIZE), expected)
+
 
 class TestLogStreaming(unittest.IsolatedAsyncioTestCase):
     """Test log streaming functionality."""
