@@ -5,15 +5,17 @@ import unittest
 from datetime import timedelta
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, Mock, patch
 
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 
 from simpletuner.helpers.data_backend.runtime.context_parallel_sync import (
+    ContextParallelBatchSynchronizer,
     gather_sample_weighted_scalar,
     gather_variable_batch_tensor,
+    reduce_accumulated_losses,
     resolve_distributed_batch_layout,
 )
 
@@ -38,11 +40,79 @@ class _GlooAccelerator:
         self.device = torch.device("cpu")
         self.gather_shapes = []
 
+    def reduce(self, tensor, reduction):
+        assert reduction == "sum"
+        dist.all_reduce(tensor)
+        return tensor
+
     def gather(self, tensor):
         self.gather_shapes.append(tuple(tensor.shape))
         gathered = [torch.empty_like(tensor) for _ in range(self.num_processes)]
         dist.all_gather(gathered, tensor)
         return torch.cat(gathered, dim=0)
+
+
+def _check_batch_windows(rank, accelerator):
+    from simpletuner.helpers.data_backend.runtime import batch_fetcher
+
+    sync = ContextParallelBatchSynchronizer(accelerator)
+    for accumulation in (1, 4):
+        for fail in (False, True):
+            # Rank zero has five real batches ahead of EOF or a producer exception.
+            # Rank one has six. Its surplus must never reach a model collective.
+            fetch_error = OSError("shard read failed")
+            responses = [*range(5 + rank), fetch_error if fail and rank == 0 else False]
+            fetcher = batch_fetcher.BatchFetcher(step=0, max_size=8)
+            with patch.object(batch_fetcher, "random_dataloader_iterator", side_effect=responses):
+                fetcher.start_fetching().join(2)
+                assert fetcher._finished.is_set()
+
+            agree = Mock(wraps=sync.agree_on_batch_count)
+            window = []
+            for step in range(1, 6):
+                batch = fetcher.next_response(step, agree_on_count=agree)
+                assert batch == step - 1
+                count = (1, 3)[rank] if step % 2 else (3, 1)[rank]
+                value = torch.tensor(float(2 + 2 * rank))
+                # Only one rank reports auxiliary loss on even microbatches.
+                aux = value if rank == 0 or step % 2 else None
+                window.append((value, aux, count))
+                if step % accumulation == 0 or step == 5:
+                    mean, diffusion = reduce_accumulated_losses(window, accumulation, accelerator)
+                    steps = range(step - len(window) + 1, step + 1)
+                    assert mean == sum(3.5 if i % 2 else 2.5 for i in steps) / accumulation
+                    assert diffusion == sum(3.5 if i % 2 else 2.0 for i in steps) / accumulation
+                    window.clear()
+
+            assert agree.call_count == 1
+            if fail:
+                expected_error = OSError if rank == 0 else RuntimeError
+                try:
+                    fetcher.next_response(6, agree_on_count=agree)
+                except expected_error as error:
+                    if rank == 0:
+                        assert error is fetch_error
+                    else:
+                        assert "Another training rank" in str(error)
+                else:
+                    raise AssertionError("Expected coordinated fetch failure")
+            else:
+                assert fetcher.next_response(6, agree_on_count=agree) is False
+            assert agree.call_count == 2
+
+    # Direct/CP fetch has no queue on every rank. EOF and errors must still
+    # reach all ranks before any model preparation collective.
+    assert sync.fetch_training_batch(lambda step: {"step": step}, [], 8) == {"step": 8}
+    assert sync.fetch_training_batch(lambda step: False if rank == 0 else {"step": step}, [], 9) is False
+    try:
+        sync.fetch_training_batch(Mock(side_effect=fetch_error) if rank == 0 else Mock(return_value=False), [], 10)
+    except (OSError, RuntimeError) as error:
+        if rank == 0:
+            assert error is fetch_error
+        else:
+            assert "Another training rank" in str(error)
+    else:
+        raise AssertionError("Expected fetch error to take precedence over epoch end")
 
 
 def _run_unequal_batch_gloo_worker(rank, world_size, init_method, result_queue):
@@ -60,6 +130,7 @@ def _run_unequal_batch_gloo_worker(rank, world_size, init_method, result_queue):
         local_values = torch.tensor([10.0]) if rank == 0 else torch.tensor([20.0, 30.0, 40.0])
 
         weighted_loss = gather_sample_weighted_scalar(local_loss, local_batch_size, accelerator)
+        _check_batch_windows(rank, accelerator)
         gathered_values = gather_variable_batch_tensor(local_values, accelerator)
         result_queue.put(
             (
@@ -79,7 +150,7 @@ def _run_unequal_batch_gloo_worker(rank, world_size, init_method, result_queue):
 
 
 class DistributedBatchLayoutTests(unittest.TestCase):
-    def test_real_gloo_collectives_support_rank_varying_batch_sizes(self):
+    def test_real_gloo_collectives_for_uneven_batches_and_prefetch_windows(self):
         if not dist.is_available() or not dist.is_gloo_available():
             self.skipTest("torch.distributed with Gloo is unavailable")
 
@@ -233,6 +304,17 @@ class DistributedBatchLayoutTests(unittest.TestCase):
         self.assertEqual(float(result), 3.5)
         self.assertTrue(torch.equal(accelerator.gather_inputs[0], torch.tensor([12.0, 3.0])))
         self.assertEqual(tuple(accelerator.gather_inputs[0].shape), (2,))
+
+    def test_batch_status_without_process_group(self):
+        sync = ContextParallelBatchSynchronizer(SimpleNamespace(num_processes=8, device=torch.device("cpu")))
+        with patch.object(dist, "is_initialized", return_value=False), patch.object(dist, "all_reduce") as reduce:
+            self.assertEqual(sync.agree_on_batch_count(5), 5)
+            self.assertEqual(sync.agree_on_batch_count(0), 0)
+            fetch_error = OSError("read failed")
+            with self.assertRaises(OSError) as raised:
+                sync.agree_on_batch_count(0, batch_error=fetch_error)
+            self.assertIs(raised.exception, fetch_error)
+        reduce.assert_not_called()
 
 
 if __name__ == "__main__":

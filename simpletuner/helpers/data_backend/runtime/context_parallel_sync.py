@@ -348,6 +348,26 @@ def gather_sample_weighted_scalar(value: torch.Tensor, local_batch_size: int, ac
     return totals[0] / totals[1]
 
 
+def reduce_accumulated_losses(
+    window: list[tuple[torch.Tensor, torch.Tensor | None, int]], accumulation_steps: int, accelerator
+) -> tuple[float, float]:
+    """Average the global sample-weighted microbatch losses, including partial accumulation windows."""
+    if any(size < 1 for _, _, size in window):
+        raise ValueError("local_batch_size must be greater than 0.")
+    losses = torch.stack([loss.reshape(()) for loss, _, _ in window])
+    diffusion = torch.stack([(loss if aux is None else aux).reshape(()) for loss, aux, _ in window])
+    values = torch.stack((losses, diffusion), dim=1).detach().float()
+    counts = torch.tensor(
+        [(size, size if aux is not None else 0) for _, aux, size in window], dtype=torch.float32, device="cpu"
+    ).to(values.device, non_blocking=True)
+    totals = torch.cat((values * counts, counts), dim=1)
+    if accelerator.num_processes > 1:
+        totals = accelerator.reduce(totals, reduction="sum")
+    means = totals[:, :2] / totals[:, 2:].clamp_min(1)
+    train_loss, diffusion_loss = (means.sum(dim=0) / accumulation_steps).tolist()
+    return train_loss, diffusion_loss
+
+
 class ContextParallelBatchSynchronizer:
     """
     Caches context-parallel information for efficient batch synchronization.
@@ -450,6 +470,35 @@ class ContextParallelBatchSynchronizer:
                 yield
         finally:
             random.setstate(python_rng_state)
+
+    def agree_on_batch_count(self, count: int, *, batch_error: Exception | None = None) -> int:
+        """Return the shortest ready prefix. A fetch error takes precedence over exhaustion."""
+        count = -1 if batch_error is not None else count
+        if dist.is_available() and dist.is_initialized() and self.accelerator.num_processes > 1:
+            ready = torch.tensor(count, device=self.accelerator.device, dtype=torch.int32)
+            dist.all_reduce(ready, op=dist.ReduceOp.MIN)
+            count = int(ready.item())
+        if count < 0:
+            if batch_error is not None:
+                raise batch_error
+            raise RuntimeError("Another training rank failed while fetching its batch.")
+        return count
+
+    def fetch_training_batch(self, iterator_fn, iterator_args, step):
+        batch_error = None
+
+        def fetch_or_signal_error(*args):
+            nonlocal batch_error
+            try:
+                return iterator_fn(*args)
+            except Exception as error:
+                batch_error = error
+                return False
+
+        batch = self.fetch_batch(fetch_or_signal_error, step, *iterator_args)
+        if self.agree_on_batch_count(int(batch is not False), batch_error=batch_error):
+            return batch
+        return False
 
     def fetch_batch(self, iterator_fn, step: int, *iterator_args) -> Any:
         """

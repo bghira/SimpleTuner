@@ -1068,58 +1068,6 @@ class TestTrainer(unittest.TestCase):
         trainer.grad_norm = grad_value
         return trainer
 
-    def test_any_rank_reached_epoch_end_returns_local_value_without_process_group(self):
-        trainer = object.__new__(Trainer)
-        trainer.accelerator = SimpleNamespace(num_processes=8, device=torch.device("cpu"))
-
-        with (
-            patch("simpletuner.helpers.training.trainer.torch.distributed.is_available", return_value=True),
-            patch("simpletuner.helpers.training.trainer.torch.distributed.is_initialized", return_value=False),
-            patch("simpletuner.helpers.training.trainer.torch.distributed.all_reduce") as mock_all_reduce,
-        ):
-            self.assertTrue(trainer._any_rank_reached_epoch_end(True))
-            self.assertFalse(trainer._any_rank_reached_epoch_end(False))
-
-        mock_all_reduce.assert_not_called()
-
-    def test_any_rank_reached_epoch_end_uses_max_across_distributed_ranks(self):
-        trainer = object.__new__(Trainer)
-        trainer.accelerator = SimpleNamespace(num_processes=8, device=torch.device("cpu"))
-
-        def mark_remote_epoch_end(tensor, op=None):
-            tensor.fill_(1)
-
-        with (
-            patch("simpletuner.helpers.training.trainer.torch.distributed.is_available", return_value=True),
-            patch("simpletuner.helpers.training.trainer.torch.distributed.is_initialized", return_value=True),
-            patch(
-                "simpletuner.helpers.training.trainer.torch.distributed.all_reduce",
-                side_effect=mark_remote_epoch_end,
-            ) as mock_all_reduce,
-        ):
-            self.assertTrue(trainer._any_rank_reached_epoch_end(False))
-
-        mock_all_reduce.assert_called_once()
-
-    def test_fetch_error_is_shared_with_ranks_that_have_a_batch(self):
-        trainer = object.__new__(Trainer)
-        trainer.accelerator = SimpleNamespace(num_processes=2, device=torch.device("cpu"))
-
-        def mark_remote_fetch_error(tensor, op=None):
-            tensor.fill_(2)
-
-        with (
-            patch.object(trainer, "_distributed_collectives_ready", return_value=True),
-            patch("simpletuner.helpers.training.trainer.torch.distributed.all_reduce") as reduce,
-        ):
-            error = OSError("shard read failed")
-            with self.assertRaises(OSError) as raised:
-                trainer._any_rank_reached_epoch_end(True, batch_error=error)
-            self.assertIs(raised.exception, error)
-            reduce.side_effect = mark_remote_fetch_error
-            with self.assertRaisesRegex(RuntimeError, "Another training rank failed while fetching its batch"):
-                trainer._any_rank_reached_epoch_end(False)
-
     def test_fsdp2_full_export_failure_guard_raises_when_peer_rank_failed(self):
         trainer = object.__new__(Trainer)
         trainer.accelerator = SimpleNamespace(num_processes=2, device=torch.device("cpu"))
