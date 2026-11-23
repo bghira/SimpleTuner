@@ -328,6 +328,34 @@ class TestTREADTransformers(unittest.TestCase):
             param = forward_signature.parameters["force_keep_mask"]
             self.assertEqual(param.default, None)
 
+    def test_flux_single_stream_route_accepts_image_and_combined_keep_masks(self):
+        from tests.test_flux_time_sign_embed_gating import _tiny_flux_transformer
+
+        model = _tiny_flux_transformer()
+        router = TREADRouter(device="cpu")
+        model.set_router(router, [{"selection_ratio": 0.5, "start_layer_idx": 1, "end_layer_idx": 1}])
+        image_tokens = torch.randn(2, 4, 4)
+        force_keep = torch.tensor([[True, False, True, False], [False, True, False, True]])
+        text_mask = torch.ones(2, 2, dtype=torch.bool)
+
+        for keep_mask in (force_keep, torch.cat((text_mask, force_keep), dim=1)):
+            with (
+                self.subTest(mask_width=keep_mask.shape[1]),
+                patch.object(router, "end_route", wraps=router.end_route) as restore,
+            ):
+                output = model(
+                    hidden_states=image_tokens,
+                    encoder_hidden_states=torch.randn(2, 2, 16),
+                    timestep=torch.tensor([0.25, 0.75]),
+                    pooled_projections=torch.randn(2, 8),
+                    img_ids=torch.tensor([[0, 0, i] for i in range(4)]),
+                    txt_ids=torch.zeros(2, 3, dtype=torch.long),
+                    force_keep_mask=keep_mask,
+                ).sample
+
+            self.assertEqual(output.shape, image_tokens.shape)
+            torch.testing.assert_close(~restore.call_args.args[1].mask, force_keep)
+
     def test_tread_disabled_in_eval_mode(self):
         """Test that TREAD routing is disabled in eval mode."""
         with patch("simpletuner.helpers.models.auraflow.transformer.TREADRouter"):

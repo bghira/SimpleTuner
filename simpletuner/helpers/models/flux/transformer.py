@@ -1064,6 +1064,8 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
         encoder_hidden_states = self.context_embedder(encoder_hidden_states)
         txt_len = encoder_hidden_states.shape[1]
         num_img_tokens = hidden_states.shape[1]
+        if force_keep_mask is not None and force_keep_mask.shape[-1] == txt_len + num_img_tokens:
+            force_keep_mask = force_keep_mask[:, txt_len:]
 
         if timestep.ndim == 2:
             if timestep.shape[1] != num_img_tokens:
@@ -1389,8 +1391,7 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
                 text_tok = hidden_states[:, :txt_len, :]
                 img_tok = hidden_states[:, txt_len:, :]
 
-                fkm = force_keep_mask[:, txt_len:] if force_keep_mask is not None else None
-                tread_mask_info = router.get_mask(img_tok, mask_ratio=mask_ratio, force_keep=fkm)
+                tread_mask_info = router.get_mask(img_tok, mask_ratio=mask_ratio, force_keep=force_keep_mask)
                 saved_tokens = img_tok.clone()
                 img_tok = router.start_route(img_tok, tread_mask_info)
 
