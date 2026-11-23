@@ -28,6 +28,13 @@
 - Ask only when the answer could materially change the implementation or its consequences. Use reasonable judgment on reversible choices and state important assumptions in progress updates.
 - At a handoff, report what was verified, what remains, and the exact blocker or decision if work is unfinished.
 
+## Training run operations
+
+- Start managed training runs with `simpletuner server` and submit them through `POST /api/training/start`. For a prepared configuration, `simpletuner server --env <config-name>` starts the run when the server is ready. See the [API training tutorial](documentation/api/TUTORIAL.md).
+- Use `GET /api/training/status` and `GET /api/training/events` to monitor progress and check what the trainer is doing, including validation. Use `POST /api/training/validation/run` to request samples between scheduled validations.
+- Before a planned restart, request a checkpoint with `POST /api/training/checkpoint/run` on the server managing the trainer. Wait for the save to complete and verify the checkpoint is accessible to the next run before stopping the trainer. Resume from that checkpoint.
+- When the server is local and the GPUs are remote, register the GPU host with `simpletuner worker --orchestrator-url <url> --worker-token <token>`. Set `webhook_config` to send trainer events to a callback URL on the local system that the worker can reach. Confirm that events arrive after launch. See [worker orchestration](documentation/experimental/server/WORKERS.md).
+
 ## Code style
 
 - Defensive programming should be justified and expected by users, not masking bugs
