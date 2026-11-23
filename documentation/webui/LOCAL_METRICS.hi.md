@@ -13,7 +13,7 @@ SimpleTuner बाहरी सेवा के बिना प्रशिक�
 - `training_metrics.jsonl`: हर step के append-only scalar records।
 - `training_metrics.json`: atomic run manifest, status और metric names।
 - `validation_media.jsonl`: validation image, video और audio index।
-- `timestep_distribution.jsonl`: global step के अनुसार grouped timestep samples।
+- `timestep_distribution.jsonl`: `log_timestep_distribution` चालू होने पर ग्लोबल स्टेप के अनुसार दर्ज किए गए टाइमस्टेप सैंपल।
 - `training_report.html`: बिना server के खुलने वाली self-contained report।
 
 Resume पर records जोड़े जाते हैं। HTML relative media paths उपयोग करता है, इसलिए इसे output directory के साथ archive करें।

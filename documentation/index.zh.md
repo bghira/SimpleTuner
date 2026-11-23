@@ -24,7 +24,7 @@
 
     ---
 
-    为每次训练保存标量图表和验证对比
+    为每次训练保存标量图表、可选的时间步散点图和验证结果对比
 
     [:octicons-arrow-right-24: 本地训练指标](webui/LOCAL_METRICS.md)
 

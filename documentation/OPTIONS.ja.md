@@ -2089,6 +2089,10 @@ LayerSync は同一 Transformer 内の「学生」レイヤーを、より強い
 - **理由**: ローカルまたは外部監視を有効にします。`simpletuner` は JSONL、マニフェスト、検証メディア情報、自己完結 HTML を `output_dir` に保存します。複数の tracker はカンマ区切りで指定します。
 - **選択肢**: simpletuner, wandb, tensorboard, swanlab, comet_ml, custom-tracker, none
 
+### `--log_timestep_distribution`
+
+W&B または SimpleTuner のローカルトラッカーでタイムステップの散布図を記録します。デフォルトでは各サンプルのタイムステップを CPU にコピーしません。有効にすると、メインプロセスだけがサンプルを記録します。
+
 ### `--validation_image_format`
 
 - **内容**: `output_dir/validation_images` に保存する画像形式。

@@ -24,7 +24,7 @@
 
     ---
 
-    हर training run के साथ scalar charts और validation comparisons रखें
+    हर प्रशिक्षण रन के लिए स्केलर चार्ट, वैकल्पिक टाइमस्टेप प्लॉट और वैलिडेशन परिणामों की तुलना सहेजें
 
     [:octicons-arrow-right-24: स्थानीय प्रशिक्षण मेट्रिक्स](webui/LOCAL_METRICS.md)
 

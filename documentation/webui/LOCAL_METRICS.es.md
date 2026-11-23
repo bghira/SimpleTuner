@@ -15,7 +15,7 @@ El directorio de salida contiene:
 - `training_metrics.jsonl`: escalares por paso, en formato append-only.
 - `training_metrics.json`: manifiesto atómico, estado y nombres de métricas.
 - `validation_media.jsonl`: índice de imágenes, vídeo y audio de validación.
-- `timestep_distribution.jsonl`: muestras de timestep agrupadas por paso global.
+- `timestep_distribution.jsonl`: muestras de pasos de difusión agrupadas por paso global cuando se activa `log_timestep_distribution`.
 - `training_report.html`: informe autónomo que abre sin servidor.
 
 Una reanudación añade registros. Archiva el informe HTML junto con el directorio de salida porque usa rutas relativas para los medios.

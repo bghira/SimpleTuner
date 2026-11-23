@@ -26,6 +26,16 @@ class ReportToTests(unittest.TestCase):
         self.assertTrue(report_to_contains(args.report_to, "wandb"))
         self.assertTrue(report_to_contains(args.report_to, "simpletuner"))
 
+    def test_timestep_distribution_requires_explicit_opt_in(self):
+        for flags, enabled in (
+            ([], False),
+            (["--log_timestep_distribution"], True),
+            (["--log_timestep_distribution=false"], False),
+        ):
+            with self.subTest(flags=flags):
+                args = parse_cmdline_args(BASE_ARGS + ["--report_to=wandb"] + flags, exit_on_error=True)
+                self.assertIs(args.log_timestep_distribution, enabled)
+
     def test_parser_rejects_removed_all_value(self):
         with self.assertRaisesRegex(ValueError, "Unsupported --report_to value 'all'"):
             parse_cmdline_args(BASE_ARGS + ["--report_to=all"], exit_on_error=True)

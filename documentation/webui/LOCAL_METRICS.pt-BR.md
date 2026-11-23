@@ -13,7 +13,7 @@ Use valores separados por virgula, como `report_to=simpletuner,wandb`, para ativ
 - `training_metrics.jsonl`: escalares por etapa, somente anexados.
 - `training_metrics.json`: manifesto atômico, status e nomes das métricas.
 - `validation_media.jsonl`: índice de imagens, vídeos e áudios de validação.
-- `timestep_distribution.jsonl`: amostras de timestep agrupadas por etapa global.
+- `timestep_distribution.jsonl`: amostras de passos de difusão agrupadas por etapa global quando `log_timestep_distribution` está ativo.
 - `training_report.html`: relatório autônomo que abre sem servidor.
 
 Ao retomar, novos registros são anexados. Arquive o HTML com o diretório de saída, pois os caminhos de mídia são relativos.

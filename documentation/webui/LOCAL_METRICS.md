@@ -19,7 +19,7 @@ The training output directory contains:
 | `training_metrics.jsonl` | Append-only scalar records with step and UTC timestamp |
 | `training_metrics.json` | Atomic run manifest, metric names, status, and selected configuration values |
 | `validation_media.jsonl` | Indexed validation image, video, and audio paths |
-| `timestep_distribution.jsonl` | Timestep samples grouped by global step |
+| `timestep_distribution.jsonl` | Timestep samples grouped by global step when `log_timestep_distribution` is enabled |
 | `training_report.html` | Self-contained report that opens without a server |
 
 The JSONL files are the raw interface for analysis tools. A resumed run appends records instead of replacing them. Under DDP, only the main process writes these files.

@@ -2111,6 +2111,10 @@ Upstream option mapping (LayerSync → SimpleTuner):
 - **Why**: Enables local or external monitoring. `simpletuner` writes raw JSONL, a manifest, validation media metadata, and a self-contained HTML report to `output_dir`. Use comma-separated values for multiple trackers.
 - **Choices**: simpletuner, wandb, tensorboard, swanlab, comet_ml, custom-tracker, none
 
+### `--log_timestep_distribution`
+
+Enable the timestep scatter plot with W&B or the SimpleTuner local tracker. By default, training skips the host copy of per-sample timesteps. When enabled, only the main process records samples.
+
 ### `--validation_image_format`
 
 - **What**: Format for validation images saved in `output_dir/validation_images`.

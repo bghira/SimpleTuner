@@ -2089,6 +2089,10 @@ Mapeo de opciones upstream (LayerSync → SimpleTuner):
 - **Por qué**: Habilita monitoreo local o externo. `simpletuner` escribe JSONL, un manifiesto, metadatos de validación y un informe HTML autónomo en `output_dir`. Usa valores separados por comas para múltiples trackers.
 - **Opciones**: simpletuner, wandb, tensorboard, swanlab, comet_ml, custom-tracker, none
 
+### `--log_timestep_distribution`
+
+Activa el gráfico de dispersión de pasos de difusión con W&B o el registro local de SimpleTuner. Por defecto, se omite la copia a la CPU del paso de difusión de cada muestra. Al activar la opción, solo el proceso principal registra las muestras.
+
 ### `--validation_image_format`
 
 - **Qué**: Formato de imágenes guardadas en `output_dir/validation_images`.

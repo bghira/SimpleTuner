@@ -24,7 +24,7 @@
 
     ---
 
-    Store scalar charts and validation comparisons with each training run
+    Store scalar charts, optional timestep plots, and validation comparisons with each training run
 
     [:octicons-arrow-right-24: Local Training Metrics](webui/LOCAL_METRICS.md)
 
