@@ -3365,6 +3365,53 @@ class DatasetCaptioningTabSmokeTestCase(_TrainerPageMixin, WebUITestCase):
         self.for_each_browser("test_captioning_subtab_initializes", scenario)
 
 
+class JobQueueHeroTestCase(WebUITestCase):
+    SERVER_MODE = ServerMode.UNIFIED
+    MAX_BROWSERS = 1
+
+    def test_dismissal_and_restore_survive_reload(self):
+        queue_selector = "#job-queue-tab-content"
+        hero = (By.CSS_SELECTOR, f"{queue_selector} .hero-cta")
+        dismiss = (By.CSS_SELECTOR, f"{queue_selector} .hero-dismiss-btn")
+        restore = (By.CSS_SELECTOR, f'{queue_selector} button[title="Show getting started guide"]')
+
+        def is_dismissed():
+            response = requests.get(f"{self.base_url}/api/cloud/hints", timeout=5)
+            response.raise_for_status()
+            return "job_queue_hero" in response.json()["dismissed_hints"]
+
+        def scenario(driver, _):
+            wait = WebDriverWait(driver, 15)
+
+            def wait_for_queue():
+                wait.until(
+                    lambda d: d.execute_script(
+                        "const queue = document.querySelector(arguments[0]);"
+                        "return !!(queue && window.Alpine?.$data(queue).loaded);",
+                        queue_selector,
+                    )
+                )
+                self.dismiss_onboarding(driver)
+
+            driver.get(f"{self.base_url}/web/trainer#job_queue")
+            wait_for_queue()
+            wait.until(EC.element_to_be_clickable(dismiss)).click()
+            wait.until(EC.invisibility_of_element_located(hero))
+            wait.until(lambda _: is_dismissed(), "The Job Queue dismissal did not reach the server")
+
+            driver.refresh()
+            wait_for_queue()
+            self.assertFalse(driver.find_element(*hero).is_displayed())
+            wait.until(EC.element_to_be_clickable(restore)).click()
+            wait.until(lambda _: not is_dismissed(), "The Job Queue restore did not reach the server")
+
+            driver.refresh()
+            wait_for_queue()
+            wait.until(EC.visibility_of_element_located(hero))
+
+        self.for_each_browser("job_queue_hero_dismissal", scenario)
+
+
 class TabNavigationTestCase(_TrainerPageMixin, WebUITestCase):
     """Test tab navigation functionality."""
 

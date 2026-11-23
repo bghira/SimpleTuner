@@ -112,14 +112,14 @@ class DataUploadPreviewResponse(BaseModel):
 
 
 class HintsResponse(BaseModel):
-    """Response for all hints (unified format for admin and cloud dashboard)."""
+    """Response for all hints managed by the shared hints API."""
 
     dismissed_hints: List[str] = []
 
 
 @router.get("/hints")
 async def get_all_hints() -> HintsResponse:
-    """Get all dismissed hints as a list (unified format for admin component)."""
+    """Get all dismissed hints as a list."""
     from ...services.webui_state import WebUIStateStore
 
     defaults = WebUIStateStore().load_defaults()
@@ -130,6 +130,8 @@ async def get_all_hints() -> HintsResponse:
         dismissed.append("dataloader")
     if defaults.cloud_git_hint_dismissed:
         dismissed.append("git")
+    if defaults.job_queue_hero_dismissed:
+        dismissed.append("job_queue_hero")
 
     # Admin hints (stored as admin_*)
     admin_hints = getattr(defaults, "admin_dismissed_hints", []) or []
@@ -140,7 +142,7 @@ async def get_all_hints() -> HintsResponse:
 
 
 # --- Hint Management ---
-# NOTE: This handles cloud dashboard and admin hints.
+# NOTE: This handles cloud dashboard, Job Queue, and admin hints.
 # Metrics hints are handled separately in metrics_config.py with their own storage.
 # This separation is intentional - different feature areas use different hint lists.
 
@@ -170,6 +172,8 @@ async def dismiss_hint(hint_name: str) -> Dict[str, Any]:
         defaults.cloud_dataloader_hint_dismissed = True
     elif hint_name == "git":
         defaults.cloud_git_hint_dismissed = True
+    elif hint_name == "job_queue_hero":
+        defaults.job_queue_hero_dismissed = True
     # Handle admin hints (admin_overview, admin_users, etc.)
     elif hint_name.startswith("admin_"):
         admin_hints = getattr(defaults, "admin_dismissed_hints", None) or []
@@ -202,6 +206,8 @@ async def show_hint(hint_name: str) -> Dict[str, Any]:
         defaults.cloud_dataloader_hint_dismissed = False
     elif hint_name == "git":
         defaults.cloud_git_hint_dismissed = False
+    elif hint_name == "job_queue_hero":
+        defaults.job_queue_hero_dismissed = False
     # Handle admin hints (admin_overview, admin_users, etc.)
     elif hint_name.startswith("admin_"):
         admin_hints = getattr(defaults, "admin_dismissed_hints", None) or []
