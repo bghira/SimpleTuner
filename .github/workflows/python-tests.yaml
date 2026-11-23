@@ -28,8 +28,12 @@ on:
 
 jobs:
   python-tests:
-    name: Python Tests
+    name: Python Tests (${{ matrix.letters }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        letters: [a-p, q-z]
 
     steps:
     - uses: actions/checkout@v4
@@ -56,7 +60,7 @@ jobs:
         PY
 
     - name: Run Tests
-      run: python -m unittest discover -v tests/
+      run: python -m unittest discover -v tests/ -p 'test_[${{ matrix.letters }}]*.py'
 
   js-tests:
     name: JavaScript Tests
