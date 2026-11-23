@@ -624,118 +624,53 @@ class LocalJobSubmitResponse(BaseModel):
     reason: Optional[str] = None
 
 
-async def _submit_to_worker(
-    request: "LocalJobSubmitRequest",
+async def submit_worker_job(
+    config_name: str,
     config: Dict[str, Any],
     user: Optional[User],
+    *,
+    target_worker_id: Optional[str] = None,
+    dataloader: Optional[list] = None,
 ) -> LocalJobSubmitResponse:
-    """Submit a job to be executed by a remote worker."""
+    """Queue a configuration snapshot and let the worker scheduler assign it."""
     import uuid
     from datetime import datetime, timezone
 
-    from ..services.cloud.async_job_store import AsyncJobStore
     from ..services.cloud.base import JobType, UnifiedJob
-    from ..services.worker_repository import get_worker_repository
-    from .workers import is_worker_connected, push_to_worker
+    from ..services.worker_manager import get_worker_manager
 
-    worker_repo = get_worker_repository()
-    job_store = await AsyncJobStore.get_instance()
+    manager = get_worker_manager()
+    if manager is None:
+        return LocalJobSubmitResponse(success=False, error="Worker scheduler unavailable")
 
-    # Generate job ID
     job_id = f"wjob-{uuid.uuid4().hex[:12]}"
     now = datetime.now(timezone.utc).isoformat()
-
-    # Create job entry in job store
-    job = UnifiedJob(
-        job_id=job_id,
-        job_type=JobType.LOCAL,
-        provider="worker",
-        status="pending",
-        config_name=request.config_name,
-        created_at=now,
-        queued_at=now,
-        user_id=user.id if user else None,
-        metadata={
-            "config": config,
-            "target": "worker",
-        },
-    )
-    await job_store.add_job(job)
-    logger.info(f"Created worker job {job_id} for config '{request.config_name}'")
-
-    # Find an idle worker
-    idle_worker = await worker_repo.get_idle_worker_for_job()
-
-    if idle_worker and is_worker_connected(idle_worker.worker_id):
-        # Dispatch immediately to the idle worker
-        from ..models.worker import WorkerStatus
-
-        # Mark worker as busy
-        await worker_repo.update_worker(
-            idle_worker.worker_id,
-            {
-                "status": WorkerStatus.BUSY,
-                "current_job_id": job_id,
-            },
-        )
-
-        # Push job to worker via SSE
-        success = await push_to_worker(
-            idle_worker.worker_id,
-            {
-                "type": "job_submit",
-                "job_id": job_id,
-                "config": config,
-                "dataloader": config.get("dataloader_config"),
-                "upload_endpoint": "/api/cloud/storage",
-            },
-        )
-
-        if success:
-            # Update job status to running
-            await job_store.update_job(
-                job_id,
-                {
-                    "status": "running",
-                    "started_at": datetime.now(timezone.utc).isoformat(),
-                    "metadata": {
-                        **job.metadata,
-                        "worker_id": idle_worker.worker_id,
-                    },
-                },
-            )
-            logger.info(f"Dispatched job {job_id} to worker {idle_worker.worker_id}")
-            return LocalJobSubmitResponse(
-                success=True,
-                job_id=job_id,
-                status="running",
-                allocated_worker_id=idle_worker.worker_id,
-            )
-        else:
-            # Failed to push, revert worker status but keep job queued
-            await worker_repo.update_worker(
-                idle_worker.worker_id,
-                {
-                    "status": WorkerStatus.IDLE,
-                    "current_job_id": None,
-                },
-            )
-            logger.warning(f"Failed to push job {job_id} to worker {idle_worker.worker_id}, job remains queued")
-            return LocalJobSubmitResponse(
-                success=True,
-                job_id=job_id,
-                status="queued",
-                reason="Failed to dispatch to worker, job queued for retry",
-            )
-    else:
-        # No idle worker connected - job is queued for later dispatch
-        logger.info(f"No idle workers available, job {job_id} queued for later dispatch")
-        return LocalJobSubmitResponse(
-            success=True,
+    metadata = {"config": config, "target": "worker"}
+    if target_worker_id:
+        metadata["target_worker_id"] = target_worker_id
+    if dataloader is not None:
+        metadata["dataloader"] = dataloader
+    await manager.job_store.add_job(
+        UnifiedJob(
             job_id=job_id,
-            status="queued",
-            reason="No idle workers available, job queued",
+            job_type=JobType.LOCAL,
+            provider="worker",
+            status="pending",
+            config_name=config_name,
+            created_at=now,
+            queued_at=now,
+            user_id=user.id if user else None,
+            metadata=metadata,
         )
+    )
+    await manager.dispatch_pending_jobs()
+    job = await manager.job_store.get_job(job_id)
+    return LocalJobSubmitResponse(
+        success=True,
+        job_id=job_id,
+        status="queued" if job.status == "pending" else job.status,
+        allocated_worker_id=job.metadata.get("worker_id"),
+    )
 
 
 @router.post("/submit", response_model=LocalJobSubmitResponse)
@@ -841,7 +776,7 @@ async def submit_local_job(
 
         # Dispatch to worker if requested/available
         if use_worker:
-            return await _submit_to_worker(request, config, user)
+            return await submit_worker_job(request.config_name, config, user)
 
         # Get user's org_id for quota checks
         user_org_id = user.org_id if user else None

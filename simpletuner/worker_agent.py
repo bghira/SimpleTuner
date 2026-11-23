@@ -311,7 +311,7 @@ class WorkerAgent:
         is_kubeflow_job = event.get("provider") == "kubeflow"
         job_config = copy.deepcopy(event["config"])
         dataloader = event.get("dataloader")
-        if is_kubeflow_job and dataloader is not None:
+        if event.get("provider") in ("kubeflow", "worker") and dataloader is not None:
             dataloader_path = job_dir / "dataloader.json"
             with dataloader_path.open("w", encoding="utf-8") as handle:
                 json.dump(dataloader, handle)

@@ -10,7 +10,7 @@
     {% set btn_size = '' %}
 {% endif %}
 
-<div class="{{ wrapper_classes }}" id="action-buttons" data-placement="{{ placement }}" x-data>
+<div class="{{ wrapper_classes }}" id="action-buttons" data-placement="{{ placement }}" x-data="trainingLaunchPicker()">
     <!-- Action Buttons -->
     <div class="btn-group" role="group">
         <!-- Validate Button -->
@@ -45,12 +45,19 @@
                 id="runBtn"
                 title="Start training"
                 aria-label="Start training"
+                x-ref="run"
+                @click="chooseDestination()"
+                aria-haspopup="dialog"
+                aria-controls="training-launch-picker-{{ placement }}"
+                hx-trigger="launch-selected"
+                hx-sync="this:drop"
+                hx-on::config-request="event.detail.headers['X-Training-Destination'] = this.dataset.destination"
                 hx-post="/api/training/start"
                 hx-include="#trainer-form"
                 hx-target="#training-status"
                 hx-swap="innerHTML"
                 hx-indicator="#run-spinner"
-                x-bind:disabled="$store.trainer?.localStopTarget || $store.trainer?.activeTab === 'cloud'"
+                x-bind:disabled="loading || $store.trainer?.activeTab === 'cloud'"
                 x-bind:title="$store.trainer?.activeTab === 'cloud' ? 'Use Cloud tab to submit jobs' : 'Start training'"
                 hx-disabled-elt="this"
                 hx-on::before-request="const validationEl = document.getElementById('validation-results'); if(validationEl) validationEl.innerHTML = '';"
@@ -109,6 +116,22 @@
             <span class="btn-text">Shutdown</span>
         </button>
     </div>
+    <dialog id="training-launch-picker-{{ placement }}" x-ref="picker" aria-labelledby="training-launch-title-{{ placement }}"
+            class="bg-dark text-light border border-secondary rounded p-3 text-start">
+        <h2 id="training-launch-title-{{ placement }}" class="h6">Run training on</h2>
+        <div class="list-group mb-3">
+            <button type="button" class="list-group-item list-group-item-action" @click="launch('local')">
+                Local <small class="text-muted">This machine</small>
+            </button>
+            <template x-for="worker in workers" :key="worker.id">
+                <button type="button" class="list-group-item list-group-item-action" @click="launch(worker.id)">
+                    <strong x-text="worker.name"></strong>
+                    <small class="d-block" x-text="[worker.gpu, worker.status === 'busy' ? 'Busy · queue here' : 'Available'].filter(Boolean).join(' · ')"></small>
+                </button>
+            </template>
+        </div>
+        <button type="button" class="btn btn-outline-secondary btn-sm" @click="$refs.picker.close()">Cancel</button>
+    </dialog>
 </div>
 
 <!-- Shutdown confirmation modal -->
@@ -451,6 +474,36 @@ if (!window.__trainerActionHTMXBound) {
                 title: status === 'reconnecting' ? 'Shutdown paused while reconnecting to API' : 'API offline; shutdown unavailable',
             });
         }
+    });
+
+    window.trainingLaunchPicker = () => ({
+        workers: [],
+        loading: false,
+        async chooseDestination() {
+            if (this.loading) return;
+            this.loading = true;
+            try {
+                const response = await ApiClient.fetch('/api/training/launch-workers');
+                if (!response.ok) throw new Error('Could not load training workers.');
+                this.workers = await response.json();
+            } catch (error) {
+                window.showToast(error.message, 'error');
+                return;
+            } finally {
+                this.loading = false;
+            }
+            await this.$nextTick();
+            if (this.workers.length) {
+                this.$refs.picker.showModal();
+            } else {
+                this.launch('local-only');
+            }
+        },
+        launch(destination) {
+            this.$refs.picker.close();
+            this.$refs.run.dataset.destination = destination;
+            htmx.trigger(this.$refs.run, 'launch-selected');
+        },
     });
 
     window.__handleTrainerRunAfterRequest = function(button, evt) {

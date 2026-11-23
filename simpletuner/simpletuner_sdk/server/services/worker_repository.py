@@ -11,6 +11,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
+from types import EllipsisType
 from typing import Any, Dict, List, Optional
 
 from ..models.worker import Worker, WorkerStatus, WorkerType
@@ -257,12 +258,15 @@ class WorkerRepository(BaseSQLiteStore):
 
         return await loop.run_in_executor(None, _list)
 
-    async def update_worker(self, worker_id: str, updates: Dict[str, Any]) -> Optional[Worker]:
+    async def update_worker(
+        self, worker_id: str, updates: Dict[str, Any], *, expected_job_id: str | None | EllipsisType = ...
+    ) -> Optional[Worker]:
         """Update an existing worker.
 
         Args:
             worker_id: The worker ID to update.
             updates: Dictionary of field updates.
+            expected_job_id: When supplied, update only the observed job assignment.
 
         Returns:
             The updated worker if found, None otherwise.
@@ -302,6 +306,9 @@ class WorkerRepository(BaseSQLiteStore):
 
                 values.append(worker_id)
                 query = f"UPDATE workers SET {', '.join(set_clauses)} WHERE worker_id = ?"
+                if expected_job_id is not ...:
+                    query += " AND current_job_id IS ?"
+                    values.append(expected_job_id)
                 cursor.execute(query, values)
                 conn.commit()
 
@@ -360,7 +367,9 @@ class WorkerRepository(BaseSQLiteStore):
             conn = self._get_connection()
             try:
                 cursor = conn.cursor()
-                cursor.execute("SELECT * FROM workers WHERE status = ?", (WorkerStatus.IDLE.value,))
+                cursor.execute(
+                    "SELECT * FROM workers WHERE status = ? AND current_job_id IS NULL", (WorkerStatus.IDLE.value,)
+                )
                 rows = cursor.fetchall()
 
                 for row in rows:

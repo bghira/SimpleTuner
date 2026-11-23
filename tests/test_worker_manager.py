@@ -462,6 +462,20 @@ class TestWorkerManager(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(self.mock_job_store.list_jobs.call_count, 2)
 
+    async def test_busy_selected_worker_cannot_be_replaced_by_an_idle_peer(self) -> None:
+        job = self._create_job(metadata={"target_worker_id": "h200"}, provider="worker")
+        self.mock_job_store.list_jobs.return_value = [job]
+        self.mock_worker_repository.get_worker.return_value = self._create_worker(worker_id="h200", status=WorkerStatus.BUSY)
+        self.mock_worker_repository.get_idle_worker_for_job.return_value = self._create_worker(worker_id="l40s")
+        with patch.object(self.worker_manager, "_dispatch_job_to_worker", new_callable=AsyncMock) as dispatch:
+            await self.worker_manager.dispatch_pending_jobs()
+            dispatch.assert_not_awaited()
+            idle = self._create_worker(worker_id="h200")
+            self.mock_worker_repository.get_worker.return_value = idle
+            await self.worker_manager.dispatch_pending_jobs()
+            dispatch.assert_awaited_once_with(job, idle)
+        self.mock_worker_repository.get_idle_worker_for_job.assert_not_awaited()
+
     async def test_find_available_worker(self) -> None:
         """Test finding available worker for job."""
         job = self._create_job(

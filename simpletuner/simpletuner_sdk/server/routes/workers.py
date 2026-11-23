@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from ..models.worker import WorkerStatus
 from ..services.callback_events import StageStatus
 from ..services.callback_service import get_default_callback_service
 from ..services.cloud.auth import User, get_optional_user
@@ -230,7 +231,7 @@ async def register_worker(
     Raises:
         HTTPException: 401 if token is invalid
     """
-    from ..models.worker import WorkerStatus, WorkerType
+    from ..models.worker import WorkerType
     from ..services.worker_repository import get_worker_repository
 
     worker = await validate_worker_token(x_worker_token)
@@ -270,9 +271,8 @@ async def register_worker(
         "connected_at": now,
     }
 
-    if worker.is_job_bound:
-        updates["current_job_id"] = worker.current_job_id
-    elif request.provider:
+    updates["current_job_id"] = worker.current_job_id if worker.is_job_bound else None
+    if not worker.is_job_bound and request.provider:
         updates["provider"] = request.provider
 
     # Handle reconnection reconciliation
@@ -357,14 +357,14 @@ async def worker_stream(
     else:
         manual_control_workers.discard(worker_id)
 
-    if worker.is_job_bound:
-        from ..services.worker_manager import get_worker_manager
+    from ..services.worker_manager import get_worker_manager
 
-        worker_manager = get_worker_manager()
-        if worker_manager is None:
-            logger.error("Cannot dispatch bound Worker %s: WorkerManager is not initialized", worker_id)
-        else:
+    worker_manager = get_worker_manager()
+    if worker_manager:
+        if worker.is_job_bound:
             await worker_manager.dispatch_bound_job(worker_id)
+        elif worker.status == WorkerStatus.IDLE:
+            await worker_manager.dispatch_pending_jobs()
 
     async def event_generator():
         """Generate SSE events for the worker."""
@@ -467,6 +467,7 @@ async def worker_heartbeat(
     Raises:
         HTTPException: 401 if token is invalid, 400 if worker_id mismatch
     """
+    from ..services.cloud.storage.job_repository import get_job_repository
     from ..services.worker_repository import get_worker_repository
 
     worker = await validate_worker_token(x_worker_token)
@@ -487,8 +488,6 @@ async def worker_heartbeat(
         )
 
     if request.job_progress:
-        from ..services.cloud.storage.job_repository import get_job_repository
-
         if not request.current_job_id:
             raise HTTPException(status_code=422, detail="Job progress requires a job ID")
         job = await _assigned_job(get_job_repository(), request.current_job_id, worker.worker_id)
@@ -501,8 +500,6 @@ async def worker_heartbeat(
         "last_heartbeat": now,
     }
     if worker.is_job_bound:
-        from ..models.worker import WorkerStatus
-
         updates["status"] = WorkerStatus.BUSY if request.status == WorkerStatus.BUSY.value else WorkerStatus.CONNECTING
         updates["current_job_id"] = worker.current_job_id
     if worker.connected_at is None:
@@ -511,7 +508,23 @@ async def worker_heartbeat(
     if request.current_job_id and not worker.is_job_bound:
         updates["current_job_id"] = request.current_job_id
 
-    await worker_repo.update_worker(worker.worker_id, updates)
+    ready = request.status == WorkerStatus.IDLE and not worker.is_job_bound and not request.current_job_id
+    if ready and worker.current_job_id:
+        # An idle heartbeat can cross a newly dispatched command on the wire.
+        assigned = await get_job_repository().get(worker.current_job_id)
+        ready = assigned is None or assigned.is_terminal
+        if ready:
+            updates["current_job_id"] = None
+        else:
+            updates.pop("status")
+    await worker_repo.update_worker(worker.worker_id, updates, expected_job_id=worker.current_job_id)
+
+    if ready:
+        from ..services.worker_manager import get_worker_manager
+
+        manager = get_worker_manager()
+        if manager:
+            await manager.dispatch_pending_jobs()
 
     logger.debug(
         "Heartbeat from worker %s: status=%s, job=%s",
@@ -521,6 +534,18 @@ async def worker_heartbeat(
     )
 
     return {"success": True}
+
+
+@router.get("/queue")
+async def worker_has_pending_jobs(worker_id: str, x_worker_token: str = Header(..., alias="X-Worker-Token")):
+    """Let an ephemeral worker stay online for jobs waiting for it."""
+    from ..services.cloud.container import get_job_store
+
+    worker = await validate_worker_token(x_worker_token)
+    if worker.worker_id != worker_id:
+        raise HTTPException(status_code=403, detail="Worker ID mismatch")
+    jobs = await get_job_store().list_jobs(status="pending", provider="worker", limit=-1)
+    return {"has_jobs": any((job.metadata or {}).get("target_worker_id") in (None, worker_id) for job in jobs)}
 
 
 @router.post("/job/{job_id}/status")
@@ -597,47 +622,18 @@ async def update_job_status(
     await job_repo.update(job_id, updates)
     _record_worker_stats(job, worker, request.status, request.progress)
 
-    # Release an ordinary Worker, or delete a one-shot Kubeflow Worker and its
-    # TrainJob after the terminal status is safely persisted.
-    if request.status in ["completed", "failed", "cancelled"]:
-        from ..models.worker import WorkerStatus
+    if worker.is_job_bound and request.status in ["completed", "failed", "cancelled"]:
+        from ..services.kubeflow_job_service import get_kubeflow_job_service
         from ..services.worker_repository import get_worker_repository
 
-        worker_repo = get_worker_repository()
-        if worker.is_job_bound:
-            await worker_repo.update_worker(
-                worker.worker_id,
-                {
-                    "status": WorkerStatus.DRAINING,
-                    "current_job_id": worker.current_job_id,
-                },
-            )
-            from ..services.kubeflow_job_service import get_kubeflow_job_service
-
-            service = get_kubeflow_job_service()
-            if service is None:
-                logger.error("Kubeflow service unavailable while finalizing job %s", job_id)
-            else:
-                await service.finalize(job_id)
+        await get_worker_repository().update_worker(
+            worker.worker_id, {"status": WorkerStatus.DRAINING, "current_job_id": worker.current_job_id}
+        )
+        service = get_kubeflow_job_service()
+        if service is None:
+            logger.error("Kubeflow service unavailable while finalizing job %s", job_id)
         else:
-            await worker_repo.update_worker(
-                worker.worker_id,
-                {
-                    "status": WorkerStatus.IDLE,
-                    "current_job_id": None,
-                },
-            )
-            logger.info(f"Freed worker {worker.worker_id} after job {job_id} {request.status}")
-
-            # Try to dispatch any pending worker jobs
-            try:
-                from ..services.worker_manager import get_worker_manager
-
-                worker_manager = get_worker_manager()
-                if worker_manager:
-                    await worker_manager.dispatch_pending_jobs()
-            except Exception as exc:
-                logger.warning("Failed to dispatch pending jobs: %s", exc)
+            await service.finalize(job_id)
 
     # Emit SSE event for UI updates
     try:
@@ -691,9 +687,6 @@ async def list_workers(
         )
 
     worker_repo = get_worker_repository()
-
-    # Get workers with optional status filter
-    from ..models.worker import WorkerStatus
 
     status_enum = None
     if status_filter:
@@ -925,7 +918,6 @@ async def drain_worker(
     Raises:
         HTTPException: 403 if user lacks permission, 404 if worker not found
     """
-    from ..models.worker import WorkerStatus
     from ..services.worker_repository import get_worker_repository
 
     if not user or not user.has_permission("admin.workers"):

@@ -139,6 +139,106 @@ class _TrainingWorkerFixture:
 class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
     SERVER_MODE = ServerMode.UNIFIED
 
+    def test_run_chooses_a_busy_worker_and_waits_for_its_idle_heartbeat(self):
+        from contextlib import ExitStack
+
+        self.with_sample_environment()
+
+        def scenario(driver, browser):
+            with ExitStack() as connections:
+                jobs = [f"launch-{browser}-{gpu}" for gpu in ("L40S", "H200")]
+                streams = []
+                for job in jobs:
+                    gpu = job.rsplit("-", 1)[1]
+                    self.register_job(job, gpu, gpu)
+                    response = connections.enter_context(
+                        requests.get(
+                            f"{self.base_url}/api/workers/stream",
+                            params={"worker_id": f"worker-{job}"},
+                            headers={"X-Worker-Token": job + "-token"},
+                            stream=True,
+                            timeout=15,
+                        )
+                    )
+                    response.raise_for_status()
+                    streams.append(response)
+
+                driver.get(f"{self.base_url}/web/trainer#basic")
+                self.dismiss_onboarding(driver)
+                wait = WebDriverWait(driver, 15)
+                wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input[name='tracker_project_name']")))
+                BasicConfigTab(driver, base_url=self.base_url).set_model_name("edited-project")
+                run = wait.until(
+                    lambda d: next(
+                        (el for el in d.find_elements(By.ID, "runBtn") if el.is_displayed() and el.is_enabled()), False
+                    )
+                )
+                wait.until(
+                    lambda d: (self.dismiss_onboarding(d) or True)
+                    and d.execute_script(
+                        "const r = arguments[0].getBoundingClientRect(); return arguments[0].contains(document.elementFromPoint(r.x + r.width/2, r.y + r.height/2));",
+                        run,
+                    )
+                )
+                run.click()
+                picker = wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "dialog[open]")))
+                self.assertIn("Local", picker.text)
+                self.assertEqual(picker.text.count("Busy"), 2)
+                picker.find_element(By.XPATH, ".//button[normalize-space()='Cancel']").click()
+                self.assertFalse(picker.is_displayed())
+                run.click()
+                wait.until(EC.visibility_of(picker))
+                picker.find_element(By.XPATH, ".//button[strong='H200']").click()
+                status = wait.until(lambda d: d.find_element(By.ID, "training-status").get_attribute("textContent").strip())
+                self.assertIn("queued for H200", status)
+                new_id = status.split("Job ID: ")[-1].strip()
+                for idx, job in enumerate(jobs):
+                    auth = {"X-Worker-Token": job + "-token"}
+                    requests.post(
+                        f"{self.base_url}/api/workers/job/{job}/status",
+                        headers=auth,
+                        json={"status": "completed"},
+                        timeout=5,
+                    ).raise_for_status()
+                    requests.post(
+                        f"{self.base_url}/api/workers/heartbeat",
+                        headers=auth,
+                        json={"worker_id": "worker-" + job, "status": "idle"},
+                        timeout=5,
+                    ).raise_for_status()
+                    if idx == 0:
+                        queued = requests.get(f"{self.base_url}/api/cloud/jobs/{new_id}", timeout=5)
+                        queued.raise_for_status()
+                        self.assertEqual(queued.json()["job"]["status"], "pending")
+                line = next(line for line in streams[1].iter_lines(chunk_size=1) if line.startswith(b"data: "))
+                event = json.loads(line[6:])
+                self.assertEqual(event["job_id"], new_id)
+                self.assertEqual(event["config"]["model_family"], "flux")
+                self.assertEqual(event["config"]["tracker_project_name"], "edited-project")
+                self.assertEqual(event["dataloader"], [])
+                self.assertTrue(run.is_enabled())
+
+                # Observe local submissions without launching a GPU process in the browser suite.
+                driver.execute_script(
+                    """
+                    document.body.addEventListener('htmx:beforeRequest', event => {
+                        if (event.detail.elt.id !== 'runBtn') return;
+                        event.preventDefault();
+                        window.localLaunchTarget = event.detail.requestConfig.headers['X-Training-Destination'];
+                    });
+                """
+                )
+                run.click()
+                wait.until(EC.visibility_of(picker))
+                picker.find_element(By.XPATH, ".//button[starts-with(normalize-space(), 'Local')]").click()
+                wait.until(lambda d: d.execute_script("return window.localLaunchTarget === 'local'"))
+            wait.until(lambda _: requests.get(f"{self.base_url}/api/training/launch-workers", timeout=5).json() == [])
+            run.click()
+            wait.until(lambda d: d.execute_script("return window.localLaunchTarget === 'local-only'"))
+            self.assertFalse(picker.is_displayed())
+
+        self.for_each_browser("run_on_selected_worker", scenario)
+
     def test_progress_list_filters_dismisses_and_scrolls_at_saved_limit(self):
         self.with_sample_environment()
 
@@ -348,7 +448,7 @@ class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
                     const stop = [...document.querySelectorAll('[hx-post="/api/training/cancel"]')];
                     const run = [...document.querySelectorAll('[hx-post="/api/training/start"]')];
                     return stop.length && run.length && stop.every(b => b.disabled !== arguments[0]) &&
-                        run.every(b => b.disabled === arguments[0]);
+                        run.every(b => !b.disabled);
                 """,
                     local_active,
                 )
