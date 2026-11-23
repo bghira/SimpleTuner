@@ -555,6 +555,84 @@ class WorkerHeartbeatTestCase(APITestCase, unittest.TestCase):
                 self.assertEqual(run_async(jobs.get(worker.current_job_id)).error_message, error)
 
 
+class MultinodePeerTestCase(APITestCase, unittest.TestCase):
+    @patch.dict(BaseSQLiteStore._instances, clear=True)
+    def test_monitor_peer_through_registration_reconnect_and_job_completion(self):
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth import get_optional_user
+        from simpletuner.simpletuner_sdk.server.services.cloud.storage.job_repository import JobRepository
+        from simpletuner.simpletuner_sdk.server.services.worker_repository import WorkerRepository
+
+        directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        workers = WorkerRepository(directory / "workers.db")
+        jobs = JobRepository(directory / "jobs.db")
+        self.enterContext(
+            patch(
+                "simpletuner.simpletuner_sdk.server.services.worker_repository.get_worker_repository", return_value=workers
+            )
+        )
+        self.enterContext(
+            patch(
+                "simpletuner.simpletuner_sdk.server.services.cloud.storage.job_repository.get_job_repository",
+                return_value=jobs,
+            )
+        )
+        client = self.enterContext(create_router_client(router, admin_router))
+        client.app.dependency_overrides[get_optional_user] = lambda: Mock(id=1, username="admin")
+        job = UnifiedJob(
+            "run",
+            JobType.LOCAL,
+            "worker",
+            "running",
+            "train",
+            datetime.now(timezone.utc).isoformat(),
+            metadata={"worker_id": "leader"},
+        )
+        run_async(jobs.add(job))
+        for invalid, code in [
+            ({"worker_type": "peer"}, 422),
+            ({"worker_type": "persistent", "job_id": "run"}, 422),
+            ({"worker_type": "peer", "job_id": "missing"}, 404),
+        ]:
+            self.assertEqual(client.post("/api/admin/workers", json={"name": "node-2", **invalid}).status_code, code)
+        with patch("simpletuner.simpletuner_sdk.server.services.cloud.audit.audit_log", new_callable=AsyncMock):
+            response = client.post("/api/admin/workers", json={"name": "node-2", "worker_type": "peer", "job_id": "run"})
+        self.assertEqual(response.status_code, 200, response.text)
+        credentials = response.json()
+        headers = {"X-Worker-Token": credentials["token"]}
+        worker_id = credentials["worker_id"]
+        registration = {"name": "peer-host", "persistent": True, "gpu_info": {"count": 8}}
+        beat = {"worker_id": worker_id, "status": "idle", "system_metrics": {"gpu_0_utilization_percent": 90}}
+        for _ in range(2):
+            reply = client.post("/api/workers/register", headers=headers, json=registration)
+            self.assertEqual(reply.status_code, 200, reply.text)
+            self.assertIsNone(reply.json()["resume_job"])
+            response = client.post("/api/workers/heartbeat", headers=headers, json=beat)
+            self.assertEqual(response.status_code, 200, response.text)
+            peer = run_async(workers.get_worker(worker_id))
+            self.assertEqual(
+                (peer.worker_type, peer.status, peer.current_job_id), (WorkerType.PEER, WorkerStatus.BUSY, "run")
+            )
+            self.assertEqual(peer.system_sample["metrics"], beat["system_metrics"])
+            self.assertIsNone(run_async(workers.get_idle_worker_for_job()))
+
+        for extra, code in [
+            ({"current_job_id": "other"}, 409),
+            ({"log_tail": "text"}, 403),
+            ({"job_progress": {"step": 3}}, 403),
+        ]:
+            self.assertEqual(
+                client.post("/api/workers/heartbeat", headers=headers, json={**beat, **extra}).status_code, code
+            )
+        self.assertEqual(
+            client.post("/api/workers/job/run/status", headers=headers, json={"status": "completed"}).status_code, 403
+        )
+        self.assertEqual(run_async(jobs.get("run")).metadata["worker_id"], "leader")
+        run_async(jobs.update("run", {"status": "completed"}))
+        self.assertEqual(client.post("/api/workers/heartbeat", headers=headers, json=beat).status_code, 410)
+        self.assertEqual(client.post("/api/workers/register", headers=headers, json=registration).status_code, 410)
+        self.assertIsNone(run_async(workers.get_worker(worker_id)).current_job_id)
+
+
 class WorkerJobStatusTestCase(APITestCase, unittest.TestCase):
     """Test POST /api/workers/job/{job_id}/status endpoint."""
 

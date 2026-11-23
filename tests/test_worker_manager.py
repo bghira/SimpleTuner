@@ -314,6 +314,13 @@ class TestWorkerManager(unittest.IsolatedAsyncioTestCase):
             event_type="worker.status",
         )
 
+    async def test_peer_disconnect_and_failed_launch_leave_primary_job_running(self):
+        peer = self._create_worker(worker_type=WorkerType.PEER, current_job_id="primary-job")
+        await self.worker_manager._handle_worker_offline(peer)
+        await self.worker_manager._handle_failed_launch(peer)
+        self.mock_job_store.get_job.assert_not_awaited()
+        self.mock_job_store.update_job.assert_not_awaited()
+
     async def test_handle_worker_offline_with_job(self) -> None:
         """Test handling worker offline with active job."""
         worker = self._create_worker(

@@ -215,6 +215,16 @@ curl -s -X POST http://localhost:8001/api/queue/submit \
 2. 标签匹配（支持 glob 模式）
 3. Worker 可用性（IDLE）
 
+## 监控分布式作业的其他节点
+
+作业分配后，为每个额外节点创建一个对等节点令牌。使用编排器作业队列中显示的作业 ID，在该节点运行返回的连接命令。每个对等节点都会出现在 Workers 列表中，并报告自己的 GPU 指标。原工作节点负责控制作业和报告训练进度。移除对等节点会停止对该节点的监控。
+
+```bash
+curl -s -X POST http://localhost:8001/api/admin/workers \
+  -H "Content-Type: application/json" \
+  -d '{"name":"node-2","worker_type":"peer","job_id":"<job-id>"}'
+```
+
 ## 标签
 
 标签用于灵活选择 Worker：

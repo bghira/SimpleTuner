@@ -172,6 +172,9 @@ class WorkerAgent:
                 if e.response.status_code == 401:
                     logger.error("Invalid worker token, exiting")
                     break
+                if e.response.status_code == 410:
+                    logger.info("Peer job ended, exiting")
+                    break
                 logger.error(f"HTTP error: {e}, reconnecting in 10s...")
                 await asyncio.sleep(10)
             except Exception as e:

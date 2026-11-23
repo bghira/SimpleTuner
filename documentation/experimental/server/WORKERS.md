@@ -215,6 +215,16 @@ The scheduler matches jobs to workers based on:
 2. Label matching (glob patterns supported)
 3. Worker availability (IDLE status)
 
+## Monitor another node in a distributed job
+
+Create a peer token for each additional node after the job is assigned. Use the orchestrator job ID shown in the Job Queue. Run the returned connection command on that node. Each peer appears in Workers and reports its own GPU metrics. The original worker controls the job and reports training progress. Removing a peer stops monitoring that node.
+
+```bash
+curl -s -X POST http://localhost:8001/api/admin/workers \
+  -H "Content-Type: application/json" \
+  -d '{"name":"node-2","worker_type":"peer","job_id":"<job-id>"}'
+```
+
 ## Labels
 
 Labels provide flexible worker selection:

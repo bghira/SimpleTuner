@@ -215,6 +215,16 @@ O scheduler faz matching de jobs para workers com base em:
 2. Matching de labels (suporte a glob)
 3. Disponibilidade do worker (status IDLE)
 
+## Monitorar outro nó de um trabalho distribuído
+
+Após a atribuição do trabalho, crie um token de par para cada nó adicional. Use o ID do trabalho exibido na fila do orquestrador. Execute o comando de conexão retornado nesse nó. Cada par aparece em Workers e envia suas próprias métricas de GPU. O worker original controla o trabalho e informa o progresso do treinamento. Remover um par encerra o monitoramento desse nó.
+
+```bash
+curl -s -X POST http://localhost:8001/api/admin/workers \
+  -H "Content-Type: application/json" \
+  -d '{"name":"node-2","worker_type":"peer","job_id":"<job-id>"}'
+```
+
 ## Labels
 
 Labels fornecem selecao flexivel de workers:

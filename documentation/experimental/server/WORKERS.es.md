@@ -215,6 +215,16 @@ El scheduler empareja trabajos con workers basado en:
 2. Match de etiquetas (patrones glob soportados)
 3. Disponibilidad del worker (estado IDLE)
 
+## Monitorizar otro nodo de un trabajo distribuido
+
+Una vez asignado el trabajo, crea un token de par para cada nodo adicional. Usa el ID del trabajo que aparece en la cola del orquestador. Ejecuta el comando de conexión devuelto en ese nodo. Cada par aparece en Workers y envía sus propias métricas de GPU. El worker original controla el trabajo e informa del progreso. Eliminar un par detiene la monitorización de ese nodo.
+
+```bash
+curl -s -X POST http://localhost:8001/api/admin/workers \
+  -H "Content-Type: application/json" \
+  -d '{"name":"node-2","worker_type":"peer","job_id":"<job-id>"}'
+```
+
 ## Etiquetas
 
 Las etiquetas proporcionan selección flexible de workers:

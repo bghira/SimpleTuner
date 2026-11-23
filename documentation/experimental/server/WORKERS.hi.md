@@ -215,6 +215,16 @@ Scheduler jobs को workers से निम्न आधार पर match �
 2. Label matching (glob patterns समर्थित)
 3. Worker availability (IDLE status)
 
+## वितरित जॉब के दूसरे नोड की निगरानी
+
+जॉब असाइन होने के बाद हर अतिरिक्त नोड के लिए एक पीयर टोकन बनाएं। ऑर्केस्ट्रेटर की जॉब कतार में दिखने वाली जॉब आईडी का उपयोग करें। उस नोड पर प्राप्त कनेक्शन कमांड चलाएं। हर पीयर Workers में दिखाई देता है और अपने GPU मेट्रिक्स भेजता है। मूल वर्कर जॉब को नियंत्रित करता है और प्रशिक्षण की प्रगति बताता है। पीयर को हटाने से उस नोड की निगरानी बंद हो जाती है।
+
+```bash
+curl -s -X POST http://localhost:8001/api/admin/workers \
+  -H "Content-Type: application/json" \
+  -d '{"name":"node-2","worker_type":"peer","job_id":"<job-id>"}'
+```
+
 ## Labels
 
 Labels flexible worker selection देते हैं:

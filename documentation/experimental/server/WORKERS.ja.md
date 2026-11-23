@@ -215,6 +215,16 @@ curl -s -X POST http://localhost:8001/api/queue/submit \
 2. ラベルマッチング（glob パターン対応）
 3. ワーカーの空き状況（IDLE）
 
+## 分散ジョブの別ノードを監視する
+
+ジョブの割り当て後、追加のノードごとにピアトークンを作成します。オーケストレーターのジョブキューに表示されるジョブ ID を使い、返された接続コマンドをそのノードで実行します。各ピアは Workers に表示され、自身の GPU 指標を報告します。ジョブの制御と学習の進捗報告は元のワーカーが担当します。ピアを削除すると、そのノードの監視が終了します。
+
+```bash
+curl -s -X POST http://localhost:8001/api/admin/workers \
+  -H "Content-Type: application/json" \
+  -d '{"name":"node-2","worker_type":"peer","job_id":"<job-id>"}'
+```
+
 ## ラベル
 
 ラベルにより柔軟なワーカー選択が可能です：

@@ -14,6 +14,8 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+from ..models.worker import WorkerType
+
 logger = logging.getLogger(__name__)
 
 
@@ -131,7 +133,7 @@ class WorkerManager:
 
         logger.warning(f"Worker {worker.worker_id} never registered, cleaning up")
 
-        if worker.current_job_id:
+        if worker.current_job_id and worker.worker_type != WorkerType.PEER:
             await self._handle_orphaned_job(worker.current_job_id, worker)
 
         if worker.persistent:
@@ -153,7 +155,7 @@ class WorkerManager:
             {"status": WorkerStatus.OFFLINE},
         )
 
-        if worker.current_job_id:
+        if worker.current_job_id and worker.worker_type != WorkerType.PEER:
             await self._handle_orphaned_job(worker.current_job_id, worker)
 
         await self.sse_manager.broadcast(
@@ -242,7 +244,13 @@ class WorkerManager:
             from ..models.worker import WorkerStatus
 
             worker = await self.worker_repository.get_worker(worker_id)
-            if worker and worker.status == WorkerStatus.IDLE and not worker.current_job_id and not worker.is_job_bound:
+            if (
+                worker
+                and worker.worker_type != WorkerType.PEER
+                and worker.status == WorkerStatus.IDLE
+                and not worker.current_job_id
+                and not worker.is_job_bound
+            ):
                 return worker
             return None
 
