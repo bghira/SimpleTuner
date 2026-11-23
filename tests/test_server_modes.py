@@ -86,6 +86,12 @@ class RouteInclusionTestCase(unittest.TestCase):
         app = create_app(mode=ServerMode.TRAINER)
         for name, path in (
             ("browse_directories", "/api/datasets/browse"),
+            ("get_webui_state", "/api/webui/state"),
+            ("get_gpu_inventory", "/api/hardware/gpus"),
+            ("create_webhook_config", "/api/configs/webhooks"),
+            ("list_prompt_libraries", "/api/prompt-libraries/"),
+            ("get_lycoris_metadata", "/api/lycoris/metadata"),
+            ("inference_prompt_sources", "/api/checkpoints/inference/prompt-sources"),
             ("worker_heartbeat", "/api/workers/heartbeat"),
             ("list_workers", "/api/admin/workers"),
             ("get_hints_status", "/api/cloud/hints/status"),

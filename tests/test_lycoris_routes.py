@@ -1,9 +1,13 @@
 import unittest
 
+from simpletuner.simpletuner_sdk.server.routes.lycoris import router
 from tests.test_webui_api import _WebUIBaseTestCase
 
 
 class LycorisRoutesTestCase(_WebUIBaseTestCase, unittest.TestCase):
+
+    routers = (router,)
+
     def test_metadata_endpoint_returns_algorithms_and_presets(self) -> None:
         response = self.client.get("/api/lycoris/metadata")
 

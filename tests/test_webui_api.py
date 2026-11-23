@@ -12,15 +12,18 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from fastapi.testclient import TestClient
+from fastapi import APIRouter
 
 from simpletuner.simpletuner_sdk.server import ServerMode
+from simpletuner.simpletuner_sdk.server.routes import hardware, webui_state
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIDefaults, WebUIStateStore
-from tests.unittest_support import APITestCase
+from tests.unittest_support import APITestCase, create_router_client
 
 
 class _WebUIBaseTestCase(APITestCase, unittest.TestCase):
-    """Common setup that previously lived in pytest fixtures."""
+    """Isolate UI state and use the full trainer app for integration cases."""
+
+    routers: tuple[APIRouter, ...] = ()
 
     def setUp(self) -> None:
         super().setUp()
@@ -40,8 +43,7 @@ class _WebUIBaseTestCase(APITestCase, unittest.TestCase):
         )
         self._store_patch.start()
 
-        # Trainer app client.
-        self.client: TestClient = self.create_test_client(ServerMode.TRAINER)
+        self.client = create_router_client(*self.routers) if self.routers else self.create_test_client(ServerMode.TRAINER)
 
     def tearDown(self) -> None:
         self.client.close()
@@ -53,6 +55,8 @@ class _WebUIBaseTestCase(APITestCase, unittest.TestCase):
 
 class WebUIStateAPITestCase(_WebUIBaseTestCase):
     """Test /api/webui state management endpoints."""
+
+    routers = (webui_state.router, hardware.router)
 
     def setUp(self) -> None:
         super().setUp()
@@ -424,6 +428,8 @@ class ConfigIntegrationTestCase(_WebUIBaseTestCase):
 
 class WebUICollapsedSectionsAPITestCase(_WebUIBaseTestCase):
     """Test /api/webui/ui-state/collapsed-sections/* endpoints."""
+
+    routers = (webui_state.router,)
 
     def test_get_collapsed_sections_empty_by_default(self) -> None:
         """Test that GET returns empty dict when no state exists."""

@@ -3,11 +3,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from simpletuner.simpletuner_sdk.server.routes.prompt_libraries import router
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIDefaults
 from tests.test_webui_api import _WebUIBaseTestCase
 
 
 class PromptLibraryRoutesTestCase(_WebUIBaseTestCase, unittest.TestCase):
+
+    routers = (router,)
+
     def setUp(self) -> None:
         super().setUp()
         self.configs_dir = Path(self.temp_dir / "configs")

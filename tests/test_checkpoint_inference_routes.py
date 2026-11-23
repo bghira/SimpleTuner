@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 from fastapi import status
 
+from simpletuner.simpletuner_sdk.server.routes.checkpoints import router
 from simpletuner.simpletuner_sdk.server.services.checkpoint_inference_service import (
     CHECKPOINT_INFERENCE_SERVICE,
     CheckpointInferenceServiceError,
@@ -11,6 +12,9 @@ from tests.test_webui_api import _WebUIBaseTestCase
 
 
 class CheckpointInferenceRoutesTestCase(_WebUIBaseTestCase, unittest.TestCase):
+
+    routers = (router,)
+
     def test_start_inference_forwards_validated_request(self) -> None:
         response_payload = {"session_id": "session-one", "status": "loading"}
         with patch.object(CHECKPOINT_INFERENCE_SERVICE, "start", return_value=response_payload) as start:
