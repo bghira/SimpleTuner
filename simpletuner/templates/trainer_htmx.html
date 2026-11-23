@@ -84,6 +84,7 @@ document.addEventListener('alpine:init', () => {
     });
 
     Alpine.store('trainer', trainerComponent());
+    Alpine.store('trainingProgressVisibility', trainingProgressVisibility());
 
     // Shared dataloader configs store
     Alpine.store('dataloaderConfigs', {
@@ -418,22 +419,46 @@ const sanitizeConfigEntry = (entry) => {
 window.sanitizeConfigName = sanitizeConfigName;
 window.sanitizeConfigEntry = sanitizeConfigEntry;
 
-function trainingProgressList() {
+function trainingProgressVisibility() {
     const storageKey = 'simpletuner.dismissedTrainingJobs';
     const readDismissed = () => JSON.parse(localStorage.getItem(storageKey) || '[]');
     return {
-        query: '',
         dismissed: readDismissed(),
-        syncDismissed(event) {
+        sync(event) {
             if (event.key === storageKey || event.key === null) this.dismissed = readDismissed();
         },
+        isDismissed(jobId) {
+            return this.dismissed.includes(jobId);
+        },
+        save(dismissed) {
+            localStorage.setItem(storageKey, JSON.stringify(dismissed));
+            this.dismissed = dismissed;
+        },
         dismiss(jobId) {
-            this.dismissed = [...new Set([...readDismissed(), jobId])];
-            localStorage.setItem(storageKey, JSON.stringify(this.dismissed));
+            this.save([...new Set([...readDismissed(), jobId])]);
+        },
+        restore(jobId) {
+            this.save(readDismissed().filter(id => id !== jobId));
+        },
+    };
+}
+
+function trainingProgressList() {
+    return {
+        query: '',
+        dismiss(jobId) {
+            Alpine.store('trainingProgressVisibility').dismiss(jobId);
             if (!this.remainingRuns.length) this.query = '';
         },
+        showRestoredJob(jobId) {
+            this.query = '';
+            this.$nextTick(() => {
+                const card = this.$el.querySelector('.training-run[aria-label="' + CSS.escape(jobId) + '"]');
+                card?.focus();
+            });
+        },
         get remainingRuns() {
-            return this.trainingRuns.filter(run => !this.dismissed.includes(run.job_id));
+            return this.trainingRuns.filter(run => !Alpine.store('trainingProgressVisibility').isDismissed(run.job_id));
         },
         get matchingRuns() {
             const query = this.query.trim().toLowerCase();
@@ -7418,7 +7443,8 @@ function trainerComponent() {
             <!-- Training Progress -->
             <section class="training-progress-section" @training-runs.window="updateTrainingRuns('callback', $event.detail)"
                      @worker-training-runs.window="updateTrainingRuns('worker', $event.detail)"
-                     x-data="trainingProgressList()" @storage.window="syncDismissed($event)"
+                     x-data="trainingProgressList()" @storage.window="$store.trainingProgressVisibility.sync($event)"
+                     @training-progress-restored.window="showRestoredJob($event.detail)"
                      x-show="remainingRuns.length" x-cloak aria-label="Training Progress">
                 <div class="training-progress-header">
                     <h5><i class="fas fa-chart-line" aria-hidden="true"></i> Training Progress</h5>
@@ -7427,7 +7453,7 @@ function trainerComponent() {
                 </div>
                 <div class="training-run-list" x-visible-jobs="defaults?.training_progress_visible_jobs ?? 4">
                     <template x-for="run in matchingRuns" :key="run.job_id">
-                        <article class="training-run" :aria-label="run.job_id">
+                        <article class="training-run" :aria-label="run.job_id" tabindex="-1">
                             <button type="button" class="training-run-dismiss" title="Dismiss from Training Progress"
                                     :aria-label="'Dismiss job ' + run.job_id" @click="dismiss(run.job_id)">
                                 <i class="fas fa-times" aria-hidden="true"></i>

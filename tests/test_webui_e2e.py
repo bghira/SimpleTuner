@@ -194,6 +194,76 @@ class RemoteWorkerJobQueueTestCase(_TrainingWorkerFixture, WebUITestCase):
         self.assertEqual(logs, final_log)
 
 
+class TrainingProgressRestoreTestCase(_TrainingWorkerFixture, WebUITestCase):
+    SERVER_MODE = ServerMode.UNIFIED
+    MAX_BROWSERS = 1
+
+    def test_restores_each_dismissed_worker_from_job_queue(self):
+        job_ids = ("first-restore", "second-restore")
+        for job_id, worker in zip(job_ids, ("First worker", "Second worker")):
+            self.register_job(job_id, worker, "L40S")
+            requests.post(
+                f"{self.base_url}/api/workers/job/{job_id}/status",
+                json={"progress": {"current": 25, "total": 100, "metrics": {"loss": 0.15}}},
+                headers={"X-Worker-Token": f"{job_id}-token"},
+                timeout=10,
+            ).raise_for_status()
+
+        def scenario(driver, _):
+            wait = WebDriverWait(driver, 20)
+
+            def click(locator):
+                element = wait.until(EC.element_to_be_clickable(locator))
+                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
+                element.click()
+
+            def wait_for_queue():
+                wait.until(EC.presence_of_element_located((By.ID, "job-queue-tab-content")))
+                self.dismiss_onboarding(driver)
+                driver.execute_script(
+                    "Alpine.$data(document.querySelector('.dashboard-wrapper')).eventDockCollapsed = true;"
+                )
+
+            def card(job_id):
+                return By.CSS_SELECTOR, f'.training-run[aria-label="{job_id}"]'
+
+            def restore(job_id):
+                click(
+                    (
+                        By.XPATH,
+                        f"//div[contains(@class, 'job-queue-item')][.//span[@class='job-id' and text()='{job_id[:8]}']]",
+                    )
+                )
+                click((By.CSS_SELECTOR, "[data-testid='restore-training-progress']"))
+                wait.until(EC.visibility_of_element_located(card(job_id)))
+                wait.until(lambda d: d.switch_to.active_element.get_attribute("aria-label") == job_id)
+
+            driver.get(f"{self.base_url}/web/trainer#job_queue")
+            wait_for_queue()
+            for job_id in job_ids:
+                click((By.CSS_SELECTOR, f'.training-run[aria-label="{job_id}"] .training-run-dismiss'))
+                wait.until(EC.invisibility_of_element_located(card(job_id)))
+
+            driver.refresh()
+            wait_for_queue()
+            for job_id in job_ids:
+                wait.until(EC.invisibility_of_element_located(card(job_id)))
+
+            restore(job_ids[0])
+            self.assertFalse(driver.find_elements(*card(job_ids[1])))
+            filter_field = driver.find_element(By.CSS_SELECTOR, ".training-progress-header input")
+            filter_field.send_keys("First worker")
+            restore(job_ids[1])
+            self.assertEqual(filter_field.get_property("value"), "")
+
+            driver.refresh()
+            wait_for_queue()
+            for job_id in job_ids:
+                wait.until(EC.visibility_of_element_located(card(job_id)))
+
+        self.for_each_browser("restore_training_progress", scenario)
+
+
 class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
     SERVER_MODE = ServerMode.UNIFIED
 
