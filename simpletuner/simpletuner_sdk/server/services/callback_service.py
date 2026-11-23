@@ -606,9 +606,10 @@ class CallbackService:
             for run in self._runs.values():
                 if not view_all and run.get("user_id") != user.id:
                     continue
+                local = not run.get("assigned_worker") and bool(run.get("local_worker") or run.get("local"))
                 progress = run.get("progress")
                 if progress is None:
-                    if run.get("validation") is None:
+                    if run.get("validation") is None and not (local and run["status"] == "starting"):
                         continue
                     progress = self._merge_progress_state(None, ProgressData())
                 metrics = progress.get("metrics", {})
@@ -638,7 +639,9 @@ class CallbackService:
                         "validation_at",
                     )
                 }
-                snapshots.append({**summary, "progress": stats, "terminal": run["status"] in TERMINAL_STATUSES})
+                snapshots.append(
+                    {**summary, "is_local": local, "progress": stats, "terminal": run["status"] in TERMINAL_STATUSES}
+                )
             return self._runs_revision, snapshots
 
     def _broadcast_startup_stage(self, job_id: str | None, stage_state: Mapping[str, Any]) -> None:

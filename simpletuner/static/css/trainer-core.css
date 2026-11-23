@@ -272,6 +272,35 @@
     gap: var(--spacing-sm);
 }
 
+.manual-action {
+    position: relative;
+}
+
+.event-dock-toolbar:has(.manual-action [aria-expanded="true"]) {
+    overflow: visible;
+}
+
+.manual-target-menu {
+    inset: auto 0 calc(100% + 0.25rem) auto;
+    width: min(16rem, 65vw);
+    max-height: 40vh;
+    overflow-y: auto;
+}
+
+.manual-target-menu-below {
+    top: calc(100% + 0.25rem);
+    bottom: auto;
+}
+
+.manual-target-menu .dropdown-item {
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
+.manual-target-menu small {
+    display: block;
+}
+
 .event-dock-actions .btn {
     border-color: var(--glass-border);
     color: var(--text-primary);
@@ -586,10 +615,7 @@
         padding: var(--spacing-xs);
     }
 
-    /* Hide trigger buttons on very small screens when training */
-    .event-dock-actions .btn[title*="Trigger"] {
-        display: none;
-    }
+
 }
 
 /* Onboarding Overlay & Modal */

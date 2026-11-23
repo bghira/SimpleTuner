@@ -226,7 +226,7 @@ class WorkerAgent:
                     "GET",
                     f"{self.config.orchestrator_url}/api/workers/stream",
                     headers={"X-Worker-Token": self.config.worker_token},
-                    params={"worker_id": self.worker_id},
+                    params={"worker_id": self.worker_id, "manual_controls": "true"},
                 ) as response:
                     response.raise_for_status()
                     logger.info("Connected to SSE stream")
@@ -260,6 +260,8 @@ class WorkerAgent:
 
         if event_type == "job_submit":
             await self._start_job(event)
+        elif event_type == "job_manual_action":
+            self._signal_manual_action(event)
         elif event_type == "job_cancel":
             await self._stop_current_job()
         elif event_type == "shutdown":
@@ -267,6 +269,25 @@ class WorkerAgent:
             self.shutdown_requested = True
         elif event_type == "ping":
             pass  # Keepalive, no action needed
+
+    def _signal_manual_action(self, event: Dict[str, Any]) -> None:
+        action = event.get("action")
+        if action not in ("validation", "checkpoint") or not self.current_job:
+            return
+        if (
+            event.get("job_id") != self.current_job["job_id"]
+            or not self.training_process
+            or not self._is_process_running(self.training_process)
+        ):
+            return
+
+        path = self._signal_file
+        counts = json.loads(path.read_text())
+        key = f"manual_{action}"
+        counts[key] = counts.get(key, 0) + 1
+        pending = path.with_suffix(".tmp")
+        pending.write_text(json.dumps(counts))
+        pending.replace(path)
 
     async def _start_job(self, event: Dict[str, Any]):
         """Start a training job received from the orchestrator.
@@ -305,6 +326,9 @@ class WorkerAgent:
         with config_path.open("w", encoding="utf-8") as handle:
             json.dump(job_config, handle)
 
+        self._signal_file = job_dir / "triggers.json"
+        self._signal_file.write_text("{}")
+
         # Set up environment
         env = os.environ.copy()
         env.update(
@@ -313,6 +337,7 @@ class WorkerAgent:
                 "SIMPLETUNER_UPLOAD_TOKEN": event.get("upload_token", ""),
                 "CONFIG_PATH": str(config_path),
                 "SIMPLETUNER_JOB_ID": job_id,
+                "SIMPLETUNER_ACCELERATE_SIGNAL_FILE": str(self._signal_file),
                 "SIMPLETUNER_WORKER_STATUS_URL": f"{self.config.orchestrator_url}/api/workers/job/{job_id}/status",
                 "SIMPLETUNER_WORKER_TOKEN": self.config.worker_token,
                 "SIMPLETUNER_CONFIG_BACKEND": "json",
@@ -374,7 +399,7 @@ class WorkerAgent:
             await self._report_job_status("training")
             while process.poll() is None:
                 if process.stdout:
-                    line = process.stdout.readline()
+                    line = await asyncio.to_thread(process.stdout.readline)
                     if line:
                         logger.info("[training] %s", line.rstrip())
                 await asyncio.sleep(0.1)

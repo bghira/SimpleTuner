@@ -332,6 +332,22 @@ class TrainingAPITestCase(_WebUIBaseTestCase):
             self.assertEqual(response.status_code, 200)
             # If the route chooses not to queue a job (e.g. validation failure), we just ensure no crash.
 
+    def test_cancel_addresses_only_an_active_local_target(self) -> None:
+        from simpletuner.simpletuner_sdk.server.routes import training
+
+        targets = [{"job_id": "local", "worker_id": None}, {"job_id": "remote", "worker_id": "w1"}]
+        with (
+            patch.object(training, "_manual_targets", return_value=targets),
+            patch.object(training.training_service, "terminate_training_job", return_value=True) as terminate,
+        ):
+            for job_id in ("finished", "remote"):
+                response = self.client.post("/api/training/cancel", data={"job_id": job_id})
+                self.assertIn("No Active Training", response.text)
+            terminate.assert_not_called()
+            response = self.client.post("/api/training/cancel", data={"job_id": "local"})
+            self.assertIn("Training Cancelled", response.text)
+            terminate.assert_called_once_with("local", status="cancelled", clear_job_id=True)
+
     def test_stop_training(self) -> None:
         with patch("simpletuner.simpletuner_sdk.api_state.APIState.get_state") as mock_get:
             with patch("simpletuner.simpletuner_sdk.server.routes.training.process_keeper") as mock_pk:

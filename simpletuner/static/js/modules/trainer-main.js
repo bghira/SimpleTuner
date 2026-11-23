@@ -80,18 +80,20 @@ class TrainerMain {
 
         document.body.addEventListener('htmx:beforeRequest', (evt) => {
             const button = evt.detail.elt;
-            if (button.id === 'validateBtn' || button.id === 'runBtn' || button.id === 'cancelBtn') {
+            if (button.id === 'validateBtn') {
                 this.ui.addLoadingSpinner(button);
             }
         });
 
         document.body.addEventListener('htmx:afterRequest', (evt) => {
             const button = evt.detail.elt;
-            if (button.id === 'validateBtn' || button.id === 'runBtn' || button.id === 'cancelBtn') {
-                this.ui.removeLoadingSpinner(button);
+            if (button.id === 'validateBtn' || button.id === 'cancelBtn') {
+                if (button.id === 'validateBtn') this.ui.removeLoadingSpinner(button);
 
                 if (evt.detail.successful) {
-                    this.handleSuccessResponse(button.id);
+                    if (button.id !== 'cancelBtn' || evt.detail.xhr.responseText.includes('data-local-training-cancelled')) {
+                        this.handleSuccessResponse(button.id);
+                    }
                 } else {
                     this.ui.showToast('Operation failed', 'error');
                 }
@@ -375,7 +377,6 @@ class TrainerMain {
     handleSuccessResponse(buttonId) {
         const messages = {
             'validateBtn': 'Configuration validated successfully!',
-            'runBtn': 'Training started successfully!',
             'cancelBtn': 'Training cancelled successfully!'
         };
 
@@ -389,9 +390,7 @@ class TrainerMain {
         }
 
         // Update button states for run/cancel
-        if (buttonId === 'runBtn') {
-            this.actions.updateButtonStates(true);
-        } else if (buttonId === 'cancelBtn') {
+        if (buttonId === 'cancelBtn') {
             this.actions.updateButtonStates(false);
         }
     }

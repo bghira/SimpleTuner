@@ -467,6 +467,14 @@ class TrainingServiceTests(unittest.TestCase):
         self.assertIsNone(training_service.APIState.get_state("current_job_id"))
         self.assertEqual(training_service.APIState.get_state("training_status"), "cancelled")
 
+    def test_stopping_another_local_job_preserves_current_training(self) -> None:
+        training_service.APIState.set_state("current_job_id", "current")
+        training_service.APIState.set_state("training_status", "running")
+        with patch.object(training_service.process_keeper, "terminate_process", return_value=True):
+            self.assertTrue(training_service.terminate_training_job("other", status="cancelled", clear_job_id=True))
+        self.assertEqual(training_service.APIState.get_state("current_job_id"), "current")
+        self.assertEqual(training_service.APIState.get_state("training_status"), "running")
+
     def test_request_manual_validation_sends_command(self) -> None:
         training_service.APIState.set_state("current_job_id", "job-xyz")
         with patch.object(training_service.process_keeper, "send_process_command") as mock_send:
@@ -907,6 +915,64 @@ class TrainingServiceTests(unittest.TestCase):
         # but also in always_save_fields for extra safety)
         self.assertIn("gradient_checkpointing", bundle.save_config)
         self.assertFalse(bundle.save_config["gradient_checkpointing"])
+
+
+class ManualTrainingTargetTests(unittest.IsolatedAsyncioTestCase):
+    async def test_local_selection_checks_the_running_process_and_job_owner(self):
+        from types import SimpleNamespace
+
+        from fastapi import HTTPException
+
+        from simpletuner.simpletuner_sdk.server.routes import training, workers
+
+        user = MagicMock(id=7)
+        user.has_permission.side_effect = lambda permission: permission == "job.submit"
+        jobs = {
+            name: SimpleNamespace(user_id=owner, config_name=name, is_terminal=False)
+            for name, owner in (("local-job", 7), ("other-job", 8))
+        }
+        repo = AsyncMock()
+        repo.get.side_effect = jobs.get
+        processes = {job_id: {"alive": True, "status": "running"} for job_id in jobs}
+        jobs["remote"] = SimpleNamespace(
+            user_id=7, config_name="remote", status="running", is_terminal=False, metadata={"worker_id": "w1"}
+        )
+        worker_repo = AsyncMock()
+        worker_repo.get_worker.return_value = SimpleNamespace(
+            worker_id="w1", name="GPU", gpu_info={}, status="busy", current_job_id="remote"
+        )
+        with (
+            patch.object(training.process_keeper, "list_processes", return_value=processes) as listing,
+            patch(
+                "simpletuner.simpletuner_sdk.server.services.cloud.storage.job_repository.get_job_repository",
+                return_value=repo,
+            ),
+            patch(
+                "simpletuner.simpletuner_sdk.server.services.worker_repository.get_worker_repository",
+                return_value=worker_repo,
+            ),
+            patch.dict(workers.worker_streams, {"w1": object()}, clear=True),
+            patch.object(workers, "manual_control_workers", set()),
+            patch.object(training_service, "request_manual_checkpoint") as checkpoint,
+        ):
+            targets = await training.list_manual_targets(user)
+            self.assertEqual(
+                [(t["job_id"], t["worker_id"], t["available"]) for t in targets],
+                [("local-job", None, True), ("remote", "w1", False)],
+            )
+            with self.assertRaises(HTTPException) as unsupported:
+                await training.trigger_manual_validation(job_id="remote", worker_id="w1", _user=user)
+            self.assertEqual(unsupported.exception.status_code, 409)
+            listing.assert_called_with(target=training_service.run_trainer_job)
+            with patch.object(training.APIState, "get_state", return_value="local-job"):
+                result = await training.trigger_manual_checkpoint(_user=user)
+            self.assertEqual(result["job_id"], "local-job")
+            checkpoint.assert_called_once_with("local-job")
+            for job_id in ("other-job", "finished-job"):
+                with self.assertRaises(HTTPException) as denied:
+                    await training.trigger_manual_checkpoint(job_id=job_id, _user=user)
+                self.assertEqual(denied.exception.status_code, 409)
+            self.assertEqual(checkpoint.call_count, 1)
 
 
 if __name__ == "__main__":

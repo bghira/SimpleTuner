@@ -1936,7 +1936,8 @@ optgroup option {
     min-height: 2.1rem;
 }
 
-.config-selector__menu {
+.config-selector__menu,
+.manual-target-menu {
     background: rgba(9, 11, 17, 0.96);
     border: 1px solid rgba(148, 163, 184, 0.25);
     border-radius: var(--radius-md);
@@ -1947,12 +1948,14 @@ optgroup option {
     z-index: 2100;
 }
 
-.config-selector__menu .dropdown-item {
+.config-selector__menu .dropdown-item,
+.manual-target-menu .dropdown-item {
     color: rgba(228, 233, 244, 0.85);
 }
 
 .config-selector__menu .dropdown-item:hover,
-.config-selector__menu .dropdown-item:focus {
+.config-selector__menu .dropdown-item:focus,
+.manual-target-menu .dropdown-item:is(:hover, :focus):enabled {
     color: var(--text-bright);
     background: rgba(59, 130, 246, 0.18);
 }

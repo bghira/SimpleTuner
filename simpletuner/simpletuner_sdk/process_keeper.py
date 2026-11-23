@@ -1467,6 +1467,7 @@ def submit_job(job_id: str, func, config: Dict[str, Any]) -> TrainerProcess:
         # Register it
         process_registry[job_id] = {
             "process": trainer_process,
+            "target": func,
             "status": "pending",
             "start_time": trainer_process.start_time,
             "events": [],
@@ -1608,11 +1609,13 @@ def append_external_event(job_id: str, event: Dict[str, Any]) -> None:
         events.append(event)
 
 
-def list_processes() -> Dict[str, Dict[str, Any]]:
+def list_processes(target=None) -> Dict[str, Dict[str, Any]]:
     """List all registered processes and their status."""
     with lock:
         result = {}
         for job_id, entry in process_registry.items():
+            if target is not None and entry.get("target") is not target:
+                continue
             process = entry.get("process")
             result[job_id] = {
                 "status": process.status if process else "unknown",

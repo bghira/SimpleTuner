@@ -85,18 +85,9 @@ export class TrainerActions {
      */
     updateButtonStates(isTraining) {
         const validateBtn = document.getElementById('validateBtn');
-        const runBtn = document.getElementById('runBtn');
-        const cancelBtn = document.getElementById('cancelBtn');
-
-        if (isTraining) {
-            if (validateBtn) validateBtn.disabled = true;
-            if (runBtn) runBtn.disabled = true;
-            if (cancelBtn) cancelBtn.disabled = false;
-        } else {
-            if (validateBtn) validateBtn.disabled = false;
-            if (runBtn) runBtn.disabled = false;
-            if (cancelBtn) cancelBtn.disabled = true;
-        }
+        const cancelBtn = document.querySelector('#cancelBtn:not([hx-post])');
+        if (validateBtn) validateBtn.disabled = isTraining;
+        if (cancelBtn) cancelBtn.disabled = !isTraining;
     }
 
     /**

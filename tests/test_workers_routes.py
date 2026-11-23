@@ -255,7 +255,8 @@ class WorkerRegistrationTestCase(APITestCase, unittest.TestCase):
             mock_job = Mock()
             mock_job.job_id = "job-456"
             mock_job.config_name = "test-config"
-            mock_job.status = "running"
+            mock_job.status = "training"
+            mock_job.metadata = {"worker_id": self.worker.worker_id}
 
             mock_job_repo_instance = AsyncMock()
             mock_job_repo_instance.get = AsyncMock(return_value=mock_job)

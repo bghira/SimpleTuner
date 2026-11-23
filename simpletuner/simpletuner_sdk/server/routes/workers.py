@@ -31,6 +31,7 @@ admin_router = APIRouter(prefix="/api/admin/workers", tags=["admin-workers"])
 
 # Global dict of worker_id -> asyncio.Queue for SSE management
 worker_streams: Dict[str, asyncio.Queue] = {}
+manual_control_workers: set[str] = set()
 
 
 # Request/Response Models
@@ -274,8 +275,6 @@ async def register_worker(
     elif request.provider:
         updates["provider"] = request.provider
 
-    await worker_repo.update_worker(worker.worker_id, updates)
-
     # Handle reconnection reconciliation
     resume_job = None
     abandon_job = None
@@ -290,7 +289,13 @@ async def register_worker(
         if worker.is_job_bound and job and job.status in ["pending", "queued"]:
             # The SSE connection triggers the first and only dispatch.
             pass
-        elif job and job.status in ["running", "starting"]:
+        elif (
+            job
+            and job.status in {"running", "starting", "training"}
+            and (job.metadata or {}).get("worker_id") == worker.worker_id
+        ):
+            updates["status"] = WorkerStatus.BUSY
+            updates["current_job_id"] = job.job_id
             # Job is still active - worker should resume
             resume_job = {
                 "job_id": job.job_id,
@@ -302,6 +307,8 @@ async def register_worker(
             # Job was cancelled or completed while worker was offline
             abandon_job = request.current_job_id
             logger.info("Worker %s reconnected, abandoning stale job %s", worker.worker_id, request.current_job_id)
+
+    await worker_repo.update_worker(worker.worker_id, updates)
 
     # Build SSE URL
     sse_url = f"/api/workers/stream?worker_id={worker.worker_id}"
@@ -318,6 +325,7 @@ async def register_worker(
 async def worker_stream(
     worker_id: str,
     x_worker_token: str = Header(..., alias="X-Worker-Token"),
+    manual_controls: bool = False,
 ) -> StreamingResponse:
     """SSE stream for commands to worker.
 
@@ -344,6 +352,10 @@ async def worker_stream(
     # Create queue for this worker
     queue = asyncio.Queue()
     worker_streams[worker_id] = queue
+    if manual_controls:
+        manual_control_workers.add(worker_id)
+    else:
+        manual_control_workers.discard(worker_id)
 
     if worker.is_job_bound:
         from ..services.worker_manager import get_worker_manager
@@ -378,8 +390,9 @@ async def worker_stream(
             logger.error("SSE stream error for worker %s: %s", worker_id, exc)
         finally:
             # Clean up queue
-            if worker_id in worker_streams:
+            if worker_streams.get(worker_id) is queue:
                 del worker_streams[worker_id]
+                manual_control_workers.discard(worker_id)
             logger.info("Worker %s disconnected from SSE stream", worker_id)
 
     return StreamingResponse(
