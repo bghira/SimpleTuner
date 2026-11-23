@@ -172,7 +172,7 @@ Guias detalhados estao disponiveis para todos os modelos suportados:
 - **[Guia Sana](/documentation/quickstart/SANA.pt-BR.md)** - Modelo flow-matching leve
 - **[Guia Lumina2](/documentation/quickstart/LUMINA2.pt-BR.md)** - Modelo flow-matching de 2B parametros
 - **[Guia Kwai Kolors](/documentation/quickstart/KOLORS.pt-BR.md)** - Baseado em SDXL com encoder ChatGLM
-- **[Guia LongCat-Video](/documentation/quickstart/LONGCAT_VIDEO.pt-BR.md)** - Flow-matching text-to-video e image-to-video com Qwen-2.5-VL
+- **[Guia LongCat-Video](/documentation/quickstart/LONGCAT_VIDEO.pt-BR.md)** - Flow-matching text-to-video e image-to-video com UMT5-XXL
 - **[Guia LongCat-Video Edit](/documentation/quickstart/LONGCAT_VIDEO_EDIT.pt-BR.md)** - Flavor conditioning-first (image-to-video)
 - **[Guia LongCat-Image](/documentation/quickstart/LONGCAT_IMAGE.pt-BR.md)** - Modelo flow-matching bilingue 6B com encoder Qwen-2.5-VL
 - **[Guia LongCat-Image Edit](/documentation/quickstart/LONGCAT_EDIT.pt-BR.md)** - Flavor de edicao de imagem que requer latentes de referencia

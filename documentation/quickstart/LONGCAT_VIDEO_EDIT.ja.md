@@ -10,7 +10,7 @@
 | ----------------------------- | ----------------- | ---------- |
 | Flavour                       | `final`           | `final`（同一ウェイト） |
 | Conditioning                  | なし              | **条件フレームが必須**（最初の latent を固定） |
-| Text encoder                  | Qwen‑2.5‑VL       | Qwen‑2.5‑VL（同じ） |
+| Text encoder                  | UMT5-XXL       | UMT5-XXL（同じ） |
 | Pipeline                      | TEXT2IMG          | IMG2VIDEO |
 | Validation inputs             | プロンプトのみ    | プロンプト **と** 条件画像 |
 | Buckets / stride              | 64px バケット、`(frames-1)%4==0` | 同じ |
@@ -18,7 +18,7 @@
 **引き継ぐコア既定値**
 - shift `12.0` のフローマッチング。
 - アスペクトバケットは 64px 固定。
-- Qwen‑2.5‑VL テキストエンコーダ。CFG 有効時は空のネガティブが自動追加されます。
+- UMT5-XXL テキストエンコーダ。CFG 有効時は空のネガティブが自動追加されます。
 - 既定フレーム数: 93（`(frames-1)%4==0` を満たす）。
 
 ---

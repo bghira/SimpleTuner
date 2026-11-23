@@ -3,10 +3,55 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import torch
+from tokenizers import Tokenizer, models, pre_tokenizers
+from transformers import PreTrainedTokenizerFast, UMT5Config, UMT5EncoderModel
 
+from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
 from simpletuner.helpers.models.common import ModelFoundation
 from simpletuner.helpers.models.longcat_video.model import LongCatVideo
+from simpletuner.helpers.models.longcat_video.pipeline import LongCatVideoPipeline
 from simpletuner.helpers.models.longcat_video.transformer import LongCatVideoTransformer3DModel
+
+
+class TestLongCatVideoTextConditioning(unittest.TestCase):
+    def test_uses_checkpoint_umt5_for_prompts_and_cfg(self):
+        component = LongCatVideo.TEXT_ENCODER_CONFIGURATION["text_encoder"]
+        self.assertIs(component["model"], UMT5EncoderModel)
+        self.assertEqual(component["subfolder"], "text_encoder")
+        self.assertNotIn("path", component)
+        encoder = UMT5EncoderModel(
+            UMT5Config(vocab_size=8, d_model=16, d_ff=32, d_kv=4, num_heads=4, num_layers=1, dropout_rate=0.0)
+        ).eval()
+        backend = Tokenizer(models.WordLevel({"[PAD]": 0, "[UNK]": 1, "cat": 2, "&": 3, "dog": 4}, unk_token="[UNK]"))
+        backend.pre_tokenizer = pre_tokenizers.Whitespace()
+        tokenizer = PreTrainedTokenizerFast(tokenizer_object=backend, pad_token="[PAD]", unk_token="[UNK]")
+        pipe = LongCatVideoPipeline(transformer=None, vae=None, scheduler=None, text_encoder=encoder, tokenizer=tokenizer)
+
+        positive, mask, negative, neg_mask = pipe.encode_prompt(
+            [" cat  &amp;   dog ", "dog"],
+            torch.device("cpu"),
+            num_videos_per_prompt=2,
+            max_sequence_length=5,
+            do_classifier_free_guidance=True,
+            negative_prompt="cat",
+        )
+        for texts, embeds, masks in ((["cat & dog", "dog"], positive, mask), (["cat", "cat"], negative, neg_mask)):
+            tokens = tokenizer(texts, max_length=5, padding="max_length", truncation=True, return_tensors="pt")
+            expected = encoder(**{key: tokens[key] for key in ("input_ids", "attention_mask")}).last_hidden_state
+            torch.testing.assert_close(embeds[:, 0], expected.repeat_interleave(2, dim=0))
+            torch.testing.assert_close(masks[:, 0, 0], tokens.attention_mask.repeat_interleave(2, dim=0))
+
+    def test_caption_and_dropout_cache_keys_change_for_native_encoder(self):
+        model = LongCatVideo.__new__(LongCatVideo)
+        cache = TextEmbeddingCache.__new__(TextEmbeddingCache)
+        cache.model = model
+        cache.key_type = model.text_embed_cache_key()
+        cache.model_type = "longcat_video"
+        cache._requires_path_based_keys = False
+        for caption in ("cat", ""):
+            with patch.object(model, "text_embed_cache_namespace", return_value=None):
+                legacy_key = cache.create_hash(caption)
+            self.assertNotEqual(legacy_key, cache.create_hash(caption))
 
 
 class TestLongCatVideoTrainingLatents(unittest.TestCase):

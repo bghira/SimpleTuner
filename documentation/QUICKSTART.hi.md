@@ -287,7 +287,7 @@ WebUI के एनवायरनमेंट क्रिएटर और स�
 | Kwai Kolors | ChatGLM-6B | 6B | AutoencoderKL |
 | Krea2 | Qwen3VL | not specified | Qwen Image VAE |
 | LongCat Image | Qwen2.5-VL | 7B | AutoencoderKL |
-| LongCat Video | Qwen2.5-VL | 7B | Wan VAE |
+| LongCat Video | UMT5-XXL | 5.7B | Wan VAE |
 | LTX Video | T5 XXL v1.1 | 11B | LTX Video VAE |
 | LTX Video 2 | Gemma3 / Gemma4 | not specified | LTX Video 2 VAE |
 | Lumina2 | Gemma2 | 2B | AutoencoderKL |

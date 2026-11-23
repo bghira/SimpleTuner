@@ -10,7 +10,7 @@ This guide walks you through training and validating the image‑to‑video work
 | ----------------------------- | ----------------- | ---------- |
 | Flavour                       | `final`           | `final` (same weights) |
 | Conditioning                  | none              | **requires conditioning frame** (first latent kept fixed) |
-| Text encoder                  | Qwen‑2.5‑VL       | Qwen‑2.5‑VL (same) |
+| Text encoder                  | UMT5-XXL       | UMT5-XXL (same) |
 | Pipeline                      | TEXT2IMG          | IMG2VIDEO |
 | Validation inputs             | prompt only       | prompt **and** conditioning image |
 | Buckets / stride              | 64px buckets, `(frames-1)%4==0` | same |
@@ -18,7 +18,7 @@ This guide walks you through training and validating the image‑to‑video work
 **Core defaults you inherit**
 - Flow matching with shift `12.0`.
 - Aspect buckets enforced at 64px.
-- Qwen‑2.5‑VL text encoder; empty negatives auto‑added when CFG is on.
+- UMT5-XXL text encoder; empty negatives auto‑added when CFG is on.
 - Default frames: 93 (satisfies `(frames-1)%4==0`).
 
 ---

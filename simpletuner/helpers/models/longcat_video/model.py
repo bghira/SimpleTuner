@@ -5,7 +5,7 @@ from typing import Dict, Optional
 import torch
 from diffusers import FlowMatchEulerDiscreteScheduler
 from diffusers.models import AutoencoderKLWan
-from transformers import AutoTokenizer, Qwen2_5_VLForConditionalGeneration
+from transformers import AutoTokenizer, UMT5EncoderModel
 
 from simpletuner.helpers.acceleration import (
     AccelerationBackend,
@@ -66,12 +66,12 @@ class LongCatVideo(VideoModelFoundation):
 
     TEXT_ENCODER_CONFIGURATION = {
         "text_encoder": {
-            "name": "Qwen-2.5 VL",
+            "name": "UMT5",
             "tokenizer": AutoTokenizer,
-            "tokenizer_subfolder": None,
-            "model": Qwen2_5_VLForConditionalGeneration,
-            "subfolder": None,
-            "path": "Qwen/Qwen2.5-VL-7B-Instruct",
+            "tokenizer_subfolder": "tokenizer",
+            "use_fast": True,
+            "model": UMT5EncoderModel,
+            "subfolder": "text_encoder",
         },
     }
 
@@ -396,6 +396,9 @@ class LongCatVideo(VideoModelFoundation):
 
     def collate_prompt_embeds(self, text_encoder_output: list[dict]) -> dict:
         return {}
+
+    def text_embed_cache_namespace(self) -> str:
+        return "longcat-video-umt5"
 
     def text_embed_cache_key(self) -> TextEmbedCacheKey:
         return TextEmbedCacheKey.CAPTION

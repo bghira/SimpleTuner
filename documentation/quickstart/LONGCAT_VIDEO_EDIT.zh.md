@@ -10,7 +10,7 @@
 | ----------------------------- | ----------------- | ---------- |
 | Flavour                       | `final`           | `final`（同一权重） |
 | Conditioning                  | 无                | **需要条件帧**（首帧 latent 固定） |
-| Text encoder                  | Qwen‑2.5‑VL       | Qwen‑2.5‑VL（相同） |
+| Text encoder                  | UMT5-XXL       | UMT5-XXL（相同） |
 | Pipeline                      | TEXT2IMG          | IMG2VIDEO |
 | Validation inputs             | 仅提示词          | 提示词 **和** 条件图 |
 | Buckets / stride              | 64px 桶，`(frames-1)%4==0` | 相同 |
@@ -18,7 +18,7 @@
 **继承的核心默认值**
 - shift `12.0` 的流匹配。
 - 64px 宽高比桶对齐。
-- Qwen‑2.5‑VL 文本编码器；CFG 开启时会自动补空负向。
+- UMT5-XXL 文本编码器；CFG 开启时会自动补空负向。
 - 默认帧数 93（满足 `(frames-1)%4==0`）。
 
 ---

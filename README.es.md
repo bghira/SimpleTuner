@@ -172,7 +172,7 @@ Hay guías detalladas de inicio rápido disponibles para todos los modelos sopor
 - **[Guía de Sana](/documentation/quickstart/SANA.md)** - Modelo ligero de flow-matching
 - **[Guía de Lumina2](/documentation/quickstart/LUMINA2.md)** - Modelo de flow-matching de 2B parámetros
 - **[Guía de Kwai Kolors](/documentation/quickstart/KOLORS.md)** - Basado en SDXL con encoder ChatGLM
-- **[Guía de LongCat-Video](/documentation/quickstart/LONGCAT_VIDEO.md)** - Flow-matching text-to-video e image-to-video con Qwen-2.5-VL
+- **[Guía de LongCat-Video](/documentation/quickstart/LONGCAT_VIDEO.md)** - Flow-matching text-to-video e image-to-video con UMT5-XXL
 - **[Guía de LongCat-Video Edit](/documentation/quickstart/LONGCAT_VIDEO_EDIT.md)** - Variante de conditioning-first (image-to-video)
 - **[Guía de LongCat-Image](/documentation/quickstart/LONGCAT_IMAGE.md)** - Modelo bilingüe de flow-matching 6B con encoder Qwen-2.5-VL
 - **[Guía de LongCat-Image Edit](/documentation/quickstart/LONGCAT_EDIT.md)** - Variante de edición de imagen que requiere latents de referencia

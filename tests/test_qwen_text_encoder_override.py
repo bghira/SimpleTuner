@@ -112,7 +112,7 @@ class QwenTextEncoderOverrideTests(unittest.TestCase):
             "text_encoder",
         )
 
-    def test_longcat_video_loads_tokenizer_at_checkpoint_root(self):
+    def test_longcat_video_loads_tokenizer_from_checkpoint_subfolder(self):
         from tokenizers import Tokenizer
         from tokenizers.models import WordLevel
         from transformers import PreTrainedTokenizerFast
@@ -128,7 +128,7 @@ class QwenTextEncoderOverrideTests(unittest.TestCase):
             tokenizer_object=Tokenizer(WordLevel({"[UNK]": 0, "video": 1}, unk_token="[UNK]")), unk_token="[UNK]"
         )
         with tempfile.TemporaryDirectory() as checkpoint:
-            tokenizer.save_pretrained(checkpoint)
+            tokenizer.save_pretrained(f"{checkpoint}/tokenizer")
             model.TEXT_ENCODER_CONFIGURATION = {
                 "text_encoder": {**LongCatVideo.TEXT_ENCODER_CONFIGURATION["text_encoder"], "path": checkpoint}
             }

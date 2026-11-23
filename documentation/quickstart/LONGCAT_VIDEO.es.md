@@ -1,6 +1,6 @@
 # Guía rápida de LongCat‑Video
 
-LongCat‑Video es un modelo bilingüe (zh/en) de 13.6B para texto‑a‑video e imagen‑a‑video que usa flow matching, el codificador de texto Qwen‑2.5‑VL y el VAE de Wan. Esta guía te lleva por la configuración, preparación de datos y una primera ejecución de entrenamiento/validación con SimpleTuner.
+LongCat‑Video es un modelo bilingüe (zh/en) de 13.6B para texto‑a‑video e imagen‑a‑video que usa flow matching, el codificador de texto UMT5-XXL y el VAE de Wan. Esta guía te lleva por la configuración, preparación de datos y una primera ejecución de entrenamiento/validación con SimpleTuner.
 
 ---
 
@@ -59,7 +59,7 @@ Abre http://localhost:8001 y elige la familia de modelo `longcat_video`.
 **Valores predeterminados clave a mantener**
 - El scheduler de flow‑matching con shift `12.0` es automático; no se necesitan flags de ruido personalizados.
 - Los buckets de aspecto permanecen alineados a 64 px; `aspect_bucket_alignment` se fuerza a 64.
-- Longitud máxima de tokens 512 (Qwen‑2.5‑VL); el pipeline agrega negativos vacíos automáticamente cuando CFG está activo y no se proporciona prompt negativo.
+- Longitud máxima de tokens 512 (UMT5-XXL); el pipeline agrega negativos vacíos automáticamente cuando CFG está activo y no se proporciona prompt negativo.
 - Los frames deben cumplir `(num_frames - 1)` divisible por el stride temporal del VAE (por defecto 4). Los 93 frames por defecto ya cumplen esto.
 
 Ahorros de VRAM opcionales:
