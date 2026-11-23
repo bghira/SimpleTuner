@@ -43,7 +43,7 @@ def swap_back_first_and_last_dims(tensor: torch.Tensor) -> torch.Tensor:
     return tensor.permute(*new_order)
 
 
-def copy_stochastic_(target: Tensor, source: Tensor):
+def copy_stochastic_(target: Tensor, source: Tensor, *, generator=None):
     """
     copies source into target using stochastic rounding
 
@@ -52,8 +52,10 @@ def copy_stochastic_(target: Tensor, source: Tensor):
         source: the target tensor with dtype=float32
     """
     # create a random 16 bit integer
-    result = torch.randint_like(
-        source,
+    result = torch.randint(
+        size=source.shape,
+        device=source.device,
+        generator=generator,
         dtype=torch.int32,
         low=0,
         high=(1 << 16),
@@ -71,7 +73,7 @@ def copy_stochastic_(target: Tensor, source: Tensor):
     target.copy_(rounded)
 
 
-def add_stochastic_(_input: Tensor, other: Tensor, alpha: float = 1.0):
+def add_stochastic_(_input: Tensor, other: Tensor, alpha: float = 1.0, *, generator=None):
     """
     Adds other to input using stochastic rounding.
 
@@ -98,13 +100,13 @@ def add_stochastic_(_input: Tensor, other: Tensor, alpha: float = 1.0):
     else:
         result.add_(other, alpha=alpha)
 
-    copy_stochastic_(_input, result)
+    copy_stochastic_(_input, result, generator=generator)
 
     if _input.device.type == "mps":
         _input_original.copy_(_input.view(dtype=torch.float32))
 
 
-def addcdiv_stochastic_(_input: Tensor, tensor1: Tensor, tensor2: Tensor, value: float = 1.0):
+def addcdiv_stochastic_(_input: Tensor, tensor1: Tensor, tensor2: Tensor, value: float = 1.0, *, generator=None):
     """
     adds (tensor1 / tensor2 * value) to input using stochastic rounding
 
@@ -120,4 +122,4 @@ def addcdiv_stochastic_(_input: Tensor, tensor1: Tensor, tensor2: Tensor, value:
         result = _input.to(dtype=torch.float32)
 
     result.addcdiv_(tensor1, tensor2, value=value)
-    copy_stochastic_(_input, result)
+    copy_stochastic_(_input, result, generator=generator)

@@ -12,6 +12,8 @@ This implementation uses torch.compile to speed up,
 should be suitable for different backends.
 """
 
+import random
+
 import torch
 from torch.optim.optimizer import Optimizer
 
@@ -50,6 +52,11 @@ class AdamWBF16(Optimizer):
             raise ValueError(f"Invalid weight_decay value: {weight_decay}")
         defaults = dict(betas=betas, eps=eps, weight_decay=weight_decay, lr=lr, mup=mup)
         super().__init__(params, defaults)
+        self._rounding_generators = {}
+
+    def __setstate__(self, state):
+        super().__setstate__(state)
+        self._rounding_generators = {}
 
     def add_param_group(self, param_group):
         super().add_param_group(param_group)
@@ -85,10 +92,11 @@ class AdamWBF16(Optimizer):
     @torch.no_grad()
     def step(self, zero_grad: bool = False):
         """Performs a single optimization step."""
+        param_offset = 0
         for group in self.param_groups:
             beta1, beta2 = group["betas"]
 
-            for p in group["params"]:
+            for param_index, p in enumerate(group["params"], start=param_offset):
                 if p.grad is not None:
                     state = self.state[p]
                     # Lazy state initialization
@@ -107,7 +115,7 @@ class AdamWBF16(Optimizer):
                         # using decay at each step will work only for float32, so we just remember how much owe to decay
                         # and decay once in n iterations
                         # Each weight has its own starting point to avoid simultaneous updates in all weights
-                        state["accumulated_decay"] = float(torch.rand([]) * self.decay_threshold)
+                        state["accumulated_decay"] = random.Random(param_index).random() * self.decay_threshold
 
                     grad = p.grad
                     grad_device = grad.device
@@ -126,6 +134,11 @@ class AdamWBF16(Optimizer):
                     decay_this_iteration = (accum_decay > self.decay_threshold) * accum_decay
                     state["accumulated_decay"] -= decay_this_iteration
 
+                    # Replicas share parameter order and checkpointed update counts, even when
+                    # training noise, dropout, and the local CUDA device index differ.
+                    seed = (int(state["step"]) * 0x9E3779B97F4A7C15 + param_index) & 0xFFFFFFFFFFFFFFFF
+                    grad_rng = self._rounding_generator(grad_device, seed)
+                    weight_rng = grad_rng if p.device == grad_device else self._rounding_generator(p.device, seed)
                     _make_step(
                         grad,
                         p,
@@ -139,7 +152,15 @@ class AdamWBF16(Optimizer):
                         eps=group["eps"],
                         decay_this_iteration=decay_this_iteration,
                         zero_grad=zero_grad,
+                        grad_rng=grad_rng,
+                        weight_rng=weight_rng,
                     )
+            param_offset += len(group["params"])
+
+    def _rounding_generator(self, device, seed):
+        if device not in self._rounding_generators:
+            self._rounding_generators[device] = torch.Generator(device=device)
+        return self._rounding_generators[device].manual_seed(seed)
 
 
 def _make_step(
@@ -155,6 +176,8 @@ def _make_step(
     eps: float,
     decay_this_iteration: float,
     zero_grad: bool,
+    grad_rng: torch.Generator,
+    weight_rng: torch.Generator,
 ):
     # Handle RamTorch case where p is on CPU but state/grads are on GPU
     p_device = p.device
@@ -163,7 +186,7 @@ def _make_step(
     # Originally:
     # exp_avg.mul_(beta1).add_(grad, alpha=1 - beta1)
     exp_avg.mul_(beta1)
-    add_stochastic_(exp_avg, grad, alpha=1 - beta1)
+    add_stochastic_(exp_avg, grad, alpha=1 - beta1, generator=grad_rng)
     exp_avg_sq.mul_(beta2).addcmul_(grad, grad.conj(), value=1 - beta2)
 
     denom_correction = (1 - beta2**step) ** 0.5
@@ -180,6 +203,7 @@ def _make_step(
         exp_avg,
         exp_avg_sq.sqrt().add_(eps, alpha=1),
         value=-lr * denom_correction,
+        generator=grad_rng,
     )
 
     # For RamTorch: move shift to parameter device, update p, then compute error
@@ -187,21 +211,21 @@ def _make_step(
         # Move shift to CPU for parameter update
         shift_on_p = shift.to(p_device)
         buffer = p.clone()
-        add_stochastic_(p, shift_on_p)
+        add_stochastic_(p, shift_on_p, generator=weight_rng)
         # Compute truncation error and move back to state device
         error = buffer.sub_(p).to(state_device)
-        add_stochastic_(shift, error)
+        add_stochastic_(shift, error, generator=grad_rng)
         if decay_this_iteration > 0:
             shift.add_(p.to(state_device), alpha=-decay_this_iteration)
     else:
         buffer = p.clone()
         # Originally:
         # p.add_(shift)
-        add_stochastic_(p, shift)
+        add_stochastic_(p, shift, generator=weight_rng)
 
         # Originally:
         # shift.add_(buffer.sub_(p))
-        add_stochastic_(shift, buffer.sub_(p))
+        add_stochastic_(shift, buffer.sub_(p), generator=grad_rng)
 
         if decay_this_iteration > 0:
             shift.add_(p, alpha=-decay_this_iteration)
