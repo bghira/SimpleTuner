@@ -51,7 +51,9 @@ PNG remains the default. For smaller archives, set:
 }
 ```
 
-`validation_image_quality` applies to WebP and JPEG. Audio and video keep their existing formats.
+`validation_image_quality` applies to WebP, JPEG, and JPEG XL. Audio and video keep their existing formats.
+
+Set `validation_image_format` to `jxl` to save JPEG XL. Install the `simpletuner[jxl]` extra and view the gallery or report in a browser that decodes `image/jxl`.
 
 ## API
 

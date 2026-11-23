@@ -2092,12 +2092,14 @@ LayerSync は同一 Transformer 内の「学生」レイヤーを、より強い
 ### `--validation_image_format`
 
 - **内容**: `output_dir/validation_images` に保存する画像形式。
-- **選択肢**: png, webp, jpeg
+- **選択肢**: png, webp, jpeg, jxl
 - **デフォルト**: png
+
+JPEG XL を使うには `simpletuner[jxl]` の追加インストールと、`image/jxl` に対応するブラウザーが必要です。
 
 ### `--validation_image_quality`
 
-- **内容**: WebP と JPEG の品質（1 から 100）。
+- **内容**: WebP、JPEG、JPEG XL の品質（1 から 100）。
 - **デフォルト**: 90。PNG では無視されます。
 
 ## 環境設定変数

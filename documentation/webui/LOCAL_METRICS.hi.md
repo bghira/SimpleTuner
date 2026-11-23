@@ -32,3 +32,5 @@ GET /api/metrics/training/runs/{environment}/report
 ```
 
 API केवल configured environments के output directories पढ़ती है। छोटी archive के लिए `validation_image_format=webp` और `validation_image_quality=90` उपयोग करें; default PNG है।
+
+JPEG XL में सेव करने के लिए `validation_image_format=jxl` सेट करें। `simpletuner[jxl]` एक्स्ट्रा इंस्टॉल करें और गैलरी या रिपोर्ट को ऐसे ब्राउज़र में खोलें जिसमें `image/jxl` सपोर्ट हो।

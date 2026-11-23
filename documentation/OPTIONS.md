@@ -2114,12 +2114,14 @@ Upstream option mapping (LayerSync → SimpleTuner):
 ### `--validation_image_format`
 
 - **What**: Format for validation images saved in `output_dir/validation_images`.
-- **Choices**: png, webp, jpeg
+- **Choices**: png, webp, jpeg, jxl
 - **Default**: png
+
+JPEG XL requires the `simpletuner[jxl]` extra and a browser that supports `image/jxl`.
 
 ### `--validation_image_quality`
 
-- **What**: Encoding quality for WebP and JPEG validation images.
+- **What**: Encoding quality for WebP, JPEG, and JPEG XL validation images.
 - **Range**: 1 to 100
 - **Default**: 90. Ignored for PNG.
 

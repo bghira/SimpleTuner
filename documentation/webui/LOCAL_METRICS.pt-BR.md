@@ -32,3 +32,5 @@ GET /api/metrics/training/runs/{environment}/report
 ```
 
 A API resolve apenas diretórios de ambientes configurados. Para reduzir o arquivo, use `validation_image_format=webp` e `validation_image_quality=90`; PNG continua sendo o padrão.
+
+Para salvar em JPEG XL, defina `validation_image_format=jxl`. Instale o extra `simpletuner[jxl]` e abra a galeria ou o relatório em um navegador que decodifique `image/jxl`.

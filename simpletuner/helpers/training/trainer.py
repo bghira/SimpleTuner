@@ -6747,7 +6747,7 @@ class Trainer:
         step_pattern = f"step_{checkpoint_step}_"
         audio_extensions = {".wav", ".flac", ".mp3", ".ogg", ".m4a"}
         video_extensions = {".mp4", ".avi", ".mov", ".webm"}
-        image_extensions = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+        image_extensions = {".png", ".jpg", ".jpeg", ".webp", ".jxl", ".gif"}
         supported_extensions = image_extensions | video_extensions | audio_extensions
 
         matching_files = []

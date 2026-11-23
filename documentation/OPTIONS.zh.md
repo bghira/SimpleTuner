@@ -2094,12 +2094,14 @@ LayerSync 通过在同一 Transformer 内让“学生”层对齐更强的“教
 ### `--validation_image_format`
 
 - **内容**：保存到 `output_dir/validation_images` 的图像格式。
-- **选项**：png, webp, jpeg
+- **选项**：png, webp, jpeg, jxl
 - **默认值**：png
+
+JPEG XL 需要安装 `simpletuner[jxl]` 可选依赖，并使用支持 `image/jxl` 的浏览器。
 
 ### `--validation_image_quality`
 
-- **内容**：WebP 和 JPEG 的质量，范围 1 到 100。
+- **内容**：WebP、JPEG 和 JPEG XL 的质量，范围 1 到 100。
 - **默认值**：90。PNG 会忽略此项。
 
 ## 环境配置变量

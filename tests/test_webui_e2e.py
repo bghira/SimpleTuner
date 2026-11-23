@@ -858,7 +858,7 @@ class SplitServerRoutingTestCase(_TrainerPageMixin, WebUITestCase):
         self.for_each_browser("test_split_server_routing", scenario)
 
 
-class EventLightboxFlowTestCase(_TrainerPageMixin, WebUITestCase):
+class _ImagesEnabledBrowserMixin:
     BROWSERS = ("chrome",)
 
     def _ensure_browser(self, browser):
@@ -873,6 +873,8 @@ class EventLightboxFlowTestCase(_TrainerPageMixin, WebUITestCase):
             self._driver_cache[browser] = webdriver.Chrome(options=options)
         return self._driver_cache[browser]
 
+
+class EventLightboxFlowTestCase(_ImagesEnabledBrowserMixin, _TrainerPageMixin, WebUITestCase):
     def test_event_images_open_navigate_and_close(self) -> None:
         import base64
 
@@ -1612,6 +1614,60 @@ class MetricsGpuHealthDashboardTestCase(_TrainerPageMixin, WebUITestCase):
             WebDriverWait(driver, 5).until(lambda d: history_container.get_attribute("data-history-series") == "Temp")
 
         self.for_each_browser("test_gpu_history_toggle_series", scenario)
+
+
+class JpegXlMetricsTestCase(_ImagesEnabledBrowserMixin, _TrainerPageMixin, WebUITestCase):
+    def test_jpeg_xl_displays_in_metrics_and_local_report(self):
+        from types import SimpleNamespace
+
+        from simpletuner.helpers.training.local_metrics import MANIFEST_FILENAME, render_static_report
+        from simpletuner.helpers.training.validation_images import require_jxl_encoder, save_validation_image
+
+        try:
+            require_jxl_encoder()
+        except ValueError as error:
+            self.skipTest(str(error))
+
+        self.with_sample_environment()
+        output = self.home_path / "jpeg-xl-output"
+        validation_dir = output / "validation_images"
+        validation_dir.mkdir(parents=True)
+        config_path = self.config_dir / "test-config" / "config.json"
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        config.update({"--output_dir": str(output), "--report_to": "simpletuner", "--validation_image_format": "jxl"})
+        config_path.write_text(json.dumps(config), encoding="utf-8")
+        self.seed_defaults(active_config="test-config", output_dir=str(output))
+        (output / MANIFEST_FILENAME).write_text(json.dumps({"run_name": "JPEG XL run"}), encoding="utf-8")
+        save_validation_image(
+            Image.new("RGB", (16, 12), "red"),
+            validation_dir,
+            "sample",
+            SimpleNamespace(output_dir=output, report_to="simpletuner", validation_image_format="jxl"),
+            label="sample",
+            index=0,
+            resolution="16x12",
+        )
+        report = render_static_report(output)
+
+        def check_pixels(driver, selector):
+            img = WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.CSS_SELECTOR, selector)))
+            driver.execute_script("arguments[0].scrollIntoView();", img)
+            WebDriverWait(driver, 10).until(
+                lambda d: d.execute_script("return arguments[0].complete && arguments[0].naturalWidth === 16;", img)
+            )
+            self.assertEqual(img.get_property("naturalHeight"), 12)
+
+        def scenario(driver, _browser):
+            page = self._trainer_page(driver)
+            page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            page.switch_to_metrics_tab()
+            page.wait_for_tab("metrics")
+            check_pixels(driver, ".training-media-gallery img[src$='.jxl']")
+            driver.get(report.as_uri())
+            check_pixels(driver, "#media-grid img[src$='.jxl']")
+
+        self.for_each_browser("jpeg_xl_metrics", scenario)
 
 
 class TrainingMetricsDashboardTestCase(_TrainerPageMixin, WebUITestCase):
