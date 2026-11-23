@@ -69,6 +69,16 @@ class QwenImageModelTests(unittest.TestCase):
             block_size=block_size,
         )
 
+    def test_flow_conversion_preserves_scheduler_units_below_one(self):
+        sigmas = torch.tensor([0.00025, 0.25])
+        convert = self.model.flow_matching_timesteps_from_sigmas
+
+        single = convert(sigmas[:1], reference_timesteps=torch.tensor([0.5]))
+        mixed = convert(sigmas, reference_timesteps=torch.tensor([0.5, 500.0]))
+
+        torch.testing.assert_close(single, torch.tensor([0.25]))
+        torch.testing.assert_close(mixed, torch.tensor([0.25, 250.0]))
+
     def test_validate_xm_support_rejects_unsupported_qwen_settings(self):
         self._enable_xm(training_target="route")
         with self.assertRaisesRegex(ValueError, "xm_training_target='noise'"):

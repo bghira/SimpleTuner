@@ -105,6 +105,14 @@ class Anima(ImageModelFoundation):
             return None
         return hidden_states_buffer.get(f"layer_{int(capture_layer)}")
 
+    def flow_matching_timesteps_from_sigmas(
+        self,
+        sigmas: torch.Tensor,
+        *,
+        reference_timesteps: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        return sigmas
+
     def _prepare_crepa_self_flow_batch(self, batch: dict, state: dict) -> dict:
         latents = batch["latents"]
         input_noise = batch["input_noise"]

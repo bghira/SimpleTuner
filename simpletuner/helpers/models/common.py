@@ -5133,8 +5133,6 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
         reference_timesteps: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Convert noise-ward flow sigmas to the timestep convention consumed by this model."""
-        if reference_timesteps is not None and torch.max(reference_timesteps.detach().float()) <= 1.0:
-            return sigmas
         scheduler_config = getattr(getattr(self, "noise_schedule", None), "config", None)
         num_train_timesteps = float(getattr(scheduler_config, "num_train_timesteps", 1000) or 1000)
         return sigmas * num_train_timesteps
