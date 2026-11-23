@@ -1,5 +1,6 @@
 import logging
 import os
+from importlib import import_module
 
 import numpy as np
 import wandb
@@ -10,30 +11,39 @@ from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger(__name__)
 
-VALIDATION_IMAGE_FORMATS = {"png", "webp", "jpeg"}
+VALIDATION_IMAGE_FORMATS = {"png", "webp", "jpeg", "jxl"}
+
+
+def require_jxl_encoder() -> None:
+    try:
+        import_module("pillow_jxl")
+    except ModuleNotFoundError as error:
+        if error.name != "pillow_jxl":
+            raise
+        raise ValueError("JPEG XL validation images require the simpletuner[jxl] extra.") from error
 
 
 def validation_image_file_extension(config) -> str:
     image_format = str(getattr(config, "validation_image_format", "png") or "png").lower()
     if image_format not in VALIDATION_IMAGE_FORMATS:
-        raise ValueError("validation_image_format must be one of: png, webp, jpeg.")
+        raise ValueError("validation_image_format must be one of: png, webp, jpeg, jxl.")
     return "jpg" if image_format == "jpeg" else image_format
 
 
 def save_image_with_validation_format(image, image_path_stem, config):
-    image_format = str(getattr(config, "validation_image_format", "png") or "png").lower()
-    if image_format not in VALIDATION_IMAGE_FORMATS:
-        raise ValueError("validation_image_format must be one of: png, webp, jpeg.")
+    extension = validation_image_file_extension(config)
+    image_format = "jpeg" if extension == "jpg" else extension
+    if image_format == "jxl":
+        require_jxl_encoder()
     configured_quality = getattr(config, "validation_image_quality", 90)
     quality = 90 if configured_quality is None else int(configured_quality)
     if not 1 <= quality <= 100:
         raise ValueError("validation_image_quality must be within [1, 100].")
 
-    extension = validation_image_file_extension(config)
     save_path = f"{image_path_stem}.{extension}"
     save_image = image.convert("RGB") if image_format == "jpeg" and getattr(image, "mode", None) != "RGB" else image
     save_kwargs = {"format": image_format.upper()}
-    if image_format in {"webp", "jpeg"}:
+    if image_format in {"webp", "jpeg", "jxl"}:
         save_kwargs["quality"] = quality
     save_image.save(save_path, **save_kwargs)
     return save_path, extension

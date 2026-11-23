@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -54,6 +55,26 @@ class TrainingMetricsRoutesTests(APITestCase, unittest.TestCase):
                 media_response = client.get("/api/metrics/training/runs/anima/media/validation_images/validation.webp")
                 self.assertEqual(media_response.status_code, 200)
                 self.assertEqual(media_response.content, b"RIFF")
+
+    def test_jpeg_xl_media_has_explicit_content_type(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory).resolve()
+            validation_dir = output / "validation_images"
+            validation_dir.mkdir()
+            image = validation_dir / "validation.jxl"
+            image.write_bytes(b"\xff\x0a")
+            (output / "validation_media.jsonl").write_text(
+                json.dumps({"path": "validation_images/validation.jxl"}) + "\n", encoding="utf-8"
+            )
+
+            with (
+                patch.object(TRAINING_METRICS_SERVICE, "_environment", return_value=({}, output)),
+                self.client_session(ServerMode.UNIFIED) as client,
+            ):
+                response = client.get("/api/metrics/training/runs/anima/media/validation_images/validation.jxl")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.headers["content-type"], "image/jxl")
+            self.assertEqual(response.content, b"\xff\x0a")
 
     def test_training_run_rejects_reversed_step_range(self):
         with self.client_session(ServerMode.UNIFIED) as client:

@@ -32,3 +32,5 @@ GET /api/metrics/training/runs/{environment}/report
 ```
 
 API 只解析已配置 environment 的输出目录。若要减小归档大小，可设置 `validation_image_format=webp` 和 `validation_image_quality=90`；默认仍为 PNG。
+
+将 `validation_image_format` 设置为 `jxl` 即可保存 JPEG XL。请安装 `simpletuner[jxl]` 可选依赖，并使用支持 `image/jxl` 的浏览器查看图库或报告。

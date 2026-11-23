@@ -86,7 +86,8 @@ async def get_training_run_media(
     _user: User = Depends(get_current_user),
 ):
     path = _call_training_metrics_service(TRAINING_METRICS_SERVICE.media_path, environment, relative_path)
-    return FileResponse(path)
+    media_type = "image/jxl" if path.suffix.lower() == ".jxl" else None
+    return FileResponse(path, media_type=media_type)
 
 
 @router.get("/training/runs/{environment}/report")

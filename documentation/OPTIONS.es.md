@@ -2092,12 +2092,14 @@ Mapeo de opciones upstream (LayerSync → SimpleTuner):
 ### `--validation_image_format`
 
 - **Qué**: Formato de imágenes guardadas en `output_dir/validation_images`.
-- **Opciones**: png, webp, jpeg
+- **Opciones**: png, webp, jpeg, jxl
 - **Predeterminado**: png
+
+JPEG XL requiere el extra `simpletuner[jxl]` y un navegador compatible con `image/jxl`.
 
 ### `--validation_image_quality`
 
-- **Qué**: Calidad de WebP y JPEG, de 1 a 100.
+- **Qué**: Calidad de WebP, JPEG y JPEG XL, de 1 a 100.
 - **Predeterminado**: 90. Se ignora para PNG.
 
 ## Variables de configuración del entorno

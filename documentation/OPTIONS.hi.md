@@ -2089,12 +2089,14 @@ Upstream option mapping (LayerSync → SimpleTuner):
 ### `--validation_image_format`
 
 - **What**: `output_dir/validation_images` में save होने वाली images का format।
-- **Choices**: png, webp, jpeg
+- **Choices**: png, webp, jpeg, jxl
 - **Default**: png
+
+JPEG XL के लिए `simpletuner[jxl]` एक्स्ट्रा और `image/jxl` सपोर्ट वाला ब्राउज़र चाहिए।
 
 ### `--validation_image_quality`
 
-- **What**: WebP और JPEG quality, 1 से 100।
+- **What**: WebP, JPEG और JPEG XL quality, 1 से 100।
 - **Default**: 90। PNG के लिए ignored है।
 
 ## Environment configuration variables

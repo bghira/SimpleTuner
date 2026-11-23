@@ -218,9 +218,10 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
                 {"value": "png", "label": "PNG"},
                 {"value": "webp", "label": "WebP"},
                 {"value": "jpeg", "label": "JPEG"},
+                {"value": "jxl", "label": "JPEG XL"},
             ],
             help_text="Image format used for validation files saved in the output directory",
-            tooltip="WebP and JPEG reduce archive size. PNG preserves the existing lossless output.",
+            tooltip="JPEG XL requires the simpletuner[jxl] extra and a browser with JPEG XL support.",
             importance=ImportanceLevel.ADVANCED,
             order=3.1,
             subsection="advanced",
@@ -242,9 +243,11 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
                 ValidationRule(ValidationRuleType.MAX, value=100, message="Must be at most 100"),
             ],
             dependencies=[
-                FieldDependency(field="validation_image_format", operator="in", values=["webp", "jpeg"], action="show")
+                FieldDependency(
+                    field="validation_image_format", operator="in", values=["webp", "jpeg", "jxl"], action="show"
+                )
             ],
-            help_text="Encoding quality for WebP and JPEG validation images",
+            help_text="Encoding quality for WebP, JPEG, and JPEG XL validation images",
             tooltip="Higher values retain more detail and use more disk space.",
             importance=ImportanceLevel.ADVANCED,
             order=3.2,

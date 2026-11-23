@@ -32,3 +32,5 @@ GET /api/metrics/training/runs/{environment}/report
 ```
 
 API は設定済み environment の出力だけを参照します。容量を減らすには `validation_image_format=webp` と `validation_image_quality=90` を使います。既定値は PNG です。
+
+JPEG XL で保存するには `validation_image_format=jxl` を設定します。`simpletuner[jxl]` を追加インストールし、`image/jxl` に対応するブラウザーでギャラリーやレポートを表示します。

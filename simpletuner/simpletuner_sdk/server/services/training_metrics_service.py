@@ -22,7 +22,7 @@ from simpletuner.helpers.training.local_metrics import (
 from simpletuner.simpletuner_sdk.server.services.config_store import ConfigStore
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore
 
-SUPPORTED_MEDIA_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".webm", ".mov", ".wav"}
+SUPPORTED_MEDIA_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".jxl", ".gif", ".mp4", ".webm", ".mov", ".wav"}
 
 
 class TrainingMetricsServiceError(Exception):

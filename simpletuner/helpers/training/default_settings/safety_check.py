@@ -22,6 +22,11 @@ from simpletuner.helpers.training.error_handling import validate_deepspeed_compa
 
 
 def safety_check(args, accelerator):
+    if str(getattr(args, "validation_image_format", "")).lower() == "jxl":
+        from simpletuner.helpers.training.validation_images import require_jxl_encoder
+
+        require_jxl_encoder()
+
     if getattr(args, "distillation_method", None):
         from simpletuner.helpers.distillation.factory import DistillerFactory
 

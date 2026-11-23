@@ -22,7 +22,7 @@ else:
 LORA_SAFETENSORS_FILENAME = "pytorch_lora_weights.safetensors"
 EMA_SAFETENSORS_FILENAME = "ema_model.safetensors"
 SLA_ATTENTION_FILENAME = "sla_attention.pt"
-VALIDATION_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+VALIDATION_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".jxl", ".gif"}
 VALIDATION_VIDEO_SUFFIXES = {".mp4", ".avi", ".mov", ".webm"}
 VALIDATION_AUDIO_SUFFIXES = {".wav", ".flac", ".mp3", ".ogg", ".m4a"}
 VALIDATION_MEDIA_SUFFIXES = VALIDATION_IMAGE_SUFFIXES | VALIDATION_VIDEO_SUFFIXES | VALIDATION_AUDIO_SUFFIXES

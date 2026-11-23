@@ -10,6 +10,34 @@ from simpletuner.helpers.training import validation_images
 
 
 class ValidationImageSavingTests(unittest.TestCase):
+    def test_jxl_requires_the_optional_encoder(self):
+        missing = ModuleNotFoundError(name="pillow_jxl")
+        with patch.object(validation_images, "import_module", side_effect=missing):
+            with self.assertRaisesRegex(ValueError, r"simpletuner\[jxl\]"):
+                validation_images.save_image_with_validation_format(
+                    Image.new("RGB", (8, 8)), "unused", SimpleNamespace(validation_image_format="jxl")
+                )
+
+    def test_jxl_saves_rgba_and_passes_quality_to_the_encoder(self):
+        try:
+            validation_images.require_jxl_encoder()
+        except ValueError as error:
+            self.skipTest(str(error))
+        with tempfile.TemporaryDirectory() as directory:
+            image = Image.new("RGBA", (16, 12), (42, 128, 200, 63))
+            config = SimpleNamespace(validation_image_format="jxl", validation_image_quality=85)
+            with patch.object(image, "save", wraps=image.save) as save:
+                path, extension = validation_images.save_image_with_validation_format(
+                    image, Path(directory) / "sample", config
+                )
+            save.assert_called_once_with(path, format="JXL", quality=85)
+            self.assertEqual(extension, "jxl")
+            self.assertEqual(Path(path).suffix, ".jxl")
+            with Image.open(path) as saved:
+                self.assertEqual(saved.format, "JXL")
+                self.assertEqual(saved.size, (16, 12))
+                self.assertEqual(saved.getchannel("A").getextrema(), (63, 63))
+
     def test_multiple_resolutions_use_generated_image_count_with_prompt_banners(self):
         for image_count in (1, 2):
             with self.subTest(image_count=image_count), tempfile.TemporaryDirectory() as directory:
