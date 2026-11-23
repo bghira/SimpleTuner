@@ -1,3 +1,4 @@
+import copy
 import unittest
 from unittest.mock import patch
 
@@ -26,11 +27,13 @@ class StochasticOptimizerUpdateTests(unittest.TestCase):
                         source = torch.full((samples,), sign * (1 + fraction / 128), device=device)
                         target = torch.empty_like(source, dtype=torch.bfloat16)
                         with patch(
-                            "simpletuner.helpers.training.optimizers.adamw_bfloat16.stochastic.torch.randint_like",
+                            "simpletuner.helpers.training.optimizers.adamw_bfloat16.stochastic.torch.randint",
                             return_value=random_bits.clone(),
                         ) as randint:
                             copy_stochastic_(target, source)
-                        randint.assert_called_once_with(source, dtype=torch.int32, low=0, high=samples)
+                        randint.assert_called_once_with(
+                            size=source.shape, device=source.device, generator=None, dtype=torch.int32, low=0, high=samples
+                        )
                         farther = sign * (1 + 1 / 128)
                         self.assertTrue(torch.all((target == sign) | (target == farther)).item())
                         self.assertEqual((target == farther).sum().item(), int(samples * fraction))
@@ -52,7 +55,7 @@ class StochasticOptimizerUpdateTests(unittest.TestCase):
                 source = torch.cat((nonfinite_bits, finite.view(torch.int32))).to(device).view(torch.float32)
                 draws = torch.cat((nonfinite_draws, finite_draws)).to(device)
                 target = torch.empty_like(source, dtype=torch.bfloat16)
-                with patch.object(torch, "randint_like", return_value=draws):
+                with patch.object(torch, "randint", return_value=draws):
                     copy_stochastic_(target, source)
 
                 actual_nonfinite, actual_finite = target.cpu().split((nonfinite_bits.numel(), finite.numel()))
@@ -98,6 +101,43 @@ class StochasticOptimizerUpdateTests(unittest.TestCase):
                         rtol=0,
                         atol=0,
                     )
+
+    def test_adamw_replicas_match_across_training_rng_and_resume(self):
+        def replica():
+            params = [torch.nn.Parameter(torch.ones(192, dtype=torch.bfloat16)) for _ in range(2)]
+            optimizer = AdamWBF16([{"params": [p]} for p in params], lr=0.003, weight_decay=0.5)
+            return params, optimizer
+
+        (left, opt_left), (right, opt_right) = replica(), replica()
+        for step in range(5):
+            if step == 2:
+                opt_right = copy.deepcopy(opt_right)
+                right = [group["params"][0] for group in opt_right.param_groups]
+            if step == 3:
+                saved = copy.deepcopy(opt_right.state_dict())
+                restored, opt_right = replica()
+                for old, new in zip(right, restored):
+                    new.data.copy_(old)
+                right = restored
+                opt_right.load_state_dict(saved)
+
+            for rank, (params, optimizer) in enumerate(((left, opt_left), (right, opt_right))):
+                with torch.random.fork_rng(devices=[]):
+                    torch.manual_seed(1000 * rank + step)
+                    torch.rand(3 + rank)
+                    rng_before = torch.get_rng_state()
+                    for index, param in enumerate(params):
+                        param.grad = None if step == index else torch.linspace(-1, 2, 192).bfloat16()
+                    optimizer.step()
+                    self.assertTrue(torch.equal(torch.get_rng_state(), rng_before))
+            for a, b in zip(left, right):
+                self.assertTrue(torch.equal(a, b))
+                for key, value in opt_left.state[a].items():
+                    other = opt_right.state[b][key]
+                    if torch.is_tensor(value):
+                        self.assertTrue(torch.equal(value, other), key)
+                    else:
+                        self.assertEqual(value, other, key)
 
     def test_muon_vector_step_applies_learning_rate_to_update(self):
         for device in self.devices():
