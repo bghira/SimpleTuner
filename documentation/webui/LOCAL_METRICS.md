@@ -42,6 +42,8 @@ Open **Metrics**, then **Training Runs**. Runs are discovered from saved WebUI e
 
 In **System**, use **Machine** to select the orchestrator or a worker you can view. Updated workers report GPU readings, CPU usage, and RAM usage with their heartbeats. The GPU chart history is scoped to that machine. The page labels stale readings and shows when a worker has yet to send a sample.
 
+For Prometheus, enable the **Workers** category in **Metrics → System**. `/api/metrics/prometheus` exports the latest visible worker hardware and active training samples. Worker metrics use `worker_id`, with `gpu_index` for devices and `job_id` for training. Sample timestamp gauges show when data last arrived. Stale hardware readings are omitted.
+
 ## Validation image storage
 
 PNG remains the default. For smaller archives, set:

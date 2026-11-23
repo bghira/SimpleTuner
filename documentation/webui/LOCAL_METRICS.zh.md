@@ -26,6 +26,8 @@ SimpleTuner 可以在不使用外部服务的情况下记录训练指标：
 
 打开 **Metrics** 和 **Training Runs**，可按 step 或分钟查看标量、查看 timestep 分布、按 step 浏览验证图库并打开离线报告。在 **System** 中，使用 **Machine** 选择编排服务器或有权查看的 worker。更新后的 worker 会随心跳发送 GPU 读数、CPU 使用率和内存使用率。GPU 图表的历史记录按机器区分，页面会标明数据已过期或尚未收到。
 
+要使用 Prometheus，请在 **Metrics → System** 中启用 **Workers** 类别。`/api/metrics/prometheus` 导出有权查看的 worker 的最新硬件读数和活跃训练样本。指标包含 `worker_id` 标签，设备使用 `gpu_index`，训练使用 `job_id`。时间戳指标表示最近一次收到样本的时间。过期的硬件读数会被省略。
+
 ```text
 GET /api/metrics/training/runs
 GET /api/metrics/training/jobs/{job_id}

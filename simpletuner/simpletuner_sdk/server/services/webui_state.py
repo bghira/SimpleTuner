@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from simpletuner.simpletuner_sdk.server.services.cloud.prometheus_metrics import ALL_CATEGORIES
 from simpletuner.simpletuner_sdk.server.utils.assets import get_asset_version
 from simpletuner.simpletuner_sdk.server.utils.paths import get_simpletuner_data_roots
 
@@ -495,11 +496,10 @@ class WebUIStateStore:
             defaults.metrics_prometheus_enabled = bool(prometheus_enabled)
 
         # Normalise Prometheus categories
-        valid_categories = {"jobs", "http", "rate_limits", "approvals", "audit", "health", "circuit_breakers", "provider"}
         prometheus_categories = payload.get("metrics_prometheus_categories")
         if isinstance(prometheus_categories, list):
             defaults.metrics_prometheus_categories = [
-                c for c in prometheus_categories if isinstance(c, str) and c in valid_categories
+                c for c in prometheus_categories if isinstance(c, str) and c in ALL_CATEGORIES
             ]
         else:
             defaults.metrics_prometheus_categories = ["jobs", "http"]

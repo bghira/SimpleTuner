@@ -26,6 +26,8 @@ Resume पर records जोड़े जाते हैं। HTML relative me
 
 **Metrics** में **Training Runs** खोलें। यहाँ step या minutes पर scalar, timestep distribution, हर step की validation gallery और offline report देख सकते हैं। **System** में **Machine** से orchestrator या उस worker को चुनें जिसे देखने की अनुमति है। अपडेट किए गए workers अपने heartbeat के साथ GPU रीडिंग और CPU व RAM का उपयोग भेजते हैं। GPU इतिहास हर मशीन के लिए अलग है। पेज पुरानी रीडिंग और अभी तक कोई नमूना न आने की स्थिति अलग दिखाता है।
 
+Prometheus के लिए **Metrics → System** में **Workers** श्रेणी चालू करें। `/api/metrics/prometheus` उन workers के नवीनतम hardware और सक्रिय training नमूने देता है जिन्हें आप देख सकते हैं। मेट्रिक्स में `worker_id`, devices के लिए `gpu_index` और training के लिए `job_id` होता है। timestamp मेट्रिक्स आखिरी नमूना मिलने का समय बताते हैं। पुरानी hardware रीडिंग शामिल नहीं होतीं।
+
 ```text
 GET /api/metrics/training/runs
 GET /api/metrics/training/jobs/{job_id}

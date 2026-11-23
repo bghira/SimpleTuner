@@ -7,8 +7,9 @@ import logging
 import os
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
+from ...services.cloud.auth import User, get_optional_user
 from ...services.cloud.factory import ProviderFactory
 from ._shared import (
     BillingResponse,
@@ -338,7 +339,7 @@ async def readiness_check() -> dict:
 
 
 @router.get("/metrics/prometheus")
-async def prometheus_metrics():
+async def prometheus_metrics(user: User | None = Depends(get_optional_user)):
     """Export metrics in Prometheus text format.
 
     Use this endpoint for Prometheus scraping:
@@ -362,6 +363,7 @@ async def prometheus_metrics():
     - health: Uptime, database latency, component status
     - circuit_breakers: Circuit breaker states
     - provider: Cost limits, credit balance
+    - workers: Worker hardware and active training telemetry for authenticated users
     """
     from fastapi.responses import PlainTextResponse
 
@@ -382,7 +384,7 @@ async def prometheus_metrics():
     categories = defaults.metrics_prometheus_categories
 
     collector = get_metrics_collector()
-    content = await collector.export_prometheus(categories=categories)
+    content = await collector.export_prometheus(categories=categories, user=user)
 
     return PlainTextResponse(
         content=content,

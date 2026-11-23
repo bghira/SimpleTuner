@@ -159,14 +159,25 @@ class TrainingMetricsService:
             },
         }
 
-    async def list_worker_runs(self, user: User) -> list[dict]:
+    @staticmethod
+    async def _visible_worker_jobs(user: User) -> list[UnifiedJob]:
         user_id = None if user.has_permission("job.view.all") else user.id
-        jobs = await get_job_repository().list(job_ids=WORKER_RUN_METRICS.job_ids(), user_id=user_id)
+        return await get_job_repository().list(job_ids=WORKER_RUN_METRICS.job_ids(), user_id=user_id)
+
+    async def list_worker_runs(self, user: User) -> list[dict]:
         runs = []
-        for job in jobs:
+        for job in await self._visible_worker_jobs(user):
             if snapshot := self._worker_run(job):
                 runs.append(snapshot[0])
         return runs
+
+    async def latest_worker_samples(self, user: User) -> list[dict]:
+        samples = []
+        for job in await self._visible_worker_jobs(user):
+            if job.status in ACTIVE_STATUSES and (snapshot := WORKER_RUN_METRICS.snapshot(job)):
+                _, records = snapshot
+                samples.append({"job_id": job.job_id, "worker_id": job.metadata["worker_id"], **records[-1]})
+        return samples
 
     @staticmethod
     def _worker_run(job: UnifiedJob) -> tuple[dict, list[dict], list[str]] | None:

@@ -28,6 +28,8 @@ Cuando un tracker no recopila telemetría del sistema de forma nativa, SimpleTun
 
 Abre **Metrics** y **Training Runs** para elegir escalares por paso o minutos, ver la distribución de timesteps, revisar galerías de validación por paso y abrir el informe. En **System**, usa **Machine** para elegir el orquestador o un worker al que tengas acceso. Los workers actualizados envían lecturas de GPU y uso de CPU y RAM con sus heartbeats. El historial de GPU se mantiene por máquina. La página distingue las muestras antiguas de las que aún no se han recibido.
 
+Para Prometheus, activa la categoría **Workers** en **Metrics → System**. `/api/metrics/prometheus` exporta las últimas muestras de hardware visibles y de entrenamiento activo. Las métricas usan `worker_id`, con `gpu_index` para dispositivos y `job_id` para entrenamiento. Las métricas de tiempo indican cuándo llegó la última muestra. Las lecturas de hardware antiguas se omiten.
+
 ```text
 GET /api/metrics/training/runs
 GET /api/metrics/training/jobs/{job_id}

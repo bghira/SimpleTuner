@@ -26,6 +26,8 @@ tracker が system telemetry を標準で収集しない場合、SimpleTuner は
 
 **Metrics** の **Training Runs** で step または分単位のスカラー、timestep 分布、step ごとの検証ギャラリー、オフラインレポートを確認できます。**System** の **Machine** で、オーケストレーターまたは閲覧権限のあるワーカーを選択できます。更新済みのワーカーはハートビートで GPU の測定値、CPU 使用率、RAM 使用率を送信します。GPU 履歴はマシンごとに表示されます。古い測定値と未受信の状態は区別して表示されます。
 
+Prometheus では **Metrics → System** の **Workers** カテゴリを有効にします。`/api/metrics/prometheus` は閲覧できるワーカーの最新のハードウェア測定値と実行中の学習サンプルをエクスポートします。ラベルは `worker_id` と、デバイス用の `gpu_index`、学習用の `job_id` です。時刻のゲージは最後に受信した時点を示します。古いハードウェア測定値は除外されます。
+
 ```text
 GET /api/metrics/training/runs
 GET /api/metrics/training/jobs/{job_id}
