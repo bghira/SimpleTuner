@@ -5,6 +5,7 @@ except ModuleNotFoundError:
 import logging
 import os
 import random
+import struct
 import time
 from functools import partial
 from math import sqrt
@@ -710,19 +711,24 @@ class TrainingSample:
             # Convert image to RGB to remove any alpha channel and apply EXIF data transformations
             self.image = self.image.convert("RGB")
             try:
-                self.image = exif_transpose(self.image)
-            except TypeError as error:
-                # Pillow can read the orientation but fail to write an unrelated rational tag stored as text.
-                if str(error) != "bad operand type for abs(): 'str'":
-                    raise
                 orientation = self.image.getexif().get(ExifTags.Base.Orientation)
-                if orientation not in range(2, 9):
-                    raise
-                exif = Image.Exif()
-                exif[ExifTags.Base.Orientation] = orientation
-                self.image.info["exif"] = exif.tobytes()
-                self.image = exif_transpose(self.image)
-                logger.warning("Dropped malformed EXIF metadata while orienting %s.", self._image_path)
+            except (SyntaxError, struct.error):
+                # A malformed TIFF header has no usable orientation. Keep the decoded RGB pixels.
+                self.image.info.pop("exif", None)
+                self.image.info.pop("Raw profile type exif", None)
+                logger.warning("Dropped unreadable EXIF header on %s.", self._image_path)
+            else:
+                if orientation in range(2, 9):
+                    try:
+                        self.image = exif_transpose(self.image)
+                    except TypeError:
+                        # Pillow can read the orientation but fail to serialize unrelated TIFF tags.
+                        exif = Image.Exif()
+                        exif[ExifTags.Base.Orientation] = orientation
+                        self.image.info["exif"] = exif.tobytes()
+                        self.image.info.pop("Raw profile type exif", None)
+                        self.image = exif_transpose(self.image)
+                        logger.warning("Dropped malformed EXIF metadata while orienting %s.", self._image_path)
         return self
 
     def _apply_prepared_crop(self):
