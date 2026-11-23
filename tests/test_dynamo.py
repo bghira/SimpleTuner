@@ -1,5 +1,6 @@
 import os
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 import torch
@@ -39,6 +40,53 @@ class DynamoCudagraphWorkaroundTests(unittest.TestCase):
                     self.assertEqual(torch._dynamo.config.cache_size_limit, initial_limit)
                     with dynamo_config_context(SimpleNamespace(distillation_method=None)):
                         self.assertEqual(torch._dynamo.config.cache_size_limit, initial_limit)
+
+    def test_regional_checkpoint_replays_dynamo_config_on_a_different_thread(self):
+        from simpletuner.helpers.training.dynamo import dynamo_config_context
+        from simpletuner.helpers.training.gradient_checkpointing_interval import get_checkpoint_function
+
+        config = SimpleNamespace(
+            distillation_method="anyflow",
+            dynamo_dynamic=True,
+            dynamo_backend="inductor",
+            dynamo_use_regional_compilation=True,
+        )
+        observed = []
+
+        def settings():
+            conf = torch._dynamo.config
+            return conf.cache_size_limit, conf.capture_dynamic_output_shape_ops, conf.force_parameter_static_shapes
+
+        def block(value):
+            observed.append(settings())
+            return value.sin().square()
+
+        with ThreadPoolExecutor(max_workers=1) as worker:
+            worker_defaults = worker.submit(settings).result()
+            value = torch.tensor([0.5], requires_grad=True)
+            with dynamo_config_context(config):
+                expected = settings()
+                loss = get_checkpoint_function()(block, value, use_reentrant=False).sum()
+                worker.submit(loss.backward).result()
+            self.assertEqual(observed, [expected, expected])
+            self.assertEqual(worker.submit(settings).result(), worker_defaults)
+        torch.testing.assert_close(value.grad, torch.sin(2 * value.detach()))
+
+    def test_compiled_checkpoint_boundary_supports_fullgraph(self):
+        from simpletuner.helpers.training.dynamo import dynamo_config_context
+        from simpletuner.helpers.training.gradient_checkpointing_interval import get_checkpoint_function
+
+        config = SimpleNamespace(distillation_method="anyflow", dynamo_backend="eager", dynamo_use_regional_compilation=True)
+        with dynamo_config_context(config):
+            checkpoint = get_checkpoint_function()
+
+            @torch.compile(backend="eager", fullgraph=True)
+            def run(value):
+                return checkpoint(torch.sin, value, use_reentrant=False)
+
+            value = torch.tensor([0.5], requires_grad=True)
+            run(value).sum().backward()
+            torch.testing.assert_close(value.grad, value.detach().cos())
 
     def test_activation_checkpointing_downgrades_reduce_overhead_to_default(self):
         from simpletuner.helpers.training import dynamo

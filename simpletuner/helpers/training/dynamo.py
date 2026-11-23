@@ -10,6 +10,8 @@ import torch
 
 logger = logging.getLogger(__name__)
 
+_REGIONAL_CHECKPOINT_PATCHES = contextvars.ContextVar("regional_checkpoint_dynamo_patches", default=None)
+
 _PEFT_LORA_CUDAGRAPH_PATCHED = False
 _PEFT_TE_LORA_CUDAGRAPH_PATCHED = False
 _CHECKPOINT_CUDAGRAPH_ISSUE = "https://github.com/pytorch/pytorch/issues/154306"
@@ -43,6 +45,12 @@ def dynamo_config_context(config: Any) -> Iterator[None]:
     with contextlib.ExitStack() as stack:
         if patches:
             stack.enter_context(torch._dynamo.config.patch(patches))
+            if (
+                _coerce_flag(getattr(config, "dynamo_use_regional_compilation", False))
+                and _effective_dynamo_backend(config) != "no"
+            ):
+                token = _REGIONAL_CHECKPOINT_PATCHES.set(patches)
+                stack.callback(_REGIONAL_CHECKPOINT_PATCHES.reset, token)
         if _effective_dynamo_backend(config) == "inductor" and getattr(config, "disk_low_threshold", None) not in (
             None,
             "",
@@ -65,6 +73,25 @@ def dynamo_config_context(config: Any) -> Iterator[None]:
             torch._dynamo.on_compile_start(check_compile_disk_space)
             stack.callback(torch._dynamo.callback_handler.remove_start_callback, check_compile_disk_space)
         yield
+
+
+def regional_checkpoint_function(checkpoint: Callable) -> Callable:
+    patches = _REGIONAL_CHECKPOINT_PATCHES.get()
+    if not patches:
+        return checkpoint
+
+    def checkpoint_region(function, *args, **kwargs):
+        if torch.compiler.is_compiling():
+            return checkpoint(function, *args, **kwargs)
+
+        def run_region(*inputs, **options):
+            # Accelerator autograd threads do not inherit the forward thread's Dynamo config.
+            with torch._dynamo.config.patch(patches):
+                return function(*inputs, **options)
+
+        return checkpoint(run_region, *args, **kwargs)
+
+    return checkpoint_region
 
 
 def run_with_dynamo_config(config: Any, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:

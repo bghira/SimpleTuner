@@ -46,7 +46,9 @@ def get_checkpoint_function():
 
     if get_checkpoint_backend_base() == "unsloth" and _offloaded_checkpoint is not None:
         return _offloaded_checkpoint
-    return torch.utils.checkpoint.checkpoint
+    from simpletuner.helpers.training.dynamo import regional_checkpoint_function
+
+    return regional_checkpoint_function(torch.utils.checkpoint.checkpoint)
 
 
 def should_checkpoint_block(
