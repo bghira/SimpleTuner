@@ -201,6 +201,37 @@ class TestACEStepModel(unittest.TestCase):
         self.assertEqual(layout["tokenizer_path"], str(root / "Qwen3-Embedding-0.6B"))
         self.assertEqual(layout["vae_path"], str(root / "vae"))
 
+    def test_official_v15_flavours_use_their_standalone_transformers(self):
+        self.config.pretrained_model_name_or_path = "ACE-Step/Ace-Step1.5"
+        for flavour in ("v15-base", "v15-sft"):
+            with self.subTest(flavour=flavour), TemporaryDirectory() as tmpdir:
+                self.config.model_flavour = flavour
+                root = Path(tmpdir) / "shared"
+                (root / "vae").mkdir(parents=True)
+                (root / "Qwen3-Embedding-0.6B").mkdir()
+                (root / "acestep-v15-turbo").mkdir()
+                variant = Path(tmpdir) / "variant"
+                variant.mkdir()
+                silence = variant / "silence_latent.pt"
+                silence.touch()
+
+                with patch(
+                    "simpletuner.helpers.models.ace_step.model.snapshot_download", return_value=str(variant)
+                ) as download:
+                    layout = self.model._resolve_v15_layout(str(root))
+
+                download.assert_called_once_with(repo_id=f"ACE-Step/acestep-{flavour}")
+                self.assertEqual(layout["variant_path"], str(variant))
+                self.assertEqual(layout["silence_latent_path"], str(silence))
+                self.assertEqual(layout["vae_path"], str(root / "vae"))
+
+    def test_missing_local_v15_variant_is_rejected(self):
+        self.config.model_flavour = "v15-base"
+        with TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "acestep-v15-turbo").mkdir()
+            with self.assertRaisesRegex(FileNotFoundError, "acestep-v15-base"):
+                self.model._resolve_v15_layout(tmpdir)
+
     def test_resolve_v15_layout_uses_qwen_text_encoder_override(self):
         self.config.model_flavour = "v15-base"
         self.config.qwen_text_encoder_model_name_or_path = "custom/qwen"
