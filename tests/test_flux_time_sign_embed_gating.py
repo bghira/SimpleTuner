@@ -1,8 +1,10 @@
 import unittest
+from unittest.mock import patch
 
 import torch
 
 from simpletuner.helpers.models.flux.transformer import FluxTransformer2DModel
+from simpletuner.helpers.training.tread import TREADRouter
 
 
 def _tiny_flux_transformer(**extra_kwargs) -> FluxTransformer2DModel:
@@ -24,6 +26,41 @@ def _tiny_flux_transformer(**extra_kwargs) -> FluxTransformer2DModel:
 
 
 class FluxTimeSignEmbedGatingTestCase(unittest.TestCase):
+    def test_tread_routes_tokenwise_timesteps_in_both_streams(self):
+        model = _tiny_flux_transformer()
+        router = TREADRouter(seed=9, device="cpu")
+        image_tokens = torch.randn(2, 4, 4, requires_grad=True)
+        inputs = {
+            "hidden_states": image_tokens,
+            "encoder_hidden_states": torch.randn(2, 2, 16),
+            "pooled_projections": torch.randn(2, 8),
+            "timestep": torch.tensor([[0.1, 0.3, 0.5, 0.7], [0.2, 0.4, 0.6, 0.8]]),
+            "img_ids": torch.tensor([[0, 0, i] for i in range(4)]),
+            "txt_ids": torch.zeros(2, 3, dtype=torch.long),
+        }
+        modulation = []
+
+        def record_modulation(_block, _args, kwargs):
+            modulation.append(kwargs["temb"])
+
+        for block in (*model.transformer_blocks, *model.single_transformer_blocks):
+            self.addCleanup(block.register_forward_pre_hook(record_modulation, with_kwargs=True).remove)
+
+        model(**inputs)
+        dense_double, dense_single = modulation
+        for start in (0, 1):
+            with self.subTest(start=start), patch.object(router, "end_route", wraps=router.end_route) as restore:
+                modulation.clear()
+                model.set_router(router, [{"selection_ratio": 0.5, "start_layer_idx": start, "end_layer_idx": 1}])
+                output = model(**inputs).sample
+                self.assertEqual(output.shape, image_tokens.shape)
+                output.square().mean().backward()
+
+            mask = restore.call_args.args[1]
+            expected_image = router.start_route(dense_double, mask)
+            torch.testing.assert_close(modulation[0], expected_image if start == 0 else dense_double)
+            torch.testing.assert_close(modulation[1], torch.cat((dense_single[:, :2], expected_image), dim=1))
+
     def test_forward_accepts_tokenwise_timesteps(self):
         model = _tiny_flux_transformer()
         hidden_states = torch.randn(1, 4, 4)
