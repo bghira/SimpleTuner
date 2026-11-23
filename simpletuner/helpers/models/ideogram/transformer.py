@@ -104,15 +104,10 @@ class Ideogram4MRoPE(nn.Module):
     def forward(self, position_ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         # position_ids: (B, L, 3) of int.
         assert position_ids.ndim == 3 and position_ids.shape[-1] == 3
-        batch_size, seq_len, _ = position_ids.shape
 
-        # (3, B, inv_freq_size, L)
-        pos = position_ids.permute(2, 0, 1).to(dtype=torch.float32)  # type: ignore[arg-type]
-        inv_freq = self.inv_freq.to(dtype=torch.float32)[None, None, :, None].expand(
-            3, batch_size, -1, 1
-        )  # type: ignore[index]
-        freqs = inv_freq @ pos.unsqueeze(2)
-        freqs = freqs.transpose(2, 3)  # (3, B, L, inv_freq_size)
+        pos = position_ids.permute(2, 0, 1).float()
+        # BF16 autocast rounds all grid coordinates near 65536 to the same value in a matmul.
+        freqs = pos.unsqueeze(-1) * self.inv_freq.float()
 
         # interleaved mrope: pull H freqs into idx 1 mod 3, W freqs into idx 2 mod 3.
         freqs_t = freqs[0].clone()

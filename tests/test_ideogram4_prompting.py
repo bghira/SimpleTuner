@@ -362,6 +362,19 @@ class Ideogram4PromptingTests(unittest.TestCase):
         self.assertTrue(torch.equal(result["model_prediction"], torch.full((2, 128, 4, 4), -1.0)))
         self.assertTrue(torch.allclose(model.model.last_kwargs["t"], torch.tensor([0.9, 0.5])))
 
+    def test_image_rotary_positions_survive_bfloat16_autocast(self):
+        from simpletuner.helpers.models.ideogram.constants import IMAGE_POSITION_OFFSET
+        from simpletuner.helpers.models.ideogram.transformer import Ideogram4MRoPE
+
+        rotary = Ideogram4MRoPE(256, 5_000_000, (24, 20, 20))
+        positions = torch.tensor([[[0, 0, 0], [0, 0, 1], [0, 1, 0]]]) + IMAGE_POSITION_OFFSET
+        reference_cos, reference_sin = rotary(positions)
+        self.assertEqual(torch.unique(reference_cos[0], dim=0).shape[0], 3)
+        with torch.autocast("cpu", dtype=torch.bfloat16):
+            cos, sin = rotary(positions)
+        torch.testing.assert_close(cos, reference_cos)
+        torch.testing.assert_close(sin, reference_sin)
+
     def test_vae_latent_norm_matches_flux2_batch_norm_layout(self):
         model = Ideogram4.__new__(Ideogram4)
         latents = torch.arange(1 * 32 * 4 * 4, dtype=torch.float32).view(1, 32, 4, 4) / 100.0
