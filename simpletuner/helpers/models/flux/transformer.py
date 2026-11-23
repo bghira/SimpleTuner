@@ -1109,6 +1109,7 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
         saved_tokens = None  # copy of full‑seq image tokens
         global_idx = getattr(self, "_diffusion_blocks_active_global_start", 0)
         current_rope = image_rotary_emb
+        current_temb_img = temb_img
         combined_blocks = list(self.transformer_blocks) + list(self.single_transformer_blocks)
         musubi_manager = self._musubi_block_swap
         musubi_offload_active = False
@@ -1231,6 +1232,8 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
                 saved_tokens = hidden_states.clone()
                 hidden_states = router.start_route(hidden_states, tread_mask_info)
                 routing_now = True
+                if temb_img.ndim == 3:
+                    current_temb_img = router.start_route(temb_img, tread_mask_info)
 
                 # --- build RoPE with    [ text | routed‑image ]    rows -------------
                 # 1. text part:  (B, txt_len, D) – identical for all samples
@@ -1269,7 +1272,7 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
                     encoder_hidden_states, hidden_states = block(
                         hidden_states=hidden_states,
                         encoder_hidden_states=encoder_hidden_states,
-                        temb=temb_img,
+                        temb=current_temb_img,
                         context_temb=temb_txt,
                         image_rotary_emb=current_rope,
                         attention_mask=attention_mask,
@@ -1284,7 +1287,7 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
                         create_custom_forward(block),
                         hidden_states,
                         encoder_hidden_states,
-                        temb_img,
+                        current_temb_img,
                         temb_txt,
                         current_rope,
                         attention_mask,
@@ -1295,7 +1298,7 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
                 encoder_hidden_states, hidden_states = block(
                     hidden_states=hidden_states,
                     encoder_hidden_states=encoder_hidden_states,
-                    temb=temb_img,
+                    temb=current_temb_img,
                     context_temb=temb_txt,
                     image_rotary_emb=current_rope,
                     attention_mask=attention_mask,
@@ -1325,6 +1328,7 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
                 routing_now = False
                 route_ptr += 1
                 current_rope = image_rotary_emb
+                current_temb_img = temb_img
 
             if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
                 musubi_manager.stream_out(block)
@@ -1336,6 +1340,10 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
         # sequence.
         hidden_states = torch.cat([encoder_hidden_states, hidden_states], dim=1)
         txt_len = encoder_hidden_states.shape[1]
+
+        current_temb_single = temb_single
+        if routing_now and temb_single.ndim == 3:
+            current_temb_single = torch.cat((temb_single[:, :txt_len], current_temb_img), dim=1)
 
         for index_block, block in enumerate(self.single_transformer_blocks):
             run_gap_eagerly = False
@@ -1396,6 +1404,9 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
 
                 hidden_states = torch.cat([text_tok, img_tok], dim=1)
                 routing_now = True
+                if temb_single.ndim == 3:
+                    routed_temb = router.start_route(temb_img, tread_mask_info)
+                    current_temb_single = torch.cat((temb_single[:, :txt_len], routed_temb), dim=1)
 
                 # shrink the attention_mask, if one is provided
                 if attention_mask is not None:
@@ -1438,7 +1449,7 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
                 if checkpoint_ffn:
                     hidden_states = block(
                         hidden_states=hidden_states,
-                        temb=temb_single,
+                        temb=current_temb_single,
                         image_rotary_emb=current_rope,
                         attention_mask=attention_mask,
                         checkpoint_ffn=True,
@@ -1451,7 +1462,7 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
                     hidden_states = checkpoint_fn(
                         create_custom_forward(block),
                         hidden_states,
-                        temb_single,
+                        current_temb_single,
                         current_rope,
                         attention_mask,
                         **ckpt_kwargs,
@@ -1460,7 +1471,7 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
             else:
                 hidden_states = block(
                     hidden_states=hidden_states,
-                    temb=temb_single,
+                    temb=current_temb_single,
                     image_rotary_emb=current_rope,
                     attention_mask=attention_mask,
                     offload_attention=self.gradient_checkpointing_offload_attention,
@@ -1503,6 +1514,7 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
                     attention_mask = torch.cat([attention_mask[:, :txt_len], pad], dim=1)
 
                 current_rope = image_rotary_emb
+                current_temb_single = temb_single
 
             if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
                 musubi_manager.stream_out(block)
