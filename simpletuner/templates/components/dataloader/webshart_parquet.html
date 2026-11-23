@@ -67,6 +67,7 @@
                placeholder="{{ placeholder }}">
     </div>
     {% endfor %}
+    <div class="col-12 form-text small">Use {global_rank} in a cache path for a separate directory per training process. Set only the Shard Cache Directory to keep metadata shared.</div>
     <div class="col-md-4">
         <label class="form-label small">Shard Cache GB</label>
         <input type="number" class="form-control form-control-sm" min="0" step="any"

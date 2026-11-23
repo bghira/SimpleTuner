@@ -598,11 +598,8 @@ class WebshartMetadataBackend(MetadataBackend):
             shard_at, prefill = self.data_backend.seeded_shards(spec.rank_shuffle_seed)
         if self._window_recipe is not None:
             partitions = ceil(self.data_backend.num_shards() / self.window_shards)
-            if (
-                shard_at is None
-                and spec.sampling_order == "sequential"
-                and getattr(self.accelerator, "is_local_main_process", True)
-            ):
+            if shard_at is None and spec.sampling_order == "sequential":
+                # Webshart elects one prefill worker per shard cache directory.
                 prefill = self.data_backend.sequential_prefill(self.window_shards)
             return WindowedWebshartEpoch(
                 spec,

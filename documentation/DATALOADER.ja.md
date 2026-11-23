@@ -1451,6 +1451,7 @@ Webshart データセットは `webshart` パッケージで WebDataset 形式�
 - リモート Parquet をウィンドウ単位で順次学習する場合、`sequential_prefill` 対応の Webshart は、次のシャードを追加すると `shard_cache_gb` を超えるところまで先読みします。共有キャッシュごとに 1 つのワーカーが最大 `parallel_downloads` 件を並列でダウンロードします。学習再開時は復元したウィンドウから開始し、読み終えたシャードをキャッシュから削除できるようにします。 再開時にバックグラウンドの同時ダウンロード数だけを調整するには、`SIMPLETUNER_WEBSHART_PREFILL_DOWNLOADS` を設定します。
 - `webshart.metadata_cache_dir` はシャードカタログとキャプチャマニフェストのインデックスを保存します。デフォルトは `webshart.cache_dir` 配下の `metadata_cache` です。
 - `webshart.shard_cache_dir` はダウンロード済みのシャードを保存します。デフォルトは `webshart.cache_dir` 配下の `shard_cache` です。
+- キャッシュパスに `{global_rank}` を含めると、学習プロセスごとに別のディレクトリを使用します（単一プロセスではランク `0`）。準備済みのメタデータを共有するには、`webshart.shard_cache_dir` だけに `{env:CACHE_ROOT}/shards_{global_rank}` のようなパスを指定します。`shard_cache_gb` の上限はシャードディレクトリごとに適用されます。
 - リモートの Parquet でシャード全体のキャッシュが有効な場合、各バックエンドは読み取りの合間にキャッシュ済みシャードのリーダーを 1 つ保持します。同時ダウンロードと、使用中のリーダーがロックしているシャードのために、`shard_cache_gb` を超える空き容量を確保してください。Webshart は古いシャードを削除する前に、ダウンロード内容を一時ファイルに書き込みます。
 - `webshart.sampling_policy=global` は準備済みの各アスペクト比バケット内でサンプルをシャッフルします。`shard_local` はストレージ上で近いサンプルからバッチを作り、DataComp のようなリモートデータセットでシャードキャッシュの入れ替えを抑えます。省略すると従来のサンプラーを使用します。
 - Parquet のシャードローカルサンプリングでは、`webshart.sampling_order` の既定値は `sequential` です。ストレージ順にシャードのウィンドウを処理し、各アスペクト比バケット内で元の行順を保ちます。シャード内のサンプルをシャッフルするときや、この設定が追加される前のチェックポイントから再開するときは `shuffled` を指定してください。再開時は同じ順序設定を使います。

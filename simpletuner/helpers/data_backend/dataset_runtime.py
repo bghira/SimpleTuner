@@ -14,6 +14,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
+from simpletuner.helpers.configuration.template_vars import resolve_dataset_config_placeholders
 from simpletuner.helpers.data_backend.base import BaseDataBackend, ordered_sample_payloads
 from simpletuner.helpers.data_backend.dataset_types import get_arg_value
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
@@ -48,6 +49,7 @@ class DatasetRuntime:
         args_dict = (
             args if isinstance(args, dict) else {key: value for key, value in vars(args).items() if not key.startswith("_")}
         )
+        config = resolve_dataset_config_placeholders(config, args_dict)
         settings = create_backend_config(config, args_dict)
         builder = create_backend_builder(settings.backend_type, accelerator, args)
         source = builder.build(settings)

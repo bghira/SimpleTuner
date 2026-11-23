@@ -57,7 +57,7 @@ from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
 from simpletuner.helpers.caching.vae import VAECache
 from simpletuner.helpers.configuration.platform_validation import validate_mps_train_batch_size
 from simpletuner.helpers.configuration.sanitization import make_public_config_serializable, should_skip_public_config_key
-from simpletuner.helpers.configuration.template_vars import resolve_value_placeholders
+from simpletuner.helpers.configuration.template_vars import resolve_dataset_config_placeholders
 from simpletuner.helpers.data_backend.aws import S3DataBackend
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.bucket_report import BucketReport
@@ -962,31 +962,8 @@ def sort_dataset_configs_by_dependencies(data_backend_config):
     return ordered + [config for config in enabled if not config.get("id")]
 
 
-def fill_variables_in_config_paths(args: dict, config: list[dict]) -> dict:
-    """
-    Fill in variables in the config paths with values from args.
-    This is useful for paths that contain variables like {cache_dir}, {model_name}, etc.
-    """
-    model_family = args.get("model_family") if isinstance(args, dict) else getattr(args, "model_family", "")
-    output_dir = args.get("output_dir") if isinstance(args, dict) else getattr(args, "output_dir", "")
-    if not output_dir:
-        output_dir = os.path.join(os.getcwd(), ".simpletuner_output")
-
-    filled_config: list[dict] = []
-    for backend in config:
-        dataset_id = ""
-        try:
-            dataset_id = str(backend.get("id", "") or "")
-        except Exception:
-            dataset_id = ""
-        mapping = {
-            "model_family": model_family,
-            "output_dir": output_dir,
-            "id": dataset_id,
-        }
-        filled_config.append(resolve_value_placeholders(backend, variables=mapping))
-
-    return filled_config
+def fill_variables_in_config_paths(args, config: list[dict]) -> list[dict]:
+    return [resolve_dataset_config_placeholders(backend, args) for backend in config]
 
 
 def get_local_backend(accelerator, identifier: str, compress_cache: bool = False) -> LocalDataBackend:
