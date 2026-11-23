@@ -181,6 +181,7 @@ class WebUIDefaults:
     cloud_outputs_dir: Optional[str] = None
     cloud_dataloader_hint_dismissed: bool = False
     cloud_git_hint_dismissed: bool = False
+    job_queue_hero_dismissed: bool = False
     # Data consent for cloud uploads: "ask" (default), "allow", or "deny"
     cloud_data_consent: str = "ask"
     # Polling preference: None (auto), True (force enable), False (force disable)
@@ -427,9 +428,10 @@ class WebUIStateStore:
         git_branch = payload.get("git_branch")
         defaults.git_branch = git_branch.strip() if isinstance(git_branch, str) and git_branch.strip() else None
 
-        # Normalise cloud hint dismissal booleans
+        # Normalise hint dismissal booleans
         defaults.cloud_dataloader_hint_dismissed = bool(payload.get("cloud_dataloader_hint_dismissed", False))
         defaults.cloud_git_hint_dismissed = bool(payload.get("cloud_git_hint_dismissed", False))
+        defaults.job_queue_hero_dismissed = bool(payload.get("job_queue_hero_dismissed", False))
 
         # Normalise cloud tab enabled (default True)
         cloud_tab_value = payload.get("cloud_tab_enabled")
