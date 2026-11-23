@@ -1693,6 +1693,77 @@ class RemoteWorkerSystemMetricsTestCase(_TrainingWorkerFixture, WebUITestCase):
     SERVER_MODE = ServerMode.UNIFIED
     MAX_BROWSERS = 1
 
+    def test_switching_gpus_redraws_both_canvases(self):
+        job_id = "gpu-chart-switching"
+        self.register_job(job_id, "Multi-GPU worker", "L40S")
+        readings = {}
+        for index, vram_percent in enumerate((35, 82, 95)):
+            readings.update(
+                {
+                    f"system/gpu/{index}/memory_percent": vram_percent,
+                    f"system/gpu/{index}/temperature_celsius": 49 + index,
+                    f"system/gpu/{index}/fan_speed_percent": 25 + index * 5,
+                }
+            )
+        requests.post(
+            f"{self.base_url}/api/workers/heartbeat",
+            headers={"X-Worker-Token": f"{job_id}-token"},
+            json={
+                "worker_id": f"worker-{job_id}",
+                "current_job_id": job_id,
+                "status": "busy",
+                "system_metrics": readings,
+            },
+            timeout=10,
+        ).raise_for_status()
+
+        def scenario(driver, _):
+            driver.get(f"{self.base_url}/web/trainer#metrics")
+            wait = WebDriverWait(driver, 20)
+            root = "#metrics-tab-content"
+            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, root)))
+            self.dismiss_onboarding(driver)
+            wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "[data-testid='system-metrics-tab']"))).click()
+            driver.execute_script("Alpine.$data(document.querySelector('.dashboard-wrapper')).eventDockCollapsed = true;")
+            machine = wait.until(EC.element_to_be_clickable((By.ID, "gpu-metrics-source")))
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", machine)
+            Select(machine).select_by_value(f"worker-{job_id}")
+            tabs = (By.CSS_SELECTOR, f"{root} .gpu-tab")
+            wait.until(lambda d: len(d.find_elements(*tabs)) == 3)
+
+            vram_colors = [(16, 185, 129), (245, 158, 11), (239, 68, 68)]
+            for index in (0, 1, 0, 2, 1, 2, 0):
+                button = driver.find_elements(*tabs)[index]
+                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", button)
+                button.click()
+                wait.until(
+                    lambda d: d.execute_script(
+                        """
+                        const card = document.querySelector('#metrics-tab-content .gpu-card');
+                        if (card?.querySelector('.gpu-id-badge')?.textContent.trim() !== 'GPU ' + arguments[0]) {
+                            return false;
+                        }
+                        function hasColor(selector, color) {
+                            const canvas = card.querySelector(selector);
+                            const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+                            for (let offset = 0; offset < pixels.length; offset += 4) {
+                                if (pixels[offset] === color[0] && pixels[offset + 1] === color[1]
+                                    && pixels[offset + 2] === color[2] && pixels[offset + 3] > 240) return true;
+                            }
+                            return false;
+                        }
+                        return hasColor('.vram-pie-wrapper canvas', arguments[1])
+                            && hasColor('.history-chart-container canvas', [239, 68, 68])
+                            && hasColor('.history-chart-container canvas', [6, 182, 212]);
+                        """,
+                        index,
+                        vram_colors[index],
+                    ),
+                    f"GPU {index} did not draw its VRAM ring and history lines",
+                )
+
+        self.for_each_browser("gpu_switching_charts", scenario)
+
     def test_workers_with_gpu_zero_keep_separate_history(self):
         workers = (("gpu-first", "First GPU worker", 47), ("gpu-second", "Second GPU worker", 71))
         for job_id, worker, temperature in workers:
