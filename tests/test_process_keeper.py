@@ -183,6 +183,14 @@ def embed_cache_failure_with_child(config):
     detached_code = """
 import os, time
 pid_file = os.environ.get("PID_FILE")
+
+def publish_pid(pid):
+    if pid_file:
+        temp_path = pid_file + ".tmp"
+        with open(temp_path, "w", encoding="utf-8") as handle:
+            handle.write(f"{pid},{os.getpgid(pid)}")
+        os.replace(temp_path, pid_file)
+
 if hasattr(os, "setsid"):
     try:
         os.setsid()
@@ -193,14 +201,10 @@ if hasattr(os, "fork"):
     if pid == 0:
         time.sleep(2)
     else:
-        if pid_file:
-            with open(pid_file, "w", encoding="utf-8") as handle:
-                handle.write(f"{pid},{os.getpgid(pid)}")
+        publish_pid(pid)
         os._exit(0)
 else:
-    if pid_file:
-        with open(pid_file, "w", encoding="utf-8") as handle:
-            handle.write(f"{os.getpid()},{os.getpgid(0)}")
+    publish_pid(os.getpid())
     time.sleep(2)
 """
 
