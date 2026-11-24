@@ -2,8 +2,10 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from simpletuner.simpletuner_sdk.server.services.config_store import ConfigStore
+from simpletuner.simpletuner_sdk.server.services.configs_service import ConfigServiceError, ConfigsService
 
 
 class ConfigStoreSaveBehaviourTests(unittest.TestCase):
@@ -59,6 +61,28 @@ class ConfigStoreSaveBehaviourTests(unittest.TestCase):
                 self.assertNotIn("default_worker_ids", store.export_config(name)["_metadata"])
                 store.save_worker_defaults(name, [])
                 self.assertEqual(store.load_config(name)[1].default_worker_ids, [])
+
+    def test_worker_dataset_copy_preserves_flat_environment_until_enabled(self):
+        service = ConfigsService()
+        store = ConfigStore(config_dir=self.config_root)
+        original = {"data_backend_config": "old-datasets.json"}
+        datasets = [{"id": "worker-images", "type": "local", "dataset_type": "image"}]
+        store.save_config("flat", original)
+        with patch.object(ConfigsService, "_get_store", return_value=store):
+            previous = service.get_config("flat")["config"]
+            pulled = service.save_worker_dataloader_copy("flat", datasets)
+            self.assertFalse(pulled["enabled"])
+            self.assertEqual(service.get_config("flat")["config"], previous)
+            with self.assertRaises(ConfigServiceError) as existing:
+                service.save_worker_dataloader_copy("flat", [])
+            self.assertEqual(existing.exception.status_code, 409)
+            self.assertEqual(json.loads((self.config_root / pulled["path"]).read_text()), datasets)
+            enabled = service.save_worker_dataloader_copy("flat")
+            self.assertTrue(enabled["enabled"])
+            result = service.get_config("flat")
+            self.assertEqual(result["metadata"]["worker_dataloader_copy"], enabled)
+            self.assertEqual(result["config"]["data_backend_config"], pulled["path"])
+        self.assertTrue((self.config_root / "flat.json").is_file())
 
     def test_dataloader_save_preserves_list_payload(self) -> None:
         store = ConfigStore(config_dir=self.config_root / "dataloaders", config_type="dataloader")

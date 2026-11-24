@@ -507,8 +507,11 @@ def compute_validations(
             )
             continue
 
+        online_text_encoding = (
+            _dataset_type(dataset) is DatasetType.TEXT_EMBEDS and dataset.get("text_cache_encode_only") is True
+        )
         for field in blueprint.fields:
-            if not field.required:
+            if not field.required or (online_text_encoding and field.id == "cache_dir"):
                 continue
             value = dataset.get(field.id)
             if value is None:

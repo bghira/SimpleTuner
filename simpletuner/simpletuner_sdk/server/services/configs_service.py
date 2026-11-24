@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shutil
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -262,7 +263,51 @@ class ConfigsService:
         except ValueError as exc:
             raise ConfigServiceError(str(exc), status.HTTP_422_UNPROCESSABLE_CONTENT) from exc
 
-        return {"name": name, "config": config, "metadata": metadata.model_dump(), "config_type": config_type}
+        result = {"name": name, "config": config, "metadata": metadata.model_dump(), "config_type": config_type}
+        if config_type == "model":
+            copy_path = self._worker_dataloader_path(store, name)
+            if copy_path.is_file():
+                relative = self._format_relative_to_configs(copy_path, Path(store.config_dir))
+                active_path = config.get("data_backend_config") or config.get("--data_backend_config")
+                result["metadata"]["worker_dataloader_copy"] = {"path": relative, "enabled": active_path == relative}
+        return result
+
+    def _worker_dataloader_path(self, store: ConfigStore, name: str) -> Path:
+        name = name.strip()
+        if name.lower().endswith(".json"):
+            name = name[:-5].strip()
+        return self._dataloader_destination(Path(store.config_dir).resolve(), name, f"{name}/multidatabackend.worker.json")
+
+    def save_worker_dataloader_copy(self, name: str, datasets: list[dict] | None = None) -> Dict[str, Any]:
+        """Save a snapshot when datasets are provided, or select an existing snapshot."""
+        name = self._validate_config_name(name)
+        store = self._get_store("model")
+        try:
+            config, metadata = store.load_config(name)
+        except FileNotFoundError as exc:
+            raise ConfigServiceError(str(exc), status.HTTP_404_NOT_FOUND) from exc
+        path = self._worker_dataloader_path(store, name)
+        relative = self._format_relative_to_configs(path, Path(store.config_dir))
+
+        if datasets is not None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory(dir=path.parent) as staging:
+                pending = Path(staging) / path.name
+                pending.write_text(json.dumps(datasets, indent=2) + "\n", encoding="utf-8")
+                try:
+                    os.link(pending, path)
+                except FileExistsError as exc:
+                    raise ConfigServiceError("A local dataset copy already exists.", status.HTTP_409_CONFLICT) from exc
+        else:
+            if not path.is_file():
+                raise ConfigServiceError("Pull the worker dataset configuration first.", status.HTTP_404_NOT_FOUND)
+            config["data_backend_config"] = relative
+            config.pop("--data_backend_config", None)
+            store.save_config(name, config, metadata, overwrite=True)
+            self._invalidate_active_config_cache()
+
+        active_path = config.get("data_backend_config") or config.get("--data_backend_config")
+        return {"path": relative, "enabled": active_path == relative}
 
     def read_data_backend_file(self, path: str) -> Any:
         store = self._get_store()

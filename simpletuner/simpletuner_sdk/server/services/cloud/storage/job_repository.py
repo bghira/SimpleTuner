@@ -435,6 +435,28 @@ class JobRepository(BaseSQLiteStore):
 
         return await asyncio.to_thread(_read)
 
+    _ACTIVE_WORKER_ASSIGNMENT = """
+        provider IN ('worker', 'kubeflow')
+        AND status IN ('starting', 'running', 'training')
+        AND (? IS NULL OR user_id = ?)
+        AND json_extract(metadata, '$.worker_id') IS NOT NULL
+        AND NOT COALESCE(json_extract(metadata, '$.group_check'), 0)
+    """
+
+    async def list_active_worker_environments(self, user_id: int | None) -> set[str]:
+        def _list():
+            conn = self._get_connection()
+            try:
+                rows = conn.execute(
+                    f"SELECT DISTINCT config_name FROM jobs WHERE {self._ACTIVE_WORKER_ASSIGNMENT}",
+                    (user_id, user_id),
+                )
+                return {row["config_name"] for row in rows}
+            finally:
+                conn.close()
+
+        return await asyncio.to_thread(_list)
+
     async def get_active_worker_job(self, environment: str, user_id: int | None) -> UnifiedJob | None:
         """Find the newest worker assignment for an environment visible to the user."""
 
@@ -442,17 +464,12 @@ class JobRepository(BaseSQLiteStore):
             conn = self._get_connection()
             try:
                 row = conn.execute(
-                    """
-                    SELECT * FROM jobs
-                    WHERE config_name = ? AND provider IN ('worker', 'kubeflow')
-                      AND status IN ('starting', 'running', 'training')
-                      AND (? IS NULL OR user_id = ?)
-                      AND json_extract(metadata, '$.worker_id') IS NOT NULL
-                      AND NOT COALESCE(json_extract(metadata, '$.group_check'), 0)
+                    f"""
+                    SELECT * FROM jobs WHERE {self._ACTIVE_WORKER_ASSIGNMENT} AND config_name = ?
                     ORDER BY COALESCE(started_at, created_at) DESC, job_id DESC
                     LIMIT 1
                     """,
-                    (environment, user_id, user_id),
+                    (user_id, user_id, environment),
                 ).fetchone()
                 return self._row_to_job(row) if row else None
             finally:

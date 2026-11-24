@@ -3391,7 +3391,7 @@ class RemoteWorkerDatasetsTestCase(_TrainingWorkerFixture, _TrainerPageMixin, We
     SERVER_MODE = ServerMode.UNIFIED
     MAX_BROWSERS = 1
 
-    def test_environment_loads_remote_config_into_dataset_builder(self):
+    def test_remote_environment_can_pull_and_enable_a_local_dataset_copy(self):
         import asyncio
         from concurrent.futures import ThreadPoolExecutor
         from threading import Event
@@ -3415,6 +3415,13 @@ class RemoteWorkerDatasetsTestCase(_TrainingWorkerFixture, _TrainerPageMixin, We
         self.register_job(job_id, "Lead GPU", "H200", config_name=remote_environment)
         self.register_job("other-run", "Other GPU", "L40S", group={"dataloader": [{"id": "other-run-images"}]})
 
+        picker = requests.get(f"{self.base_url}/api/configs/", params={"include_worker_sources": True}, timeout=10)
+        self.assertTrue(picker.ok, picker.text)
+        self.assertIn(
+            remote_environment,
+            {config["name"] for config in picker.json()["configs"] if config["remote_datasets"]},
+        )
+
         worker_file = self.home_path / "worker-datasets.json"
         worker_config = self.home_path / "worker-launch.json"
         worker_config.write_text(json.dumps({"--data_backend_config": str(worker_file)}))
@@ -3422,6 +3429,7 @@ class RemoteWorkerDatasetsTestCase(_TrainingWorkerFixture, _TrainerPageMixin, We
         dataset = {
             "id": "remote-images",
             "type": "webshart",
+            "dataset_type": "image",
             "source": source,
             "crop": False,
             "resolution": 256,
@@ -3457,7 +3465,7 @@ class RemoteWorkerDatasetsTestCase(_TrainingWorkerFixture, _TrainerPageMixin, We
                         if agent._dataset_config_tasks:
                             await asyncio.gather(*agent._dataset_config_tasks)
                             served += 1
-                            if served == 2:
+                            if served == 3:
                                 return
 
         def scenario(driver, _):
@@ -3485,6 +3493,19 @@ class RemoteWorkerDatasetsTestCase(_TrainingWorkerFixture, _TrainerPageMixin, We
                 self.assertEqual(elements[0].text, label)
                 self.assertEqual(elements[0].get_dom_attribute("title"), title)
 
+            dialog = (By.ID, "worker-dataset-pull-dialog")
+            wait.until(EC.visibility_of_element_located(dialog))
+            click((By.CSS_SELECTOR, "#worker-dataset-pull-dialog button:first-of-type"))
+            wait.until(EC.invisibility_of_element_located(dialog))
+            click((By.CSS_SELECTOR, ".config-selector__toggle-wrapper > button"))
+            remote_marker = wait.until(
+                EC.visibility_of_element_located(
+                    (By.CSS_SELECTOR, '.config-selector__menu .dropdown-item.active [aria-label="Remote datasets"]')
+                )
+            )
+            self.assertEqual(remote_marker.text, "☁️")
+            click((By.CSS_SELECTOR, ".config-selector__toggle-wrapper > button"))
+
             online_title = "Text embeddings are encoded for each batch without using the cache"
             click((By.CSS_SELECTOR, 'button[title="List view"]'))
             wait.until(
@@ -3510,7 +3531,6 @@ class RemoteWorkerDatasetsTestCase(_TrainingWorkerFixture, _TrainerPageMixin, We
             assert_storage("dataset-grid-card", "remote-images-updated", "grid-card-path", source, source)
             assert_storage("dataset-grid-card", "online-text", "grid-card-path", "Online encoding", online_title)
             assert_storage("dataset-grid-card", "cached-text", "grid-card-path", "text/precomputed", cached["cache_dir"])
-            worker.result(timeout=5)
             self.assertIn("Lead GPU", driver.find_element(By.ID, "datasets-tab-content").text)
             self.assertFalse(driver.find_elements(By.CSS_SELECTOR, '[data-dataset-id="other-run-images"]'))
 
@@ -3521,13 +3541,63 @@ class RemoteWorkerDatasetsTestCase(_TrainingWorkerFixture, _TrainerPageMixin, We
             self.assertEqual(json_editor.get_dom_attribute("readonly"), "true")
             self.assertEqual(json.loads(json_editor.get_property("value")), [updated, online, cached])
 
+            click((By.XPATH, '//div[@id="datasets-tab-content"]//button[normalize-space()="Pull locally"]'))
+            enable = (By.XPATH, '//button[normalize-space()="Enable local copy"]')
+            wait.until(EC.element_to_be_clickable(enable))
+            worker.result(timeout=5)
+            local_copy = remote_dir / "multidatabackend.worker.json"
+            self.assertEqual(json.loads(local_copy.read_text()), [updated, online, cached])
+            self.assertEqual(
+                json.loads((remote_dir / dataset_file).read_text()), [{"id": "stale-local-copy", "type": "local"}]
+            )
+            self.assertEqual(json_editor.get_dom_attribute("readonly"), "true")
+            self.assertEqual(json.loads((remote_dir / "config.json").read_text()), model_config)
+
+            click(enable)
+            save = (By.CSS_SELECTOR, '[aria-label="Save dataset configuration"]')
+            wait.until(EC.element_to_be_clickable(save))
+            self.assertEqual(
+                json.loads((remote_dir / "config.json").read_text())["data_backend_config"],
+                f"{remote_environment}/{local_copy.name}",
+            )
+            driver.execute_script("Alpine.$data(document.querySelector('.dashboard-wrapper')).eventDockCollapsed = true")
+            wait.until(EC.invisibility_of_element_located((By.CSS_SELECTOR, ".toast.show")))
+            self.assertIsNone(json_editor.get_dom_attribute("readonly"))
+            edited = json.loads(json_editor.get_property("value"))
+            edited[0]["id"] = "local-edited-images"
+            driver.execute_script(
+                """
+                const fetch = window.fetch;
+                window.fetch = async (url, options) => {
+                    const response = await fetch(url, options);
+                    if (url === '/api/datasets/plan' && options?.method === 'POST') {
+                        window.datasetSaveResponse = {ok: response.ok, body: await response.clone().json()};
+                    }
+                    return response;
+                };
+                arguments[0].value = arguments[1];
+                arguments[0].dispatchEvent(new Event('input', {bubbles: true}));
+                """,
+                json_editor,
+                json.dumps(edited),
+            )
+            click((By.XPATH, '//div[@id="dataloaderSection"]//button[contains(., "Apply & Save JSON")]'))
+            response = wait.until(lambda d: d.execute_script("return window.datasetSaveResponse"))
+            self.assertTrue(response["ok"], response["body"])
+            self.assertEqual(json.loads(local_copy.read_text())[0]["id"], "local-edited-images")
+            driver.refresh()
+            self.dismiss_onboarding(driver)
+            wait.until(EC.element_to_be_clickable(save))
+            self.assertFalse(driver.find_element(*dialog).is_displayed())
+
             self.assertTrue(
                 driver.execute_async_script(
                     "Alpine.store('trainer').switchEnvironment(arguments[0]).then(arguments[1])", "default"
                 )
             )
             self.dismiss_onboarding(driver)
-            driver.execute_script("document.querySelector('#datasets-tab-content .hero-dismiss-btn').click()")
+            wait.until(EC.presence_of_element_located((By.ID, "datasets-tab-content")))
+            driver.execute_script("document.querySelector('#datasets-tab-content .hero-dismiss-btn')?.click()")
             builder = wait.until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, "#dataloaderSection .mode-switcher button:nth-child(1)"))
             )
