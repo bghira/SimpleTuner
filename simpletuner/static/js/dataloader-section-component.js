@@ -162,15 +162,21 @@ function dataloaderSectionComponent() {
     get datasets() {
         return this.trainer.datasets || [];
     },
-    datasetSource(dataset) {
-        if (dataset.type === 'webshart') {
-            return dataset.source ?? dataset.webshart?.source ?? '';
+    datasetStorage(dataset) {
+        if (dataset.dataset_type === 'text_embeds' && this.normalizeBoolean(dataset.text_cache_encode_only)) {
+            return {
+                icon: 'fa-bolt',
+                label: 'Online encoding',
+                title: 'Text embeddings are encoded for each batch without using the cache',
+            };
         }
-        return dataset.instance_data_dir || dataset.aws_bucket_name || dataset.dataset_name || '';
-    },
-    datasetSourceLabel(dataset) {
-        const source = this.datasetSource(dataset);
-        return dataset.type === 'webshart' ? source : source.split('/').slice(-2).join('/');
+        if (dataset.type === 'webshart') {
+            const source = dataset.source ?? dataset.webshart?.source ?? '';
+            return { icon: 'fa-folder-open', label: source, title: source };
+        }
+        const embeds = ['text_embeds', 'image_embeds'].includes(dataset.dataset_type);
+        const path = (embeds ? dataset.cache_dir : dataset.instance_data_dir || dataset.aws_bucket_name || dataset.dataset_name) || '';
+        return { icon: embeds ? 'fa-database' : 'fa-folder-open', label: path.split('/').slice(-2).join('/'), title: path };
     },
     get datasetConfigReadOnly() {
         return this.trainer.datasetConfigReadOnly || false;

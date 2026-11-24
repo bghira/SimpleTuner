@@ -52,44 +52,23 @@
           style="cursor: pointer;"
           @click.stop="expandSectionIfCollapsed(dataset, 'card'); setListTab(dataset, 'captions')">No captions</span>
 
-    <!-- Path (truncated) - hide for embed types -->
+    <!-- Dataset or cache location -->
     <div class="list-item-path small"
-         x-show="dataset.dataset_type !== 'text_embeds' && dataset.dataset_type !== 'image_embeds'"
-         :class="{'text-muted': datasetSource(dataset), 'text-danger': !datasetSource(dataset)}"
-         :title="datasetSource(dataset) || (datasetConfigReadOnly ? 'No path configured' : 'No path configured - click to fix')"
-         @click.stop="!datasetConfigReadOnly && !datasetSource(dataset) && (expandSectionIfCollapsed(dataset, 'card'), setListTab(dataset, 'storage'))"
-         :style="!datasetConfigReadOnly && !datasetSource(dataset) ? 'cursor: pointer;' : ''">
-        <template x-if="datasetSource(dataset)">
+         x-data="{ get storage() { return datasetStorage(dataset); } }"
+         :class="{'text-muted': storage.label, 'text-danger': !storage.label}"
+         :title="storage.title || (datasetConfigReadOnly ? 'No path configured' : 'No path configured - click to fix')"
+         @click.stop="!datasetConfigReadOnly && !storage.label && (expandSectionIfCollapsed(dataset, 'card'), setListTab(dataset, 'storage'))"
+         :style="!datasetConfigReadOnly && !storage.label ? 'cursor: pointer;' : ''">
+        <template x-if="storage.label">
             <span>
-                <i class="fas fa-folder-open me-1"></i>
-                <span x-text="datasetSourceLabel(dataset)"></span>
+                <i class="fas me-1" :class="storage.icon"></i>
+                <span x-text="storage.label"></span>
             </span>
         </template>
-        <template x-if="!datasetSource(dataset)">
+        <template x-if="!storage.label">
             <span class="path-error-badge">
                 <i class="fas fa-exclamation-triangle me-1"></i>
                 <span x-text="datasetConfigReadOnly ? 'No path configured' : 'No path - click to configure'"></span>
-            </span>
-        </template>
-    </div>
-
-    <!-- Cache path indicator for embed types -->
-    <div class="list-item-path small"
-         x-show="dataset.dataset_type === 'text_embeds' || dataset.dataset_type === 'image_embeds'"
-         :class="{'text-muted': dataset.cache_dir, 'text-danger': !dataset.cache_dir}"
-         :title="dataset.cache_dir || 'No cache path configured - click to fix'"
-         @click.stop="!dataset.cache_dir && (expandSectionIfCollapsed(dataset, 'card'), setListTab(dataset, 'storage'))"
-         :style="!dataset.cache_dir ? 'cursor: pointer;' : ''">
-        <template x-if="dataset.cache_dir">
-            <span>
-                <i class="fas fa-database me-1"></i>
-                <span x-text="dataset.cache_dir.split('/').slice(-2).join('/')"></span>
-            </span>
-        </template>
-        <template x-if="!dataset.cache_dir">
-            <span class="path-error-badge">
-                <i class="fas fa-exclamation-triangle me-1"></i>
-                <span>No cache path - click to configure</span>
             </span>
         </template>
     </div>

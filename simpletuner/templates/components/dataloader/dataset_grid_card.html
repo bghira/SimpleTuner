@@ -106,40 +106,21 @@
             </span>
         </div>
 
-        <!-- Path Preview (for non-embed types) -->
+        <!-- Dataset or cache location -->
         <div class="grid-card-path"
-             x-show="dataset.dataset_type !== 'text_embeds' && dataset.dataset_type !== 'image_embeds'"
-             :class="{'path-error': !datasetSource(dataset)}"
-             :title="datasetSource(dataset) || 'No path configured'">
-            <template x-if="datasetSource(dataset)">
+             x-data="{ get storage() { return datasetStorage(dataset); } }"
+             :class="{'path-error': !storage.label}"
+             :title="storage.title || 'No path configured'">
+            <template x-if="storage.label">
                 <span>
-                    <i class="fas fa-folder-open"></i>
-                    <span x-text="datasetSourceLabel(dataset)"></span>
+                    <i class="fas" :class="storage.icon"></i>
+                    <span x-text="storage.label"></span>
                 </span>
             </template>
-            <template x-if="!datasetSource(dataset)">
+            <template x-if="!storage.label">
                 <span class="text-danger">
                     <i class="fas fa-exclamation-triangle"></i>
                     <span>No path configured</span>
-                </span>
-            </template>
-        </div>
-
-        <!-- Cache Path Preview (for embed types) -->
-        <div class="grid-card-path"
-             x-show="dataset.dataset_type === 'text_embeds' || dataset.dataset_type === 'image_embeds'"
-             :class="{'path-error': !dataset.cache_dir}"
-             :title="dataset.cache_dir || 'No cache path configured'">
-            <template x-if="dataset.cache_dir">
-                <span>
-                    <i class="fas fa-database"></i>
-                    <span x-text="dataset.cache_dir.split('/').slice(-2).join('/')"></span>
-                </span>
-            </template>
-            <template x-if="!dataset.cache_dir">
-                <span class="text-danger">
-                    <i class="fas fa-exclamation-triangle"></i>
-                    <span>No cache path configured</span>
                 </span>
             </template>
         </div>
