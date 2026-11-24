@@ -1,10 +1,12 @@
 """Webshart backend builder for creating WebshartDataBackend instances."""
 
 import logging
+from collections.abc import Iterator
 from typing import Any, Dict
 
 from simpletuner.helpers.data_backend.config.base import BaseBackendConfig
-from simpletuner.helpers.data_backend.webshart import WebshartDataBackend
+from simpletuner.helpers.data_backend.source_inventory import SourceShard
+from simpletuner.helpers.data_backend.webshart import WebshartDataBackend, iter_webshart_shards
 
 from .base import BaseBackendBuilder
 
@@ -12,6 +14,11 @@ logger = logging.getLogger("WebshartBackendBuilder")
 
 
 class WebshartBackendBuilder(BaseBackendBuilder):
+    supports_shard_listing = True
+
+    def iter_source_shards(self, config: BaseBackendConfig) -> Iterator[SourceShard]:
+        return iter_webshart_shards(config)
+
     def _create_backend(self, config: BaseBackendConfig) -> WebshartDataBackend:
         self._validate_webshart_config(config)
 

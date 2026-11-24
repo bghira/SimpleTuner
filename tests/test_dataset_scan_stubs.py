@@ -9,6 +9,7 @@ preventing AttributeError crashes during standalone scans.
 import unittest
 from unittest.mock import Mock
 
+from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 from simpletuner.simpletuner_sdk.server.services.dataset_scan_service import (
     DatasetScanService,
     ScanStatus,
@@ -260,7 +261,7 @@ class TestPixelAreaConversion(unittest.TestCase):
             "minimum_image_size": 256,
         }
         args = _ScanArgsNamespace()
-        result = DatasetScanService._convert_pixel_area(config, args)
+        result = DatasetRuntime.preparation_config(config, args)
 
         self.assertEqual(result["resolution_type"], "area")
         self.assertAlmostEqual(result["resolution"], 1.048576)
@@ -275,7 +276,7 @@ class TestPixelAreaConversion(unittest.TestCase):
             "resolution": 1024,
         }
         args = _ScanArgsNamespace()
-        result = DatasetScanService._convert_pixel_area(config, args)
+        result = DatasetRuntime.preparation_config(config, args)
 
         self.assertEqual(result["resolution_type"], "pixel")
         self.assertEqual(result["resolution"], 1024)
@@ -287,7 +288,7 @@ class TestPixelAreaConversion(unittest.TestCase):
             "resolution": 1.0,
         }
         args = _ScanArgsNamespace()
-        result = DatasetScanService._convert_pixel_area(config, args)
+        result = DatasetRuntime.preparation_config(config, args)
 
         self.assertEqual(result["resolution_type"], "area")
         self.assertEqual(result["resolution"], 1.0)
@@ -299,7 +300,7 @@ class TestPixelAreaConversion(unittest.TestCase):
             "resolution": 512,
         }
         args = _ScanArgsNamespace()
-        result = DatasetScanService._convert_pixel_area(config, args)
+        result = DatasetRuntime.preparation_config(config, args)
 
         self.assertEqual(config["resolution_type"], "pixel_area")
         self.assertEqual(config["resolution"], 512)
@@ -313,7 +314,7 @@ class TestPixelAreaConversion(unittest.TestCase):
             "minimum_image_size": 0,
         }
         args = _ScanArgsNamespace()
-        result = DatasetScanService._convert_pixel_area(config, args)
+        result = DatasetRuntime.preparation_config(config, args)
 
         self.assertEqual(result["minimum_image_size"], 0)
 

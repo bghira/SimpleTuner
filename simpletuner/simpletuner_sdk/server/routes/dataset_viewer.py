@@ -25,6 +25,7 @@ from simpletuner.simpletuner_sdk.server.services.dataset_viewer_service import (
     DatasetFileMutationUnavailable,
     DatasetFilePage,
     DatasetGraph,
+    DatasetShardPage,
     DatasetSummary,
     DatasetViewChanged,
     DatasetViewerService,
@@ -112,6 +113,30 @@ async def get_viewer_summaries(
         for ds in datasets
         if str(ds.get("dataset_type", "")).lower() not in ("text_embeds", "image_embeds")
     ]
+
+
+@router.get("/viewer/shards", response_model=DatasetShardPage)
+def get_viewer_source_shards(
+    dataset_id: str,
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    query: str = Query("", max_length=256),
+    refresh: bool = False,
+    _user: User = Depends(get_current_user),
+) -> DatasetShardPage:
+    """Page through source shards without preparing sample metadata."""
+    config = _require_dataset_config(dataset_id)
+    try:
+        return _get_viewer_service().list_source_shards(
+            config, _get_global_config(), limit=limit, offset=offset, query=query, refresh=refresh
+        )
+    except (NotImplementedError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except (ImportError, OSError) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Unable to read the source shard catalogue. Check the source and this server’s storage access.",
+        ) from exc
 
 
 @router.get("/viewer/files", response_model=DatasetFilePage)

@@ -80,6 +80,27 @@
 
 /* --- Compact dashboard grid (stats + config + caption + filter) --- */
 
+.viewer-shard-list {
+    max-height: 22rem;
+    overflow: auto;
+}
+
+.viewer-shard-list th,
+.viewer-shard-list td {
+    padding: 0.4rem 0.55rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.viewer-shard-list th:not(:first-child),
+.viewer-shard-list td:not(:first-child) {
+    text-align: right;
+    white-space: nowrap;
+}
+
+.viewer-shard-list td:first-child {
+    overflow-wrap: anywhere;
+}
+
 .viewer-dashboard {
     display: grid;
     grid-template-columns: 1fr 1fr;

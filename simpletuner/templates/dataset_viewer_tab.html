@@ -144,7 +144,7 @@
                             <span class="fw-semibold" x-text="ds.dataset_id"></span>
                             <span class="badge viewer-preparation-status"
                                   :class="ds.has_cache ? 'bg-success' : ds.scan_incomplete ? 'bg-warning text-dark' : 'bg-secondary'"
-                                  x-text="ds.has_cache ? 'Cached' : ds.scan_incomplete ? 'Scan incomplete' : 'No Cache'"></span>
+                                  x-text="ds.has_cache ? 'Cached' : ds.scan_incomplete ? 'Scan incomplete' : ds.supports_shard_listing ? 'Source shards' : 'No Cache'"></span>
                             <span class="badge bg-info" x-show="ds.conditioning_type"
                                   x-text="ds.conditioning_type"></span>
                             <span class="badge bg-warning text-dark" x-show="ds.auto_generated">auto-generated</span>
@@ -160,7 +160,7 @@
                                     class="btn btn-outline-warning btn-sm py-0 px-2"
                                     @click.stop="scanDataset(ds.dataset_id)"
                                     :disabled="scanning || caching"
-                                    title="Scan this dataset">
+                                    :title="ds.supports_shard_listing ? 'Prepare sample metadata' : 'Scan this dataset'">
                                 <i class="fas fa-search viewer-text-xs"></i>
                             </button>
                             <button type="button"
@@ -177,17 +177,65 @@
                 <!-- Expanded content -->
                 <div x-show="expandedDataset === ds.dataset_id" x-cloak class="card-body p-0">
 
+                    <template x-if="ds.supports_shard_listing && expandedDataset === ds.dataset_id">
+                        <section class="p-3 viewer-shards" aria-label="Source shards">
+                            <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
+                                <h6 class="mb-0">Source Shards</h6>
+                                <div class="d-flex align-items-center gap-2">
+                                    <input type="search" class="form-control form-control-sm" placeholder="Filter shards"
+                                           aria-label="Filter shards" maxlength="256" x-model="shardSearch"
+                                           @input.debounce.250ms="loadSourceShards(ds.dataset_id)">
+                                    <button type="button" class="btn btn-sm btn-outline-secondary"
+                                            :disabled="shardLoading" @click="loadSourceShards(ds.dataset_id, 0, true)">
+                                        Refresh shards
+                                    </button>
+                                </div>
+                            </div>
+                            <p x-show="shardLoading" class="text-muted small mb-0" role="status">Loading source shards…</p>
+                            <p x-show="shardError" class="text-danger small mb-0" role="alert" x-text="shardError"></p>
+                            <p x-show="!shardLoading && sourceShards?.total === 0" class="text-muted small mb-0">No matching shards.</p>
+                            <div x-show="!shardLoading && sourceShards?.shards?.length" class="viewer-shard-list">
+                                <table class="w-100 small" aria-label="Shard listing">
+                                    <thead>
+                                        <tr><th scope="col">Path</th><th scope="col">Size</th><th scope="col">Rows</th></tr>
+                                    </thead>
+                                    <tbody>
+                                        <template x-for="shard in sourceShards?.shards || []" :key="shard.path">
+                                            <tr>
+                                                <td x-text="shard.path"></td>
+                                                <td x-text="shard.size_bytes == null ? '—' : $store.trainer.formatBytes(shard.size_bytes)"></td>
+                                                <td x-text="shard.rows == null ? '—' : shard.rows.toLocaleString()"></td>
+                                            </tr>
+                                        </template>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div x-show="!shardLoading && sourceShards?.total > 0" class="d-flex justify-content-between gap-2 align-items-center mt-2">
+                                <span class="text-muted small"
+                                      x-text="sourceShards ? ((sourceShards.offset + 1) + '–' + (sourceShards.offset + sourceShards.shards.length) + ' of ' + sourceShards.total.toLocaleString() + (shardSearch.trim() ? ' matching' : '') + (sourceShards.total === 1 ? ' shard' : ' shards')) : ''"></span>
+                                <div class="btn-group btn-group-sm" x-show="sourceShards?.total > sourceShards?.limit">
+                                    <button type="button" class="btn btn-outline-secondary" :disabled="!sourceShards?.offset"
+                                            @click="loadSourceShards(ds.dataset_id, sourceShards.offset - sourceShards.limit)">Previous</button>
+                                    <button type="button" class="btn btn-outline-secondary"
+                                            :disabled="!sourceShards || sourceShards.offset + sourceShards.limit >= sourceShards.total"
+                                            @click="loadSourceShards(ds.dataset_id, sourceShards.offset + sourceShards.limit)">Next</button>
+                                </div>
+                            </div>
+                        </section>
+                    </template>
+
                     <!-- No cache state -->
                     <div x-show="!ds.has_cache" class="text-center py-4 px-3">
                         <p class="text-muted small mb-2">
                             <i class="fas fa-info-circle text-warning me-1"></i>
-                            <span x-text="ds.scan_incomplete ? 'The metadata scan has no completed publication yet.' : 'Run a metadata scan to browse this dataset.'"></span>
+                            <span x-text="ds.scan_incomplete ? 'The metadata scan has no completed publication yet.' : ds.supports_shard_listing ? 'Prepare metadata to browse samples and aspect ratio buckets.' : 'Run a metadata scan to browse this dataset.'"></span>
                         </p>
                         <button type="button"
                                 class="btn btn-outline-warning btn-sm"
                                 @click.stop="scanDataset(ds.dataset_id)"
                                 :disabled="scanning || caching">
-                            <i class="fas fa-search me-1"></i> Scan This Dataset
+                            <i class="fas fa-search me-1"></i>
+                            <span x-text="ds.supports_shard_listing ? 'Prepare Sample Metadata' : 'Scan This Dataset'"></span>
                         </button>
                     </div>
 

@@ -6,6 +6,7 @@ import logging
 import os
 import random
 from collections.abc import Callable, Iterable, Iterator, Sequence
+from contextlib import ExitStack, contextmanager
 from copy import deepcopy
 from dataclasses import dataclass
 from itertools import batched
@@ -17,6 +18,7 @@ from PIL import Image
 from simpletuner.helpers.configuration.template_vars import resolve_dataset_config_placeholders
 from simpletuner.helpers.data_backend.base import BaseDataBackend, ordered_sample_payloads
 from simpletuner.helpers.data_backend.dataset_types import get_arg_value
+from simpletuner.helpers.data_backend.source_inventory import SourceShard
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.helpers.metadata.preparation import DatasetReadView
@@ -40,9 +42,8 @@ class DatasetValidationSample:
 
 
 class DatasetRuntime:
-    @classmethod
-    def from_config(cls, config, args, accelerator, *, preparation_only=False):
-        """Open one standalone dataset with resolved source and metadata providers."""
+    @staticmethod
+    def _resolve_provider(config, args, accelerator):
         from simpletuner.helpers.data_backend.builders import create_backend_builder
         from simpletuner.helpers.data_backend.config import create_backend_config
 
@@ -52,10 +53,64 @@ class DatasetRuntime:
         config = resolve_dataset_config_placeholders(config, args_dict)
         settings = create_backend_config(config, args_dict)
         builder = create_backend_builder(settings.backend_type, accelerator, args)
+        return config, args_dict, settings, builder
+
+    @classmethod
+    def iter_source_shards(cls, config, args) -> Iterator[SourceShard]:
+        """Open only the source catalogue through the configured dataset provider."""
+        _, _, settings, builder = cls._resolve_provider(config, args, None)
+        return builder.iter_source_shards(settings)
+
+    @classmethod
+    def from_config(cls, config, args, accelerator, *, preparation_only=False):
+        """Open one standalone dataset with resolved source and metadata providers."""
+        config, args_dict, settings, builder = cls._resolve_provider(config, args, accelerator)
         source = builder.build(settings)
         metadata = builder.create_metadata_backend(settings, source, args_dict, preparation_only=preparation_only)
         resolved = {**config, **settings.to_dict()["config"], "instance_data_dir": metadata.instance_data_dir}
         return cls(settings.id, source, metadata, {**resolved, **cls.caption_config(resolved, args)})
+
+    @staticmethod
+    def preparation_config(config, args):
+        """Convert pixel-area settings to the megapixel geometry used by standalone preparation."""
+        if config.get("resolution_type", get_arg_value(args, "resolution_type")) != "pixel_area":
+            return config
+        edge = config.get("resolution", get_arg_value(args, "resolution"))
+        if edge is None:
+            return config
+        config = {**config, "resolution_type": "area", "resolution": int(edge) ** 2 / 1_000_000}
+        for key in ("maximum_image_size", "target_downsample_size", "minimum_image_size"):
+            value = config.get(key)
+            if value is not None and value > 0:
+                config[key] = value**2 / 1_000_000
+        return config
+
+    @classmethod
+    @contextmanager
+    def open_preparation(cls, config, args, accelerator, *, dataset_plan=()):
+        """Open a dataset and any linked source needed by its metadata provider."""
+        config = cls.preparation_config(config, args)
+        with ExitStack() as scope:
+            dataset = cls.from_config(config, args, accelerator)
+            scope.callback(dataset.close)
+            audio = config.get("audio") or {}
+            source_id = config.get("source_dataset_id") or audio.get("source_dataset_id")
+            if audio.get("source_from_video") and source_id:
+                source = next(
+                    (
+                        entry
+                        for entry in dataset_plan
+                        if entry.get("id") == source_id and not (entry.get("disabled") or entry.get("disable"))
+                    ),
+                    None,
+                )
+                if source is None:
+                    raise ValueError(f"Dataset {dataset.id} requires an enabled video source {source_id}.")
+                dataset.source_dataset = cls.from_config(
+                    cls.preparation_config(source, args), args, accelerator, preparation_only=True
+                )
+                scope.callback(dataset.source_dataset.close)
+            yield dataset
 
     def __init__(
         self,

@@ -1,13 +1,23 @@
-"""The legacy persisted inventory of files exposed by one source."""
+"""File and shard inventories exposed by dataset sources."""
 
 import json
 import logging
 import os
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class SourceShard:
+    """A source-relative shard path with any published size and row count."""
+
+    path: str
+    size_bytes: int | None = None
+    rows: int | None = None
 
 
 class SourceFileInventory:

@@ -12,6 +12,11 @@ window.datasetViewerComponent = function () {
         loading: false,
         _summaryRequest: 0,
         expandedDataset: null,
+        sourceShards: null,
+        shardSearch: '',
+        shardLoading: false,
+        shardError: '',
+        _shardRequest: 0,
         selectedBucket: null,
         thumbnails: [],
         loadingThumbnails: false,
@@ -99,6 +104,7 @@ window.datasetViewerComponent = function () {
         },
 
         destroy() {
+            this._clearSourceShards();
             this._cacheRequest++;
             this._scanRequest++;
             this._summaryRequest++;
@@ -186,6 +192,7 @@ window.datasetViewerComponent = function () {
         _setupConfigListener() {
             this._configHandler = () => {
                 this.expandedDataset = null;
+                this._clearSourceShards();
                 this.selectedBucket = null;
                 this.thumbnails = [];
                 this.closeFileDetail();
@@ -528,6 +535,10 @@ window.datasetViewerComponent = function () {
                 const summaries = await resp.json();
                 if (request !== this._summaryRequest) return;
                 this.datasets = summaries;
+                const expanded = summaries.find(dataset => dataset.dataset_id === this.expandedDataset);
+                if (expanded?.supports_shard_listing && !this.sourceShards && !this.shardLoading) {
+                    this.loadSourceShards(expanded.dataset_id);
+                }
 
                 // Load supplementary data for cached datasets in parallel
                 const fetchPromises = [];
@@ -672,10 +683,45 @@ window.datasetViewerComponent = function () {
 
         toggleDataset(datasetId) {
             this.expandedDataset = this.expandedDataset === datasetId ? null : datasetId;
+            this._clearSourceShards();
             this._clearBucketSelection();
             this.closeFileDetail();
             this._clearConditioningPairs();
             this._saveNavState();
+            if (this.expandedDataset && this.datasets.find(ds => ds.dataset_id === datasetId)?.supports_shard_listing) {
+                this.loadSourceShards(datasetId);
+            }
+        },
+
+        _clearSourceShards() {
+            this._shardRequest++;
+            this.sourceShards = null;
+            this.shardSearch = '';
+            this.shardLoading = false;
+            this.shardError = '';
+        },
+
+        async loadSourceShards(datasetId, offset = 0, refresh = false) {
+            if (this.expandedDataset !== datasetId) return;
+            const request = ++this._shardRequest;
+            const query = this.shardSearch.trim();
+            this.shardLoading = true;
+            this.shardError = '';
+            const current = () => request === this._shardRequest && query === this.shardSearch.trim();
+            try {
+                const params = new URLSearchParams({dataset_id: datasetId, query, offset, refresh});
+                const response = await fetch('/api/datasets/viewer/shards?' + params);
+                const result = await response.json();
+                if (!current()) return;
+                if (!response.ok) throw new Error(result.detail || 'Unable to list source shards.');
+                this.sourceShards = result;
+            } catch (error) {
+                if (!current()) return;
+                this.sourceShards = null;
+                this.shardError = error.message;
+            } finally {
+                if (request === this._shardRequest) this.shardLoading = false;
+            }
         },
 
         _clearBucketSelection() {

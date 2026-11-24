@@ -3861,6 +3861,79 @@ class DatasetSaveActiveRunTestCase(_TrainingWorkerFixture, _TrainerPageMixin, We
         self.for_each_browser("restart_notice_on_dataset_save", scenario)
 
 
+class DatasetViewerSourceShardsTestCase(_TrainerPageMixin, WebUITestCase):
+    SERVER_MODE = ServerMode.UNIFIED
+    MAX_BROWSERS = 1
+
+    def test_viewer_filters_and_pages_shards_before_sample_preparation(self):
+        self.seed_defaults()
+        source = self.home_path / "viewer-shard-source"
+        source.mkdir()
+        for index in range(55):
+            (source / f"shard-{index:03d}.parquet").touch()
+        (source / "special.parquet").touch()
+        plan = [
+            {
+                "id": "viewer-shards",
+                "type": "webshart",
+                "dataset_type": "image",
+                "source": str(source),
+                "resolution": 256,
+                "caption_strategy": "webshart",
+                "metadata_backend": "webshart",
+                "webshart": {"format": "parquet"},
+            }
+        ]
+        (self.config_dir / "default" / "multidatabackend.json").write_text(json.dumps(plan))
+
+        def scenario(driver, _):
+            driver.get(f"{self.base_url}/web/trainer#datasets")
+            wait = WebDriverWait(driver, 25)
+            viewer_button = wait.until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, "//button[contains(@class,'dataset-subtab-btn') and contains(.,'Viewer')]")
+                )
+            )
+            self.dismiss_onboarding(driver)
+            viewer_button.click()
+            driver.execute_script(
+                """
+                const fetch = window.fetch;
+                window.viewerScanRequests = 0;
+                window.fetch = (url, options) => {
+                    if (new URL(url, window.location.origin).pathname.startsWith('/api/datasets/scan')
+                        && options?.method === 'POST') window.viewerScanRequests++;
+                    return fetch(url, options);
+                };
+                """
+            )
+            card = wait.until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, "//div[contains(@class,'viewer-card-header')][.//span[text()='viewer-shards']]")
+                )
+            )
+            self.dismiss_onboarding(driver)
+            card.click()
+            panel = (By.CSS_SELECTOR, '[aria-label="Source shards"]')
+            wait.until(EC.text_to_be_present_in_element(panel, "of 56 shards"))
+            wait.until(EC.text_to_be_present_in_element(panel, "shard-049.parquet"))
+            self.assertNotIn("special.parquet", driver.find_element(*panel).text)
+            next_page = wait.until(
+                EC.element_to_be_clickable((By.XPATH, "//section[@aria-label='Source shards']//button[text()='Next']"))
+            )
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'})", next_page)
+            next_page.click()
+            wait.until(EC.text_to_be_present_in_element(panel, "special.parquet"))
+            field = wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, 'input[aria-label="Filter shards"]')))
+            field.send_keys("ShArD-017")
+            wait.until(EC.text_to_be_present_in_element(panel, "of 1 matching shard"))
+            wait.until(EC.text_to_be_present_in_element(panel, "shard-017.parquet"))
+            self.assertNotIn("special.parquet", driver.find_element(*panel).text)
+            self.assertEqual(driver.execute_script("return window.viewerScanRequests"), 0)
+
+        self.for_each_browser("browse_source_shards", scenario)
+
+
 class DatasetViewerRevisionTestCase(_TrainerPageMixin, WebUITestCase):
     MAX_BROWSERS = 1
 
