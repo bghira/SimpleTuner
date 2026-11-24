@@ -7,8 +7,9 @@ from copy import copy
 from dataclasses import dataclass
 from hashlib import sha256
 from io import BytesIO
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, List, Optional, Tuple, Union
+from urllib.parse import urlsplit
 
 import requests
 import torch
@@ -16,6 +17,7 @@ from atomicwrites import atomic_write
 from PIL import Image
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
+from simpletuner.helpers.data_backend.config.image import ImageBackendConfig
 from simpletuner.helpers.data_backend.config.validators import validate_webshart_caption_key
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.data_backend.filters import DatasetFilter
@@ -31,6 +33,93 @@ if should_log():
     logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 else:
     logger.setLevel("ERROR")
+
+
+def test_webshart_connection(config: ImageBackendConfig) -> dict:
+    """Check access to the configured source without preparing shards or caches."""
+    source = config.webshart_source
+    options = config.webshart or {}
+    if not isinstance(source, str) or not source.strip():
+        raise ValueError("A WebShart dataset source is required.")
+    source = source.strip()
+    format = options.get("format", "tar")
+    if format not in {"tar", "parquet"}:
+        raise ValueError("WebShart format must be Tar or Parquet.")
+    manifest = options.get("manifest")
+    if manifest:
+        if format != "parquet":
+            raise ValueError("A WebShart capture manifest requires the Parquet format.")
+        manifest_path = PurePosixPath(manifest)
+        if manifest_path.is_absolute() or ".." in manifest_path.parts:
+            raise ValueError("The capture manifest must be relative to the dataset source.")
+        manifest = manifest_path.as_posix()
+
+    if source.startswith("s3://"):
+        if format != "parquet":
+            raise ValueError("S3 WebShart sources require the Parquet format.")
+        return _probe_s3_source(source, config, manifest)
+
+    directory = Path(source)
+    if directory.is_dir():
+        if manifest and not (directory / manifest).is_file():
+            raise ValueError("The WebShart capture manifest was not found.")
+        return {"transport": "local", "manifest_checked": bool(manifest)}
+
+    repo = source.removeprefix("https://huggingface.co/datasets/").rstrip("/")
+    if "://" in repo or source.startswith(("/", "./", "../", "~")):
+        raise ValueError("Use a Hugging Face dataset repository, an S3 URL, or an existing local directory.")
+
+    from httpx import RequestError
+    from huggingface_hub import HfApi
+    from huggingface_hub.errors import HfHubHTTPError, HFValidationError
+
+    hub = HfApi(token=config.webshart_hf_token)
+    try:
+        if manifest:
+            if not hub.file_exists(repo, manifest, repo_type="dataset"):
+                raise ValueError("The WebShart capture manifest was not found on Hugging Face.")
+        elif config.webshart_subfolder:
+            next(iter(hub.list_repo_tree(repo, config.webshart_subfolder, repo_type="dataset")), None)
+        else:
+            hub.dataset_info(repo, expand=["id"], timeout=10)
+    except (HfHubHTTPError, RequestError, requests.RequestException, HFValidationError) as exc:
+        raise ValueError(
+            "Unable to access the WebShart source on Hugging Face. Check the repository, path and token."
+        ) from exc
+    return {"transport": "huggingface", "manifest_checked": bool(manifest)}
+
+
+def _probe_s3_source(source: str, config: ImageBackendConfig, manifest: str | None) -> dict:
+    parsed = urlsplit(source)
+    if not parsed.netloc or parsed.query or parsed.fragment or "@" in parsed.netloc:
+        raise ValueError("The WebShart S3 source must be s3://bucket or s3://bucket/prefix.")
+    prefix = parsed.path.strip("/")
+    options = {
+        "region_name": config.aws_region_name,
+        "endpoint_url": config.aws_endpoint_url,
+        "aws_access_key_id": config.aws_access_key_id,
+        "aws_secret_access_key": config.aws_secret_access_key,
+        "aws_session_token": config.aws_session_token,
+    }
+    if manifest:
+        from webshart._webshart import _S3Store
+
+        resolved = resolve_s3_options({key: value for key, value in options.items() if value is not None})
+        try:
+            _S3Store(parsed.netloc, **resolved).head("/".join(part for part in (prefix, manifest) if part))
+        except FileNotFoundError as exc:
+            raise ValueError("The WebShart capture manifest was not found in S3.") from exc
+        except PermissionError as exc:
+            raise ValueError("S3 denied access to the WebShart capture manifest. Check this server’s credentials.") from exc
+        except OSError as exc:
+            raise ValueError("Unable to reach the WebShart capture manifest. Check the S3 endpoint and network.") from exc
+        return {"transport": "s3", "manifest_checked": True}
+
+    from simpletuner.helpers.data_backend.aws import test_s3_connection
+
+    prefix = "/".join(part for part in (prefix, (config.webshart_subfolder or "").strip("/")) if part)
+    details = test_s3_connection(parsed.netloc, prefix=f"{prefix}/" if prefix else "", max_keys=1, **options)
+    return {"transport": "s3", "manifest_checked": False, "has_objects": bool(details["sample_keys"])}
 
 
 @dataclass(frozen=True)

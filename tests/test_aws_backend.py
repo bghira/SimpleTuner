@@ -217,7 +217,7 @@ class TestS3PrefixHandling(unittest.TestCase):
                 max_keys=5,
             )
 
-        client.head_bucket.assert_called_once_with(Bucket="bucket")
+        client.head_bucket.assert_not_called()
         self.assertEqual(
             [call.kwargs["Prefix"] for call in client.list_objects_v2.call_args_list],
             ["train/", "reg/"],

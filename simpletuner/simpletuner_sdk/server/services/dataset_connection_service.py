@@ -9,8 +9,10 @@ from typing import Any, Dict, Optional
 from fastapi import status
 
 from simpletuner.helpers.data_backend.aws import test_s3_connection
+from simpletuner.helpers.data_backend.config.image import ImageBackendConfig
 from simpletuner.helpers.data_backend.csv_url_list import test_csv_manifest
 from simpletuner.helpers.data_backend.huggingface import test_huggingface_dataset
+from simpletuner.helpers.data_backend.webshart import test_webshart_connection
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore
 from simpletuner.simpletuner_sdk.server.utils.paths import resolve_config_path
 
@@ -42,13 +44,13 @@ class DatasetConnectionService:
             return None
         return None
 
-    def _resolve_path(self, value: Optional[str]) -> Optional[Path]:
+    def _resolve_path(self, value: Optional[str], configs_dir: Optional[str | Path]) -> Optional[Path]:
         if not value:
             return None
-        configs_dir = self._default_configs_dir()
+        config_root = Path(configs_dir).expanduser() if configs_dir else self._default_configs_dir()
         resolved: Optional[Path] = None
         try:
-            resolved = resolve_config_path(value, config_dir=configs_dir, check_cwd_first=True)
+            resolved = resolve_config_path(value, config_dir=config_root, check_cwd_first=True)
         except Exception:
             resolved = None
         if resolved:
@@ -59,29 +61,28 @@ class DatasetConnectionService:
         return None
 
     def test_connection(self, dataset: Dict[str, Any], configs_dir: Optional[str | Path] = None) -> Dict[str, Any]:
-        if configs_dir:
-            self._explicit_configs_dir = Path(configs_dir).expanduser()
-
         dataset_type = (dataset or {}).get("type") or "local"
         dataset_type = str(dataset_type).lower()
 
         if dataset_type == "csv":
-            return self._test_csv(dataset)
+            return self._test_csv(dataset, configs_dir)
         if dataset_type == "huggingface":
             return self._test_huggingface(dataset)
         if dataset_type == "aws":
             return self._test_aws(dataset)
+        if dataset_type == "webshart":
+            return self._test_webshart(dataset)
 
         raise DatasetConnectionError(
             f"Connection tests are not supported for dataset type '{dataset_type}'.", backend=dataset_type
         )
 
-    def _test_csv(self, dataset: Dict[str, Any]) -> Dict[str, Any]:
+    def _test_csv(self, dataset: Dict[str, Any], configs_dir: Optional[str | Path]) -> Dict[str, Any]:
         csv_file = dataset.get("csv_file")
         caption_column = dataset.get("csv_caption_column") or dataset.get("caption_column")
         url_column = dataset.get("csv_url_column") or dataset.get("url_column") or dataset.get("url")
 
-        resolved = self._resolve_path(csv_file)
+        resolved = self._resolve_path(csv_file, configs_dir)
         target = str(resolved) if resolved else csv_file
         if not target:
             raise DatasetConnectionError("CSV file path is required", backend="csv")
@@ -160,6 +161,7 @@ class DatasetConnectionService:
                 endpoint_url=endpoint,
                 aws_access_key_id=access_key,
                 aws_secret_access_key=secret_key,
+                aws_session_token=dataset.get("aws_session_token"),
             )
         except ValueError as exc:
             raise DatasetConnectionError(str(exc), backend="aws") from exc
@@ -174,3 +176,24 @@ class DatasetConnectionService:
             "message": message,
             "details": details,
         }
+
+    def _test_webshart(self, dataset: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            config = ImageBackendConfig.from_dict({"id": "connection-test", **dataset, "type": "webshart"}, {})
+            details = test_webshart_connection(config)
+        except ImportError as exc:
+            raise DatasetConnectionError(
+                "Install WebShart and its storage dependencies to test this connection.",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                backend="webshart",
+            ) from exc
+        except (TypeError, ValueError) as exc:
+            raise DatasetConnectionError(str(exc), backend="webshart") from exc
+
+        if details["manifest_checked"]:
+            message = "WebShart capture manifest is reachable"
+        elif details.get("has_objects") is False:
+            message = "WebShart S3 prefix is reachable but contains no objects"
+        else:
+            message = "WebShart dataset source is reachable"
+        return {"status": "ok", "backend": "webshart", "message": message, "details": details}

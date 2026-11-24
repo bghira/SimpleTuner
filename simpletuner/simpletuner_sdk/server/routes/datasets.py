@@ -253,9 +253,7 @@ async def get_dataset_plan(_user: User = Depends(get_current_user)) -> DatasetPl
 
 
 @router.post("/test-connection")
-async def test_dataset_connection(
-    request: DatasetConnectionRequest, _user: User = Depends(get_current_user)
-) -> Dict[str, Any]:
+def test_dataset_connection(request: DatasetConnectionRequest, _user: User = Depends(get_current_user)) -> Dict[str, Any]:
     """Run a lightweight connection test for a dataset payload."""
 
     try:
