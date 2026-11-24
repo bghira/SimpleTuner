@@ -3548,7 +3548,7 @@ class DatasetSaveActiveRunTestCase(_TrainingWorkerFixture, _TrainerPageMixin, We
     def test_dataset_save_warns_to_restart_the_active_remote_run(self):
         self.seed_defaults()
         job_id = "dataset-save-active"
-        self.register_job(job_id, "Worker", "H200", config_name="default")
+        self.register_job(job_id, "Worker", "H200", config_name="default", group={"worker_id": None})
         dataset_path = self.config_dir / "default" / "multidatabackend.json"
         original = [
             {
