@@ -109,15 +109,15 @@
         <!-- Path Preview (for non-embed types) -->
         <div class="grid-card-path"
              x-show="dataset.dataset_type !== 'text_embeds' && dataset.dataset_type !== 'image_embeds'"
-             :class="{'path-error': !(dataset.instance_data_dir || dataset.aws_bucket_name || dataset.dataset_name)}"
-             :title="dataset.instance_data_dir || dataset.aws_bucket_name || dataset.dataset_name || 'No path configured'">
-            <template x-if="dataset.instance_data_dir || dataset.aws_bucket_name || dataset.dataset_name">
+             :class="{'path-error': !datasetSource(dataset)}"
+             :title="datasetSource(dataset) || 'No path configured'">
+            <template x-if="datasetSource(dataset)">
                 <span>
                     <i class="fas fa-folder-open"></i>
-                    <span x-text="(dataset.instance_data_dir || dataset.aws_bucket_name || dataset.dataset_name).split('/').slice(-2).join('/')"></span>
+                    <span x-text="datasetSourceLabel(dataset)"></span>
                 </span>
             </template>
-            <template x-if="!(dataset.instance_data_dir || dataset.aws_bucket_name || dataset.dataset_name)">
+            <template x-if="!datasetSource(dataset)">
                 <span class="text-danger">
                     <i class="fas fa-exclamation-triangle"></i>
                     <span>No path configured</span>

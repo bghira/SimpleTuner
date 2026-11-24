@@ -3418,13 +3418,16 @@ class RemoteWorkerDatasetsTestCase(_TrainingWorkerFixture, _TrainerPageMixin, We
         worker_file = self.home_path / "worker-datasets.json"
         worker_config = self.home_path / "worker-launch.json"
         worker_config.write_text(json.dumps({"--data_backend_config": str(worker_file)}))
+        source = "s3://training-images"
         dataset = {
             "id": "remote-images",
             "type": "webshart",
+            "source": source,
             "crop": False,
             "resolution": 256,
-            "caption_strategy": "filename",
-            "webshart_manifest": "data/train.json",
+            "caption_strategy": "webshart",
+            "metadata_backend": "webshart",
+            "webshart": {"format": "parquet", "manifest": "data/train.json"},
         }
         worker_file.write_text(json.dumps([{**dataset, "aws_secret_access_key": "hidden-value"}]))
         connected = Event()
@@ -3461,17 +3464,40 @@ class RemoteWorkerDatasetsTestCase(_TrainingWorkerFixture, _TrainerPageMixin, We
             self.dismiss_onboarding(driver)
             wait = WebDriverWait(driver, 30)
             section = (By.ID, "dataloaderSection")
-            original = (By.CSS_SELECTOR, '#dataloaderSection [data-dataset-id="remote-images"]')
-            wait.until(EC.visibility_of_element_located(original))
+
+            def click(locator):
+                button = wait.until(EC.element_to_be_clickable(locator))
+                self.dismiss_onboarding(driver)
+                driver.execute_script("arguments[0].scrollIntoView({block: 'center'})", button)
+                button.click()
+
+            click((By.CSS_SELECTOR, 'button[title="List view"]'))
+            original = (
+                By.CSS_SELECTOR,
+                '#dataloaderSection .dataset-list-item[data-dataset-id="remote-images"] .list-item-path',
+            )
+            list_path = wait.until(EC.visibility_of_element_located(original))
+            self.assertEqual(list_path.text, source)
+            self.assertEqual(list_path.get_dom_attribute("title"), source)
             self.assertNotIn("stale-local-copy", driver.find_element(*section).get_attribute("outerHTML"))
 
-            worker_file.write_text(
-                json.dumps([{**dataset, "id": "remote-images-updated", "aws_secret_access_key": "hidden"}])
-            )
-            self.dismiss_onboarding(driver)
-            wait.until(EC.element_to_be_clickable((By.XPATH, '//button[normalize-space()="Refresh"]'))).click()
+            updated = {key: value for key, value in dataset.items() if key != "source"}
+            updated.update(id="remote-images-updated", webshart={**dataset["webshart"], "source": source})
+            worker_file.write_text(json.dumps([{**updated, "aws_secret_access_key": "hidden"}]))
+            click((By.XPATH, '//button[normalize-space()="Refresh"]'))
             row = (By.CSS_SELECTOR, '#dataloaderSection [data-dataset-id="remote-images-updated"]')
             wait.until(EC.visibility_of_element_located(row))
+            click((By.CSS_SELECTOR, 'button[title="Grid view"]'))
+            grid_path = wait.until(
+                EC.visibility_of_element_located(
+                    (
+                        By.CSS_SELECTOR,
+                        '#dataloaderSection .dataset-grid-card[data-dataset-id="remote-images-updated"] .grid-card-path',
+                    )
+                )
+            )
+            self.assertEqual(grid_path.text, source)
+            self.assertEqual(grid_path.get_dom_attribute("title"), source)
             worker.result(timeout=5)
             self.assertIn("Lead GPU", driver.find_element(By.ID, "datasets-tab-content").text)
             self.assertFalse(driver.find_elements(By.CSS_SELECTOR, '[data-dataset-id="other-run-images"]'))
@@ -3481,7 +3507,7 @@ class RemoteWorkerDatasetsTestCase(_TrainingWorkerFixture, _TrainerPageMixin, We
             ).click()
             json_editor = wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "#dataloaderSection textarea")))
             self.assertEqual(json_editor.get_dom_attribute("readonly"), "true")
-            self.assertEqual(json.loads(json_editor.get_property("value")), [{**dataset, "id": "remote-images-updated"}])
+            self.assertEqual(json.loads(json_editor.get_property("value")), [updated])
 
             self.assertTrue(
                 driver.execute_async_script(
@@ -3495,7 +3521,8 @@ class RemoteWorkerDatasetsTestCase(_TrainingWorkerFixture, _TrainerPageMixin, We
             )
             driver.execute_script("arguments[0].scrollIntoView({block: 'center'})", builder)
             builder.click()
-            wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, '[data-dataset-id="local-images"]')))
+            local_card = (By.CSS_SELECTOR, '.dataset-grid-card[data-dataset-id="local-images"]')
+            wait.until(EC.visibility_of_element_located(local_card))
             self.assertFalse(driver.find_elements(*row))
             wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, '[aria-label="Save dataset configuration"]')))
 

@@ -162,6 +162,16 @@ function dataloaderSectionComponent() {
     get datasets() {
         return this.trainer.datasets || [];
     },
+    datasetSource(dataset) {
+        if (dataset.type === 'webshart') {
+            return dataset.source ?? dataset.webshart?.source ?? '';
+        }
+        return dataset.instance_data_dir || dataset.aws_bucket_name || dataset.dataset_name || '';
+    },
+    datasetSourceLabel(dataset) {
+        const source = this.datasetSource(dataset);
+        return dataset.type === 'webshart' ? source : source.split('/').slice(-2).join('/');
+    },
     get datasetConfigReadOnly() {
         return this.trainer.datasetConfigReadOnly || false;
     },
