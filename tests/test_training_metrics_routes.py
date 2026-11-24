@@ -155,6 +155,13 @@ class WorkerTrainingMetricsTests(unittest.IsolatedAsyncioTestCase):
             result = await TRAINING_METRICS_SERVICE.get_worker_run(job.job_id, owner)
             self.assertEqual([row["step"] for row in result["records"]], [1, 2])
             self.assertEqual(result["available_metrics"], ["learning_rate", "loss"])
+            self.assertEqual(result["run"]["workers"], [{"id": "worker", "name": "Worker"}])
+            job.metadata.update(worker_ids=["worker", "node-2"], worker_names=["Worker", "Another worker"])
+            group = await TRAINING_METRICS_SERVICE.get_worker_run(job.job_id, owner)
+            self.assertEqual(
+                group["run"]["workers"], [{"id": "worker", "name": "Worker"}, {"id": "node-2", "name": "Another worker"}]
+            )
+            self.assertEqual(group["records"], result["records"])
             self.assertEqual([run["job_id"] for run in await TRAINING_METRICS_SERVICE.list_worker_runs(owner)], [job.job_id])
             store.list.assert_awaited_once_with(job_ids=[job.job_id], user_id=owner.id)
             with self.assertRaises(TrainingMetricsServiceError) as error:
