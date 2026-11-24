@@ -217,7 +217,7 @@ curl -s -X POST http://localhost:8001/api/queue/submit \
 
 ## 在多个工作节点上启动同一个任务
 
-在环境的 **Hardware → Multi-node setup** 中勾选主机，用 **Move up** 和 **Move down** 调整排名，确认数据路径及共享输出目录后点击 **Save**。**Run** 将使用保存的主机。**Change workers for this run** 仅更改本次运行的主机。若有主机忙碌，整组任务会排队；不可用的主机需要重新连接或替换。本地复制环境时会保留该组，导出的配置会省略工作节点 ID。
+打开环境的 **Hardware** 标签页。如果显示介绍，请先关闭，然后在 **Multi-node setup** 中勾选主机，用 **Move up** 和 **Move down** 调整排名，确认数据路径及共享输出目录后点击 **Save**。**Run** 将使用保存的主机。**Change workers for this run** 仅更改本次运行的主机。若有主机忙碌，整组任务会排队；不可用的主机需要重新连接或替换。本地复制环境时会保留该组，导出的配置会省略工作节点 ID。
 
 当所有选中的节点均空闲时，点击 **Test group**，即可使用显示的地址和端口在所选 GPU 上执行 NCCL 全归约，并按节点排名查看结果。测试无需加载模型。
 

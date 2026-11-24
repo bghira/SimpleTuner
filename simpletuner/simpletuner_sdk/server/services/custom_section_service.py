@@ -23,6 +23,15 @@ class CustomSectionService:
 
     def _initialize_custom_sections(self) -> None:
         """Initialize all custom templated sections."""
+        self.register_custom_section(
+            tab="hardware",
+            section_id="multi_node_setup",
+            title="Multi-node setup",
+            icon="fas fa-server",
+            template="components/worker_group_setup.html",
+            order=15,
+        )
+
         # Publishing tab authentication section
         self.register_custom_section(
             tab="publishing",

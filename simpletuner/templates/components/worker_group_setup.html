@@ -1,54 +1,52 @@
-<section class="card mb-3" x-data="hardwareWorkerGroup()" x-init="$watch('$store.trainer.activeEnvironment', () => refresh()); if ($store.trainer.activeEnvironment) refresh()"
-         @config-saved.window="refresh()" aria-label="Multi-node setup">
-    <div class="card-body">
-        <h3 class="h5">Multi-node setup</h3>
-        <p>Choose the default workers for <strong x-text="$store.trainer.activeEnvironment || 'default'"></strong>.
-           The first host is machine rank 0.</p>
-        <button type="button" class="btn btn-sm btn-outline-secondary mb-2" :disabled="loading"
-                @click="refresh()">Refresh workers</button>
-        <p role="alert" x-show="error" x-text="error"></p>
-        <p x-show="!loading && !workers.some(w => w.multinode_gpus && workers.some(other => other.id !== w.id && other.multinode_gpus && other.gpu === w.gpu && ['idle','busy'].includes(other.status)) && ['idle','busy'].includes(w.status))">
-            Connect at least two worker agents with matching CUDA GPUs.
-            <a href="{{ docs_url('experimental/server/WORKERS.md') }}" target="_blank" rel="noopener">Worker setup</a>
-        </p>
-        <div class="list-group mb-2">{% include 'components/worker_group_choices.html' %}</div>
-        <ol class="list-unstyled" aria-label="Machine ranks">
-            <template x-for="(id, rank) in selected" :key="id">
-                <li class="d-flex align-items-center gap-2 mb-1">
-                    <strong x-text="'Rank ' + rank"></strong>
-                    <span x-text="lookup(id)?.name || 'Unavailable worker'"></span>
-                    <small x-show="lookup(id)?.multinode_gpus" x-text="lookup(id)?.multinode_gpus + ' GPUs'"></small>
-                    <small x-text="lookup(id)?.status || 'Removed or inaccessible'"></small>
-                    <button type="button" class="btn btn-sm btn-outline-secondary" :disabled="rank === 0" @click="move(rank, -1)">Move up</button>
-                    <button type="button" class="btn btn-sm btn-outline-secondary" :disabled="rank === selected.length - 1" @click="move(rank, 1)">Move down</button>
-                    <button type="button" class="btn btn-sm btn-outline-secondary" @click="toggle(id, false)">Remove</button>
-                </li>
-            </template>
-        </ol>
-        <p x-show="selected.length === 1">Choose a second worker, or clear the selection to use the Run picker.</p>
-        <div x-show="selected.length >= 2">
-            <p x-text="groupSummary()"></p>
-            <dl>
-                <dt>Rank 0 rendezvous</dt><dd x-text="(lookup(selected[0])?.address || 'Unavailable') + ':' + (setting('main_process_port') || 29500)"></dd>
-                <dt>Dataset configuration</dt><dd x-text="setting('data_backend_config') || 'Unset'"></dd>
-                <dt>Shared output directory</dt><dd x-text="setting('output_dir') || 'Unset'"></dd>
-            </dl>
-            <p>Every host needs access to the dataset paths and shared checkpoint directory.
-               For a hostname other workers cannot reach, set <code>SIMPLETUNER_WORKER_ADDRESS</code> on the rank 0 agent.</p>
-            <button class="btn btn-sm btn-outline-primary" type="button" :disabled="!canCheck || checking"
-                    @click="testGroup()">Test group</button>
-            <small x-show="!canCheck">The NCCL check requires idle, connected workers with updated agents.</small>
-        </div>
-        <div aria-live="polite">
-            <p x-show="checking">Checking NCCL connectivity…</p>
-            <template x-if="check">
-                <div><strong x-text="'NCCL check · ' + check.status"></strong>
-                    <p x-show="check.error" x-text="check.error"></p>
-                    <ul><template x-for="host in check.hosts" :key="host.rank">
-                        <li x-text="'Rank ' + host.rank + ' · ' + host.name + ' · ' + host.status"></li>
-                    </template></ul>
-                </div>
-            </template>
-        </div>
+<section class="col-12" x-data="hardwareWorkerGroup()"
+         x-init="$watch('$store.trainer.activeEnvironment', () => refresh()); if ($store.trainer.activeEnvironment) refresh()"
+         @config-saved.window="refresh()" aria-label="{{ section.title }}">
+    <p>Choose the default workers for <strong x-text="$store.trainer.activeEnvironment || 'default'"></strong>.
+       The first host is machine rank 0.</p>
+    <button type="button" class="btn btn-sm btn-outline-secondary mb-2" :disabled="loading"
+            @click="refresh()">Refresh workers</button>
+    <p role="alert" x-show="error" x-text="error"></p>
+    <p x-show="!loading && !workers.some(w => w.multinode_gpus && workers.some(other => other.id !== w.id && other.multinode_gpus && other.gpu === w.gpu && ['idle','busy'].includes(other.status)) && ['idle','busy'].includes(w.status))">
+        Connect at least two worker agents with matching CUDA GPUs.
+        <a href="{{ docs_url('experimental/server/WORKERS.md') }}" target="_blank" rel="noopener">Worker setup</a>
+    </p>
+    <div class="list-group worker-group-list mb-2">{% include 'components/worker_group_choices.html' %}</div>
+    <ol class="list-unstyled" aria-label="Machine ranks">
+        <template x-for="(id, rank) in selected" :key="id">
+            <li class="d-flex align-items-center gap-2 mb-1">
+                <strong x-text="'Rank ' + rank"></strong>
+                <span x-text="lookup(id)?.name || 'Unavailable worker'"></span>
+                <small x-show="lookup(id)?.multinode_gpus" x-text="lookup(id)?.multinode_gpus + ' GPUs'"></small>
+                <small x-text="lookup(id)?.status || 'Removed or inaccessible'"></small>
+                <button type="button" class="btn btn-sm btn-outline-secondary" :disabled="rank === 0" @click="move(rank, -1)">Move up</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" :disabled="rank === selected.length - 1" @click="move(rank, 1)">Move down</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" @click="toggle(id, false)">Remove</button>
+            </li>
+        </template>
+    </ol>
+    <p x-show="selected.length === 1">Choose a second worker, or clear the selection to use the Run picker.</p>
+    <div x-show="selected.length >= 2">
+        <p x-text="groupSummary()"></p>
+        <dl>
+            <dt>Rank 0 rendezvous</dt><dd x-text="(lookup(selected[0])?.address || 'Unavailable') + ':' + (setting('main_process_port') || 29500)"></dd>
+            <dt>Dataset configuration</dt><dd x-text="setting('data_backend_config') || 'Unset'"></dd>
+            <dt>Shared output directory</dt><dd x-text="setting('output_dir') || 'Unset'"></dd>
+        </dl>
+        <p>Every host needs access to the dataset paths and shared checkpoint directory.
+           For a hostname other workers cannot reach, set <code>SIMPLETUNER_WORKER_ADDRESS</code> on the rank 0 agent.</p>
+        <button class="btn btn-sm btn-outline-primary" type="button" :disabled="!canCheck || checking"
+                @click="testGroup()">Test group</button>
+        <small x-show="!canCheck">The NCCL check requires idle, connected workers with updated agents.</small>
+    </div>
+    <div aria-live="polite">
+        <p x-show="checking">Checking NCCL connectivity…</p>
+        <template x-if="check">
+            <div><strong x-text="'NCCL check · ' + check.status"></strong>
+                <p x-show="check.error" x-text="check.error"></p>
+                <ul><template x-for="host in check.hosts" :key="host.rank">
+                    <li x-text="'Rank ' + host.rank + ' · ' + host.name + ' · ' + host.status"></li>
+                </template></ul>
+            </div>
+        </template>
     </div>
 </section>

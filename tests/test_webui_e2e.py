@@ -267,6 +267,33 @@ class TrainingProgressRestoreTestCase(_TrainingWorkerFixture, WebUITestCase):
 class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
     SERVER_MODE = ServerMode.UNIFIED
 
+    def assert_worker_row_uses_theme(self, driver, row):
+        colors = driver.execute_script(
+            """
+            const row = arguments[0];
+            const initialTheme = document.body.dataset.theme;
+            const sample = document.createElement('span');
+            sample.style.backgroundColor = 'var(--field-bg)';
+            sample.style.color = 'var(--text-secondary)';
+            sample.style.borderColor = 'var(--field-border)';
+            row.append(sample);
+            const properties = ['backgroundColor', 'color', 'borderTopColor'];
+            const palette = element => properties.map(name => getComputedStyle(element)[name]);
+            try {
+                return ['dark', 'light'].map(theme => {
+                    window.applyTheme(theme);
+                    return [theme, palette(row), palette(sample)];
+                });
+            } finally {
+                sample.remove();
+                window.applyTheme(initialTheme);
+            }
+            """,
+            row,
+        )
+        for theme, row_colors, theme_colors in colors:
+            self.assertEqual(row_colors, theme_colors, f"Worker row colors in the {theme} theme")
+
     def test_run_chooses_a_busy_worker_and_waits_for_its_idle_heartbeat(self):
         from contextlib import ExitStack
 
@@ -318,6 +345,7 @@ class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
                 picker = wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "dialog[open]")))
                 self.assertIn("Local", picker.text)
                 self.assertEqual(picker.text.count("Busy"), 3)
+                self.assert_worker_row_uses_theme(driver, picker.find_element(By.CSS_SELECTOR, "label.list-group-item"))
                 picker.find_element(By.XPATH, ".//button[normalize-space()='Cancel']").click()
                 self.assertFalse(picker.is_displayed())
                 run.click()
@@ -454,6 +482,8 @@ class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
                 driver.get(f"{self.base_url}/web/trainer#hardware")
                 self.dismiss_onboarding(driver)
                 section = "section[aria-label='Multi-node setup']"
+                hero = (By.CSS_SELECTOR, "#hardware-tab-content .hero-cta")
+                dismiss = "#hardware-tab-content .hero-dismiss-btn"
 
                 def click(selector):
                     el = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, selector)))
@@ -467,6 +497,20 @@ class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
                     )
                     el.click()
 
+                wait.until(EC.visibility_of_element_located(hero))
+                self.assertFalse(driver.find_element(By.CSS_SELECTOR, section).is_displayed())
+                click(dismiss)
+                wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, section)))
+                panel = (By.CSS_SELECTOR, f"#hardware-tab-content .tab-fields #content-multi_node_setup {section}")
+                self.assertTrue(driver.find_element(*panel).is_displayed())
+                toggle = "#section-multi_node_setup button[data-bs-target='#content-multi_node_setup']"
+                click(toggle)
+                wait.until(EC.invisibility_of_element_located(panel))
+                click(toggle)
+                wait.until(EC.visibility_of_element_located(panel))
+
+                row = wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, f"{section} label.list-group-item")))
+                self.assert_worker_row_uses_theme(driver, row)
                 for worker in ids:
                     click(f"{section} input[value='{worker}']")
                 click(f"{section} ol li:last-child button:first-of-type")
@@ -483,6 +527,12 @@ class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
 
                 wait.until(lambda _: saved() == ids[::-1])
                 driver.refresh()
+                wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, section)))
+                self.assertFalse(driver.find_element(*hero).is_displayed())
+                click("#hardware-tab-content button[aria-label='Show introduction']")
+                wait.until(EC.visibility_of_element_located(hero))
+                self.assertFalse(driver.find_element(By.CSS_SELECTOR, section).is_displayed())
+                click(dismiss)
                 for environment, count in [("other-env", 0), ("test-config", 2)]:
                     wait.until(lambda d: d.execute_script("return !!window.Alpine?.store('trainer')?.activeEnvironment"))
                     driver.execute_async_script(
@@ -560,8 +610,13 @@ class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
                         timeout=5,
                     ).raise_for_status()
                 driver.get(f"{self.base_url}/web/trainer#hardware")
-                panel = wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "[aria-label='Multi-node setup']")))
+                dismiss = (By.CSS_SELECTOR, "#hardware-tab-content .hero-dismiss-btn")
+                panel_visible = EC.visibility_of_element_located((By.CSS_SELECTOR, "[aria-label='Multi-node setup']"))
+                wait.until(EC.any_of(panel_visible, EC.element_to_be_clickable(dismiss)))
                 self.dismiss_onboarding(driver)
+                if not panel_visible(driver):
+                    driver.find_element(*dismiss).click()
+                panel = wait.until(panel_visible)
                 for host in hosts:
                     box = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, f"input[value='worker-{host}']")))
                     wait.until(

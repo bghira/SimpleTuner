@@ -217,7 +217,7 @@ O scheduler faz matching de jobs para workers com base em:
 
 ## Iniciar um trabalho em vários workers
 
-Para reutilizar um grupo, abra **Hardware → Multi-node setup** no ambiente. Selecione os hosts, ordene-os com **Move up** e **Move down**, confira os caminhos dos dados e da saída compartilhada e clique em **Save**. **Run** usa o grupo salvo. **Change workers for this run** altera a seleção apenas para essa execução. O grupo aguarda se houver hosts ocupados. Reconecte ou substitua hosts indisponíveis. Cópias locais mantêm o grupo e exportações omitem os identificadores.
+Para reutilizar um grupo, abra **Hardware** no ambiente. Feche a introdução se ela aparecer e use **Multi-node setup**. Selecione os hosts, ordene-os com **Move up** e **Move down**, confira os caminhos dos dados e da saída compartilhada e clique em **Save**. **Run** usa o grupo salvo. **Change workers for this run** altera a seleção apenas para essa execução. O grupo aguarda se houver hosts ocupados. Reconecte ou substitua hosts indisponíveis. Cópias locais mantêm o grupo e exportações omitem os identificadores.
 
 Com todos os workers livres, **Test group** executa uma redução coletiva NCCL nas GPUs selecionadas e exibe o resultado por host e rank. O teste usa o endereço e a porta indicados sem carregar um modelo.
 
