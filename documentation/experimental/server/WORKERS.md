@@ -217,7 +217,7 @@ The scheduler matches jobs to workers based on:
 
 ## Launch a job on several workers
 
-To reuse a group, open **Hardware → Multi-node setup** for the environment. Check the hosts, use **Move up** or **Move down** to set their ranks, review the dataset and shared output paths, then click **Save**. **Run** uses the saved hosts. **Change workers for this run** overrides them once. A busy group queues together. An unavailable rank must be reconnected or replaced. Local copies retain the group, while portable exports omit the worker IDs.
+To reuse a group, open **Hardware** for the environment. Dismiss the introduction if it is shown, then use **Multi-node setup**. Check the hosts, use **Move up** or **Move down** to set their ranks, review the dataset and shared output paths, then click **Save**. **Run** uses the saved hosts. **Change workers for this run** overrides them once. A busy group queues together. An unavailable rank must be reconnected or replaced. Local copies retain the group, while portable exports omit the worker IDs.
 
 With the selected workers idle, **Test group** runs a short NCCL all-reduce across the GPUs in the selection. The result lists each host by machine rank. The test uses the displayed rendezvous address and port and does not load a model.
 

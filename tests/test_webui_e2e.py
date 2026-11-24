@@ -454,6 +454,8 @@ class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
                 driver.get(f"{self.base_url}/web/trainer#hardware")
                 self.dismiss_onboarding(driver)
                 section = "section[aria-label='Multi-node setup']"
+                hero = (By.CSS_SELECTOR, "#hardware-tab-content .hero-cta")
+                dismiss = "#hardware-tab-content .hero-dismiss-btn"
 
                 def click(selector):
                     el = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, selector)))
@@ -466,6 +468,11 @@ class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
                         )
                     )
                     el.click()
+
+                wait.until(EC.visibility_of_element_located(hero))
+                self.assertFalse(driver.find_element(By.CSS_SELECTOR, section).is_displayed())
+                click(dismiss)
+                wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, section)))
 
                 for worker in ids:
                     click(f"{section} input[value='{worker}']")
@@ -483,6 +490,12 @@ class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
 
                 wait.until(lambda _: saved() == ids[::-1])
                 driver.refresh()
+                wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, section)))
+                self.assertFalse(driver.find_element(*hero).is_displayed())
+                click("#hardware-tab-content button[aria-label='Show introduction']")
+                wait.until(EC.visibility_of_element_located(hero))
+                self.assertFalse(driver.find_element(By.CSS_SELECTOR, section).is_displayed())
+                click(dismiss)
                 for environment, count in [("other-env", 0), ("test-config", 2)]:
                     wait.until(lambda d: d.execute_script("return !!window.Alpine?.store('trainer')?.activeEnvironment"))
                     driver.execute_async_script(
@@ -560,8 +573,13 @@ class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
                         timeout=5,
                     ).raise_for_status()
                 driver.get(f"{self.base_url}/web/trainer#hardware")
-                panel = wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "[aria-label='Multi-node setup']")))
+                dismiss = (By.CSS_SELECTOR, "#hardware-tab-content .hero-dismiss-btn")
+                panel_visible = EC.visibility_of_element_located((By.CSS_SELECTOR, "[aria-label='Multi-node setup']"))
+                wait.until(EC.any_of(panel_visible, EC.element_to_be_clickable(dismiss)))
                 self.dismiss_onboarding(driver)
+                if not panel_visible(driver):
+                    driver.find_element(*dismiss).click()
+                panel = wait.until(panel_visible)
                 for host in hosts:
                     box = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, f"input[value='worker-{host}']")))
                     wait.until(

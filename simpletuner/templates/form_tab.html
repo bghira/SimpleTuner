@@ -1856,7 +1856,6 @@ if (!window.hardwareHeroCTA) {
 
     <div x-show="!showHeroCTA()" x-cloak>
     {% elif tab_name == 'hardware' %}
-    {% include 'components/worker_group_setup.html' %}
     <!-- Hero CTA - Introduction to hardware settings -->
     {% call hero_cta(
         theme='purple',
@@ -1908,6 +1907,7 @@ if (!window.hardwareHeroCTA) {
     {% endcall %}
 
     <div x-show="!showHeroCTA()" x-cloak>
+        {% include 'components/worker_group_setup.html' %}
     {% elif tab_name == 'basic' %}
     <!-- Basic EZ Mode Hero -->
     <div x-show="hints.ez_mode" x-cloak class="model-ez-mode-hero mb-4"
