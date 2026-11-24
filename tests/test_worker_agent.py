@@ -207,6 +207,24 @@ class WorkerAgentJobStartTestCase(unittest.IsolatedAsyncioTestCase):
         config = json.loads(Path(popen.call_args.kwargs["env"]["CONFIG_PATH"]).read_text())
         self.assertEqual((config["num_machines"], config["num_processes"]), (2, 16))
 
+    async def test_nccl_check_reports_timeout_and_releases_ephemeral_worker(self):
+        agent = WorkerAgent(WorkerConfig("https://orchestrator.example.com", "token", "worker"))
+        agent.current_job = {"group_check": True, "job_id": "check"}
+        process = Mock()
+        process.returncode = None
+        process.communicate = AsyncMock(side_effect=[TimeoutError(), (b"", None)])
+        agent.training_process = process
+        with (
+            patch.object(agent, "_report_job_status", new_callable=AsyncMock) as report,
+            patch.object(agent, "_send_heartbeat", new_callable=AsyncMock) as heartbeat,
+        ):
+            await agent._monitor_training(Path("."))
+        self.assertIsNone(agent.current_job)
+        self.assertFalse(agent.shutdown_requested)
+        self.assertIn("Timed out", report.await_args.kwargs["error"])
+        process.terminate.assert_called_once()
+        heartbeat.assert_awaited_once()
+
     async def test_start_legacy_job_preserves_yaml_dataloader(self) -> None:
         """Verify ordinary Workers retain their existing YAML launch contract."""
         job_id = f"test-{uuid.uuid4().hex}"

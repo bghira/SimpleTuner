@@ -178,7 +178,8 @@ class WorkerManager:
 
             error = f"Worker {worker.name} went offline during training"
             if await self.job_store.finish_group_member(job_id, worker.worker_id, "failed", error, None):
-                _record_worker_stats(job, worker, "failed", None)
+                if not job.metadata.get("group_check"):
+                    _record_worker_stats(job, worker, "failed", None)
                 for worker_id in ids:
                     await push_to_worker(worker_id, {"type": "job_cancel", "job_id": job_id})
             return
@@ -262,6 +263,7 @@ class WorkerManager:
             "upload_endpoint": "/api/cloud/storage",
             "upload_token": job.upload_token or "",
             "hf_token": metadata.get("hf_token"),
+            **({"group_check": True} if metadata.get("group_check") else {}),
         }
 
     async def _dispatch_group(self, job):
@@ -280,9 +282,23 @@ class WorkerManager:
                 job.job_id, {"status": "failed", "error_message": str(exc)}, expected_status="pending"
             )
             return
-        if any(not is_worker_connected(w.worker_id) for w in workers):
+        check = job.metadata.get("group_check")
+        if check and not all(w.gpu_info.get("nccl_group_check") for w in workers):
+            await self.job_store.update_job(
+                job.job_id,
+                {"status": "failed", "error_message": "Update all workers to agents with NCCL support."},
+                expected_status="pending",
+            )
             return
-        if not await self.worker_repository.reserve_group(ids, job.job_id):
+        if not all(is_worker_connected(w.worker_id) for w in workers) or not await self.worker_repository.reserve_group(
+            ids, job.job_id
+        ):
+            if check:
+                await self.job_store.update_job(
+                    job.job_id,
+                    {"status": "failed", "error_message": "Every worker must be connected and idle to run the group check."},
+                    expected_status="pending",
+                )
             return
         delivered = False
         try:
@@ -311,7 +327,8 @@ class WorkerManager:
                 await self.job_store.update_job(
                     job.job_id,
                     {
-                        "status": "pending",
+                        "status": "failed" if check else "pending",
+                        "error_message": "A worker disconnected before the check started." if check else None,
                         "started_at": None,
                         "metadata": {"worker_id": None, "worker_ids": None, "worker_names": None},
                     },

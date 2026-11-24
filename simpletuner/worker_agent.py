@@ -76,6 +76,7 @@ def detect_gpu_info() -> Dict[str, Any]:
             names = [torch.cuda.get_device_name(index) for index in range(torch.cuda.device_count())]
             return {
                 "name": names[0],
+                "nccl_group_check": torch.distributed.is_available() and torch.distributed.is_nccl_available(),
                 "distributed_address": (
                     (os.environ.get("SIMPLETUNER_WORKER_ADDRESS") or socket.gethostname()) if len(set(names)) == 1 else None
                 ),
@@ -398,11 +399,11 @@ class WorkerAgent:
                 f"--master-addr={distributed['master_addr']}",
                 f"--master-port={distributed['master_port']}",
                 "--module",
-                "simpletuner.train",
+                "simpletuner.worker_group_check" if event.get("group_check") else "simpletuner.train",
             ]
 
         logger.info(f"Launching training: {' '.join(cmd)}")
-        if is_kubeflow_job:
+        if is_kubeflow_job or event.get("group_check"):
             self.training_process = await asyncio.create_subprocess_exec(
                 *cmd,
                 env=env,
@@ -432,7 +433,22 @@ class WorkerAgent:
         if process is None:
             raise RuntimeError("Training process is not initialized")
 
-        if self._is_async_process(process):
+        check_error = None
+        if job.get("group_check"):
+            try:
+                output, _ = await asyncio.wait_for(process.communicate(), timeout=90)
+                self._log_tail = output.decode("utf-8", errors="replace")[-WORKER_LOG_TAIL_SIZE:]
+            except asyncio.TimeoutError:
+                check_error = "Timed out after 90 seconds during the NCCL group check"
+                if process.returncode is None:
+                    process.terminate()
+                    try:
+                        await asyncio.wait_for(process.communicate(), timeout=10)
+                    except asyncio.TimeoutError:
+                        process.kill()
+                        await process.communicate()
+            exit_code = process.returncode
+        elif self._is_async_process(process):
             await self._report_job_status("running")
             if process.stdout:
                 while line := await process.stdout.readline():
@@ -450,10 +466,13 @@ class WorkerAgent:
             return
         logger.info(f"Training finished with exit code: {exit_code}")
 
-        if exit_code == 0:
+        if exit_code == 0 and not check_error:
             await self._report_job_status("completed")
         else:
-            await self._report_job_status("failed", error=f"Training exited with code {exit_code}")
+            error = check_error or f"Training exited with code {exit_code}"
+            if job.get("group_check") and not check_error:
+                error = f"NCCL check exited with code {exit_code} on {self.config.name}. See the worker log for details."
+            await self._report_job_status("failed", error=error)
 
         if self.current_job is not job:
             return
@@ -461,6 +480,10 @@ class WorkerAgent:
         # Cleanup
         self.current_job = None
         self.training_process = None
+
+        if job.get("group_check"):
+            await self._send_heartbeat()
+            return
 
         # Ephemeral workers check for more jobs or shut down
         if not self.config.persistent:

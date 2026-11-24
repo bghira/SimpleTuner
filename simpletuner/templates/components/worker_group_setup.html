@@ -35,6 +35,20 @@
             </dl>
             <p>Every host needs access to the dataset paths and shared checkpoint directory.
                For a hostname other workers cannot reach, set <code>SIMPLETUNER_WORKER_ADDRESS</code> on the rank 0 agent.</p>
+            <button class="btn btn-sm btn-outline-primary" type="button" :disabled="!canCheck || checking"
+                    @click="testGroup()">Test group</button>
+            <small x-show="!canCheck">The NCCL check requires idle, connected workers with updated agents.</small>
+        </div>
+        <div aria-live="polite">
+            <p x-show="checking">Checking NCCL connectivity…</p>
+            <template x-if="check">
+                <div><strong x-text="'NCCL check · ' + check.status"></strong>
+                    <p x-show="check.error" x-text="check.error"></p>
+                    <ul><template x-for="host in check.hosts" :key="host.rank">
+                        <li x-text="'Rank ' + host.rank + ' · ' + host.name + ' · ' + host.status"></li>
+                    </template></ul>
+                </div>
+            </template>
         </div>
     </div>
 </section>

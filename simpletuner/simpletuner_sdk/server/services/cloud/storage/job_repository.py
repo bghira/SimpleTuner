@@ -367,12 +367,19 @@ class JobRepository(BaseSQLiteStore):
         def finish(conn):
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute("SELECT metadata, status FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
-            if not row or row["status"] not in {"starting", "running", "training"}:
+            if not row:
                 return False
             metadata = json.loads(row["metadata"])
             members = metadata.get("worker_ids", [])
             completed = set(metadata.get("completed_workers", []))
-            if worker_id not in members or worker_id in completed:
+            if worker_id not in members:
+                return False
+            if metadata.get("group_check") and worker_id not in metadata.get("check_results", {}):
+                conn.execute(
+                    "UPDATE jobs SET metadata = json_patch(metadata, ?) WHERE job_id = ?",
+                    (json.dumps({"check_results": {worker_id: status}}), job_id),
+                )
+            if row["status"] not in {"starting", "running", "training"} or worker_id in completed:
                 return False
             if status == "completed":
                 completed.add(worker_id)

@@ -16,7 +16,7 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # websockets may not be installed in all environments
     ConnectionClosed = ConnectionClosedOK = RuntimeError
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from simpletuner.helpers.utils.checkpoint_manager import CheckpointManager
 from simpletuner.simpletuner_sdk import process_keeper
@@ -149,6 +149,7 @@ async def list_launch_workers(
             "status": worker.status.value if is_worker_connected(worker.worker_id) else "offline",
             "multinode_gpus": worker.multinode_gpus,
             "address": worker.gpu_info.get("distributed_address"),
+            "group_check": bool(worker.gpu_info.get("nccl_group_check")),
         }
         for worker in await _launch_workers(_user, include_offline=include_offline)
     ]
@@ -163,6 +164,64 @@ async def list_launch_workers(
     except FileNotFoundError:
         ids = []
     return {"workers": workers, "default_worker_ids": ids}
+
+
+class WorkerGroupCheck(BaseModel):
+    worker_ids: list[str] = Field(min_length=2)
+    port: int = Field(default=29500, ge=1, le=65535)
+
+
+@router.post("/worker-group-checks")
+async def check_worker_group(body: WorkerGroupCheck, user: User = Depends(get_current_user)):
+    from .queue import submit_worker_job
+
+    try:
+        hosts = resolve_worker_group(body.worker_ids, await _launch_workers(user))
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if any(w.status.value != "idle" or w.current_job_id for w in hosts):
+        raise HTTPException(409, "The group check requires every selected worker to be idle.")
+    if not all(w.gpu_info.get("nccl_group_check") for w in hosts):
+        raise HTTPException(422, "Update all selected agents to a version with NCCL group check support.")
+    result = await submit_worker_job(
+        "NCCL group check",
+        {"main_process_port": body.port},
+        user,
+        target_worker_id=body.worker_ids[0],
+        target_worker_ids=body.worker_ids,
+        group_check=True,
+    )
+    if not result.success:
+        raise HTTPException(503, result.error)
+    return {"job_id": result.job_id}
+
+
+@router.get("/worker-group-checks/{job_id}")
+async def worker_group_check_status(job_id: str, user: User = Depends(get_current_user)):
+    from ..services.cloud.storage.job_repository import get_job_repository
+
+    job = await get_job_repository().get(job_id)
+    if (
+        not job
+        or not (job.metadata or {}).get("group_check")
+        or (job.user_id != user.id and not user.has_permission("job.view.all"))
+    ):
+        raise HTTPException(404, "Group check not found")
+    names = job.metadata.get("worker_names") or []
+    results = job.metadata.get("check_results", {})
+    return {
+        "status": job.status,
+        "terminal": job.is_terminal,
+        "error": job.error_message,
+        "hosts": [
+            {
+                "rank": rank,
+                "name": names[rank] if rank < len(names) else worker_id,
+                "status": results.get(worker_id, "No result" if job.is_terminal else "Waiting"),
+            }
+            for rank, worker_id in enumerate(job.metadata["target_worker_ids"])
+        ],
+    }
 
 
 @router.post("/start", response_class=HTMLResponse)

@@ -50,6 +50,51 @@ window.workerGroupSelection = function () {
 window.hardwareWorkerGroup = function () {
     return {
         ...window.workerGroupSelection(),
+        check: null,
+        checking: false,
+        checkTimer: null,
+        disposed: false,
+        destroy() {
+            this.disposed = true;
+            clearTimeout(this.checkTimer);
+        },
+        get canCheck() {
+            return this.selected.length >= 2 && this.selected.every(id => {
+                const w = this.lookup(id);
+                return w?.status === 'idle' && w.group_check && w.gpu === this.lookup(this.selected[0])?.gpu;
+            });
+        },
+        async testGroup() {
+            if (!this.canCheck || this.checking) return;
+            this.checking = true;
+            this.check = null;
+            this.error = '';
+            try {
+                const response = await ApiClient.fetch('/api/training/worker-group-checks', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({worker_ids: this.selected, port: Number(this.setting('main_process_port') || 29500)}),
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Invalid group check settings.');
+                await this.readCheck(data.job_id);
+            } catch (error) {
+                this.error = error.message;
+                this.checking = false;
+            }
+        },
+        async readCheck(id) {
+            if (this.disposed) return;
+            try {
+                const response = await ApiClient.fetch('/api/training/worker-group-checks/' + encodeURIComponent(id));
+                if (!response.ok) throw new Error('Could not read the NCCL result.');
+                this.check = await response.json();
+                this.checking = !this.check.terminal;
+                if (this.checking && !this.disposed) this.checkTimer = setTimeout(() => this.readCheck(id), 1000);
+            } catch (error) {
+                this.error = error.message;
+                this.checking = false;
+            }
+        },
         async refresh() {
             const environment = this.$store.trainer.activeEnvironment || 'default';
             const group = await this.loadWorkers(environment, true);

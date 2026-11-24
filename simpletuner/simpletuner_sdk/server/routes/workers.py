@@ -701,6 +701,8 @@ async def update_job_status(
                         await push_to_worker(member, {"type": "job_cancel", "job_id": job_id})
         elif job.is_terminal or worker.worker_id != group[0]:
             return {"success": True}
+    if (job.metadata or {}).get("group_check"):
+        return {"success": True}
     if not request.status:
         if not request.progress and request.validation is None:
             raise HTTPException(status_code=422, detail="Expected worker status, progress, or validation")

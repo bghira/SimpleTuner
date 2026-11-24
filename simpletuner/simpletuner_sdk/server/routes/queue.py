@@ -650,6 +650,7 @@ async def submit_worker_job(
     *,
     target_worker_id: Optional[str] = None,
     target_worker_ids: Optional[list[str]] = None,
+    group_check: bool = False,
     dataloader: Optional[list] = None,
 ) -> LocalJobSubmitResponse:
     """Queue a configuration snapshot and let the worker scheduler assign it."""
@@ -666,6 +667,8 @@ async def submit_worker_job(
     job_id = f"wjob-{uuid.uuid4().hex[:12]}"
     now = datetime.now(timezone.utc).isoformat()
     metadata = {"config": config, "target": "worker"}
+    if group_check:
+        metadata["group_check"] = True
     if target_worker_ids:
         metadata["target_worker_ids"] = target_worker_ids
     if target_worker_id:
@@ -688,7 +691,7 @@ async def submit_worker_job(
     await manager.dispatch_pending_jobs()
     job = await manager.job_store.get_job(job_id)
     return LocalJobSubmitResponse(
-        success=job.status != "failed",
+        success=job.status != "failed" or group_check,
         error=job.error_message if job.status == "failed" else None,
         job_id=job_id,
         status="queued" if job.status == "pending" else job.status,

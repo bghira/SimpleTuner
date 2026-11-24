@@ -219,6 +219,8 @@ O scheduler faz matching de jobs para workers com base em:
 
 Para reutilizar um grupo, abra **Hardware → Multi-node setup** no ambiente. Selecione os hosts, ordene-os com **Move up** e **Move down**, confira os caminhos dos dados e da saída compartilhada e clique em **Save**. **Run** usa o grupo salvo. **Change workers for this run** altera a seleção apenas para essa execução. O grupo aguarda se houver hosts ocupados. Reconecte ou substitua hosts indisponíveis. Cópias locais mantêm o grupo e exportações omitem os identificadores.
 
+Com todos os workers livres, **Test group** executa uma redução coletiva NCCL nas GPUs selecionadas e exibe o resultado por host e rank. O teste usa o endereço e a porta indicados sem carregar um modelo.
+
 Em **Run**, marque os hosts com o mesmo modelo de GPU CUDA na ordem de rank desejada. O primeiro recebe o rank 0. O trabalho aguarda até que todos estejam livres. Cada host usa a mesma quantidade de GPUs do host com menos GPUs no grupo. Training Progress lista os workers juntos em ordem de rank.
 
 Atualize o agente em cada host. Os hosts devem conseguir se comunicar e resolver o nome do host de rank 0. Antes de iniciar o agente, você pode definir `SIMPLETUNER_WORKER_ADDRESS` com um nome ou IP acessível. Libere o tráfego do backend distribuído e a porta `main_process_port` (padrão 29500) no rank 0. Os caminhos dos dados devem funcionar em todos os hosts. Use armazenamento compartilhado para os checkpoints e a saída.

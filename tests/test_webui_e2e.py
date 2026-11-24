@@ -506,6 +506,99 @@ class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
 
         self.for_each_browser("hardware_worker_defaults", scenario)
 
+    def test_hardware_group_check_displays_both_worker_results(self):
+        from contextlib import ExitStack
+
+        self.with_sample_environment()
+
+        def scenario(driver, browser):
+            wait = WebDriverWait(driver, 20)
+            hosts = [f"check-{browser}-{rank}" for rank in range(2)]
+            with ExitStack() as context:
+                streams = []
+                for host in hosts:
+                    worker_id = "worker-" + host
+                    headers = {"X-Worker-Token": host + "-token"}
+                    self.register_job(
+                        host,
+                        host,
+                        "H200",
+                        gpu_info={
+                            "count": 1,
+                            "accelerator": "cuda",
+                            "distributed_address": host,
+                            "nccl_group_check": True,
+                        },
+                    )
+                    streams.append(
+                        context.enter_context(
+                            requests.get(
+                                f"{self.base_url}/api/workers/stream",
+                                params={"worker_id": worker_id},
+                                headers=headers,
+                                stream=True,
+                                timeout=20,
+                            )
+                        )
+                    )
+                    streams[-1].raise_for_status()
+                body = {"worker_ids": ["worker-" + host for host in hosts], "port": 29500}
+                response = requests.post(f"{self.base_url}/api/training/worker-group-checks", json=body, timeout=5)
+                self.assertEqual(response.status_code, 409)
+                for host in hosts:
+                    headers = {"X-Worker-Token": host + "-token"}
+                    requests.post(
+                        f"{self.base_url}/api/workers/job/{host}/status",
+                        headers=headers,
+                        json={"status": "completed"},
+                        timeout=5,
+                    ).raise_for_status()
+                    requests.post(
+                        f"{self.base_url}/api/workers/heartbeat",
+                        headers=headers,
+                        json={"worker_id": "worker-" + host, "status": "idle"},
+                        timeout=5,
+                    ).raise_for_status()
+                driver.get(f"{self.base_url}/web/trainer#hardware")
+                panel = wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "[aria-label='Multi-node setup']")))
+                self.dismiss_onboarding(driver)
+                for host in hosts:
+                    box = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, f"input[value='worker-{host}']")))
+                    wait.until(
+                        lambda d: (self.dismiss_onboarding(d) or True)
+                        and d.execute_script(
+                            "arguments[0].scrollIntoView({block:'center'}); const r=arguments[0].getBoundingClientRect(); return arguments[0].contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));",
+                            box,
+                        )
+                    )
+                    box.click()
+                check_button = panel.find_element(By.XPATH, ".//button[normalize-space()='Test group']")
+                wait.until(
+                    lambda d: d.execute_script(
+                        "const el=arguments[0]; el.scrollIntoView({block:'center', behavior:'instant'}); "
+                        "const r=el.getBoundingClientRect(); return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));",
+                        check_button,
+                    )
+                )
+                check_button.click()
+                for rank, (host, stream) in enumerate(zip(hosts, streams)):
+                    event = json.loads(
+                        next(line[6:] for line in stream.iter_lines(chunk_size=1) if line.startswith(b"data: "))
+                    )
+                    self.assertTrue(event["group_check"])
+                    self.assertEqual(event["distributed"]["node_rank"], rank)
+                    requests.post(
+                        f"{self.base_url}/api/workers/job/{event['job_id']}/status",
+                        headers={"X-Worker-Token": host + "-token"},
+                        json={"status": "completed"},
+                        timeout=5,
+                    ).raise_for_status()
+                wait.until(lambda _: "NCCL check · completed" in panel.text)
+                for rank, host in enumerate(hosts):
+                    self.assertIn(f"Rank {rank} · {host} · completed", panel.text)
+
+        self.for_each_browser("hardware_nccl_check", scenario)
+
     def test_progress_list_filters_dismisses_and_scrolls_at_saved_limit(self):
         self.with_sample_environment()
 
