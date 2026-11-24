@@ -233,6 +233,11 @@ async def start_training(request: Request, _user: User = Depends(get_current_use
     environment = request.headers.get("X-Training-Environment")
     if environment and environment != bundle.active_config:
         return HTMLResponse("The active environment changed. Retry from the current environment.", status_code=409)
+    if environment:
+        from ..services.cloud.storage.job_repository import get_job_repository
+
+        if await get_job_repository().list_active_training_jobs(environment):
+            return '<div class="alert alert-warning">This environment already has an active training run.</div>'
 
     selected = []
     if destination in ("environment", "saved-group", "local-only"):
@@ -243,8 +248,8 @@ async def start_training(request: Request, _user: User = Depends(get_current_use
             ids = []
         if destination == "saved-group" and not ids:
             return '<div class="alert alert-warning">The default workers changed. Run again to choose a destination.</div>'
-        if destination == "local-only" and not ids and await _launch_workers(_user):
-            return '<div class="alert alert-warning">A worker just connected. Run again to choose a destination.</div>'
+        if destination == "local-only" and (ids or await _launch_workers(_user)):
+            return '<div class="alert alert-warning">Worker choices changed. Run again to choose a destination.</div>'
     else:
         ids = [] if destination == "local" else destination.split(",")
     if ids:
@@ -353,43 +358,63 @@ async def _manual_targets(user: User) -> list[dict]:
     from ..models.worker import WorkerStatus
     from ..services.cloud.storage.job_repository import get_job_repository
     from ..services.worker_repository import get_worker_repository
-    from .workers import manual_control_workers, worker_streams
+    from .workers import is_worker_connected, manual_control_workers
 
     jobs = get_job_repository()
     workers = get_worker_repository()
     targets = []
     can_manage_all = user.has_permission("job.cancel.all")
     can_manage_own = user.has_permission("job.submit")
-    candidates = [
-        (job_id, None)
-        for job_id, process in process_keeper.list_processes(target=training_service.run_trainer_job).items()
-        if process["alive"] and process["status"] == "running"
-    ]
-    for worker_id in tuple(worker_streams):
-        worker = await workers.get_worker(worker_id)
-        if worker and worker.current_job_id and worker.status in (WorkerStatus.BUSY, WorkerStatus.DRAINING):
-            candidates.append((worker.current_job_id, worker))
-    for job_id, worker in candidates:
-        job = await jobs.get(job_id)
-        if not can_manage_all and not (can_manage_own and job and job.user_id == user.id):
+    can_view_all = can_manage_all or user.has_permission("job.view.all")
+    can_stop_own = user.has_permission("job.cancel.own")
+    for job_id, process in process_keeper.list_processes(target=training_service.run_trainer_job).items():
+        if not process["alive"] or process["status"] != "running":
             continue
+        job = await jobs.get(job_id)
         if job and job.is_terminal:
             continue
-        if worker and (
-            not job
-            or job.status not in {"starting", "running", "training"}
-            or (job.metadata or {}).get("worker_id") != worker.worker_id
-        ):
+        if not can_manage_all and not (can_manage_own and job and job.user_id == user.id):
             continue
         targets.append(
             {
                 "job_id": job_id,
-                "worker_id": worker.worker_id if worker else None,
-                "name": worker.name if worker else "Local",
+                "worker_id": None,
+                "name": "Local",
                 "config_name": job.config_name if job else None,
+                "gpu": None,
+                "available": True,
+                "show_manual_actions": True,
+                "can_stop": True,
+                "is_current": job_id == APIState.get_state("current_job_id"),
+            }
+        )
+    for job in await jobs.list_active_training_jobs():
+        if job.provider not in {"worker", "kubeflow"} or (not can_view_all and job.user_id != user.id):
+            continue
+        metadata = job.metadata or {}
+        worker_id = metadata.get("worker_id")
+        worker = await workers.get_worker(worker_id) if worker_id else None
+        worker_names = metadata.get("worker_names") or []
+        own = job.user_id == user.id
+        show_manual_actions = (
+            worker is not None
+            and worker.current_job_id == job.job_id
+            and worker.status in (WorkerStatus.BUSY, WorkerStatus.DRAINING)
+            and is_worker_connected(worker.worker_id)
+            and (can_manage_all or (own and can_manage_own))
+        )
+        targets.append(
+            {
+                "job_id": job.job_id,
+                "worker_id": worker_id,
+                "provider": job.provider,
+                "name": ", ".join(worker_names) or (worker.name if worker else "Remote worker"),
+                "config_name": job.config_name,
                 "gpu": (worker.gpu_info or {}).get("name") if worker else None,
-                "available": not worker or worker.worker_id in manual_control_workers,
-                "is_current": worker is None and job_id == APIState.get_state("current_job_id"),
+                "available": show_manual_actions and worker_id in manual_control_workers,
+                "show_manual_actions": show_manual_actions,
+                "can_stop": can_manage_all or (own and can_stop_own),
+                "is_current": False,
             }
         )
     return targets
@@ -410,11 +435,17 @@ async def _trigger_manual_action(
         raise HTTPException(status_code=400, detail="No active training job")
     targets = await _manual_targets(user)
     target = next((item for item in targets if item["job_id"] == selected and item["worker_id"] == worker_id), None)
-    if target is None:
+    if target is None or (target.get("provider") is not None and not target["worker_id"]):
         raise HTTPException(status_code=409, detail="This training job is no longer available.")
     if worker_id:
+        from .workers import is_worker_connected
+
+        if not is_worker_connected(worker_id):
+            raise HTTPException(status_code=409, detail="The training worker disconnected.")
         if worker_id not in manual_control_workers:
             raise HTTPException(status_code=409, detail="Update the worker agent to enable manual actions.")
+        if not target["available"]:
+            raise HTTPException(status_code=409, detail="This training job is no longer available.")
         if not await push_to_worker(worker_id, {"type": "job_manual_action", "job_id": selected, "action": action}):
             raise HTTPException(status_code=409, detail="The training worker disconnected.")
     else:
@@ -453,7 +484,11 @@ async def cancel_training(request: Request, _user: User = Depends(get_current_us
         form_data = await request.form()
         job_id = form_data.get("job_id", APIState.get_state("current_job_id"))
 
-        local_ids = {target["job_id"] for target in await _manual_targets(_user) if target["worker_id"] is None}
+        local_ids = {
+            target["job_id"]
+            for target in await _manual_targets(_user)
+            if target["worker_id"] is None and not target.get("provider")
+        }
         if job_id in local_ids and training_service.terminate_training_job(job_id, status="cancelled", clear_job_id=True):
             return f"""
             <div class="alert alert-warning" data-local-training-cancelled>

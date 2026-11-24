@@ -223,6 +223,13 @@
                                         <i class="fas me-1" :class="statusIcon(job.status)"></i>
                                         <span x-text="job.status"></span>
                                     </span>
+                                    <template x-if="['worker', 'kubeflow'].includes(job.provider) && ['starting', 'running'].includes(job.status)">
+                                        <button type="button" class="btn btn-sm btn-outline-danger"
+                                                aria-label="Stop training run" title="Stop training run"
+                                                @click.stop="cancelJob(job.job_id)">
+                                            <i class="fas fa-stop" aria-hidden="true"></i>
+                                        </button>
+                                    </template>
                                     <template x-if="job.cost_usd">
                                         <span class="job-cost">$<span x-text="job.cost_usd.toFixed(2)"></span></span>
                                     </template>
@@ -351,7 +358,7 @@
                                         <i class="fas fa-chart-line me-1" aria-hidden="true"></i>Show in Training Progress
                                     </button>
                                 </template>
-                                <template x-if="['pending', 'uploading', 'queued', 'running'].includes(selectedJob.status)">
+                                <template x-if="['pending', 'uploading', 'queued', 'starting', 'running'].includes(selectedJob.status)">
                                     <button type="button"
                                             class="btn btn-sm btn-outline-danger"
                                             @click="cancelJob(selectedJob.job_id)">

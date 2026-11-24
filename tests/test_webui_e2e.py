@@ -541,20 +541,56 @@ class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
                         "Alpine.store('trainer').switchEnvironment(arguments[0]).then(arguments[1])", environment
                     )
                     wait.until(lambda d: len(d.find_elements(By.CSS_SELECTOR, section + " input:checked")) == count)
-                click("#runBtn")
-                panel = wait.until(lambda d: d.find_element(By.ID, "training-status").get_attribute("textContent").strip())
-                self.assertIn("queued for " + ", ".join(hosts[::-1]), panel)
-                wait.until(
-                    EC.element_to_be_clickable((By.XPATH, "//button[normalize-space()='Change workers for this run']"))
-                ).click()
-                dialog = wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "dialog[open]")))
+
+                def show_run_picker():
+                    click("#runBtn")
+                    return wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "dialog[open]")))
+
+                def checked_workers(dialog):
+                    return [box.get_attribute("value") for box in dialog.find_elements(By.CSS_SELECTOR, "input:checked")]
+
+                stop_and_shutdown = [driver.find_element(By.ID, button) for button in ("cancelBtn", "shutdownBtn")]
+                size = driver.get_window_size()
+                self.addCleanup(driver.set_window_size, size["width"], size["height"])
+                for width in (1120, 1024, 760, 390):
+                    driver.set_window_size(width, 900)
+                    wait.until(
+                        lambda d: d.execute_script(
+                            """
+                            return arguments[0].every(button => {
+                                const rect = button.getBoundingClientRect();
+                                return rect.width > 0 && rect.left >= 0 &&
+                                    rect.right <= document.documentElement.clientWidth;
+                            });
+                            """,
+                            stop_and_shutdown,
+                        ),
+                        f"Stop and Shutdown fit at {width}px",
+                    )
+
+                dialog = show_run_picker()
+                self.assertEqual(checked_workers(dialog), ids[::-1])
+                self.assertFalse(driver.find_element(By.ID, "training-status").text.strip())
+                run_selected = (By.XPATH, ".//button[normalize-space()='Run on selected workers']")
+                dialog.find_element(*run_selected).click()
+                status = wait.until(lambda d: d.find_element(By.ID, "training-status").get_attribute("textContent").strip())
+                self.assertIn("queued for " + ", ".join(hosts[::-1]), status)
+
+                dialog = show_run_picker()
                 dialog.find_element(By.CSS_SELECTOR, f"input[value='{ids[1]}']").click()
-                dialog.find_element(By.XPATH, ".//button[normalize-space()='Run on selected workers']").click()
+                dialog.find_element(By.XPATH, ".//button[normalize-space()='Cancel']").click()
+                dialog = show_run_picker()
+                self.assertEqual(checked_workers(dialog), ids[::-1])
+                dialog.find_element(By.CSS_SELECTOR, f"input[value='{ids[1]}']").click()
+                dialog.find_element(*run_selected).click()
                 wait.until(lambda d: "queued for " + hosts[0] in d.find_element(By.ID, "training-status").text)
                 self.assertEqual(saved(), ids[::-1])
             wait.until(lambda _: requests.get(f"{self.base_url}/api/training/launch-workers", timeout=5).json() == [])
-            click("#runBtn")
-            wait.until(lambda d: "unavailable at rank 0" in d.find_element(By.ID, "training-status").text)
+            dialog = show_run_picker()
+            self.assertEqual(checked_workers(dialog), ids[::-1])
+            self.assertFalse(dialog.find_element(*run_selected).is_enabled())
+            self.assertTrue(dialog.find_element(By.XPATH, ".//button[starts-with(normalize-space(), 'Local')]").is_enabled())
+            dialog.find_element(By.XPATH, ".//button[normalize-space()='Cancel']").click()
 
         self.for_each_browser("hardware_worker_defaults", scenario)
 
@@ -862,7 +898,7 @@ class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
             def controls(local_active):
                 return driver.execute_script(
                     """
-                    const stop = [...document.querySelectorAll('[hx-post="/api/training/cancel"]')];
+                    const stop = [...document.querySelectorAll('#cancelBtn')];
                     const run = [...document.querySelectorAll('[hx-post="/api/training/start"]')];
                     return stop.length && run.length && stop.every(b => b.disabled !== arguments[0]) &&
                         run.every(b => !b.disabled);
@@ -878,9 +914,13 @@ class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
                 const fetch = ApiClient.fetch.bind(ApiClient);
                 window.localAlive = true;
                 ApiClient.fetch = (path, ...args) => {
+                    if (path === '/api/training/cancel') {
+                        window.stopTarget = args[0].body.get('job_id');
+                        return Promise.resolve(new Response('<div data-local-training-cancelled>Stopped</div>'));
+                    }
                     if (path !== '/api/training/control-targets') return fetch(path, ...args);
                     const targets = [{job_id: arguments[0], worker_id: 'worker-1'}];
-                    if (window.localAlive) targets.push({job_id: 'local-stop-test', worker_id: null});
+                    if (window.localAlive) targets.push({job_id: 'local-stop-test', worker_id: null, name: 'Local', can_stop: true});
                     return Promise.resolve(Response.json(targets));
                 };
                 Alpine.store('trainer').refreshManualTargets();
@@ -894,17 +934,14 @@ class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
 
             driver.execute_script(
                 """
-                document.body.addEventListener('htmx:beforeRequest', event => {
-                    if (event.detail.elt.id !== 'cancelBtn') return;
-                    window.stopTarget = event.detail.requestConfig.parameters.job_id;
-                });
                 window.confirm = () => true;
                 document.getElementById('cancelBtn').click();
             """
             )
+            choice = (By.CSS_SELECTOR, "#training-stop-picker-header .list-group-item")
+            wait.until(EC.element_to_be_clickable(choice)).click()
             self.assertEqual(driver.execute_script("return window.stopTarget"), "local-stop-test")
-
-            wait.until(EC.text_to_be_present_in_element((By.ID, "training-status"), "No Active Training"))
+            wait.until(EC.invisibility_of_element_located((By.ID, "training-stop-picker-header")))
             wait.until(lambda _: controls(True))
 
             # Completion prompts a fresh target lookup, even between periodic polls.
@@ -925,6 +962,98 @@ class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
             wait.until(lambda _: controls(False))
 
         self.for_each_browser("local_stop_remote_progress", scenario)
+
+    def test_remote_runs_can_stop_from_the_toolbar_and_queue(self):
+        from contextlib import ExitStack
+
+        environment = "stop-toolbar-env"
+        env_dir = self.config_dir / environment
+        env_dir.mkdir()
+        (env_dir / "config.json").write_bytes((self.config_dir / "default" / "config.json").read_bytes())
+        self.seed_defaults(active_config=environment)
+        self.addCleanup(self.seed_defaults)
+
+        def scenario(driver, _):
+            first, second = "multinode-stop", "other-stop"
+            worker_ids = [f"worker-{job_id}" for job_id in (first, second)]
+            self.register_job(
+                first,
+                "Lead GPU",
+                "H200",
+                config_name=environment,
+                group={"worker_ids": worker_ids, "worker_names": ["Lead GPU", "Other GPU"]},
+            )
+            self.register_job(second, "Other GPU", "L40S", config_name="other-env")
+            with ExitStack() as connections:
+                streams = []
+                for job_id, worker_id in zip((first, second), worker_ids):
+                    connection = connections.enter_context(
+                        requests.get(
+                            f"{self.base_url}/api/workers/stream",
+                            params={"worker_id": worker_id},
+                            headers={"X-Worker-Token": f"{job_id}-token"},
+                            stream=True,
+                            timeout=20,
+                        )
+                    )
+                    connection.raise_for_status()
+                    streams.append(connection.iter_lines(chunk_size=1))
+
+                def assert_stop_message(stream, job_id):
+                    message = next(line for line in stream if line.startswith(b"data: "))
+                    self.assertEqual(json.loads(message[6:]), {"type": "job_cancel", "job_id": job_id})
+
+                driver.get(f"{self.base_url}/web/trainer#job_queue")
+                wait = WebDriverWait(driver, 20)
+                stop = wait.until(EC.element_to_be_clickable((By.ID, "cancelBtn")))
+                self.dismiss_onboarding(driver)
+                driver.execute_script("window.confirm = () => true")
+                start = (By.CSS_SELECTOR, '[hx-post="/api/training/start"]')
+                self.assertFalse(driver.find_element(*start).is_enabled())
+                stop.click()
+                picker = wait.until(EC.visibility_of_element_located((By.ID, "training-stop-picker-header")))
+                choices = picker.find_elements(By.CSS_SELECTOR, ".list-group-item")
+                self.assertTrue(any(second in choice.text for choice in choices))
+                next(choice for choice in choices if first in choice.text).click()
+                for stream in streams:
+                    assert_stop_message(stream, first)
+                wait.until(EC.invisibility_of_element_located((By.ID, "training-stop-picker-header")))
+                wait.until(EC.element_to_be_clickable(start))
+                self.assertTrue(driver.find_element(By.ID, "cancelBtn").is_enabled())
+
+                driver.find_element(*start).click()
+                launch = wait.until(EC.visibility_of_element_located((By.ID, "training-launch-picker-header")))
+                self.assertIn("Run training on", launch.text)
+                self.assertEqual(
+                    driver.execute_script(
+                        """
+                        const context = document.createElement('canvas').getContext('2d');
+                        context.fillStyle = getComputedStyle(arguments[0]).backgroundColor;
+                        context.fillRect(0, 0, 1, 1);
+                        return context.getImageData(0, 0, 1, 1).data[3];
+                        """,
+                        launch,
+                    ),
+                    255,
+                )
+                launch.find_element(By.XPATH, './/button[normalize-space()="Cancel"]').click()
+
+                row_button = (
+                    By.XPATH,
+                    '//div[contains(@class, "job-queue-item")][.//div[text()="other-env"]]//button[@aria-label="Stop training run"]',
+                )
+                button = wait.until(EC.element_to_be_clickable(row_button))
+                driver.execute_script("arguments[0].scrollIntoView({block: 'center'})", button)
+                button.click()
+                assert_stop_message(streams[1], second)
+                wait.until(
+                    lambda d: d.execute_script(
+                        "return !Alpine.store('trainer').stoppableRuns.some(run => run.job_id === arguments[0])",
+                        second,
+                    )
+                )
+
+        self.for_each_browser("stop_remote_training", scenario)
 
     def test_dock_actions_address_only_the_selected_connected_worker(self):
         from contextlib import ExitStack
@@ -1153,8 +1282,9 @@ class ResponsiveTrainerLayoutTestCase(WebUITestCase):
             self.assertGreaterEqual(menu.rect["x"], sidebar.rect["x"] + sidebar.rect["width"])
 
             manage = menu.find_element(By.CSS_SELECTOR, 'a[href="#environments"]')
-            self.assertTrue(
-                driver.execute_script(
+            wait.until(
+                lambda d: (self.dismiss_onboarding(d) or True)
+                and d.execute_script(
                     "const item = arguments[0], r = item.getBoundingClientRect();"
                     "return item.contains(document.elementFromPoint(r.left + 2, r.top + r.height / 2));",
                     manage,
@@ -3618,7 +3748,7 @@ class DatasetSaveActiveRunTestCase(_TrainingWorkerFixture, _TrainerPageMixin, We
     def test_dataset_save_warns_to_restart_the_active_remote_run(self):
         self.seed_defaults()
         job_id = "dataset-save-active"
-        self.register_job(job_id, "Worker", "H200", config_name="default")
+        self.register_job(job_id, "Worker", "H200", config_name="default", group={"worker_id": None})
         dataset_path = self.config_dir / "default" / "multidatabackend.json"
         original = [
             {

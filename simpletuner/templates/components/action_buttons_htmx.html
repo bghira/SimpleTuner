@@ -57,8 +57,8 @@
                 hx-target="#training-status"
                 hx-swap="innerHTML"
                 hx-indicator="#run-spinner"
-                x-bind:disabled="loading || $store.trainer?.activeTab === 'cloud'"
-                x-bind:title="$store.trainer?.activeTab === 'cloud' ? 'Use Cloud tab to submit jobs' : 'Start training'"
+                x-bind:disabled="loading || $store.trainer.activeEnvironmentIsTraining || $store.trainer.activeTab === 'cloud'"
+                x-bind:title="$store.trainer.activeEnvironmentIsTraining ? 'This environment is already training' : ($store.trainer.activeTab === 'cloud' ? 'Use Cloud tab to submit jobs' : 'Start training')"
                 hx-disabled-elt="this"
                 hx-on::before-request="const validationEl = document.getElementById('validation-results'); if(validationEl) validationEl.innerHTML = '';"
                 hx-on::after-request="window.__handleTrainerRunAfterRequest?.(this, event)">
@@ -75,37 +75,23 @@
             </span>
         </button>
 
-        <button type="button" class="btn btn-sm btn-outline-secondary me-2"
-                x-show="$store.trainer.activeEnvironmentMetadata?.default_worker_ids?.length"
-                @click="chooseDestination(true)">Change workers for this run</button>
-
         <!-- Cancel Training Button -->
         <button type="button"
                 class="trainer-action-btn btn {{ btn_size }}btn-danger"
                 id="cancelBtn"
-                title="Stop local training"
-                aria-label="Stop local training"
-                :disabled="!$store.trainer.localStopTarget || $store.trainer.localStopPending"
-                :hx-vals="JSON.stringify({job_id: $store.trainer.localStopTarget?.job_id || ''})"
-                disabled
-                hx-post="/api/training/cancel"
-                hx-target="#training-status"
-                hx-swap="innerHTML"
-                hx-indicator="#cancel-spinner"
-                hx-confirm="Stop local training?"
-                hx-on::before-request="Alpine.store('trainer').localStopPending = true"
-                hx-on::after-request="Alpine.store('trainer').finishLocalStop()">
+                title="Stop training"
+                aria-label="Stop training"
+                aria-haspopup="dialog"
+                aria-controls="training-stop-picker-{{ placement }}"
+                :disabled="!$store.trainer.stoppableRuns.length || $store.trainer.stopPending"
+                @click="$refs.stopPicker.showModal()"
+                disabled>
             <i class="fas fa-stop"></i>
             {% if is_header %}
                 <span class="btn-text">Stop</span>
             {% else %}
                 <span class="btn-text">Cancel Training</span>
             {% endif %}
-            <span id="cancel-spinner" class="htmx-indicator">
-                <span class="spinner-border spinner-border-sm ms-2" role="status">
-                    <span class="visually-hidden">Cancelling...</span>
-                </span>
-            </span>
         </button>
 
         <!-- Shutdown Button -->
@@ -120,21 +106,46 @@
             <span class="btn-text">Shutdown</span>
         </button>
     </div>
-    <dialog id="training-launch-picker-{{ placement }}" x-ref="picker" aria-labelledby="training-launch-title-{{ placement }}"
-            class="bg-dark text-light border border-secondary rounded p-3 text-start">
-        <h2 id="training-launch-title-{{ placement }}" class="h6">Run training on</h2>
-        <div class="list-group worker-group-list mb-3">
-            <button type="button" class="list-group-item list-group-item-action" @click="launch('local')">
-                Local <small class="text-muted">This machine</small>
-            </button>
-            {% include 'components/worker_group_choices.html' %}
-        </div>
-        <small class="d-block mb-2" x-show="workers.some(w => w.multinode_gpus && workers.some(other => other.id !== w.id && other.multinode_gpus && other.gpu === w.gpu))">Select hosts in rank order. The first checked host is rank 0.</small>
-        <p x-show="selected.length > 1" x-text="groupSummary()"></p>
-        <button type="button" class="btn btn-primary btn-sm" :disabled="!selected.length"
-                @click="launch(selected.join(','))">Run on selected workers</button>
-        <button type="button" class="btn btn-outline-secondary btn-sm" @click="$refs.picker.close()">Cancel</button>
-    </dialog>
+    <template x-teleport="body">
+        <dialog id="training-stop-picker-{{ placement }}" x-ref="stopPicker"
+                class="training-launch-dialog border border-secondary rounded p-3 text-start"
+                aria-labelledby="training-stop-title-{{ placement }}">
+            <h2 id="training-stop-title-{{ placement }}" class="h6">Stop training</h2>
+            <div class="list-group worker-group-list mb-3">
+                <template x-for="target in $store.trainer.stoppableRuns" :key="target.job_id">
+                    <button type="button" class="list-group-item list-group-item-action"
+                            :disabled="$store.trainer.stopPending"
+                            @click="$store.trainer.stopTrainingRun(target, $refs.stopPicker)">
+                        <strong x-text="target.config_name || target.job_id"></strong>
+                        <small class="d-block" x-text="target.name + ' · ' + target.job_id"></small>
+                    </button>
+                </template>
+            </div>
+            <button type="button" class="btn btn-outline-secondary btn-sm" @click="$refs.stopPicker.close()">Close</button>
+        </dialog>
+    </template>
+    <template x-teleport="body">
+        <dialog id="training-launch-picker-{{ placement }}" x-ref="picker" aria-labelledby="training-launch-title-{{ placement }}"
+                class="training-launch-dialog border border-secondary rounded p-3 text-start">
+            <h2 id="training-launch-title-{{ placement }}" class="h6">Run training on</h2>
+            <div class="list-group worker-group-list mb-3">
+                <button type="button" class="list-group-item list-group-item-action" @click="launch('local')">
+                    Local <small class="text-muted">This machine</small>
+                </button>
+                {% include 'components/worker_group_choices.html' %}
+            </div>
+            <small class="d-block mb-2" x-show.important="workers.some(w => w.multinode_gpus && workers.some(other => other.id !== w.id && other.multinode_gpus && other.gpu === w.gpu))">Select hosts in rank order. The first checked host is rank 0.</small>
+            <p x-show="selected.length > 1" x-text="groupSummary()"></p>
+            <p class="small text-warning" role="status" x-show="selected.length && !canLaunchSelected">
+                Review the selected workers or choose Local to start on this machine.
+            </p>
+            <div class="d-flex flex-wrap gap-2">
+                <button type="button" class="btn btn-primary btn-sm" :disabled="!canLaunchSelected" autofocus
+                        @click="launch(selected.join(','))">Run on selected workers</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" @click="$refs.picker.close()">Cancel</button>
+            </div>
+        </dialog>
+    </template>
 </div>
 
 <!-- Shutdown confirmation modal -->
@@ -303,7 +314,6 @@
 if (!window.__trainerActionHTMXBound) {
     window.__trainerActionHTMXBound = true;
 
-    const TRAINER_BUTTON_IDS = new Set(['validateBtn', 'cancelBtn']);
     const shutdownState = {
         requestInFlight: false,
         initiated: false,
@@ -481,21 +491,29 @@ if (!window.__trainerActionHTMXBound) {
 
     window.trainingLaunchPicker = () => ({
         ...window.workerGroupSelection(),
-        async chooseDestination(override = false) {
+        get canLaunchSelected() {
+            return this.selected.length > 0 && this.selected.every(id => {
+                const worker = this.lookup(id);
+                return this.isAvailable(worker) && (this.selected.length === 1 || this.compatible(worker));
+            });
+        },
+        async chooseDestination() {
             if (this.loading) return;
             const environment = this.$store.trainer.activeEnvironment || 'default';
-            const group = await this.loadWorkers(environment);
+            const group = await this.loadWorkers(environment, true);
             if (!group || environment !== (this.$store.trainer.activeEnvironment || 'default')) return;
             this.$refs.run.dataset.environment = environment;
-            this.selected = group.default_worker_ids.filter(id => this.workers.some(w => w.id === id));
-            if (group.default_worker_ids.length && !override) {
-                this.launch('saved-group');
-            } else if (this.workers.length || override) {
-                await this.$nextTick();
-                this.$refs.picker.showModal();
-            } else {
+            this.selected = [...group.default_worker_ids];
+            this.workers = [
+                ...this.selected.map(id => this.lookup(id) || {id, name: id, status: 'Unavailable'}),
+                ...this.workers.filter(worker => this.isAvailable(worker) && !this.selected.includes(worker.id)),
+            ];
+            if (!this.workers.length) {
                 this.launch('local-only');
+                return;
             }
+            await this.$nextTick();
+            this.$refs.picker.showModal();
         },
         launch(destination) {
             this.$refs.picker.close();
@@ -505,30 +523,25 @@ if (!window.__trainerActionHTMXBound) {
     });
 
     window.__handleTrainerRunAfterRequest = function(button, evt) {
-        button.disabled = window.Alpine?.store('trainer')?.activeTab === 'cloud';
-        if (evt.detail.successful && evt.detail.xhr.responseText.includes('data-local-training-started')) {
-            window.Alpine.store('trainer').refreshManualTargets();
-            window.initSSE?.();
+        const trainer = window.Alpine.store('trainer');
+        button.disabled = trainer.activeEnvironmentIsTraining || trainer.activeTab === 'cloud';
+        if (evt.detail.successful) {
+            trainer.refreshManualTargets();
+            if (evt.detail.xhr.responseText.includes('data-local-training-started')) window.initSSE?.();
         }
     };
 
     // Enhanced HTMX event handlers
     document.body.addEventListener('htmx:afterRequest', function(evt) {
         const button = evt.detail.elt;
-        if (!button || !button.id) {
-            return;
-        }
-
-        if (!TRAINER_BUTTON_IDS.has(button.id)) {
-            return;
-        }
+        if (button?.id !== 'validateBtn') return;
 
         const xhr = evt.detail.xhr;
         const responseText = xhr && typeof xhr.responseText === 'string' ? xhr.responseText : '';
         const hasErrorAlert = responseText.includes('alert-danger');
 
         // Special handling for validation button
-        if (button.id === 'validateBtn' && evt.detail.successful) {
+        if (evt.detail.successful) {
             // Check if response contains validation errors or warnings
             if (responseText.includes('alert-danger')) {
                 button.classList.add('error-pulse');
@@ -556,10 +569,6 @@ if (!window.__trainerActionHTMXBound) {
             button.classList.add('success-pulse');
             setTimeout(() => button.classList.remove('success-pulse'), 1000);
 
-            if (!window.trainerMain && window.showToast && button.id === 'cancelBtn' && responseText.includes('data-local-training-cancelled')) {
-                window.showToast('Training cancelled successfully!', 'success');
-                window.__trainerActionToastFallback = true;
-            }
         } else {
             button.classList.add('error-pulse');
             setTimeout(() => button.classList.remove('error-pulse'), 1000);

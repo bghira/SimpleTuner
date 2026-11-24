@@ -296,6 +296,17 @@ body {
     display: flex;
     align-items: center;
     gap: var(--spacing-md);
+    min-width: 0;
+}
+
+.topbar-left .config-selector,
+.config-selector__toggle-wrapper,
+.config-selector__toggle-wrapper > .btn {
+    min-width: 0;
+}
+
+.config-selector__toggle-wrapper > .btn {
+    max-width: 100%;
 }
 
 /* Topbar right section - pushed to the right */
@@ -2165,6 +2176,25 @@ optgroup option {
 
 .startup-progress-alert .startup-progress-item:last-child {
     margin-bottom: 0;
+}
+
+.training-launch-dialog {
+    width: min(36rem, calc(100% - 2rem));
+    background: var(--sidebar-bg);
+    color: var(--text-primary);
+}
+
+@media (max-width: 1024px) {
+    .header-actions .trainer-action-btn .btn-text {
+        display: none !important;
+    }
+}
+
+@media (max-width: 768px) {
+    .topbar-right,
+    .header-actions {
+        flex-wrap: wrap;
+    }
 }
 
 /* Mobile sidebar toggle button - additional responsive tweaks */

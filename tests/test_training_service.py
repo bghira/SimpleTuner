@@ -935,8 +935,15 @@ class ManualTrainingTargetTests(unittest.IsolatedAsyncioTestCase):
         repo.get.side_effect = jobs.get
         processes = {job_id: {"alive": True, "status": "running"} for job_id in jobs}
         jobs["remote"] = SimpleNamespace(
-            user_id=7, config_name="remote", status="running", is_terminal=False, metadata={"worker_id": "w1"}
+            user_id=7,
+            job_id="remote",
+            provider="worker",
+            config_name="remote",
+            status="running",
+            is_terminal=False,
+            metadata={"worker_id": "w1"},
         )
+        repo.list_active_training_jobs.return_value = [jobs["remote"]]
         worker_repo = AsyncMock()
         worker_repo.get_worker.return_value = SimpleNamespace(
             worker_id="w1", name="GPU", gpu_info={}, status="busy", current_job_id="remote"

@@ -3576,18 +3576,46 @@ function trainerComponent() {
         _serverUptimeTimer: null,
         _beforeUnloadHandler: null,
         _visibilityChangeHandler: null,
-        manualTargets: [],
+        trainingControlTargets: [],
         _manualTargetsRequest: 0,
-        localStopPending: false,
-        get localStopTarget() {
-            const local = this.manualTargets.filter(target => !target.worker_id);
-            return local.length === 1 ? local[0] : local.find(target => target.is_current);
+        stopPending: false,
+        get activeEnvironmentIsTraining() {
+            return this.trainingControlTargets.some(target => target.config_name === this.activeEnvironment);
         },
-        async finishLocalStop() {
+        get stoppableRuns() {
+            return this.trainingControlTargets.filter(target => target.can_stop);
+        },
+        get manualTargets() {
+            return this.trainingControlTargets.filter(target => target.show_manual_actions);
+        },
+        async stopTrainingRun(target, dialog) {
+            if (this.stopPending || !target.can_stop || !window.confirm('Stop this training run?')) return;
+            this.stopPending = true;
             try {
-                await this.refreshManualTargets();
+                const remote = Boolean(target.provider || target.worker_id);
+                const response = remote
+                    ? await ApiClient.fetch(`/api/cloud/jobs/${encodeURIComponent(target.job_id)}/cancel`, {method: 'POST'}, {forceApi: true})
+                    : await ApiClient.fetch('/api/training/cancel', {
+                        method: 'POST',
+                        body: new URLSearchParams({job_id: target.job_id})
+                    }, {forceApi: true});
+                if (remote) {
+                    const result = await response.json();
+                    if (!response.ok || !result.success) throw new Error(result.detail || 'Could not stop the training run.');
+                } else {
+                    const html = await response.text();
+                    if (!response.ok || !html.includes('data-local-training-cancelled')) {
+                        throw new Error('The local training run could not be stopped.');
+                    }
+                    document.getElementById('training-status').innerHTML = html;
+                }
+                dialog.close();
+                window.showToast('Stop requested', 'success');
+            } catch (error) {
+                window.showToast(error.message, 'error');
             } finally {
-                this.localStopPending = false;
+                await this.refreshManualTargets();
+                this.stopPending = false;
             }
         },
         manualMenu: null,
@@ -3601,16 +3629,16 @@ function trainerComponent() {
                 if (!response.ok) throw new Error(response.statusText);
                 const targets = await response.json();
                 if (request !== this._manualTargetsRequest) return;
-                this.manualTargets = targets;
+                this.trainingControlTargets = targets;
             } catch (error) {
                 if (request !== this._manualTargetsRequest) return;
                 console.warn('Could not load training nodes:', error);
-                this.manualTargets = [];
+                this.trainingControlTargets = [];
             }
             if (!this.manualTargets.length) this.manualMenu = null;
         },
         toggleManualAction(action, button) {
-            if (this.manualTargets.length === 1 && !this.manualTargets[0].worker_id) {
+            if (this.manualTargets.length === 1 && !this.manualTargets[0].provider) {
                 return this.sendManualAction(action, this.manualTargets[0]);
             }
             this.manualMenuBelow = window.innerHeight - button.getBoundingClientRect().bottom > window.innerHeight * 0.4 + 8;
@@ -6005,7 +6033,7 @@ function trainerComponent() {
 <!-- Main App - shown when auth check complete and login not required -->
 <div class="dashboard-wrapper"
      x-data="$store.trainer"
-     @training-status.window="if (localStopTarget && $event.detail?.job_id === localStopTarget.job_id && ['idle', 'completed', 'complete', 'stopped', 'cancelled', 'terminated', 'failed', 'error'].includes($event.detail.status)) refreshManualTargets()"
+     @training-status.window="if ($event.detail?.job_id && (['idle', 'completed', 'complete', 'stopped', 'cancelled', 'terminated', 'failed', 'error'].includes($event.detail.status) || !trainingControlTargets.some(target => target.job_id === $event.detail.job_id))) refreshManualTargets()"
      x-show="$store.cloudAuth.shouldShowApp"
      x-cloak
      x-init="(async () => {
@@ -7205,7 +7233,7 @@ function trainerComponent() {
                             :disabled="loading">
                         <i class="fas fa-cog" x-show="!loading"></i>
                         <span class="spinner-border spinner-border-sm" x-show="loading"></span>
-                        <span x-text="activeConfig || 'No Config Selected'"></span>
+                        <span class="text-truncate" :title="activeConfig" x-text="activeConfig || 'No Config Selected'"></span>
 
                         <!-- Validation state indicators -->
                         <span x-show="validationState && !validationState.is_valid"
@@ -7688,7 +7716,7 @@ function trainerComponent() {
                                 :aria-expanded="manualMenu === '{{ action }}'" aria-controls="{{ action }}-targets"
                                 :disabled="manualPending" @click.stop="toggleManualAction('{{ action }}', $el)">
                             <i class="fas {{ icon }}" aria-hidden="true"></i> <span>{{ label }}</span>
-                            <i x-show="manualTargets.length > 1 || manualTargets[0]?.worker_id" class="fas fa-caret-down" aria-hidden="true"></i>
+                            <i x-show="manualTargets.length > 1 || manualTargets[0]?.provider" class="fas fa-caret-down" aria-hidden="true"></i>
                         </button>
                         <div id="{{ action }}-targets" class="dropdown-menu show manual-target-menu"
                              role="group" aria-label="{{ label }} on training node" x-cloak x-show="manualMenu === '{{ action }}'"
