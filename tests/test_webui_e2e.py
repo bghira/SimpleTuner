@@ -473,6 +473,13 @@ class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
                 self.assertFalse(driver.find_element(By.CSS_SELECTOR, section).is_displayed())
                 click(dismiss)
                 wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, section)))
+                panel = (By.CSS_SELECTOR, f"#hardware-tab-content .tab-fields #content-multi_node_setup {section}")
+                self.assertTrue(driver.find_element(*panel).is_displayed())
+                toggle = "#section-multi_node_setup button[data-bs-target='#content-multi_node_setup']"
+                click(toggle)
+                wait.until(EC.invisibility_of_element_located(panel))
+                click(toggle)
+                wait.until(EC.visibility_of_element_located(panel))
 
                 for worker in ids:
                     click(f"{section} input[value='{worker}']")

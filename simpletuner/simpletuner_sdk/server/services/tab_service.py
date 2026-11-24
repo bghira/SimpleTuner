@@ -428,14 +428,11 @@ class TabService:
         if not capabilities.get("supports_fsdp", False):
             _filter_by_prefix(["fsdp_"])
 
-        sections = context.get("sections")
-        if sections:
-            filtered_sections: List[Dict[str, Any]] = []
-            for section in sections:
-                section_id = section.get("id")
-                if section_id and any(field.get("section_id") == section_id for field in fields):
-                    filtered_sections.append(section)
-            context["sections"] = filtered_sections
+        field_section_ids = {field.get("section_id") for field in fields}
+        context["sections"] = CUSTOM_SECTION_SERVICE.merge_custom_sections_with_field_sections(
+            tab="hardware",
+            field_sections=[section for section in context.get("sections", []) if section["id"] in field_section_ids],
+        )
 
         return context
 
