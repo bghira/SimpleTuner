@@ -193,6 +193,14 @@ class TrainingMetricsService:
             "job_id": job.job_id,
             "environment": environment,
             "worker": worker_name,
+            "workers": [
+                {"id": worker_id, "name": name}
+                for worker_id, name in zip(
+                    job.metadata.get("worker_ids") or [job.metadata["worker_id"]],
+                    job.metadata.get("worker_names") or [worker_name],
+                    strict=True,
+                )
+            ],
             "run_name": config.get("--tracker_run_name") or config.get("tracker_run_name") or environment or job.job_id,
             "model_family": config.get("--model_family") or config.get("model_family"),
             "status": "running",

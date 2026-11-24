@@ -50,7 +50,7 @@
                         data-testid="training-run-select">
                     <template x-for="run in trainingRuns" :key="trainingRunKey(run)">
                         <option :value="trainingRunKey(run)"
-                                x-text="run.worker ? run.run_name + ' · ' + run.worker + ' · ' + run.job_id : run.run_name + ' · ' + run.environment"></option>
+                                x-text="run.worker ? run.run_name + ' · ' + run.workers.map(w => w.name).join(', ') + ' · ' + run.job_id : run.run_name + ' · ' + run.environment"></option>
                     </template>
                 </select>
                 <button type="button"
@@ -90,8 +90,12 @@
             <div>
                 <div class="training-run-summary">
                     <div x-show="trainingRunData.run.worker">
-                        <span>Live worker</span>
-                        <strong x-text="trainingRunData.run.worker"></strong>
+                        <span x-text="trainingRunData.run.workers?.length > 1 ? 'Live workers' : 'Live worker'"></span>
+                        <template x-for="host in trainingRunData.run.workers" :key="host.id">
+                            <button type="button" class="btn btn-link btn-sm p-0 me-2" x-text="host.name"
+                                    :disabled="!gpuWorkers.some(worker => worker.worker_id === host.id)"
+                                    @click="setMetricsSection('system'); selectGpuSource(host.id)"></button>
+                        </template>
                     </div>
                     <div>
                         <span>Status</span>

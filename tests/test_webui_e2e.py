@@ -99,7 +99,7 @@ class _TrainerPageMixin:
 
 class _TrainingWorkerFixture:
 
-    def register_job(self, job_id, worker_name, gpu, *, error_message=None, gpu_info=None):
+    def register_job(self, job_id, worker_name, gpu, *, error_message=None, gpu_info=None, group=None):
         import asyncio
         from datetime import datetime, timezone
         from unittest.mock import patch
@@ -132,7 +132,7 @@ class _TrainingWorkerFixture:
             created_at=datetime.now(timezone.utc).isoformat(),
             completed_at=datetime.now(timezone.utc).isoformat() if error_message else None,
             error_message=error_message,
-            metadata={"worker_id": worker.worker_id},
+            metadata={"worker_id": worker.worker_id, **(group or {})},
         )
         with patch.dict(JobRepository._instances, clear=True):
             asyncio.run(JobRepository(cloud_dir / "jobs.db").add(job))
@@ -2110,6 +2110,63 @@ class RemoteWorkerTrainingMetricsTestCase(_TrainingWorkerFixture, WebUITestCase)
             headers={"X-Worker-Token": f"{job_id}-token"},
             timeout=10,
         ).raise_for_status()
+
+    def test_group_member_opens_its_own_gpu_metrics(self):
+        self.with_sample_environment()
+        job_id = "group-metrics"
+        host = requests.post(
+            f"{self.base_url}/api/admin/workers", json={"name": "Second H200", "worker_type": "persistent"}, timeout=10
+        ).json()
+        ids = [f"worker-{job_id}", host["worker_id"]]
+        self.register_job(
+            job_id, "First H200", "H200", group={"worker_ids": ids, "worker_names": ["First H200", "Second H200"]}
+        )
+        requests.post(
+            f"{self.base_url}/api/workers/heartbeat",
+            headers={"X-Worker-Token": host["token"]},
+            json={
+                "worker_id": ids[1],
+                "status": "busy",
+                "current_job_id": job_id,
+                "system_metrics": {"system/gpu/0/utilization_percent": 97},
+            },
+            timeout=10,
+        ).raise_for_status()
+        requests.post(
+            f"{self.base_url}/api/workers/job/{job_id}/status",
+            headers={"X-Worker-Token": job_id + "-token"},
+            json={"progress": {"current": 25, "metrics": {"loss": 0.2}}},
+            timeout=10,
+        ).raise_for_status()
+
+        def scenario(driver, _):
+            wait = WebDriverWait(driver, 20)
+            driver.get(f"{self.base_url}/web/trainer#metrics")
+            self.dismiss_onboarding(driver)
+            selector = wait.until(EC.element_to_be_clickable((By.ID, "training-run-select")))
+            Select(selector).select_by_value("worker:" + job_id)
+            link = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[normalize-space()='Second H200']")))
+            driver.execute_script("arguments[0].scrollIntoView({block:'center'})", link)
+            wait.until(
+                lambda d: (self.dismiss_onboarding(d) or True)
+                and d.execute_script(
+                    "const r=arguments[0].getBoundingClientRect(); "
+                    "return arguments[0].contains(document.elementFromPoint(r.x+r.width/2, r.y+r.height/2));",
+                    link,
+                )
+            )
+            link.click()
+            wait.until(
+                lambda d: Select(d.find_element(By.ID, "gpu-metrics-source")).first_selected_option.get_attribute("value")
+                == ids[1]
+            )
+            wait.until(
+                lambda d: d.execute_script(
+                    "return Alpine.$data(document.querySelector('#metrics-tab-content')).gpuHealth[0]?.gpu_utilization_percent === 97"
+                )
+            )
+
+        self.for_each_browser("group_member_metrics", scenario)
 
     def test_shared_environment_workers_have_separate_training_runs(self):
         runs = (("progress-first", "First worker", 0.1), ("progress-second", "Second worker", 0.2))
