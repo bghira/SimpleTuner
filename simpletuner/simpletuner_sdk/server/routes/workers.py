@@ -16,12 +16,12 @@ from typing import Annotated, Any, Dict, Literal, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field, FiniteFloat
+from pydantic import BaseModel, Field, FiniteFloat, StringConstraints
 
 from simpletuner.worker_protocol import WORKER_LOG_TAIL_SIZE
 
 from ..models.worker import WorkerStatus, WorkerType
-from ..services.callback_events import StageStatus
+from ..services.callback_events import EventType, StageStatus
 from ..services.callback_service import get_default_callback_service
 from ..services.cloud.auth import User, get_optional_user
 from ..services.worker_credentials import generate_worker_token, hash_token
@@ -90,6 +90,12 @@ class JobStatusUpdate(BaseModel):
     error: Optional[str] = None
     log_tail: str | None = Field(default=None, max_length=WORKER_LOG_TAIL_SIZE)
     validation: WorkerValidationUpdate | None = None
+
+
+class WorkerValidationImages(BaseModel):
+    message: str | None = None
+    timestamp: datetime
+    images: list[Annotated[str, StringConstraints(pattern=r"^iVBORw0KGgo[A-Za-z0-9+/]*={0,2}$")]] = Field(min_length=1)
 
 
 class CreateWorkerRequest(BaseModel):
@@ -657,6 +663,38 @@ async def worker_has_pending_jobs(worker_id: str, x_worker_token: str = Header(.
             for job in jobs
         )
     }
+
+
+@router.post("/job/{job_id}/validation")
+async def publish_validation_images(
+    job_id: str,
+    request: WorkerValidationImages,
+    x_worker_token: str = Header(..., alias="X-Worker-Token"),
+) -> Dict[str, Any]:
+    """Publish completed validation images from the worker leading a job."""
+    from ..services.cloud.storage.job_repository import get_job_repository
+
+    worker = await validate_worker_token(x_worker_token)
+    job = await _assigned_job(get_job_repository(), job_id, worker, reports_progress=False)
+    metadata = job.metadata or {}
+    if metadata.get("worker_id") != worker.worker_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Only the lead worker can publish validation images"
+        )
+    if job.is_terminal or metadata.get("group_check"):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Job is not accepting validation images")
+
+    get_default_callback_service().handle_incoming(
+        {
+            "type": EventType.VALIDATION.value,
+            "job_id": job.job_id,
+            "message": request.message,
+            "timestamp": request.timestamp,
+            "images": request.images,
+            "data": {"worker": worker.name},
+        }
+    )
+    return {"success": True}
 
 
 @router.post("/job/{job_id}/status")

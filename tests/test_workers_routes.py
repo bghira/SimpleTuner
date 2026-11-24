@@ -656,6 +656,59 @@ class WorkerJobStatusTestCase(APITestCase, unittest.TestCase):
         self.client.close()
         super().tearDown()
 
+    def test_only_group_lead_publishes_validation_image_events(self):
+        from simpletuner.simpletuner_sdk.server.services.callback_service import CallbackService
+        from simpletuner.simpletuner_sdk.server.services.event_store import EventStore
+
+        callback_service = CallbackService(EventStore())
+        job = UnifiedJob(
+            job_id="job-456",
+            job_type=JobType.LOCAL,
+            provider="worker",
+            status="training",
+            created_at=datetime.now(timezone.utc).isoformat(),
+            config_name="distributed",
+            metadata={"worker_id": "leader", "worker_ids": ["leader", self.worker.worker_id]},
+        )
+        jobs = AsyncMock()
+        jobs.get.return_value = job
+        route = "/api/workers/job/job-456/validation"
+        payload = {
+            "message": "Validation: sample",
+            "timestamp": "2026-01-01T00:00:00Z",
+            "images": ["iVBORw0KGgo="],
+        }
+        headers = {"X-Worker-Token": self.token}
+        with (
+            patch("simpletuner.simpletuner_sdk.server.routes.workers.validate_worker_token", return_value=self.worker),
+            patch(
+                "simpletuner.simpletuner_sdk.server.services.cloud.storage.job_repository.get_job_repository",
+                return_value=jobs,
+            ),
+            patch(
+                "simpletuner.simpletuner_sdk.server.routes.workers.get_default_callback_service",
+                return_value=callback_service,
+            ),
+        ):
+            response = self.client.post(route, json=payload, headers=headers)
+            self.assertEqual(response.status_code, 403)
+            self.assertEqual(callback_service.stream_since(-1), [])
+
+            job.metadata["worker_ids"].reverse()
+            job.metadata["worker_id"] = self.worker.worker_id
+            response = self.client.post(route, json=payload, headers=headers)
+            response.raise_for_status()
+            (event,) = callback_service.stream_since(-1)
+            self.assertEqual(event.type.value, "training.validation")
+            self.assertEqual(event.job_id, job.job_id)
+            self.assertEqual(event.images, tuple(payload["images"]))
+            self.assertEqual(event.data["worker"], self.worker.name)
+
+            job.status = "completed"
+            response = self.client.post(route, json=payload, headers=headers)
+            self.assertEqual(response.status_code, 409)
+            self.assertEqual(len(callback_service.stream_since(-1)), 1)
+
     @patch.dict(BaseSQLiteStore._instances, clear=True)
     def test_group_member_failure_cancels_leader_and_late_completion_preserves_error(self):
         from simpletuner.simpletuner_sdk.server.services.cloud.storage.job_repository import JobRepository

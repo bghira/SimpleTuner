@@ -671,6 +671,9 @@
                 baseRetryDelay: 1000,
                 maxRetryDelay: 30000
             });
+            if (window.sseManager) {
+                window.EventRenderer?.init();
+            }
 
             // Note: training_progress events are handled by training_events_sse.html
             // which properly extracts and normalizes metrics before dispatching

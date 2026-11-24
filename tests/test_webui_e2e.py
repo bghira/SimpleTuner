@@ -1289,6 +1289,38 @@ class _ImagesEnabledBrowserMixin:
         return self._driver_cache[browser]
 
 
+class ValidationEventReplayFlowTestCase(_ImagesEnabledBrowserMixin, _TrainerPageMixin, WebUITestCase):
+    SERVER_MODE = ServerMode.UNIFIED
+
+    def test_completed_validation_image_survives_refresh(self) -> None:
+        import base64
+
+        buffer = BytesIO()
+        Image.new("RGB", (8, 8), color="red").save(buffer, format="PNG")
+        image = base64.b64encode(buffer.getvalue()).decode("ascii")
+        headline = "Completed validation replay check"
+        for kind, message in (("validation.image", "Sampling preview for replay check"), ("training.validation", headline)):
+            requests.post(
+                f"{self.base_url}/callback",
+                json={"type": kind, "job_id": "validation-replay-test", "message": message, "images": [image]},
+                timeout=10,
+            ).raise_for_status()
+
+        def scenario(driver, _browser):
+            self._trainer_page(driver).navigate_to_trainer()
+            wait = WebDriverWait(driver, 15)
+            result = (By.CSS_SELECTOR, f'#eventList img.event-image[alt="{headline}"]')
+            wait.until(EC.presence_of_element_located(result))
+            driver.refresh()
+            wait.until(EC.presence_of_element_located(result))
+            self.assertEqual(len(driver.find_elements(*result)), 1)
+            self.assertEqual(
+                driver.find_elements(By.CSS_SELECTOR, '#eventList img[alt*="Sampling preview for replay check"]'), []
+            )
+
+        self.for_each_browser("test_completed_validation_image_survives_refresh", scenario)
+
+
 class EventLightboxFlowTestCase(_ImagesEnabledBrowserMixin, _TrainerPageMixin, WebUITestCase):
     def test_event_images_open_navigate_and_close(self) -> None:
         import base64
