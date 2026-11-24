@@ -187,6 +187,9 @@ class AsyncJobStore:
         """Update an existing job."""
         return await self._jobs.update(job_id, updates, expected_status=expected_status)
 
+    async def finish_group_member(self, job_id, worker_id, status, error, log_tail):
+        return await self._jobs.finish_group_member(job_id, worker_id, status, error, log_tail)
+
     async def get_job(self, job_id: str) -> Optional[UnifiedJob]:
         """Get a job by ID."""
         return await self._jobs.get(job_id)

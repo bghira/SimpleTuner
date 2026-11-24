@@ -170,6 +170,43 @@ class WorkerAgentJobStartTestCase(unittest.IsolatedAsyncioTestCase):
         finally:
             shutil.rmtree(job_dir, ignore_errors=True)
 
+    async def test_group_dispatch_launches_assigned_machine_rank(self):
+        job_id = f"test-{uuid.uuid4().hex}"
+        job_dir = Path(f"/tmp/simpletuner_job_{job_id}")
+        self.addCleanup(shutil.rmtree, job_dir, ignore_errors=True)
+        agent = WorkerAgent(WorkerConfig("https://orchestrator.example.com", "token", "worker", persistent=True))
+        event = {
+            "type": "job_submit",
+            "job_id": job_id,
+            "provider": "worker",
+            "config": {"num_processes": 1},
+            "upload_endpoint": "/api/cloud/storage",
+            "distributed": {"nnodes": 2, "nproc_per_node": 8, "node_rank": 1, "master_addr": "leader", "master_port": 29501},
+        }
+        with (
+            patch.object(agent, "_report_job_status", new=AsyncMock()),
+            patch("simpletuner.worker_agent.subprocess.Popen") as popen,
+            patch("simpletuner.worker_agent.asyncio.create_task", side_effect=lambda coro: coro.close()),
+        ):
+            await agent._start_job(event)
+        self.assertEqual(
+            popen.call_args.args[0],
+            [
+                sys.executable,
+                "-m",
+                "torch.distributed.run",
+                "--nnodes=2",
+                "--nproc-per-node=8",
+                "--node-rank=1",
+                "--master-addr=leader",
+                "--master-port=29501",
+                "--module",
+                "simpletuner.train",
+            ],
+        )
+        config = json.loads(Path(popen.call_args.kwargs["env"]["CONFIG_PATH"]).read_text())
+        self.assertEqual((config["num_machines"], config["num_processes"]), (2, 16))
+
     async def test_start_legacy_job_preserves_yaml_dataloader(self) -> None:
         """Verify ordinary Workers retain their existing YAML launch contract."""
         job_id = f"test-{uuid.uuid4().hex}"
@@ -269,6 +306,7 @@ class WorkerAgentJobStartTestCase(unittest.IsolatedAsyncioTestCase):
             agent._log_tail = output[: -len("last training line\n")][-WORKER_LOG_TAIL_SIZE:]
             with patch("simpletuner.worker_agent.httpx.AsyncClient") as client:
                 post = client.return_value.__aenter__.return_value.post
+                post.return_value = Mock()
                 await agent._monitor_training(Path("/tmp"))
 
             self.assertEqual(post.await_args.kwargs["json"]["status"], "completed")

@@ -624,12 +624,32 @@ class LocalJobSubmitResponse(BaseModel):
     reason: Optional[str] = None
 
 
+async def submit_selected_worker_job(name, config, store, user, ids):
+    """Send the same environment and managed dataset snapshot through either submission API."""
+    import json
+
+    from ..utils.paths import resolve_config_path
+
+    config = {key.removeprefix("--"): value for key, value in config.items()}
+    dataloader = None
+    if path := config.get("data_backend_config"):
+        resolved = resolve_config_path(path, config_dir=store.config_dir, check_cwd_first=False)
+        if resolved and resolved.resolve().is_relative_to(store.config_dir.resolve()) and resolved.suffix == ".json":
+            dataloader = json.loads(resolved.read_text(encoding="utf-8"))
+            if not isinstance(dataloader, list):
+                raise ValueError("The selected dataset configuration must contain a list of datasets.")
+    return await submit_worker_job(
+        name, config, user, target_worker_id=ids[0], target_worker_ids=ids if len(ids) > 1 else None, dataloader=dataloader
+    )
+
+
 async def submit_worker_job(
     config_name: str,
     config: Dict[str, Any],
     user: Optional[User],
     *,
     target_worker_id: Optional[str] = None,
+    target_worker_ids: Optional[list[str]] = None,
     dataloader: Optional[list] = None,
 ) -> LocalJobSubmitResponse:
     """Queue a configuration snapshot and let the worker scheduler assign it."""
@@ -646,6 +666,8 @@ async def submit_worker_job(
     job_id = f"wjob-{uuid.uuid4().hex[:12]}"
     now = datetime.now(timezone.utc).isoformat()
     metadata = {"config": config, "target": "worker"}
+    if target_worker_ids:
+        metadata["target_worker_ids"] = target_worker_ids
     if target_worker_id:
         metadata["target_worker_id"] = target_worker_id
     if dataloader is not None:
@@ -666,7 +688,8 @@ async def submit_worker_job(
     await manager.dispatch_pending_jobs()
     job = await manager.job_store.get_job(job_id)
     return LocalJobSubmitResponse(
-        success=True,
+        success=job.status != "failed",
+        error=job.error_message if job.status == "failed" else None,
         job_id=job_id,
         status="queued" if job.status == "pending" else job.status,
         allocated_worker_id=job.metadata.get("worker_id"),
@@ -707,7 +730,7 @@ async def submit_local_job(
         )
 
         try:
-            config, _ = config_store.load_config(request.config_name)
+            config, metadata = config_store.load_config(request.config_name)
         except FileNotFoundError:
             return LocalJobSubmitResponse(
                 success=False,
@@ -738,6 +761,13 @@ async def submit_local_job(
                 status=job.status,
                 allocated_worker_id=(job.metadata or {}).get("worker_id"),
             )
+
+        if request.target in ("worker", "auto") and metadata.default_worker_ids:
+            from ..services.worker_groups import launch_inventory, resolve_worker_group
+
+            ids = metadata.default_worker_ids
+            resolve_worker_group(ids, await launch_inventory(user))
+            return await submit_selected_worker_job(request.config_name, config, config_store, user, ids)
 
         # Always initialize worker repository to ensure consistent state
         # This fixes an issue where target=local would fail but target=auto would work

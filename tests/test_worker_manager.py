@@ -107,6 +107,18 @@ class TestWorkerManager(unittest.IsolatedAsyncioTestCase):
         job.upload_token = "test-upload-token"
         return job
 
+    async def test_group_rechecks_submit_permission_before_reserving_hosts(self):
+        job = self._create_job(metadata={"target_worker_ids": ["a", "b"]})
+        with patch(
+            "simpletuner.simpletuner_sdk.server.services.cloud.auth.user_store.UserStore.get_user",
+            new=AsyncMock(return_value=None),
+        ):
+            await self.worker_manager._dispatch_group(job)
+        self.mock_worker_repository.reserve_group.assert_not_awaited()
+        updates = self.mock_job_store.update_job.await_args.args[1]
+        self.assertEqual(updates["status"], "failed")
+        self.assertIn("rank 0", updates["error_message"])
+
     async def test_start_and_stop(self) -> None:
         """Test starting and stopping the worker manager."""
         await self.worker_manager.start()

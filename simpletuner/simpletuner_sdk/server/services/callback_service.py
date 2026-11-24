@@ -148,6 +148,7 @@ def _job_context(job_id: str) -> dict[str, Any]:
             "assigned_worker": bool(worker_id or job.provider in {"worker", "kubeflow"}),
             "local_worker": job.provider == "local" and not worker_id,
             "worker": worker.name if worker else worker_id,
+            "worker_names": metadata.get("worker_names"),
             "gpu": (worker.gpu_info or {}).get("name") if worker else job.hardware_type,
         }
 
@@ -631,6 +632,7 @@ class CallbackService:
                     for key in (
                         "job_id",
                         "worker",
+                        "worker_names",
                         "gpu",
                         "config_name",
                         "updated_at",

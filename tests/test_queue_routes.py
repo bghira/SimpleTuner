@@ -287,7 +287,7 @@ class TestSubmitLocalJob(AsyncAPITestCase, unittest.IsolatedAsyncioTestCase):
         # Mock dependencies
         mock_config = {"model_family": "flux", "output_dir": "/output"}
         mock_config_store = MagicMock()
-        mock_config_store.load_config = MagicMock(return_value=(mock_config, MagicMock()))
+        mock_config_store.load_config = MagicMock(return_value=(mock_config, MagicMock(default_worker_ids=[])))
 
         mock_defaults = MagicMock()
         mock_defaults.configs_dir = "/configs"
@@ -347,7 +347,7 @@ class TestSubmitLocalJob(AsyncAPITestCase, unittest.IsolatedAsyncioTestCase):
 
         mock_config = {"model_family": "flux", "output_dir": "/output"}
         mock_config_store = MagicMock()
-        mock_config_store.load_config = MagicMock(return_value=(mock_config, MagicMock()))
+        mock_config_store.load_config = MagicMock(return_value=(mock_config, MagicMock(default_worker_ids=[])))
 
         mock_defaults = MagicMock()
         mock_defaults.configs_dir = "/configs"

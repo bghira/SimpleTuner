@@ -215,6 +215,14 @@ O scheduler faz matching de jobs para workers com base em:
 2. Matching de labels (suporte a glob)
 3. Disponibilidade do worker (status IDLE)
 
+## Iniciar um trabalho em vários workers
+
+Para reutilizar um grupo, abra **Hardware → Multi-node setup** no ambiente. Selecione os hosts, ordene-os com **Move up** e **Move down**, confira os caminhos dos dados e da saída compartilhada e clique em **Save**. **Run** usa o grupo salvo. **Change workers for this run** altera a seleção apenas para essa execução. O grupo aguarda se houver hosts ocupados. Reconecte ou substitua hosts indisponíveis. Cópias locais mantêm o grupo e exportações omitem os identificadores.
+
+Em **Run**, marque os hosts com o mesmo modelo de GPU CUDA na ordem de rank desejada. O primeiro recebe o rank 0. O trabalho aguarda até que todos estejam livres. Cada host usa a mesma quantidade de GPUs do host com menos GPUs no grupo. Training Progress lista os workers juntos em ordem de rank.
+
+Atualize o agente em cada host. Os hosts devem conseguir se comunicar e resolver o nome do host de rank 0. Antes de iniciar o agente, você pode definir `SIMPLETUNER_WORKER_ADDRESS` com um nome ou IP acessível. Libere o tráfego do backend distribuído e a porta `main_process_port` (padrão 29500) no rank 0. Os caminhos dos dados devem funcionar em todos os hosts. Use armazenamento compartilhado para os checkpoints e a saída.
+
 ## Monitorar outro nó de um trabalho distribuído
 
 Após a atribuição do trabalho, crie um token de par para cada nó adicional. Use o ID do trabalho exibido na fila do orquestrador. Execute o comando de conexão retornado nesse nó. Cada par aparece em Workers e envia suas próprias métricas de GPU. O worker original controla o trabalho e informa o progresso do treinamento. Remover um par encerra o monitoramento desse nó.

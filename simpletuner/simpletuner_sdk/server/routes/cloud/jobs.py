@@ -197,6 +197,7 @@ async def cancel_job(
         CloudJobStatus.QUEUED.value,
         CloudJobStatus.RUNNING.value,
         "starting",
+        "training",
     ]
     if job.status not in cancellable_states:
         raise JobStateError(job_id, job.status, cancellable_states)
@@ -241,7 +242,7 @@ async def cancel_job(
         except Exception as exc:
             logger.error("Error cancelling Kubeflow job %s: %s", job_id, exc)
             raise ProviderError("kubeflow", f"Error cancelling job: {exc}", cause=exc)
-    elif job.job_type == JobType.LOCAL:
+    elif job.job_type == JobType.LOCAL and job.provider != "worker":
         try:
             from simpletuner.simpletuner_sdk import process_keeper
 
@@ -266,6 +267,16 @@ async def cancel_job(
             "completed_at": datetime.now(timezone.utc).isoformat(),
         },
     )
+
+    if job.provider == "worker":
+        from ..workers import push_to_worker
+
+        # Read the assignment after cancellation in case dispatch claimed a pending job concurrently.
+        cancelled = await store.get_job(job_id)
+        metadata = cancelled.metadata or {}
+        for worker_id in metadata.get("worker_ids") or [metadata.get("worker_id")]:
+            if worker_id:
+                await push_to_worker(worker_id, {"type": "job_cancel", "job_id": job_id})
 
     job_type_label = "Local" if job.is_local else "Cloud"
 

@@ -223,6 +223,7 @@ class TrainingConfigBundle:
     config_dict: Dict[str, Any]
     save_config: Dict[str, Any]
     merge_environment_defaults: bool = False
+    default_worker_ids: list[str] | None = None
 
 
 @dataclass
@@ -298,6 +299,16 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
                 form_dict[key] = values
     else:
         form_dict = dict(form_data)
+
+    expected_environment = form_dict.pop("__worker_environment", None)
+    worker_selection = form_dict.pop("__default_worker_ids", None)
+    worker_ids = None
+    if worker_selection is not None:
+        worker_ids = json.loads(worker_selection)
+        if not isinstance(worker_ids, list) or not all(isinstance(item, str) and item for item in worker_ids):
+            raise ValueError("Invalid worker selection.")
+        if not expected_environment or len(worker_ids) == 1 or len(set(worker_ids)) != len(worker_ids):
+            raise ValueError("Choose at least two distinct workers or clear the selection.")
 
     raw_interval_input = form_dict.get("accelerator_cache_clear_interval")
     if raw_interval_input is None:
@@ -457,6 +468,8 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
 
     store = get_config_store()
     active_config = store.get_active_config() or "default"
+    if expected_environment and expected_environment != active_config:
+        raise ValueError("The active environment changed. Reload before saving or launching.")
 
     existing_config_cli: Dict[str, Any] = {}
     if active_config:
@@ -921,6 +934,7 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
         config_dict=config_dict,
         save_config=save_config,
         merge_environment_defaults=merge_environment_defaults,
+        default_worker_ids=worker_ids,
     )
 
 
@@ -945,6 +959,8 @@ def persist_config_bundle(bundle: TrainingConfigBundle) -> None:
             logger.info("Created backup at %s", backup_path)
 
     store.save_trainer_config(bundle.active_config, bundle.save_config, overwrite=True)
+    if bundle.default_worker_ids is not None:
+        store.save_worker_defaults(bundle.active_config, bundle.default_worker_ids)
 
     literal_scientific_keys = {
         key: value

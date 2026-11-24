@@ -63,6 +63,20 @@ class Worker:
         """
         return self.worker_type == WorkerType.EPHEMERAL and self.provider == "kubeflow" and self.current_job_id is not None
 
+    @property
+    def multinode_gpus(self) -> int:
+        info = self.gpu_info
+        count = info.get("count")
+        if (
+            info.get("accelerator") == "cuda"
+            and info.get("name")
+            and info.get("distributed_address")
+            and isinstance(count, int)
+            and count > 0
+        ):
+            return count
+        return 0
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {

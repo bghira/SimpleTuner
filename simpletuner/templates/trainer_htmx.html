@@ -463,7 +463,7 @@ function trainingProgressList() {
         get matchingRuns() {
             const query = this.query.trim().toLowerCase();
             if (!query) return this.remainingRuns;
-            return this.remainingRuns.filter(run => [run.worker, run.config_name, run.gpu, run.job_id]
+            return this.remainingRuns.filter(run => [run.worker, ...(run.worker_names || []), run.config_name, run.gpu, run.job_id]
                 .some(value => value?.toLowerCase().includes(query)));
         },
     };
@@ -771,6 +771,7 @@ function trainerComponent() {
                 const phase = (run.validation_at ?? 0) >= (previous.validation_at ?? 0) ? run : previous;
                 byJob.set(run.job_id, {
                     ...latest, validation_at: phase.validation_at, validation: state.terminal ? null : phase.validation, worker: run.worker || previous.worker, gpu: run.gpu || previous.gpu,
+                    worker_names: run.worker_names || previous.worker_names,
                     config_name: run.config_name || previous.config_name, status: state.status,
                     terminal: state.terminal, updated_at: state.updated_at, is_local: run.is_local ?? previous.is_local,
                     progress: { ...latest.progress, percent: Math.max(previous.progress.percent, run.progress.percent) }
@@ -834,6 +835,12 @@ function trainerComponent() {
         },
         activeEnvironmentConfig: null,
         activeEnvironmentMetadata: null,
+        workerGroupDraft: null,
+        get usesWorkerGroup() {
+            const ids = this.workerGroupDraft?.environment === this.activeEnvironment
+                ? this.workerGroupDraft.ids : this.activeEnvironmentMetadata?.default_worker_ids;
+            return (ids?.length || 0) >= 2;
+        },
         configValues: {},
         showConfigJsonModal: false,
         configJsonDraft: '',
@@ -913,6 +920,7 @@ function trainerComponent() {
                     throw new Error('Failed to activate configuration');
                 }
                 const previousEnvironment = this.activeEnvironment;
+                this.workerGroupDraft = null;
                 this.activeEnvironment = sanitizedName;
 
                  // Update the config selector component
@@ -5026,7 +5034,7 @@ function trainerComponent() {
             if (!formElement) return;
 
             const formData = new FormData(formElement);
-            let isDirty = false;
+            let isDirty = this.workerGroupDraft?.environment === this.activeEnvironment;
 
             // Check for changes
             for (const [key, value] of formData.entries()) {
@@ -5771,6 +5779,10 @@ function trainerComponent() {
                     this.normalizeCheckboxFormData(formData);
                 }
 
+                if (this.workerGroupDraft?.environment === this.activeEnvironment) {
+                    formData.set('__worker_environment', this.activeEnvironment);
+                    formData.set('__default_worker_ids', JSON.stringify(this.workerGroupDraft.ids));
+                }
                 const params = {};
                 formData.forEach((value, key) => {
                     if (Object.prototype.hasOwnProperty.call(params, key)) {
@@ -5894,6 +5906,7 @@ function trainerComponent() {
                     successful = response.ok;
 
                     if (response.ok) {
+                        this.workerGroupDraft = null;
                         this.markFormClean();
                         window.showToast('Configuration saved', 'success');
 
@@ -7460,8 +7473,8 @@ function trainerComponent() {
                             </button>
                             <dl class="training-run-heading">
                                 <div class="training-run-worker">
-                                    <dt x-text="run.worker ? 'Worker' : 'Job'"></dt>
-                                    <dd :title="run.job_id" x-text="run.worker || run.job_id"></dd>
+                                    <dt x-text="run.worker_names?.length > 1 ? run.worker_names.length + ' workers' : run.worker ? 'Worker' : 'Job'"></dt>
+                                    <dd :title="run.worker_names?.join(', ') || run.job_id" x-text="run.worker_names?.join(', ') || run.worker || run.job_id"></dd>
                                 </div>
                                 <div class="training-run-gpu">
                                     <dt>GPU</dt>
@@ -7837,6 +7850,7 @@ function trainerComponent() {
 <script src="/static/js/utils/api.js?v={{ asset_version }}"></script>
 <script src="/static/js/dataloader-builder.js?v={{ asset_version }}"></script>
 <script src="/static/js/dataloader-htmx-init.js?v={{ asset_version }}"></script>
+<script src="/static/js/worker-group.js?v={{ asset_version }}"></script>
 <script src="/static/js/event-handler.js?v={{ asset_version }}"></script>
 <script src="/static/js/services/dependency-manager.js?v={{ asset_version }}"></script>
 

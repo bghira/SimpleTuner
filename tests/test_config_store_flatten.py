@@ -41,6 +41,25 @@ class ConfigStoreSaveBehaviourTests(unittest.TestCase):
         self.assertEqual(saved["--model_type"], "lora")
         self.assertEqual(saved["--output_dir"], "output/example")
 
+    def test_worker_defaults_follow_local_environments_and_stay_out_of_exports(self):
+        store = ConfigStore(config_dir=self.config_root)
+        for name in ("default", "flat", "folder"):
+            with self.subTest(name=name):
+                if name == "folder":
+                    (self.config_root / name).mkdir()
+                store.save_trainer_config(name, {"--model_family": "flux"}, overwrite=True)
+                store.save_worker_defaults(name, ["b", "a"])
+                store.save_trainer_config(name, {"--model_family": "flux"}, overwrite=True)
+                config, metadata = store.load_config(name)
+                self.assertNotIn("default_worker_ids", config)
+                self.assertEqual(metadata.default_worker_ids, ["b", "a"])
+                self.assertEqual(store.copy_config(name, name + "-copy").default_worker_ids, ["b", "a"])
+                self.assertEqual(store.rename_config(name + "-copy", name + "-new").default_worker_ids, ["b", "a"])
+                self.assertEqual(store.load_config(name + "-new")[1].default_worker_ids, ["b", "a"])
+                self.assertNotIn("default_worker_ids", store.export_config(name)["_metadata"])
+                store.save_worker_defaults(name, [])
+                self.assertEqual(store.load_config(name)[1].default_worker_ids, [])
+
     def test_dataloader_save_preserves_list_payload(self) -> None:
         store = ConfigStore(config_dir=self.config_root / "dataloaders", config_type="dataloader")
 

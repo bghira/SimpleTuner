@@ -656,6 +656,49 @@ class WorkerJobStatusTestCase(APITestCase, unittest.TestCase):
         self.client.close()
         super().tearDown()
 
+    @patch.dict(BaseSQLiteStore._instances, clear=True)
+    def test_group_member_failure_cancels_leader_and_late_completion_preserves_error(self):
+        from simpletuner.simpletuner_sdk.server.services.cloud.storage.job_repository import JobRepository
+
+        directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        jobs = JobRepository(directory / "jobs.db")
+        self.enterContext(
+            patch("simpletuner.simpletuner_sdk.server.routes.workers.validate_worker_token", return_value=self.worker)
+        )
+        self.enterContext(
+            patch(
+                "simpletuner.simpletuner_sdk.server.services.cloud.storage.job_repository.get_job_repository",
+                return_value=jobs,
+            )
+        )
+        job = UnifiedJob(
+            job_id="job-group",
+            job_type=JobType.LOCAL,
+            provider="worker",
+            status="running",
+            created_at=datetime.now(timezone.utc).isoformat(),
+            config_name="distributed",
+            metadata={
+                "worker_id": "leader",
+                "worker_ids": ["leader", self.worker.worker_id],
+                "worker_names": ["node one", self.worker.name],
+            },
+        )
+        run_async(jobs.add(job))
+        leader_queue = asyncio.Queue()
+        with patch.dict(worker_streams, {"leader": leader_queue}):
+            for status in ("failed", "completed"):
+                response = self.client.post(
+                    "/api/workers/job/job-group/status",
+                    json={"status": status, "error": "lost GPU"},
+                    headers={"X-Worker-Token": self.token},
+                )
+                response.raise_for_status()
+        self.assertEqual(leader_queue.get_nowait(), {"type": "job_cancel", "job_id": "job-group"})
+        self.assertTrue(leader_queue.empty())
+        stored = run_async(jobs.get(job.job_id))
+        self.assertEqual((stored.status, stored.error_message), ("failed", "lost GPU"))
+
     def test_update_job_status_success(self) -> None:
         """Test successful job status update."""
         with (
