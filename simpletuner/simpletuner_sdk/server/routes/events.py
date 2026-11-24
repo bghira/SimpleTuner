@@ -325,8 +325,8 @@ async def events_stream(request: Request, _user: User = Depends(get_current_user
                                     last_index = event.index
                                 continue
 
-                            # Drop validation events when replaying - they should only display once when fresh
-                            if is_replay_event and event.type in (EventType.VALIDATION_IMAGE, EventType.VALIDATION):
+                            # Sampling previews are only useful during validation.
+                            if is_replay_event and event.type == EventType.VALIDATION_IMAGE:
                                 if event.index is not None:
                                     last_index = event.index
                                 continue
@@ -334,6 +334,8 @@ async def events_stream(request: Request, _user: User = Depends(get_current_user
                             # Send non-broadcast events via polling
                             event_type, payload = CallbackPresenter.to_sse(event)
                             payload["local"] = callback_service.is_local_job(event.job_id)
+                            if is_replay_event and event.type == EventType.VALIDATION:
+                                payload["is_replay"] = True
 
                             await sse_manager.send_to_connection(
                                 connection.connection_id,
