@@ -7175,7 +7175,7 @@ function trainerComponent() {
                             :disabled="loading">
                         <i class="fas fa-cog" x-show="!loading"></i>
                         <span class="spinner-border spinner-border-sm" x-show="loading"></span>
-                        <span x-text="activeConfig || 'No Config Selected'"></span>
+                        <span class="text-truncate" :title="activeConfig" x-text="activeConfig || 'No Config Selected'"></span>
 
                         <!-- Validation state indicators -->
                         <span x-show="validationState && !validationState.is_valid"

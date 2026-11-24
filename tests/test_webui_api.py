@@ -351,6 +351,24 @@ class TrainingAPITestCase(_WebUIBaseTestCase):
                     self.assertEqual(local.call_args.args[0]["--tracker_project_name"], "edited")
             self.assertEqual(local.call_count, 3)
 
+    def test_local_only_launch_requires_fresh_worker_choices(self) -> None:
+        from simpletuner.simpletuner_sdk.server.routes import training
+
+        store = training.training_service.get_config_store()
+        environment = store.get_active_config()
+        with (
+            patch.object(training, "_launch_workers", return_value=[]) as inventory,
+            patch.object(training.training_service, "start_training_job") as local,
+        ):
+            store.save_worker_defaults(environment, ["saved-worker"])
+            changed_defaults = self.client.post("/api/training/start", headers={"X-Training-Destination": "local-only"})
+            self.assertIn("Run again to choose a destination", changed_defaults.text)
+            store.save_worker_defaults(environment, [])
+            inventory.return_value = [object()]
+            new_worker = self.client.post("/api/training/start", headers={"X-Training-Destination": "local-only"})
+            self.assertIn("Run again to choose a destination", new_worker.text)
+            local.assert_not_called()
+
     def test_cancel_addresses_only_an_active_local_target(self) -> None:
         from simpletuner.simpletuner_sdk.server.routes import training
 

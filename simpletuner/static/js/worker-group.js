@@ -8,8 +8,11 @@ window.workerGroupSelection = function () {
         lookup(id) {
             return this.workers.find(worker => worker.id === id);
         },
+        isAvailable(worker) {
+            return worker?.status === 'idle' || worker?.status === 'busy';
+        },
         compatible(worker) {
-            if (!['idle', 'busy'].includes(worker.status) || (this.requireMultinode && !worker.multinode_gpus)) return false;
+            if (!this.isAvailable(worker) || (this.requireMultinode && !worker.multinode_gpus)) return false;
             if (!this.selected.length) return true;
             const leader = this.lookup(this.selected[0]);
             return Boolean(leader?.multinode_gpus && worker.multinode_gpus && leader.gpu === worker.gpu);

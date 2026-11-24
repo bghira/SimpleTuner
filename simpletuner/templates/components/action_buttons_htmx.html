@@ -75,10 +75,6 @@
             </span>
         </button>
 
-        <button type="button" class="btn btn-sm btn-outline-secondary me-2"
-                x-show="$store.trainer.activeEnvironmentMetadata?.default_worker_ids?.length"
-                @click="chooseDestination(true)">Change workers for this run</button>
-
         <!-- Cancel Training Button -->
         <button type="button"
                 class="trainer-action-btn btn {{ btn_size }}btn-danger"
@@ -120,21 +116,28 @@
             <span class="btn-text">Shutdown</span>
         </button>
     </div>
-    <dialog id="training-launch-picker-{{ placement }}" x-ref="picker" aria-labelledby="training-launch-title-{{ placement }}"
-            class="bg-dark text-light border border-secondary rounded p-3 text-start">
-        <h2 id="training-launch-title-{{ placement }}" class="h6">Run training on</h2>
-        <div class="list-group worker-group-list mb-3">
-            <button type="button" class="list-group-item list-group-item-action" @click="launch('local')">
-                Local <small class="text-muted">This machine</small>
-            </button>
-            {% include 'components/worker_group_choices.html' %}
-        </div>
-        <small class="d-block mb-2" x-show="workers.some(w => w.multinode_gpus && workers.some(other => other.id !== w.id && other.multinode_gpus && other.gpu === w.gpu))">Select hosts in rank order. The first checked host is rank 0.</small>
-        <p x-show="selected.length > 1" x-text="groupSummary()"></p>
-        <button type="button" class="btn btn-primary btn-sm" :disabled="!selected.length"
-                @click="launch(selected.join(','))">Run on selected workers</button>
-        <button type="button" class="btn btn-outline-secondary btn-sm" @click="$refs.picker.close()">Cancel</button>
-    </dialog>
+    <template x-teleport="body">
+        <dialog id="training-launch-picker-{{ placement }}" x-ref="picker" aria-labelledby="training-launch-title-{{ placement }}"
+                class="training-launch-dialog border border-secondary rounded p-3 text-start">
+            <h2 id="training-launch-title-{{ placement }}" class="h6">Run training on</h2>
+            <div class="list-group worker-group-list mb-3">
+                <button type="button" class="list-group-item list-group-item-action" @click="launch('local')">
+                    Local <small class="text-muted">This machine</small>
+                </button>
+                {% include 'components/worker_group_choices.html' %}
+            </div>
+            <small class="d-block mb-2" x-show.important="workers.some(w => w.multinode_gpus && workers.some(other => other.id !== w.id && other.multinode_gpus && other.gpu === w.gpu))">Select hosts in rank order. The first checked host is rank 0.</small>
+            <p x-show="selected.length > 1" x-text="groupSummary()"></p>
+            <p class="small text-warning" role="status" x-show="selected.length && !canLaunchSelected">
+                Review the selected workers or choose Local to start on this machine.
+            </p>
+            <div class="d-flex flex-wrap gap-2">
+                <button type="button" class="btn btn-primary btn-sm" :disabled="!canLaunchSelected" autofocus
+                        @click="launch(selected.join(','))">Run on selected workers</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" @click="$refs.picker.close()">Cancel</button>
+            </div>
+        </dialog>
+    </template>
 </div>
 
 <!-- Shutdown confirmation modal -->
@@ -481,21 +484,29 @@ if (!window.__trainerActionHTMXBound) {
 
     window.trainingLaunchPicker = () => ({
         ...window.workerGroupSelection(),
-        async chooseDestination(override = false) {
+        get canLaunchSelected() {
+            return this.selected.length > 0 && this.selected.every(id => {
+                const worker = this.lookup(id);
+                return this.isAvailable(worker) && (this.selected.length === 1 || this.compatible(worker));
+            });
+        },
+        async chooseDestination() {
             if (this.loading) return;
             const environment = this.$store.trainer.activeEnvironment || 'default';
-            const group = await this.loadWorkers(environment);
+            const group = await this.loadWorkers(environment, true);
             if (!group || environment !== (this.$store.trainer.activeEnvironment || 'default')) return;
             this.$refs.run.dataset.environment = environment;
-            this.selected = group.default_worker_ids.filter(id => this.workers.some(w => w.id === id));
-            if (group.default_worker_ids.length && !override) {
-                this.launch('saved-group');
-            } else if (this.workers.length || override) {
-                await this.$nextTick();
-                this.$refs.picker.showModal();
-            } else {
+            this.selected = [...group.default_worker_ids];
+            this.workers = [
+                ...this.selected.map(id => this.lookup(id) || {id, name: id, status: 'Unavailable'}),
+                ...this.workers.filter(worker => this.isAvailable(worker) && !this.selected.includes(worker.id)),
+            ];
+            if (!this.workers.length) {
                 this.launch('local-only');
+                return;
             }
+            await this.$nextTick();
+            this.$refs.picker.showModal();
         },
         launch(destination) {
             this.$refs.picker.close();

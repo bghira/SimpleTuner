@@ -243,8 +243,8 @@ async def start_training(request: Request, _user: User = Depends(get_current_use
             ids = []
         if destination == "saved-group" and not ids:
             return '<div class="alert alert-warning">The default workers changed. Run again to choose a destination.</div>'
-        if destination == "local-only" and not ids and await _launch_workers(_user):
-            return '<div class="alert alert-warning">A worker just connected. Run again to choose a destination.</div>'
+        if destination == "local-only" and (ids or await _launch_workers(_user)):
+            return '<div class="alert alert-warning">Worker choices changed. Run again to choose a destination.</div>'
     else:
         ids = [] if destination == "local" else destination.split(",")
     if ids:

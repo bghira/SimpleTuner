@@ -541,20 +541,56 @@ class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
                         "Alpine.store('trainer').switchEnvironment(arguments[0]).then(arguments[1])", environment
                     )
                     wait.until(lambda d: len(d.find_elements(By.CSS_SELECTOR, section + " input:checked")) == count)
-                click("#runBtn")
-                panel = wait.until(lambda d: d.find_element(By.ID, "training-status").get_attribute("textContent").strip())
-                self.assertIn("queued for " + ", ".join(hosts[::-1]), panel)
-                wait.until(
-                    EC.element_to_be_clickable((By.XPATH, "//button[normalize-space()='Change workers for this run']"))
-                ).click()
-                dialog = wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "dialog[open]")))
+
+                def show_run_picker():
+                    click("#runBtn")
+                    return wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "dialog[open]")))
+
+                def checked_workers(dialog):
+                    return [box.get_attribute("value") for box in dialog.find_elements(By.CSS_SELECTOR, "input:checked")]
+
+                stop_and_shutdown = [driver.find_element(By.ID, button) for button in ("cancelBtn", "shutdownBtn")]
+                size = driver.get_window_size()
+                self.addCleanup(driver.set_window_size, size["width"], size["height"])
+                for width in (1120, 1024, 760, 390):
+                    driver.set_window_size(width, 900)
+                    wait.until(
+                        lambda d: d.execute_script(
+                            """
+                            return arguments[0].every(button => {
+                                const rect = button.getBoundingClientRect();
+                                return rect.width > 0 && rect.left >= 0 &&
+                                    rect.right <= document.documentElement.clientWidth;
+                            });
+                            """,
+                            stop_and_shutdown,
+                        ),
+                        f"Stop and Shutdown fit at {width}px",
+                    )
+
+                dialog = show_run_picker()
+                self.assertEqual(checked_workers(dialog), ids[::-1])
+                self.assertFalse(driver.find_element(By.ID, "training-status").text.strip())
+                run_selected = (By.XPATH, ".//button[normalize-space()='Run on selected workers']")
+                dialog.find_element(*run_selected).click()
+                status = wait.until(lambda d: d.find_element(By.ID, "training-status").get_attribute("textContent").strip())
+                self.assertIn("queued for " + ", ".join(hosts[::-1]), status)
+
+                dialog = show_run_picker()
                 dialog.find_element(By.CSS_SELECTOR, f"input[value='{ids[1]}']").click()
-                dialog.find_element(By.XPATH, ".//button[normalize-space()='Run on selected workers']").click()
+                dialog.find_element(By.XPATH, ".//button[normalize-space()='Cancel']").click()
+                dialog = show_run_picker()
+                self.assertEqual(checked_workers(dialog), ids[::-1])
+                dialog.find_element(By.CSS_SELECTOR, f"input[value='{ids[1]}']").click()
+                dialog.find_element(*run_selected).click()
                 wait.until(lambda d: "queued for " + hosts[0] in d.find_element(By.ID, "training-status").text)
                 self.assertEqual(saved(), ids[::-1])
             wait.until(lambda _: requests.get(f"{self.base_url}/api/training/launch-workers", timeout=5).json() == [])
-            click("#runBtn")
-            wait.until(lambda d: "unavailable at rank 0" in d.find_element(By.ID, "training-status").text)
+            dialog = show_run_picker()
+            self.assertEqual(checked_workers(dialog), ids[::-1])
+            self.assertFalse(dialog.find_element(*run_selected).is_enabled())
+            self.assertTrue(dialog.find_element(By.XPATH, ".//button[starts-with(normalize-space(), 'Local')]").is_enabled())
+            dialog.find_element(By.XPATH, ".//button[normalize-space()='Cancel']").click()
 
         self.for_each_browser("hardware_worker_defaults", scenario)
 
@@ -1153,8 +1189,9 @@ class ResponsiveTrainerLayoutTestCase(WebUITestCase):
             self.assertGreaterEqual(menu.rect["x"], sidebar.rect["x"] + sidebar.rect["width"])
 
             manage = menu.find_element(By.CSS_SELECTOR, 'a[href="#environments"]')
-            self.assertTrue(
-                driver.execute_script(
+            wait.until(
+                lambda d: (self.dismiss_onboarding(d) or True)
+                and d.execute_script(
                     "const item = arguments[0], r = item.getBoundingClientRect();"
                     "return item.contains(document.elementFromPoint(r.left + 2, r.top + r.height / 2));",
                     manage,
