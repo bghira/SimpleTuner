@@ -2180,7 +2180,7 @@ optgroup option {
 
 .training-launch-dialog {
     width: min(36rem, calc(100% - 2rem));
-    background: var(--card-bg);
+    background: var(--sidebar-bg);
     color: var(--text-primary);
 }
 

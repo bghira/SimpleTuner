@@ -139,6 +139,7 @@ window.jobQueueManager = function jobQueueManager() {
                 });
                 if (response.ok) {
                     await this.loadJobs();
+                    window.Alpine?.store('trainer')?.refreshManualTargets();
                     if (window.showToast) {
                         window.showToast('Job cancelled', 'success');
                     }
