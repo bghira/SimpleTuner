@@ -784,8 +784,14 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
     def log_state(self, show_rank: bool = True):
         if self.epoch_provider is not None:
-            desc = self.dataset_runtime.describe()
-            overview = f"Dataset {self.id}: {desc.accepted_samples} accepted samples, {len(self)} batches per rank."
+            count = self.dataset_runtime.describe().accepted_samples
+            samples = f"{count} accepted samples" if count is not None else "accepted sample count unknown"
+            batch_count = len(self)
+            if getattr(self.metadata_backend, "training_count_is_exact", True) is False:
+                batches = f"batch budget of {batch_count} per rank"
+            else:
+                batches = f"{batch_count} batches per rank"
+            overview = f"Dataset {self.id}: {samples}, {batches}."
             self.logger.info(overview)
             return overview
         printed_state = (

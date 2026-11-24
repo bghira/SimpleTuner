@@ -32,6 +32,7 @@ from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.data_backend.local import LocalDataBackend
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend
+from simpletuner.helpers.metadata.preparation import DatasetDescription
 from simpletuner.helpers.multiaspect.sampler import MultiAspectSampler, _UnseenOccurrenceIndex
 from simpletuner.helpers.multiaspect.state import BucketStateManager
 from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
@@ -80,6 +81,30 @@ class SamplerStatePublicationTests(unittest.TestCase):
         follower.acknowledge({"position": 2, "repeat": 1, "refs": ("b", "c")})
         with follower.checkpoint_seen() as seen:
             self.assertEqual(seen, {"b": 1, "c": 1})
+
+
+class NativeSamplerSummaryTests(unittest.TestCase):
+    def test_summary_distinguishes_batch_budget_from_exact_counts(self):
+        sampler = MultiAspectSampler.__new__(MultiAspectSampler)
+        sampler.id = "stream"
+        sampler.logger = Mock()
+        sampler.batch_size = 4
+        sampler.current_epoch = 1
+        sampler.epoch_provider = Mock()
+        sampler.epoch_provider.epoch_spec.return_value = SimpleNamespace(accumulation=2)
+        sampler.metadata_backend = SimpleNamespace(runtime_args=SimpleNamespace(max_train_steps=5))
+        sampler.dataset_runtime = Mock()
+        for samples, batches, expected in (
+            (None, None, "Dataset stream: accepted sample count unknown, batch budget of 10 per rank."),
+            (0, 0, "Dataset stream: 0 accepted samples, 0 batches per rank."),
+            (48, 6, "Dataset stream: 48 accepted samples, 6 batches per rank."),
+        ):
+            with self.subTest(samples=samples, batches=batches):
+                sampler.epoch_provider.scheduled_batches.return_value = batches
+                sampler.metadata_backend.training_count_is_exact = batches is not None
+                sampler.dataset_runtime.describe.return_value = DatasetDescription(accepted_samples=samples)
+                self.assertEqual(sampler.log_state(), expected)
+                sampler.logger.info.assert_called_with(expected)
 
 
 class TestMultiAspectSampler(unittest.TestCase):
