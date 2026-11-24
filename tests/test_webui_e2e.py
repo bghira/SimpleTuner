@@ -267,6 +267,33 @@ class TrainingProgressRestoreTestCase(_TrainingWorkerFixture, WebUITestCase):
 class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
     SERVER_MODE = ServerMode.UNIFIED
 
+    def assert_worker_row_uses_theme(self, driver, row):
+        colors = driver.execute_script(
+            """
+            const row = arguments[0];
+            const initialTheme = document.body.dataset.theme;
+            const sample = document.createElement('span');
+            sample.style.backgroundColor = 'var(--field-bg)';
+            sample.style.color = 'var(--text-secondary)';
+            sample.style.borderColor = 'var(--field-border)';
+            row.append(sample);
+            const properties = ['backgroundColor', 'color', 'borderTopColor'];
+            const palette = element => properties.map(name => getComputedStyle(element)[name]);
+            try {
+                return ['dark', 'light'].map(theme => {
+                    window.applyTheme(theme);
+                    return [theme, palette(row), palette(sample)];
+                });
+            } finally {
+                sample.remove();
+                window.applyTheme(initialTheme);
+            }
+            """,
+            row,
+        )
+        for theme, row_colors, theme_colors in colors:
+            self.assertEqual(row_colors, theme_colors, f"Worker row colors in the {theme} theme")
+
     def test_run_chooses_a_busy_worker_and_waits_for_its_idle_heartbeat(self):
         from contextlib import ExitStack
 
@@ -318,6 +345,7 @@ class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
                 picker = wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "dialog[open]")))
                 self.assertIn("Local", picker.text)
                 self.assertEqual(picker.text.count("Busy"), 3)
+                self.assert_worker_row_uses_theme(driver, picker.find_element(By.CSS_SELECTOR, "label.list-group-item"))
                 picker.find_element(By.XPATH, ".//button[normalize-space()='Cancel']").click()
                 self.assertFalse(picker.is_displayed())
                 run.click()
@@ -481,6 +509,8 @@ class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
                 click(toggle)
                 wait.until(EC.visibility_of_element_located(panel))
 
+                row = wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, f"{section} label.list-group-item")))
+                self.assert_worker_row_uses_theme(driver, row)
                 for worker in ids:
                     click(f"{section} input[value='{worker}']")
                 click(f"{section} ol li:last-child button:first-of-type")

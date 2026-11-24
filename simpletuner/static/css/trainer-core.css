@@ -8,6 +8,17 @@
     color: var(--text-primary);
 }
 
+.list-group.worker-group-list {
+    --bs-list-group-bg: var(--field-bg);
+    --bs-list-group-color: var(--text-secondary);
+    --bs-list-group-border-color: var(--field-border);
+    --bs-list-group-action-color: var(--text-primary);
+    --bs-list-group-action-hover-bg: var(--card-bg-hover);
+    --bs-list-group-action-hover-color: var(--text-primary);
+    --bs-list-group-action-active-bg: var(--card-bg-hover);
+    --bs-list-group-action-active-color: var(--text-primary);
+}
+
 /* Extend unified card styling to all custom card variants */
 .tab-fragment .card,
 .tab-fragment .checkpoint-card,

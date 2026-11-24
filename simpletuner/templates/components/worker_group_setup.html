@@ -10,7 +10,7 @@
         Connect at least two worker agents with matching CUDA GPUs.
         <a href="{{ docs_url('experimental/server/WORKERS.md') }}" target="_blank" rel="noopener">Worker setup</a>
     </p>
-    <div class="list-group mb-2">{% include 'components/worker_group_choices.html' %}</div>
+    <div class="list-group worker-group-list mb-2">{% include 'components/worker_group_choices.html' %}</div>
     <ol class="list-unstyled" aria-label="Machine ranks">
         <template x-for="(id, rank) in selected" :key="id">
             <li class="d-flex align-items-center gap-2 mb-1">
