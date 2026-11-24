@@ -134,7 +134,7 @@
             {'icon': 'fa-comment-alt', 'color': 'text-warning', 'label': 'Captions'},
             {'icon': 'fa-crop-alt', 'color': 'text-success', 'label': 'Cropping & Resolution'},
         ],
-        show_condition='showHeroCTA() && !$store.trainer.remoteDatasetConfig && !$store.trainer.datasetsLoading',
+        show_condition='showHeroCTA() && !$store.trainer.remoteDatasetConfig && !$store.trainer.workerDatasetCopy && !$store.trainer.datasetsLoading',
         dismiss_method='dismissHeroCTA()',
         cta_primary={'label': 'Launch Dataset Wizard', 'icon': 'fa-magic', 'action': 'launchWizardFromHero()'},
         cta_secondary={'label': 'Dismiss', 'icon': 'fa-times', 'action': 'dismissHeroCTA()'},
@@ -189,7 +189,7 @@
     </div>
     {% endcall %}
 
-    <div x-show="!showHeroCTA() || $store.trainer.remoteDatasetConfig || $store.trainer.datasetsLoading" x-cloak>
+    <div x-show="!showHeroCTA() || $store.trainer.remoteDatasetConfig || $store.trainer.workerDatasetCopy || $store.trainer.datasetsLoading" x-cloak>
     <!-- Main Card -->
     <div class="card mb-4">
         <div class="card-header">
@@ -231,8 +231,20 @@
                     </span>
                     <button type="button" class="btn btn-outline-secondary btn-sm ms-auto"
                             @click="$store.trainer.loadDatasetsAfterEnvironmentChange()">Refresh</button>
+                    <button type="button" class="btn btn-outline-primary btn-sm"
+                            x-show="$store.trainer.remoteDatasetConfig.datasets && !$store.trainer.workerDatasetCopy"
+                            :disabled="$store.trainer.workerDatasetCopyPending"
+                            @click="$store.trainer.updateWorkerDatasetCopy('pull')">Pull locally</button>
                 </div>
             </template>
+            <div class="d-flex align-items-center flex-wrap gap-2 mb-2" x-show="$store.trainer.workerDatasetCopy">
+                <span class="text-muted small"
+                      x-text="$store.trainer.workerDatasetCopy?.enabled ? 'Using local worker dataset copy' : 'Local worker dataset copy available'"></span>
+                <button type="button" class="btn btn-outline-primary btn-sm"
+                        x-show="!$store.trainer.workerDatasetCopy?.enabled"
+                        :disabled="$store.trainer.workerDatasetCopyPending"
+                        @click="$store.trainer.updateWorkerDatasetCopy('enable')">Enable local copy</button>
+            </div>
             <!-- Dataloader Config Selector -->
             <div class="d-flex align-items-center gap-3" x-show.important="!$store.trainer.datasetConfigReadOnly">
                 <div class="flex-grow-1">

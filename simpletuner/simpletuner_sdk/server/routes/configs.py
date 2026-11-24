@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware import get_current_user
 from simpletuner.simpletuner_sdk.server.services.cloud.auth.models import User
+from simpletuner.simpletuner_sdk.server.services.cloud.storage.job_repository import get_job_repository
 from simpletuner.simpletuner_sdk.server.services.configs_service import CONFIGS_SERVICE, ConfigServiceError
 from simpletuner.simpletuner_sdk.server.services.git_config_service import (
     GIT_CONFIG_SERVICE,
@@ -17,6 +18,7 @@ from simpletuner.simpletuner_sdk.server.services.git_config_service import (
     SnapshotPreferences,
 )
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore
+from simpletuner.simpletuner_sdk.server.services.worker_dataset_service import get_worker_dataset_config
 
 router = APIRouter(prefix="/api/configs", tags=["configurations"])
 logger = logging.getLogger(__name__)
@@ -175,10 +177,17 @@ def _maybe_snapshot_on_save(
 @router.get("/")
 async def list_configs(
     config_type: str = "model",
-    _user: User = Depends(get_current_user),
+    include_worker_sources: bool = False,
+    user: User = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """List all available configurations."""
-    return _call_service(CONFIGS_SERVICE.list_configs, config_type)
+    result = _call_service(CONFIGS_SERVICE.list_configs, config_type)
+    if include_worker_sources and config_type == "model":
+        user_id = None if user.has_permission("job.view.all") else user.id
+        remote_names = await get_job_repository().list_active_worker_environments(user_id)
+        for config in result["configs"]:
+            config["remote_datasets"] = config["name"] in remote_names
+    return result
 
 
 @router.get("/data-backend-file")
@@ -419,6 +428,27 @@ async def create_environment_dataloader(
     _enforce_git_requirements("dataloader", git_enabled, prefs)
     result = _call_service(CONFIGS_SERVICE.create_environment_dataloader, name, request.path, request.include_defaults)
     return _maybe_snapshot_on_save(name, "dataloader", git_enabled, prefs, result, action="create-dataloader")
+
+
+@router.post("/{name}/worker-dataloader/{action}")
+async def update_worker_dataloader_copy(
+    name: str,
+    action: Literal["pull", "enable"],
+    user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Pull the active worker config, or enable the existing local snapshot."""
+    git_enabled, prefs = _git_preferences()
+    _enforce_git_requirements("dataloader", git_enabled, prefs)
+    datasets = None
+    if action == "pull":
+        remote = await get_worker_dataset_config(name, user)
+        if remote is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "No active worker job for this environment.")
+        datasets = remote["datasets"]
+        if datasets is None:
+            raise HTTPException(status.HTTP_409_CONFLICT, remote["error"])
+    result = _call_service(CONFIGS_SERVICE.save_worker_dataloader_copy, name, datasets)
+    return _maybe_snapshot_on_save(name, "dataloader", git_enabled, prefs, result, action=f"{action}-worker-dataloader")
 
 
 @router.get("/dataloader/content")

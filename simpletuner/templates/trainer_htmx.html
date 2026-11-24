@@ -1789,8 +1789,8 @@ function trainerComponent() {
                     }
                 }
 
-                // Check cache_dir for text_embeds datasets
-                if (datasetType === 'text_embeds') {
+                // Check cache_dir for text_embeds datasets that use caching
+                if (datasetType === 'text_embeds' && !this.normalizeBoolean(dataset.text_cache_encode_only)) {
                     if (!dataset.cache_dir || !dataset.cache_dir.trim()) {
                         validations.push({
                             field: `${id}.cache_dir`,
@@ -2957,26 +2957,16 @@ function trainerComponent() {
                     } else {
                         delete cleaned.caption_filter_list;
                     }
-                    if (cleaned.dataset_type === 'text_embeds') {
-                        if (this.normalizeBoolean(dataset.text_cache_ondemand)) {
-                            cleaned.text_cache_ondemand = true;
-                        } else {
-                            delete cleaned.text_cache_ondemand;
-                        }
-                        if (this.normalizeBoolean(dataset.text_cache_disable)) {
-                            cleaned.text_cache_disable = true;
-                        } else {
-                            delete cleaned.text_cache_disable;
-                        }
-                    } else {
-                        delete cleaned.text_cache_ondemand;
-                        delete cleaned.text_cache_disable;
-                    }
                 } else {
                     delete cleaned.write_batch_size;
                     delete cleaned.caption_filter_list;
-                    delete cleaned.text_cache_ondemand;
-                    delete cleaned.text_cache_disable;
+                }
+                for (const key of ['text_cache_ondemand', 'text_cache_disable', 'text_cache_encode_only']) {
+                    if (cleaned.dataset_type === 'text_embeds' && this.normalizeBoolean(dataset[key])) {
+                        cleaned[key] = true;
+                    } else {
+                        delete cleaned[key];
+                    }
                 }
 
                 if (['image', 'video', 'audio', 'caption'].includes(normalizedDatasetType)) {
@@ -3484,6 +3474,8 @@ function trainerComponent() {
          datasetsLoading: false,
          _datasetsReloadInFlight: null,
          remoteDatasetConfig: null,
+         workerDatasetPrompt: null,
+         workerDatasetCopyPending: false,
          dataLoaderMode: 'builder', // 'builder' or 'json'
          dataLoaderJson: '',
          hasUnsavedChanges: false,
@@ -3929,6 +3921,42 @@ function trainerComponent() {
         get datasetConfigReadOnly() {
             return this.datasetsLoading || this.remoteDatasetConfig !== null;
         },
+        get workerDatasetCopy() {
+            return this.activeEnvironmentMetadata?.worker_dataloader_copy;
+        },
+        offerWorkerDatasetCopy(environment) {
+            if (!this.remoteDatasetConfig?.datasets || this.workerDatasetCopy) return;
+            const key = `worker-dataset-pull-offered:${environment}`;
+            if (localStorage.getItem(key)) return;
+            localStorage.setItem(key, '1');
+            this.workerDatasetPrompt = environment;
+        },
+        async updateWorkerDatasetCopy(action) {
+            if (this.workerDatasetCopyPending) return;
+            const environment = this.activeEnvironment;
+            this.workerDatasetCopyPending = true;
+            try {
+                const response = await ApiClient.fetch(
+                    `/api/configs/${encodeURIComponent(environment)}/worker-dataloader/${action}`,
+                    { method: 'POST' }
+                );
+                const result = await response.json();
+                if (!response.ok) throw new Error(result.detail || 'Could not update the local dataset copy.');
+                if (this.activeEnvironment !== environment) return;
+                if (action === 'pull') {
+                    this.activeEnvironmentMetadata.worker_dataloader_copy = result;
+                    this.workerDatasetPrompt = null;
+                    window.showToast('Dataset configuration pulled. Enable the local copy to edit it.', 'success');
+                } else {
+                    if (!await this.switchEnvironment(environment)) return;
+                    window.showToast('Using the local dataset copy.', 'success');
+                }
+            } catch (error) {
+                window.showToast(error.message, 'error');
+            } finally {
+                this.workerDatasetCopyPending = false;
+            }
+        },
         loadDatasetsAfterEnvironmentChange() {
             const normalized = this.buildNormalizedConfig(this.activeEnvironmentConfig);
             const path = this.firstNonEmpty(
@@ -3969,11 +3997,12 @@ function trainerComponent() {
                 this.loadValidationErrors = [];
 
                 try {
-                    const remote = resolveEnvironment && environment
+                    const remote = resolveEnvironment && environment && !this.workerDatasetCopy?.enabled
                         ? await readJson(`/api/datasets/remote-config?environment=${encodeURIComponent(environment)}`)
                         : null;
                     if (!isCurrent()) return;
                     this.remoteDatasetConfig = remote;
+                    if (remote) this.offerWorkerDatasetCopy(environment);
 
                     let plan;
                     if (remote) {
@@ -6871,7 +6900,7 @@ function trainerComponent() {
                     async loadConfigs() {
                         this.loading = true;
                         try {
-                            const response = await fetch('/api/configs/');
+                            const response = await fetch('/api/configs/?include_worker_sources=true');
                             if (!response.ok) {
                                 throw new Error(`HTTP error! status: ${response.status}`);
                             }
@@ -6880,7 +6909,8 @@ function trainerComponent() {
                                 ? data.configs.map(sanitizeConfigEntry).filter(Boolean)
                                 : [];
                             const active = sanitizeConfigName(data.active || (configs.length > 0 ? configs[0].name : ''));
-                            this.configs = configs;
+                            const byName = new Map(configs.map(config => [config.name, config]));
+                            this.configs = [...byName.values()];
                             this.activeConfig = active;
                             // Validate the active config after loading
                             await this.validateActiveConfig();
@@ -7164,7 +7194,7 @@ function trainerComponent() {
                  style="position: relative;">
 
                 <div class="config-selector__toggle-wrapper" style="position: relative;">
-                    <button @click="open = !open"
+                    <button @click="open = !open; if (open) loadConfigs()"
                             class="btn btn-sm d-flex align-items-center gap-2"
                             :class="{
                                 'btn-outline-danger': validationState && !validationState.is_valid,
@@ -7221,12 +7251,14 @@ function trainerComponent() {
                             </div>
                         </div>
 
-                        <template x-for="(config, index) in (configs || [])" :key="config.name || `config-fallback-${index}`">
+                        <template x-for="config in configs" :key="config.name">
                             <a @click.prevent="Alpine.store('trainer').switchEnvironment(config.name); open = false;"
-                               class="dropdown-item"
+                               class="dropdown-item d-flex justify-content-between align-items-center gap-3"
                                :class="{'active': config.name === activeConfig}"
                                href="javascript:void(0)">
                                 <span x-text="config.name"></span>
+                                <span x-show="config.remote_datasets" role="img" aria-label="Remote datasets"
+                                      title="Dataset configuration on a remote worker">☁️</span>
                             </a>
                         </template>
 
@@ -7917,6 +7949,24 @@ window.showToast = window.showToast || function(message, type) {
 };
 
 </script>
+
+<dialog x-data id="worker-dataset-pull-dialog"
+        class="border border-secondary rounded p-3"
+        style="background: var(--sidebar-bg); color: var(--text-primary); max-width: min(28rem, 90vw);"
+        aria-labelledby="worker-dataset-pull-title"
+        x-effect="if ($store.trainer.workerDatasetPrompt === $store.trainer.activeEnvironment && $store.trainer.workerDatasetPrompt) {
+            if (!$el.open) $el.showModal();
+        } else if ($el.open) $el.close()"
+        @close="$store.trainer.workerDatasetPrompt = null">
+    <h2 class="h6" id="worker-dataset-pull-title">Pull dataset configuration from the worker?</h2>
+    <p>You can enable and edit the local copy after pulling it. The running job keeps its current configuration.</p>
+    <div class="d-flex justify-content-end gap-2">
+        <button type="button" class="btn btn-outline-secondary btn-sm" @click="$el.closest('dialog').close()">Later</button>
+        <button type="button" class="btn btn-primary btn-sm"
+                :disabled="$store.trainer.workerDatasetCopyPending"
+                @click="$store.trainer.updateWorkerDatasetCopy('pull')">Pull locally</button>
+    </div>
+</dialog>
 
 <!-- Validation Prompt Library Modal -->
 <div class="environment-modal-backdrop" id="promptLibraryModal" style="display: none;">

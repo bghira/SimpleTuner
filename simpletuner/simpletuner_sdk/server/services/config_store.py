@@ -315,11 +315,10 @@ class ConfigStore:
         if self.config_type == "model":
             dir_path = self.config_dir / name
             subdir_path = dir_path / "config.json"
-            if dir_path.exists() or subdir_path.exists():
+            flat_path = self.config_dir / f"{name}.json"
+            if subdir_path.exists() or (dir_path.exists() and not flat_path.exists()):
                 return subdir_path
-
-            # Fall back to root-level JSON file
-            return self.config_dir / f"{name}.json"
+            return flat_path
 
         # Dataloader configs support both the dedicated dataloaders directory
         # and environment-scoped paths that live alongside the training config.
