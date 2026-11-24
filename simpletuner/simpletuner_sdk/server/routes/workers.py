@@ -13,17 +13,13 @@ import logging
 import secrets
 from datetime import datetime, timezone
 from typing import Annotated, Any, Dict, Literal, Optional
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, FiniteFloat, StringConstraints
 
-from simpletuner.worker_protocol import (
-    WORKER_JOB_ACTIVE_STATUSES,
-    WORKER_JOB_PROVIDERS,
-    WORKER_LOG_TAIL_SIZE,
-    redact_dataset_config,
-)
+from simpletuner.worker_protocol import WORKER_JOB_ACTIVE_STATUSES, WORKER_JOB_PROVIDERS, WORKER_LOG_TAIL_SIZE
 
 from ..models.worker import WorkerStatus, WorkerType
 from ..services.callback_events import EventType, StageStatus
@@ -41,6 +37,7 @@ admin_router = APIRouter(prefix="/api/admin/workers", tags=["admin-workers"])
 # Global dict of worker_id -> asyncio.Queue for SSE management
 worker_streams: Dict[str, asyncio.Queue] = {}
 manual_control_workers: set[str] = set()
+dataset_config_workers: set[str] = set()
 
 
 # Request/Response Models
@@ -98,7 +95,8 @@ class JobStatusUpdate(BaseModel):
 
 
 class WorkerDatasets(BaseModel):
-    dataloader: list[dict[str, Any]]
+    request_id: UUID
+    dataloader: list[dict[str, Any]] | None
 
 
 class WorkerValidationImages(BaseModel):
@@ -426,6 +424,7 @@ async def worker_stream(
     worker_id: str,
     x_worker_token: str = Header(..., alias="X-Worker-Token"),
     manual_controls: bool = False,
+    dataset_config: bool = False,
 ) -> StreamingResponse:
     """SSE stream for commands to worker.
 
@@ -456,6 +455,11 @@ async def worker_stream(
         manual_control_workers.add(worker_id)
     else:
         manual_control_workers.discard(worker_id)
+
+    if dataset_config and worker.worker_type != WorkerType.PEER:
+        dataset_config_workers.add(worker_id)
+    else:
+        dataset_config_workers.discard(worker_id)
 
     from ..services.worker_manager import get_worker_manager
 
@@ -493,6 +497,7 @@ async def worker_stream(
             if worker_streams.get(worker_id) is queue:
                 del worker_streams[worker_id]
                 manual_control_workers.discard(worker_id)
+                dataset_config_workers.discard(worker_id)
             logger.info("Worker %s disconnected from SSE stream", worker_id)
 
     return StreamingResponse(
@@ -675,30 +680,30 @@ async def worker_has_pending_jobs(worker_id: str, x_worker_token: str = Header(.
 
 
 @router.post("/job/{job_id}/datasets")
-async def report_job_datasets(
+async def return_job_datasets(
     job_id: str,
     request: WorkerDatasets,
     x_worker_token: str = Header(..., alias="X-Worker-Token"),
 ) -> Dict[str, Any]:
-    """Record datasets loaded by the worker leading this job."""
+    """Return the dataloader config for an outstanding retrieval request."""
     from ..services.cloud.storage.job_repository import get_job_repository
+    from ..services.worker_dataset_service import complete_dataset_request
 
     worker = await validate_worker_token(x_worker_token)
     jobs = get_job_repository()
     job = await _assigned_job(jobs, job_id, worker, reports_progress=False)
     metadata = job.metadata or {}
     if metadata.get("worker_id") != worker.worker_id:
-        raise HTTPException(status_code=403, detail="Only the lead worker can report job datasets")
+        raise HTTPException(status_code=403, detail="Only the lead worker can return job datasets")
     if (
         job.provider not in WORKER_JOB_PROVIDERS
         or job.status not in WORKER_JOB_ACTIVE_STATUSES
         or metadata.get("group_check")
     ):
-        raise HTTPException(status_code=409, detail="Job is not accepting dataset reports")
+        raise HTTPException(status_code=409, detail="Job is not accepting dataset responses")
 
-    updated = await jobs.save_worker_dataset_config(job, worker.worker_id, redact_dataset_config(request.dataloader))
-    if not updated:
-        raise HTTPException(status_code=409, detail="Job assignment changed")
+    if not complete_dataset_request(job, worker.worker_id, request.request_id, request.dataloader):
+        raise HTTPException(status_code=404, detail="No matching dataset request")
     return {"success": True}
 
 

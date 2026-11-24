@@ -3392,10 +3392,13 @@ class RemoteWorkerDatasetsTestCase(_TrainingWorkerFixture, _TrainerPageMixin, We
     MAX_BROWSERS = 1
 
     def test_environment_loads_remote_config_into_dataset_builder(self):
-        import os
-        from unittest.mock import patch
+        import asyncio
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Event
 
-        from simpletuner.helpers.webhooks.handler import WebhookHandler
+        import httpx
+
+        from simpletuner.worker_agent import WorkerAgent, WorkerConfig
 
         remote_environment = "remote-environment"
         remote_dir = self.config_dir / remote_environment
@@ -3412,42 +3415,64 @@ class RemoteWorkerDatasetsTestCase(_TrainingWorkerFixture, _TrainerPageMixin, We
         self.register_job(job_id, "Lead GPU", "H200", config_name=remote_environment)
         self.register_job("other-run", "Other GPU", "L40S", group={"dataloader": [{"id": "other-run-images"}]})
 
+        worker_file = self.home_path / "worker-datasets.json"
+        worker_config = self.home_path / "worker-launch.json"
+        worker_config.write_text(json.dumps({"--data_backend_config": str(worker_file)}))
+        dataset = {
+            "id": "remote-images",
+            "type": "webshart",
+            "crop": False,
+            "resolution": 256,
+            "caption_strategy": "filename",
+            "webshart_manifest": "data/train.json",
+        }
+        worker_file.write_text(json.dumps([{**dataset, "aws_secret_access_key": "hidden-value"}]))
+        connected = Event()
+
+        async def serve_worker():
+            agent = WorkerAgent(WorkerConfig(self.base_url, f"{job_id}-token", "Lead GPU"))
+            agent.current_job = {"job_id": job_id}
+            agent._job_config_path = worker_config
+            async with httpx.AsyncClient(timeout=25) as client:
+                async with client.stream(
+                    "GET",
+                    f"{self.base_url}/api/workers/stream",
+                    headers={"X-Worker-Token": f"{job_id}-token"},
+                    params={"worker_id": f"worker-{job_id}", "dataset_config": "true"},
+                ) as stream:
+                    stream.raise_for_status()
+                    connected.set()
+                    served = 0
+                    async for line in stream.aiter_lines():
+                        await agent._handle_sse_line(line)
+                        if agent._dataset_config_tasks:
+                            await asyncio.gather(*agent._dataset_config_tasks)
+                            served += 1
+                            if served == 2:
+                                return
+
         def scenario(driver, _):
+            executor = ThreadPoolExecutor(max_workers=1)
+            self.addCleanup(executor.shutdown)
+            worker = executor.submit(asyncio.run, serve_worker())
+            self.assertTrue(connected.wait(10))
+
             driver.get(f"{self.base_url}/web/trainer#datasets")
             self.dismiss_onboarding(driver)
             wait = WebDriverWait(driver, 30)
             section = (By.ID, "dataloaderSection")
-            wait.until(EC.visibility_of_element_located(section))
-            wait.until(lambda d: "yet to report" in d.find_element(*section).text)
+            original = (By.CSS_SELECTOR, '#dataloaderSection [data-dataset-id="remote-images"]')
+            wait.until(EC.visibility_of_element_located(original))
             self.assertNotIn("stale-local-copy", driver.find_element(*section).get_attribute("outerHTML"))
 
-            with patch.dict(
-                os.environ,
-                {
-                    "SIMPLETUNER_WORKER_STATUS_URL": f"{self.base_url}/api/workers/job/{job_id}/status",
-                    "SIMPLETUNER_WORKER_TOKEN": f"{job_id}-token",
-                },
-            ):
-                handler = WebhookHandler(None, "remote dataset test")
-                handler.report_worker_datasets(
-                    [
-                        {
-                            "id": "remote-images",
-                            "type": "webshart",
-                            "crop": False,
-                            "resolution": 256,
-                            "caption_strategy": "filename",
-                            "webshart_manifest": "data/train.json",
-                            "aws_secret_access_key": "hidden-value",
-                        }
-                    ]
-                )
-                handler.close_worker_telemetry()
-
+            worker_file.write_text(
+                json.dumps([{**dataset, "id": "remote-images-updated", "aws_secret_access_key": "hidden"}])
+            )
             self.dismiss_onboarding(driver)
             wait.until(EC.element_to_be_clickable((By.XPATH, '//button[normalize-space()="Refresh"]'))).click()
-            row = (By.CSS_SELECTOR, '#dataloaderSection [data-dataset-id="remote-images"]')
+            row = (By.CSS_SELECTOR, '#dataloaderSection [data-dataset-id="remote-images-updated"]')
             wait.until(EC.visibility_of_element_located(row))
+            worker.result(timeout=5)
             self.assertIn("Lead GPU", driver.find_element(By.ID, "datasets-tab-content").text)
             self.assertFalse(driver.find_elements(By.CSS_SELECTOR, '[data-dataset-id="other-run-images"]'))
 
@@ -3456,19 +3481,7 @@ class RemoteWorkerDatasetsTestCase(_TrainingWorkerFixture, _TrainerPageMixin, We
             ).click()
             json_editor = wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "#dataloaderSection textarea")))
             self.assertEqual(json_editor.get_dom_attribute("readonly"), "true")
-            self.assertEqual(
-                json.loads(json_editor.get_property("value")),
-                [
-                    {
-                        "id": "remote-images",
-                        "type": "webshart",
-                        "crop": False,
-                        "resolution": 256,
-                        "caption_strategy": "filename",
-                        "webshart_manifest": "data/train.json",
-                    }
-                ],
-            )
+            self.assertEqual(json.loads(json_editor.get_property("value")), [{**dataset, "id": "remote-images-updated"}])
 
             self.assertTrue(
                 driver.execute_async_script(

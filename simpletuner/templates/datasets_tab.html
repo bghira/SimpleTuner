@@ -225,7 +225,8 @@
             <template x-if="$store.trainer.remoteDatasetConfig">
                 <div class="d-flex align-items-center gap-2 mb-2">
                     <span class="text-muted small">
-                        Loaded from <strong x-text="$store.trainer.remoteDatasetConfig.workers.join(', ')"></strong>
+                        <span x-text="$store.trainer.remoteDatasetConfig.error ? 'Worker' : 'Loaded from'"></span>
+                        <strong x-text="$store.trainer.remoteDatasetConfig.workers.join(', ')"></strong>
                         <span aria-hidden="true">·</span> Read-only
                     </span>
                     <button type="button" class="btn btn-outline-secondary btn-sm ms-auto"

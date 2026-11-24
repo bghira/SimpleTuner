@@ -1662,11 +1662,6 @@ class FactoryRegistry:
         if len(data_backend_config) == 0:
             raise ValueError("Must provide at least one data backend in the data backend config file.")
 
-        if self.accelerator.is_main_process:
-            webhook = StateTracker.get_webhook_handler()
-            if webhook is not None:
-                webhook.report_worker_datasets(data_backend_config)
-
         caption_supported = self._caption_batches_supported()
         training_types = {DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.AUDIO, DatasetType.CONDITIONING}
         if caption_supported:

@@ -710,9 +710,10 @@ class WorkerJobStatusTestCase(APITestCase, unittest.TestCase):
             self.assertEqual(len(callback_service.stream_since(-1)), 1)
 
     @patch.dict(BaseSQLiteStore._instances, clear=True)
-    def test_dataset_reports_follow_job_assignment_and_visibility(self):
-        from dataclasses import replace
+    def test_dataset_request_is_scoped_to_the_visible_job_and_its_lead(self):
+        import httpx
 
+        from simpletuner.simpletuner_sdk.server.routes.workers import dataset_config_workers
         from simpletuner.simpletuner_sdk.server.services.cloud.storage.job_repository import JobRepository
         from simpletuner.simpletuner_sdk.server.services.worker_dataset_service import get_worker_dataset_config
 
@@ -725,82 +726,74 @@ class WorkerJobStatusTestCase(APITestCase, unittest.TestCase):
             self.enterContext(
                 patch(f"simpletuner.simpletuner_sdk.server.services.{module}.get_job_repository", return_value=jobs)
             )
-
-        started_at = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         job = UnifiedJob(
             job_id="job-456",
             job_type=JobType.LOCAL,
             provider="worker",
             status="training",
             config_name="remote",
-            created_at=started_at,
-            started_at=started_at,
+            created_at=now,
+            started_at=now,
             user_id=1,
-            metadata={
-                "worker_id": "leader",
-                "worker_ids": ["leader", self.worker.worker_id],
-                "worker_names": ["Lead GPU", "Peer GPU"],
-                "config": {"data_backend_config": "worker-only.json"},
-            },
+            metadata={"worker_id": "lead", "worker_ids": ["lead", self.worker.worker_id], "worker_names": ["Lead", "Peer"]},
         )
-        run_async(jobs.add(job))
         owner = Mock(id=1)
         other_user = Mock(id=2)
         owner.has_permission.return_value = other_user.has_permission.return_value = False
-        route = f"/api/workers/job/{job.job_id}/datasets"
-        headers = {"X-Worker-Token": self.token}
-        run_async(
-            jobs.add(
-                replace(
-                    job,
-                    job_id="older-run",
-                    started_at=None,
-                    created_at="2026-01-01T00:00:00+00:00",
-                    metadata={**job.metadata, "dataloader": [{"id": "older-images", "hf_token": "excluded"}]},
-                )
-            )
-        )
-        payload = {
-            "dataloader": [
-                {
-                    "id": "remote-images",
-                    "crop": False,
-                    "aws_secret_access_key": "excluded",
-                    "video": {"num_frames": 25, "auth_token": "excluded"},
-                    "manifest_url": "https://account:password@data.example/train.json?signature=excluded",
-                }
-            ]
-        }
 
-        self.assertEqual(self.client.post(route, json=payload, headers=headers).status_code, 403)
-        self.assertIsNone(run_async(get_worker_dataset_config("remote", owner))["datasets"])
-        run_async(jobs.update(job.job_id, {"metadata": {"worker_id": self.worker.worker_id}}))
-        legacy = self.client.post(route, json={"datasets": [{"id": "summary"}]}, headers=headers)
-        self.assertEqual(legacy.status_code, 422)
-        response = self.client.post(route, json=payload, headers=headers)
-        response.raise_for_status()
-        run = run_async(get_worker_dataset_config("remote", owner))
-        self.assertEqual(
-            run["datasets"],
-            [
-                {
-                    "id": "remote-images",
-                    "crop": False,
-                    "video": {"num_frames": 25},
-                    "manifest_url": "https://data.example/train.json",
-                }
-            ],
-        )
-        self.assertIsNone(run_async(get_worker_dataset_config("remote", other_user)))
-        self.assertIsNone(run_async(get_worker_dataset_config("local", owner)))
-        self.assertNotIn("remote-images", str(run_async(jobs.get(job.job_id)).metadata))
+        async def scenario():
+            await jobs.add(job)
+            self.assertIsNone(await get_worker_dataset_config("remote", other_user))
+            self.assertIsNone(await get_worker_dataset_config("local", owner))
+            self.assertIn("disconnected", (await get_worker_dataset_config("remote", owner))["error"])
 
-        run_async(jobs.update(job.job_id, {"started_at": "2026-02-01T00:00:00+00:00"}))
-        self.assertIsNone(run_async(get_worker_dataset_config("remote", owner))["datasets"])
-        run_async(jobs.update(job.job_id, {"status": "completed"}))
-        self.assertEqual(self.client.post(route, json=payload, headers=headers).status_code, 409)
-        older = run_async(get_worker_dataset_config("remote", owner))
-        self.assertEqual(older["datasets"], [{"id": "older-images"}])
+            transport = httpx.ASGITransport(app=self.client.app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://test", headers={"X-Worker-Token": self.token}
+            ) as client:
+                sent = asyncio.Queue()
+
+                async def push(worker_id, event):
+                    await sent.put((worker_id, event))
+                    return True
+
+                self.addCleanup(dataset_config_workers.discard, "lead")
+                dataset_config_workers.add("lead")
+                with patch("simpletuner.simpletuner_sdk.server.routes.workers.push_to_worker", side_effect=push) as send:
+                    readers = [asyncio.create_task(get_worker_dataset_config("remote", owner)) for _ in range(2)]
+                    worker_id, event = await asyncio.wait_for(sent.get(), 1)
+                    self.assertEqual(worker_id, "lead")
+                    self.assertEqual(event["job_id"], job.job_id)
+                    route = f"/api/workers/job/{job.job_id}/datasets"
+                    payload = {
+                        "request_id": event["request_id"],
+                        "dataloader": [{"id": "worker-images", "aws_secret_access_key": "excluded"}],
+                    }
+                    self.assertEqual((await client.post(route, json=payload)).status_code, 403)
+                    with patch(
+                        "simpletuner.simpletuner_sdk.server.routes.workers.validate_worker_token",
+                        return_value=Mock(worker_id="lead"),
+                    ):
+                        unsolicited = {**payload, "request_id": "00000000-0000-0000-0000-000000000000"}
+                        self.assertEqual((await client.post(route, json=unsolicited)).status_code, 404)
+                        (await client.post(route, json=payload)).raise_for_status()
+                        for result in await asyncio.gather(*readers):
+                            self.assertEqual(result["datasets"], [{"id": "worker-images"}])
+                        self.assertEqual((await client.post(route, json=payload)).status_code, 404)
+                    send.assert_awaited_once()
+
+                with (
+                    patch("simpletuner.simpletuner_sdk.server.routes.workers.push_to_worker", return_value=True),
+                    patch("simpletuner.simpletuner_sdk.server.services.worker_dataset_service._REQUEST_TIMEOUT", 0.01),
+                ):
+                    self.assertIn("did not respond", (await get_worker_dataset_config("remote", owner))["error"])
+
+            dataset_config_workers.discard("lead")
+            await jobs.update(job.job_id, {"metadata": {"dataloader": [{"id": "bundled-images", "hf_token": "excluded"}]}})
+            self.assertEqual((await get_worker_dataset_config("remote", owner))["datasets"], [{"id": "bundled-images"}])
+
+        run_async(scenario())
 
     @patch.dict(BaseSQLiteStore._instances, clear=True)
     def test_group_member_failure_cancels_leader_and_late_completion_preserves_error(self):

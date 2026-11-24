@@ -83,9 +83,8 @@
 
     <!-- Main Content (shown when store is ready) -->
     <div x-show="storeReady">
-        <p x-show="!datasetsLoading && trainer.remoteDatasetConfig?.datasets === null" class="alert alert-secondary" role="status">
-            This worker has yet to report the dataset configuration for this run.
-        </p>
+        <p x-show="!datasetsLoading && trainer.remoteDatasetConfig?.error" class="alert alert-secondary" role="status"
+           x-text="trainer.remoteDatasetConfig?.error"></p>
         <!-- Mode Switcher (desktop) -->
         <div class="mode-switcher mb-3">
             <button type="button" class="btn"
