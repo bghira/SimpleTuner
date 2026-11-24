@@ -4179,6 +4179,14 @@ function trainerComponent() {
                 window.showToast('Failed to remove dataset', 'error');
             }
         },
+        showDatasetSaveResult(result) {
+            if (result.restart_required) {
+                window.showToast('Dataset configuration saved. Restart the active training run to apply these changes.', 'warning', 8000);
+                return;
+            }
+            const backup = result.backupPath ? ` (backup: ${result.backupPath})` : '';
+            window.showToast(`Dataset configuration saved${backup}`, 'success');
+        },
         async saveDatasets({ showToast = true, createBackup = false, skipConfirmation = false } = {}) {
             if (this.datasetConfigReadOnly) return;
             // Show confirmation dialog unless skipped
@@ -4212,13 +4220,7 @@ function trainerComponent() {
                     this.hasUnsavedChanges = false;
                     this.datasetValidationErrors = {}; // Clear validation errors
                     const result = await response.json();
-                    if (showToast) {
-                        let message = 'Dataset configuration saved';
-                        if (result.backupPath) {
-                            message += ` (backup: ${result.backupPath})`;
-                        }
-                        window.showToast(message, 'success');
-                    }
+                    if (showToast) this.showDatasetSaveResult(result);
                     this.refreshDatasetsJson();
                 } else {
                     const error = await response.json();

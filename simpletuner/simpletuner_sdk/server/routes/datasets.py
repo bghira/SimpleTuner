@@ -18,6 +18,7 @@ from simpletuner.simpletuner_sdk.api_state import APIState
 from simpletuner.simpletuner_sdk.server.data.dataset_blueprints import get_dataset_blueprints
 from simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware import get_current_user
 from simpletuner.simpletuner_sdk.server.services.cloud.auth.models import User
+from simpletuner.simpletuner_sdk.server.services.cloud.storage.job_repository import get_job_repository
 from simpletuner.simpletuner_sdk.server.services.config_store import ConfigStore
 from simpletuner.simpletuner_sdk.server.services.dataset_caption_service import (
     CaptionStatus,
@@ -70,6 +71,7 @@ class DatasetPlanResponse(BaseModel):
     source: Literal["default", "disk"]
     updated_at: Optional[str] = None
     backupPath: Optional[str] = None
+    restart_required: bool = False
 
 
 def _ensure_text_embed_dataset(
@@ -265,10 +267,11 @@ async def test_dataset_connection(
         raise HTTPException(status_code=exc.status_code, detail=detail)
 
 
-def _persist_plan(payload: DatasetPlanPayload) -> DatasetPlanResponse:
+async def _persist_plan(payload: DatasetPlanPayload) -> DatasetPlanResponse:
     datasets: List[Dict[str, Any]] = [entry.model_dump(exclude_none=True) for entry in payload.datasets]
 
     # Get model_family from active config
+    environment = None
     model_family = None
     model_flavour = None
     distillation_method = None
@@ -277,6 +280,7 @@ def _persist_plan(payload: DatasetPlanPayload) -> DatasetPlanResponse:
 
         configs_service = ConfigsService()
         active_config = configs_service.get_active_config()
+        environment = active_config["name"]
         config_blob = active_config["config"]
         model_family = config_blob.get("model_family") or config_blob.get("--model_family")
         model_flavour = config_blob.get("model_flavour") or config_blob.get("--model_flavour")
@@ -304,6 +308,7 @@ def _persist_plan(payload: DatasetPlanPayload) -> DatasetPlanResponse:
         )
 
     store = _store()
+    restart_required = bool(environment and await get_job_repository().list_active_training_jobs(environment))
     backup_path = None
 
     # Create backup if requested
@@ -335,19 +340,20 @@ def _persist_plan(payload: DatasetPlanPayload) -> DatasetPlanResponse:
         source="disk",
         updated_at=updated_at,
         backupPath=str(backup_path) if backup_path else None,
+        restart_required=restart_required,
     )
 
 
 @router.post("/plan", response_model=DatasetPlanResponse)
 async def create_dataset_plan(payload: DatasetPlanPayload, _user: User = Depends(get_current_user)) -> DatasetPlanResponse:
     """Create or replace the dataset plan configuration."""
-    return _persist_plan(payload)
+    return await _persist_plan(payload)
 
 
 @router.patch("/plan", response_model=DatasetPlanResponse)
 async def update_dataset_plan(payload: DatasetPlanPayload, _user: User = Depends(get_current_user)) -> DatasetPlanResponse:
     """Update the dataset plan configuration."""
-    return _persist_plan(payload)
+    return await _persist_plan(payload)
 
 
 # File Browser and Dataset Detection Endpoints
