@@ -355,9 +355,10 @@ async def stop_training(_user: User = Depends(get_current_user)):
 
 
 async def _manual_targets(user: User) -> list[dict]:
+    from ..models.worker import WorkerStatus
     from ..services.cloud.storage.job_repository import get_job_repository
     from ..services.worker_repository import get_worker_repository
-    from .workers import manual_control_workers
+    from .workers import is_worker_connected, manual_control_workers
 
     jobs = get_job_repository()
     workers = get_worker_repository()
@@ -382,6 +383,7 @@ async def _manual_targets(user: User) -> list[dict]:
                 "config_name": job.config_name if job else None,
                 "gpu": None,
                 "available": True,
+                "show_manual_actions": True,
                 "can_stop": True,
                 "is_current": job_id == APIState.get_state("current_job_id"),
             }
@@ -394,6 +396,13 @@ async def _manual_targets(user: User) -> list[dict]:
         worker = await workers.get_worker(worker_id) if worker_id else None
         worker_names = metadata.get("worker_names") or []
         own = job.user_id == user.id
+        show_manual_actions = (
+            worker is not None
+            and worker.current_job_id == job.job_id
+            and worker.status in (WorkerStatus.BUSY, WorkerStatus.DRAINING)
+            and is_worker_connected(worker.worker_id)
+            and (can_manage_all or (own and can_manage_own))
+        )
         targets.append(
             {
                 "job_id": job.job_id,
@@ -402,7 +411,8 @@ async def _manual_targets(user: User) -> list[dict]:
                 "name": ", ".join(worker_names) or (worker.name if worker else "Remote worker"),
                 "config_name": job.config_name,
                 "gpu": (worker.gpu_info or {}).get("name") if worker else None,
-                "available": worker_id in manual_control_workers and (can_manage_all or (own and can_manage_own)),
+                "available": show_manual_actions and worker_id in manual_control_workers,
+                "show_manual_actions": show_manual_actions,
                 "can_stop": can_manage_all or (own and can_stop_own),
                 "is_current": False,
             }

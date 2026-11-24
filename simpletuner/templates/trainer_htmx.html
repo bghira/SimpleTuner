@@ -3584,14 +3584,17 @@ function trainerComponent() {
         _serverUptimeTimer: null,
         _beforeUnloadHandler: null,
         _visibilityChangeHandler: null,
-        manualTargets: [],
+        trainingControlTargets: [],
         _manualTargetsRequest: 0,
         stopPending: false,
         get activeEnvironmentIsTraining() {
-            return this.manualTargets.some(target => target.config_name === this.activeEnvironment);
+            return this.trainingControlTargets.some(target => target.config_name === this.activeEnvironment);
         },
         get stoppableRuns() {
-            return this.manualTargets.filter(target => target.can_stop);
+            return this.trainingControlTargets.filter(target => target.can_stop);
+        },
+        get manualTargets() {
+            return this.trainingControlTargets.filter(target => target.show_manual_actions);
         },
         async stopTrainingRun(target, dialog) {
             if (this.stopPending || !target.can_stop || !window.confirm('Stop this training run?')) return;
@@ -3634,11 +3637,11 @@ function trainerComponent() {
                 if (!response.ok) throw new Error(response.statusText);
                 const targets = await response.json();
                 if (request !== this._manualTargetsRequest) return;
-                this.manualTargets = targets;
+                this.trainingControlTargets = targets;
             } catch (error) {
                 if (request !== this._manualTargetsRequest) return;
                 console.warn('Could not load training nodes:', error);
-                this.manualTargets = [];
+                this.trainingControlTargets = [];
             }
             if (!this.manualTargets.length) this.manualMenu = null;
         },
@@ -6001,7 +6004,7 @@ function trainerComponent() {
 <!-- Main App - shown when auth check complete and login not required -->
 <div class="dashboard-wrapper"
      x-data="$store.trainer"
-     @training-status.window="if ($event.detail?.job_id && (['idle', 'completed', 'complete', 'stopped', 'cancelled', 'terminated', 'failed', 'error'].includes($event.detail.status) || !manualTargets.some(target => target.job_id === $event.detail.job_id))) refreshManualTargets()"
+     @training-status.window="if ($event.detail?.job_id && (['idle', 'completed', 'complete', 'stopped', 'cancelled', 'terminated', 'failed', 'error'].includes($event.detail.status) || !trainingControlTargets.some(target => target.job_id === $event.detail.job_id))) refreshManualTargets()"
      x-show="$store.cloudAuth.shouldShowApp"
      x-cloak
      x-init="(async () => {

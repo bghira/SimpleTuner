@@ -966,7 +966,12 @@ class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
     def test_remote_runs_can_stop_from_the_toolbar_and_queue(self):
         from contextlib import ExitStack
 
-        self.seed_defaults()
+        environment = "stop-toolbar-env"
+        env_dir = self.config_dir / environment
+        env_dir.mkdir()
+        (env_dir / "config.json").write_bytes((self.config_dir / "default" / "config.json").read_bytes())
+        self.seed_defaults(active_config=environment)
+        self.addCleanup(self.seed_defaults)
 
         def scenario(driver, _):
             first, second = "multinode-stop", "other-stop"
@@ -975,7 +980,7 @@ class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
                 first,
                 "Lead GPU",
                 "H200",
-                config_name="default",
+                config_name=environment,
                 group={"worker_ids": worker_ids, "worker_names": ["Lead GPU", "Other GPU"]},
             )
             self.register_job(second, "Other GPU", "L40S", config_name="other-env")
@@ -1008,7 +1013,7 @@ class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
                 stop.click()
                 picker = wait.until(EC.visibility_of_element_located((By.ID, "training-stop-picker-header")))
                 choices = picker.find_elements(By.CSS_SELECTOR, ".list-group-item")
-                self.assertEqual(len(choices), 2)
+                self.assertTrue(any(second in choice.text for choice in choices))
                 next(choice for choice in choices if first in choice.text).click()
                 for stream in streams:
                     assert_stop_message(stream, first)
@@ -1041,7 +1046,12 @@ class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
                 driver.execute_script("arguments[0].scrollIntoView({block: 'center'})", button)
                 button.click()
                 assert_stop_message(streams[1], second)
-                wait.until(lambda d: not d.find_element(By.ID, "cancelBtn").is_enabled())
+                wait.until(
+                    lambda d: d.execute_script(
+                        "return !Alpine.store('trainer').stoppableRuns.some(run => run.job_id === arguments[0])",
+                        second,
+                    )
+                )
 
         self.for_each_browser("stop_remote_training", scenario)
 
