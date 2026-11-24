@@ -16,7 +16,9 @@ class WorkerTelemetrySender:
 
     def __init__(self, url: str, token: str):
         self._url = url
-        self._validation_url = url.removesuffix("/status") + "/validation"
+        job_url = url.removesuffix("/status")
+        self._validation_url = job_url + "/validation"
+        self._datasets_url = job_url + "/datasets"
         self.callback_url = url.partition("/api/workers/job/")[0] + "/callback"
         self._headers = {"X-Worker-Token": token}
         self._pending: dict[str, dict] = {}
@@ -25,8 +27,8 @@ class WorkerTelemetrySender:
         self._closed = False
         self._thread: Thread | None = None
 
-    def enqueue(self, report: dict) -> None:
-        kind = "validation" if "validation" in report else "progress"
+    def enqueue(self, report: dict, *, kind: str | None = None) -> None:
+        kind = kind or ("validation" if "validation" in report else "progress")
         with self._condition:
             if self._closed:
                 return
@@ -92,9 +94,12 @@ class WorkerTelemetrySender:
         while batch:
             kind = next(iter(batch))
             try:
-                self._post(session, self._url, batch[kind])
+                self._post(session, self._datasets_url if kind == "datasets" else self._url, batch[kind])
             except requests.RequestException as exc:
-                logging.warning("Could not report worker training progress: %s", exc)
+                if kind == "datasets" and exc.response is not None and exc.response.status_code in {403, 404, 409, 422}:
+                    del batch[kind]
+                    continue
+                logging.warning("Could not report worker %s: %s", kind, exc)
                 with self._condition:
                     if not self._closed:
                         unsuperseded = {key: report for key, report in batch.items() if key not in self._pending}

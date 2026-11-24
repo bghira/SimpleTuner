@@ -3385,6 +3385,81 @@ class DatasetManagementTestCase(_TrainerPageMixin, WebUITestCase):
         self.for_each_browser("test_add_and_remove_dataset", scenario)
 
 
+class RemoteWorkerDatasetsTestCase(_TrainingWorkerFixture, _TrainerPageMixin, WebUITestCase):
+    SERVER_MODE = ServerMode.UNIFIED
+    MAX_BROWSERS = 1
+
+    def test_datasets_show_remote_reports_per_job_after_refresh(self):
+        import os
+        from unittest.mock import patch
+
+        from simpletuner.helpers.webhooks.handler import WebhookHandler
+
+        lead = "remote-dataset-run"
+        second = "other-dataset-run"
+        self.register_job(lead, "Lead GPU", "H200", group={"worker_names": ["Lead GPU", "Peer GPU"]})
+        self.register_job(
+            second,
+            "Second GPU",
+            "L40S",
+            group={"dataloader": [{"id": "bundled-images", "type": "local", "aws_secret_access_key": "hidden-value"}]},
+        )
+
+        def scenario(driver, _):
+            driver.get(f"{self.base_url}/web/trainer#datasets")
+            self.dismiss_onboarding(driver)
+            wait = WebDriverWait(driver, 20)
+            lead_detail = (By.CSS_SELECTOR, f'#worker-datasets details[data-job-id="{lead}"]')
+            second_detail = (By.CSS_SELECTOR, f'#worker-datasets details[data-job-id="{second}"]')
+            lead_panel = wait.until(EC.visibility_of_element_located(lead_detail))
+            if lead_panel.get_dom_attribute("open") is None:
+                lead_panel.find_element(By.TAG_NAME, "summary").click()
+            self.assertIn("yet to report", lead_panel.text)
+            self.assertIn("Lead GPU, Peer GPU", lead_panel.text)
+
+            with patch.dict(
+                os.environ,
+                {
+                    "SIMPLETUNER_WORKER_STATUS_URL": f"{self.base_url}/api/workers/job/{lead}/status",
+                    "SIMPLETUNER_WORKER_TOKEN": f"{lead}-token",
+                },
+            ):
+                handler = WebhookHandler(None, "remote dataset test")
+                handler.report_worker_datasets(
+                    [
+                        {
+                            "id": "remote-images",
+                            "type": "webshart",
+                            "crop": False,
+                            "repeats": 0,
+                            "resolution": 256,
+                            "resolution_type": "pixel",
+                            "aws_secret_access_key": "hidden-value",
+                        },
+                        {"id": "disabled-embeds", "dataset_type": "text_embeds", "disable": True},
+                    ]
+                )
+                handler.close_worker_telemetry()
+            wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "#worker-datasets button"))).click()
+            wait.until(EC.staleness_of(lead_panel))
+
+            def show_run(locator):
+                panel = wait.until(EC.visibility_of_element_located(locator))
+                if panel.get_dom_attribute("open") is None:
+                    panel.find_element(By.TAG_NAME, "summary").click()
+                return panel
+
+            lead_panel = show_run(lead_detail)
+            self.assertIn("remote-images", lead_panel.text)
+            self.assertIn("256 pixel", lead_panel.text)
+            self.assertIn("disabled-embeds (disabled)", lead_panel.text)
+            self.assertIn("bundled-images", show_run(second_detail).text)
+            self.assertNotIn("hidden-value", driver.find_element(By.ID, "worker-datasets").get_attribute("outerHTML"))
+            self.assertTrue(driver.find_element(By.ID, "dataloaderSection"))
+
+        self.for_each_browser("remote_dataset_reports", scenario)
+
+
 class DatasetViewerRevisionTestCase(_TrainerPageMixin, WebUITestCase):
     MAX_BROWSERS = 1
 

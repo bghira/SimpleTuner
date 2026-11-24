@@ -1,0 +1,69 @@
+<div id="worker-datasets">
+    {% if runs %}
+    <section class="card mb-4" aria-labelledby="worker-datasets-heading">
+        <div class="card-header d-flex align-items-center justify-content-between">
+            <h5 class="mb-0" id="worker-datasets-heading">Remote training datasets</h5>
+            <button type="button" class="btn btn-sm btn-outline-secondary"
+                    hx-get="/web/trainer/worker-datasets" hx-target="#worker-datasets" hx-swap="outerHTML">
+                Refresh
+            </button>
+        </div>
+        <div class="card-body">
+            {% for run in runs %}
+            <details class="mb-3" data-job-id="{{ run.job_id }}"{% if loop.first %} open{% endif %}>
+                <summary>
+                    <strong>{{ run.config_name or run.job_id }}</strong>
+                    <span class="ms-2 text-muted">{{ run.workers | join(', ') }} · {{ run.job_id }}</span>
+                </summary>
+                {% if run.datasets is none %}
+                <p class="mt-2 mb-0 text-muted">This run has yet to report its dataset configuration.</p>
+                {% elif not run.datasets %}
+                <p class="mt-2 mb-0 text-muted">No datasets were reported for this run.</p>
+                {% else %}
+                <div class="table-responsive mt-2">
+                    <table class="table table-sm mb-0">
+                        <thead>
+                            <tr>
+                                <th scope="col">Dataset</th>
+                                <th scope="col">Type</th>
+                                <th scope="col">Backend</th>
+                                <th scope="col">Resolution</th>
+                                <th scope="col">Crop</th>
+                                <th scope="col">Captions</th>
+                                <th scope="col">Repeats</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for dataset in run.datasets %}
+                            <tr>
+                                <th scope="row">
+                                    {{ dataset.id }}
+                                    {% if dataset.disabled %}<span class="fw-normal text-muted">(disabled)</span>{% endif %}
+                                </th>
+                                <td>{{ dataset.dataset_type }}</td>
+                                <td>{{ dataset.type | default('—') }}</td>
+                                <td>
+                                    {{ dataset.resolution | default('—') }}
+                                    {% if dataset.resolution_type is defined %}{{ dataset.resolution_type }}{% endif %}
+                                </td>
+                                <td>
+                                    {% if dataset.crop is defined %}
+                                        {{ 'Yes' if dataset.crop else 'No' }}
+                                        {% if dataset.crop and dataset.crop_aspect is defined %}· {{ dataset.crop_aspect }}{% endif %}
+                                        {% if dataset.crop and dataset.crop_style is defined %}· {{ dataset.crop_style }}{% endif %}
+                                    {% else %}—{% endif %}
+                                </td>
+                                <td>{{ dataset.caption_strategy | default('—') }}</td>
+                                <td>{{ dataset.repeats | default('—') }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% endif %}
+            </details>
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+</div>

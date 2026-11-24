@@ -16,6 +16,7 @@ from ..services.cloud.auth.models import User
 from ..services.search_service import SearchService
 from ..services.tab_service import TabService
 from ..services.webui_state import WebUIStateStore
+from ..services.worker_dataset_service import list_worker_dataset_runs
 from ..utils.cache_bust import setup_cache_busting
 from ..utils.docs import setup_docs_helpers
 from ..utils.paths import get_static_directory, get_template_directory
@@ -129,6 +130,17 @@ async def render_tab(
 
 
 # Utility endpoints
+@router.get("/trainer/worker-datasets", response_class=HTMLResponse)
+async def worker_datasets(request: Request, user: User = Depends(get_current_user)):
+    """Show the dataset settings attached to active remote runs."""
+    return templates.TemplateResponse(
+        request=request,
+        name="partials/worker_datasets.html",
+        context={"runs": await list_worker_dataset_runs(user)},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @router.get("/trainer/config-selector", response_class=HTMLResponse)
 async def config_selector(
     request: Request,

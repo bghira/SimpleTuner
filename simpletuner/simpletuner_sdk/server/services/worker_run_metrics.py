@@ -6,11 +6,11 @@ from datetime import datetime, timezone
 from threading import Lock
 from time import monotonic
 
+from simpletuner.worker_protocol import WORKER_JOB_ACTIVE_STATUSES, WORKER_JOB_PROVIDERS
+
 from .callback_events import ProgressData, parse_number
 from .cloud.base import UnifiedJob
 
-WORKER_PROVIDERS = {"worker", "kubeflow"}
-ACTIVE_STATUSES = {"starting", "training", "running"}
 _METRIC_NAMES = (
     "loss",
     "parent_loss",
@@ -58,7 +58,7 @@ class WorkerRunMetrics:
         return (job.metadata or {}).get("worker_id"), job.started_at
 
     def record(self, job: UnifiedJob, worker_name: str, payload: dict) -> None:
-        if job.provider not in WORKER_PROVIDERS or job.status not in ACTIVE_STATUSES:
+        if job.provider not in WORKER_JOB_PROVIDERS or job.status not in WORKER_JOB_ACTIVE_STATUSES:
             return
         progress = ProgressData.from_mapping(payload)
         if progress is None or progress.current is None or progress.current <= 0 or not progress.current.is_integer():

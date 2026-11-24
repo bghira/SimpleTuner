@@ -146,6 +146,23 @@ class TestFactoryEdgeCases(unittest.TestCase):
             json.dump(config_data, f, indent=2)
         return config_path
 
+    def test_running_worker_reports_the_dataset_config_from_its_own_file(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        authored = [
+            {"id": "images", "type": "local", "instance_data_dir": self.temp_dir, "crop": False},
+            {"id": "disabled-cache", "type": "local", "dataset_type": "text_embeds", "disable": True},
+        ]
+        self.args.data_backend_config = self._create_temp_config(authored)
+        factory = FactoryRegistry(self.args, self.accelerator, self.text_encoders, self.tokenizers, self.model)
+        with patch.object(StateTracker, "get_webhook_handler") as webhook:
+            factory.load_configuration()
+            webhook.return_value.report_worker_datasets.assert_called_once_with(authored)
+            self.accelerator.is_main_process = False
+            factory.load_configuration()
+            self.assertEqual(webhook.return_value.report_worker_datasets.call_count, 1)
+
     def test_duplicate_enabled_ids_rejected_before_opening_artifact_providers(self):
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
 

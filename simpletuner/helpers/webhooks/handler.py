@@ -14,6 +14,7 @@ from simpletuner.helpers.logging import get_logger
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
 from simpletuner.helpers.webhooks.config import WebhookConfig
 from simpletuner.helpers.webhooks.worker_telemetry import WorkerTelemetrySender
+from simpletuner.worker_protocol import summarize_worker_datasets
 
 # Define log levels
 log_levels = {"critical": 0, "error": 1, "warning": 2, "info": 3, "debug": 4}
@@ -121,6 +122,10 @@ class WebhookHandler:
             self.webhook_type = None
             self.message_prefix = f"`({project_name})` "
             self.log_level = log_levels["info"]
+
+    def report_worker_datasets(self, config: list[dict]) -> None:
+        if self._worker_telemetry is not None and (self.accelerator is None or self.accelerator.is_main_process):
+            self._worker_telemetry.enqueue({"datasets": summarize_worker_datasets(config)}, kind="datasets")
 
     def close_worker_telemetry(self) -> None:
         if self._worker_telemetry is not None:

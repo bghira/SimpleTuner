@@ -21,11 +21,12 @@ from simpletuner.helpers.training.local_metrics import (
 )
 from simpletuner.simpletuner_sdk.server.services.config_store import ConfigStore
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore
+from simpletuner.worker_protocol import WORKER_JOB_ACTIVE_STATUSES
 
 from .cloud.auth.models import User
 from .cloud.base import UnifiedJob
 from .cloud.storage.job_repository import get_job_repository
-from .worker_run_metrics import ACTIVE_STATUSES, WORKER_RUN_METRICS
+from .worker_run_metrics import WORKER_RUN_METRICS
 
 SUPPORTED_MEDIA_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".jxl", ".gif", ".mp4", ".webm", ".mov", ".wav"}
 
@@ -174,14 +175,14 @@ class TrainingMetricsService:
     async def latest_worker_samples(self, user: User) -> list[dict]:
         samples = []
         for job in await self._visible_worker_jobs(user):
-            if job.status in ACTIVE_STATUSES and (snapshot := WORKER_RUN_METRICS.snapshot(job)):
+            if job.status in WORKER_JOB_ACTIVE_STATUSES and (snapshot := WORKER_RUN_METRICS.snapshot(job)):
                 _, records = snapshot
                 samples.append({"job_id": job.job_id, "worker_id": job.metadata["worker_id"], **records[-1]})
         return samples
 
     @staticmethod
     def _worker_run(job: UnifiedJob) -> tuple[dict, list[dict], list[str]] | None:
-        if job.status not in ACTIVE_STATUSES or not (snapshot := WORKER_RUN_METRICS.snapshot(job)):
+        if job.status not in WORKER_JOB_ACTIVE_STATUSES or not (snapshot := WORKER_RUN_METRICS.snapshot(job)):
             return None
         worker_name, records = snapshot
         config = (job.metadata or {}).get("config") or {}

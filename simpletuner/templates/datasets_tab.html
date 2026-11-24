@@ -122,6 +122,8 @@
     <!-- Configuration Sub-tab -->
     <div x-show="activeSubTab === 'configuration'" x-cloak>
 
+    <div id="worker-datasets" hx-get="/web/trainer/worker-datasets" hx-trigger="load" hx-swap="outerHTML"></div>
+
     <!-- Hero CTA - Introduction to datasets -->
     {% call hero_cta(
         theme='cyan',

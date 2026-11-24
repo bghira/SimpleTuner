@@ -18,14 +18,19 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, FiniteFloat, StringConstraints
 
-from simpletuner.worker_protocol import WORKER_LOG_TAIL_SIZE
+from simpletuner.worker_protocol import (
+    WORKER_JOB_ACTIVE_STATUSES,
+    WORKER_JOB_PROVIDERS,
+    WORKER_LOG_TAIL_SIZE,
+    WorkerDatasetSummary,
+)
 
 from ..models.worker import WorkerStatus, WorkerType
 from ..services.callback_events import EventType, StageStatus
 from ..services.callback_service import get_default_callback_service
 from ..services.cloud.auth import User, get_optional_user
 from ..services.worker_credentials import generate_worker_token, hash_token
-from ..services.worker_run_metrics import ACTIVE_STATUSES, WORKER_RUN_METRICS
+from ..services.worker_run_metrics import WORKER_RUN_METRICS
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +95,10 @@ class JobStatusUpdate(BaseModel):
     error: Optional[str] = None
     log_tail: str | None = Field(default=None, max_length=WORKER_LOG_TAIL_SIZE)
     validation: WorkerValidationUpdate | None = None
+
+
+class WorkerDatasets(BaseModel):
+    datasets: list[WorkerDatasetSummary]
 
 
 class WorkerValidationImages(BaseModel):
@@ -518,7 +527,7 @@ async def _assigned_job(job_repo, job_id: str, worker, *, reports_progress: bool
 
 
 def _record_worker_stats(job, worker, status: str, progress: dict | None, validation: WorkerValidationUpdate | None = None):
-    if progress and status in ACTIVE_STATUSES:
+    if progress and status in WORKER_JOB_ACTIVE_STATUSES:
         WORKER_RUN_METRICS.record(job, worker.name, progress)
     event = {
         "type": "training.status",
@@ -663,6 +672,39 @@ async def worker_has_pending_jobs(worker_id: str, x_worker_token: str = Header(.
             for job in jobs
         )
     }
+
+
+@router.post("/job/{job_id}/datasets")
+async def report_job_datasets(
+    job_id: str,
+    request: WorkerDatasets,
+    x_worker_token: str = Header(..., alias="X-Worker-Token"),
+) -> Dict[str, Any]:
+    """Record datasets loaded by the worker leading this job."""
+    from ..services.cloud.storage.job_repository import get_job_repository
+
+    worker = await validate_worker_token(x_worker_token)
+    jobs = get_job_repository()
+    job = await _assigned_job(jobs, job_id, worker, reports_progress=False)
+    metadata = job.metadata or {}
+    if metadata.get("worker_id") != worker.worker_id:
+        raise HTTPException(status_code=403, detail="Only the lead worker can report job datasets")
+    if (
+        job.provider not in WORKER_JOB_PROVIDERS
+        or job.status not in WORKER_JOB_ACTIVE_STATUSES
+        or metadata.get("group_check")
+    ):
+        raise HTTPException(status_code=409, detail="Job is not accepting dataset reports")
+
+    snapshot = {
+        "worker_id": worker.worker_id,
+        "started_at": job.started_at,
+        "datasets": [dataset.model_dump(exclude_none=True) for dataset in request.datasets],
+    }
+    updated = await jobs.update(job_id, {"metadata": {"worker_datasets": snapshot}}, worker_id=worker.worker_id)
+    if not updated:
+        raise HTTPException(status_code=409, detail="Job assignment changed")
+    return {"success": True}
 
 
 @router.post("/job/{job_id}/validation")

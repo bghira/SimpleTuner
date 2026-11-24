@@ -710,6 +710,63 @@ class WorkerJobStatusTestCase(APITestCase, unittest.TestCase):
             self.assertEqual(len(callback_service.stream_since(-1)), 1)
 
     @patch.dict(BaseSQLiteStore._instances, clear=True)
+    def test_dataset_reports_follow_job_assignment_and_visibility(self):
+        from simpletuner.simpletuner_sdk.server.services.cloud.storage.job_repository import JobRepository
+        from simpletuner.simpletuner_sdk.server.services.worker_dataset_service import list_worker_dataset_runs
+
+        directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        jobs = JobRepository(directory / "jobs.db")
+        self.enterContext(
+            patch("simpletuner.simpletuner_sdk.server.routes.workers.validate_worker_token", return_value=self.worker)
+        )
+        for module in ("cloud.storage.job_repository", "worker_dataset_service"):
+            self.enterContext(
+                patch(f"simpletuner.simpletuner_sdk.server.services.{module}.get_job_repository", return_value=jobs)
+            )
+
+        started_at = datetime.now(timezone.utc).isoformat()
+        job = UnifiedJob(
+            job_id="job-456",
+            job_type=JobType.LOCAL,
+            provider="worker",
+            status="training",
+            config_name="remote",
+            created_at=started_at,
+            started_at=started_at,
+            user_id=1,
+            metadata={
+                "worker_id": "leader",
+                "worker_ids": ["leader", self.worker.worker_id],
+                "worker_names": ["Lead GPU", "Peer GPU"],
+                "config": {"data_backend_config": "worker-only.json"},
+            },
+        )
+        run_async(jobs.add(job))
+        owner = Mock(id=1)
+        other_user = Mock(id=2)
+        owner.has_permission.return_value = other_user.has_permission.return_value = False
+        route = f"/api/workers/job/{job.job_id}/datasets"
+        headers = {"X-Worker-Token": self.token}
+        payload = {"datasets": [{"id": "remote-images", "crop": False, "aws_secret_access_key": "excluded"}]}
+
+        self.assertEqual(self.client.post(route, json=payload, headers=headers).status_code, 403)
+        self.assertIsNone(run_async(list_worker_dataset_runs(owner))[0]["datasets"])
+        run_async(jobs.update(job.job_id, {"metadata": {"worker_id": self.worker.worker_id}}))
+        response = self.client.post(route, json=payload, headers=headers)
+        response.raise_for_status()
+        (run,) = run_async(list_worker_dataset_runs(owner))
+        self.assertEqual(
+            run["datasets"], [{"id": "remote-images", "dataset_type": "image", "disabled": False, "crop": False}]
+        )
+        self.assertEqual(run_async(list_worker_dataset_runs(other_user)), [])
+
+        run_async(jobs.update(job.job_id, {"started_at": "2026-02-01T00:00:00+00:00"}))
+        self.assertIsNone(run_async(list_worker_dataset_runs(owner))[0]["datasets"])
+        run_async(jobs.update(job.job_id, {"status": "completed"}))
+        self.assertEqual(self.client.post(route, json=payload, headers=headers).status_code, 409)
+        self.assertEqual(run_async(list_worker_dataset_runs(owner)), [])
+
+    @patch.dict(BaseSQLiteStore._instances, clear=True)
     def test_group_member_failure_cancels_leader_and_late_completion_preserves_error(self):
         from simpletuner.simpletuner_sdk.server.services.cloud.storage.job_repository import JobRepository
 
