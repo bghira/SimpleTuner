@@ -5,9 +5,11 @@ import json
 import os
 import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from threading import Thread
+from threading import Event, Thread
 from time import sleep
 from unittest.mock import MagicMock, patch
+
+import requests
 
 from simpletuner.helpers.webhooks.handler import WebhookHandler
 
@@ -63,6 +65,61 @@ class TestWebhookHTTPSending(unittest.TestCase):
         """Clear received requests before each test."""
         TestWebhookHTTPServer.received_requests.clear()
 
+    def test_worker_progress_does_not_wait_for_http_and_coalesces_backlog(self):
+        request_started = Event()
+        release_request = Event()
+        progress_returned = Event()
+        backlog_delivered = Event()
+        reports = []
+
+        def post(*args, **kwargs):
+            reports.append(kwargs["json"])
+            if len(reports) == 1:
+                request_started.set()
+                if not release_request.wait(5):
+                    raise AssertionError("The test did not release the first request")
+                raise requests.ConnectionError("Connection reset")
+            if len(reports) == 3:
+                backlog_delivered.set()
+            return MagicMock()
+
+        def report_first_step():
+            handler.send_raw({"type": "training.progress", "progress": {"current": 1}})
+            progress_returned.set()
+
+        env = {
+            "SIMPLETUNER_WORKER_STATUS_URL": "https://orchestrator.example/status",
+            "SIMPLETUNER_WORKER_TOKEN": "test-token",
+        }
+        with (
+            patch.dict(os.environ, env),
+            patch("requests.Session.post", side_effect=post),
+            patch("simpletuner.helpers.webhooks.worker_telemetry._RETRY_INTERVAL", 0.01),
+        ):
+            handler = WebhookHandler(None, "worker")
+            producer = Thread(target=report_first_step, daemon=True)
+            producer.start()
+            try:
+                self.assertTrue(request_started.wait(3))
+                self.assertTrue(progress_returned.wait(1), "Worker HTTP blocked the training producer")
+                for step in range(2, 20):
+                    handler.send_raw({"type": "training.progress", "progress": {"current": step}})
+                handler.send_lifecycle_stage("validation", "Validation", "running")
+                handler.send_lifecycle_stage("validation", "Validation", "completed")
+                handler.send_raw({"type": "training.progress", "progress": {"current": 20}})
+            finally:
+                release_request.set()
+                producer.join(timeout=5)
+            try:
+                self.assertTrue(backlog_delivered.wait(3))
+            finally:
+                handler.close_worker_telemetry()
+
+        self.assertEqual(len(reports), 3)
+        self.assertEqual(reports[0], {"progress": {"current": 1}})
+        self.assertEqual(reports[1]["validation"]["status"], "completed")
+        self.assertEqual(reports[2], {"progress": {"current": 20}})
+
     def test_worker_reports_only_training_progress_to_its_status_endpoint(self):
         env = {
             "SIMPLETUNER_WORKER_STATUS_URL": "http://127.0.0.1:8999/worker-status",
@@ -75,22 +132,31 @@ class TestWebhookHTTPSending(unittest.TestCase):
             )
             handler.send_raw({"type": "training.status", "progress": progress})
             handler.send_raw({"type": "notification"})
+            handler.close_worker_telemetry()
         reports = TestWebhookHTTPServer.received_requests
-        self.assertEqual([r["path"] for r in reports], ["/worker-status", "/user-callback", "/user-callback"])
-        self.assertEqual(reports[0]["headers"]["X-Worker-Token"], "worker-test-token")
-        self.assertEqual(reports[0]["data"], {"progress": progress})
-        self.assertNotIn("X-Worker-Token", reports[1]["headers"])
+        self.assertCountEqual([r["path"] for r in reports], ["/worker-status", "/user-callback", "/user-callback"])
+        worker_report = next(r for r in reports if r["path"] == "/worker-status")
+        self.assertEqual(worker_report["headers"]["X-Worker-Token"], "worker-test-token")
+        self.assertEqual(worker_report["data"], {"progress": progress})
+        for report in reports:
+            if report["path"] == "/user-callback":
+                self.assertNotIn("X-Worker-Token", report["headers"])
 
     def test_worker_reports_validation_stage_and_sampling_counts_without_media(self):
         env = {"SIMPLETUNER_WORKER_STATUS_URL": "http://127.0.0.1:8999/status", "SIMPLETUNER_WORKER_TOKEN": "test-token"}
         with patch.dict(os.environ, env):
             handler = WebhookHandler(None, "worker")
             handler.send_lifecycle_stage("validation", "Running Validation", "running")
+            handler.close_worker_telemetry()
+            handler = WebhookHandler(None, "worker")
             handler.send_raw(
                 {"type": "validation.image", "data": {"step": 4, "total_steps": 8, "prompt": "sample prompt"}},
                 images=["preview"],
             )
+            handler.close_worker_telemetry()
+            handler = WebhookHandler(None, "worker")
             handler.send_lifecycle_stage("validation", "Running Validation", "completed")
+            handler.close_worker_telemetry()
         start, sample, end = [r["data"]["validation"] for r in TestWebhookHTTPServer.received_requests]
         self.assertEqual((start["status"], end["status"]), ("running", "completed"))
         self.assertEqual(set(sample), {"progress", "status", "timestamp"})

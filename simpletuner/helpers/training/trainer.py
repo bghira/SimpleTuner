@@ -2123,6 +2123,8 @@ class Trainer:
             return
 
         # Only reset webhook_handler if we have a valid config to replace it with
+        if self.webhook_handler is not None:
+            self.webhook_handler.close_worker_telemetry()
         self.webhook_handler = None
 
         # Handle string webhook_config (file path or JSON string)
@@ -6058,6 +6060,9 @@ class Trainer:
         if self._cleanup_invoked:
             return
         self._cleanup_invoked = True
+
+        if getattr(self, "webhook_handler", None) is not None:
+            self.webhook_handler.close_worker_telemetry()
 
         try:
             if getattr(self, "gpu_circuit_breaker", None) is not None:
