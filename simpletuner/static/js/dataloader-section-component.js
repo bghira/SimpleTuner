@@ -1220,11 +1220,7 @@ function dataloaderSectionComponent() {
                 trainer.hasUnsavedChanges = false;
                 trainer.datasetValidationErrors = {};
                 const result = await response.json();
-                let message = 'Dataset configuration saved';
-                if (result.backupPath) {
-                    message += ` (backup: ${result.backupPath})`;
-                }
-                window.showToast(message, 'success');
+                trainer.showDatasetSaveResult(result);
                 trainer.refreshDatasetsJson();
             } else {
                 const error = await response.json();

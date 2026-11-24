@@ -3541,6 +3541,61 @@ class RemoteWorkerDatasetsTestCase(_TrainingWorkerFixture, _TrainerPageMixin, We
         self.for_each_browser("remote_environment_datasets", scenario)
 
 
+class DatasetSaveActiveRunTestCase(_TrainingWorkerFixture, _TrainerPageMixin, WebUITestCase):
+    SERVER_MODE = ServerMode.UNIFIED
+    MAX_BROWSERS = 1
+
+    def test_dataset_save_warns_to_restart_the_active_remote_run(self):
+        self.seed_defaults()
+        job_id = "dataset-save-active"
+        self.register_job(job_id, "Worker", "H200", config_name="default")
+        dataset_path = self.config_dir / "default" / "multidatabackend.json"
+        original = [
+            {
+                "id": "webshart-images",
+                "type": "webshart",
+                "dataset_type": "image",
+                "source": "org/dataset",
+                "caption_strategy": "webshart",
+                "metadata_backend": "webshart",
+                "resolution": 256,
+                "resolution_type": "pixel",
+            }
+        ]
+        dataset_path.write_text(json.dumps(original))
+
+        def scenario(driver, _):
+            driver.get(f"{self.base_url}/web/trainer#datasets")
+            wait = WebDriverWait(driver, 20)
+            wait.until(
+                lambda d: d.execute_script("return window.Alpine?.store('trainer')?.datasets[0]?.id === 'webshart-images'")
+            )
+            self.dismiss_onboarding(driver)
+            driver.execute_script(
+                """
+                const original = window.showToast;
+                window.datasetSaveMessages = [];
+                window.showToast = (message, severity, ...args) => {
+                    window.datasetSaveMessages.push([message, severity]);
+                    return original(message, severity, ...args);
+                };
+                Alpine.store('trainer').datasets[0].source = 'org/updated-dataset';
+                """
+            )
+            button = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, '[aria-label="Save dataset configuration"]')))
+            self.dismiss_onboarding(driver)
+            button.click()
+            wait.until(
+                lambda d: d.execute_script(
+                    "return window.datasetSaveMessages.some(([message, severity]) => severity === 'warning' && "
+                    "message.includes('Restart the active training run'));"
+                )
+            )
+            self.assertEqual(json.loads(dataset_path.read_text())[0]["source"], "org/updated-dataset")
+
+        self.for_each_browser("restart_notice_on_dataset_save", scenario)
+
+
 class DatasetViewerRevisionTestCase(_TrainerPageMixin, WebUITestCase):
     MAX_BROWSERS = 1
 

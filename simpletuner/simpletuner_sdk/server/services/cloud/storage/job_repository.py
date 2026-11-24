@@ -524,6 +524,28 @@ class JobRepository(BaseSQLiteStore):
 
         return await loop.run_in_executor(None, _get)
 
+    async def list_active_training_jobs(self, environment: str | None = None) -> list[UnifiedJob]:
+        """Return jobs that have started training or are preparing to train."""
+
+        def _list():
+            conn = self._get_connection()
+            try:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM jobs
+                    WHERE status IN ('starting', 'running', 'training')
+                      AND (? IS NULL OR config_name = ?)
+                      AND NOT COALESCE(json_extract(metadata, '$.group_check'), 0)
+                    ORDER BY COALESCE(started_at, created_at) DESC
+                    """,
+                    (environment, environment),
+                )
+                return [self._row_to_job(row) for row in rows]
+            finally:
+                conn.close()
+
+        return await asyncio.to_thread(_list)
+
     async def list(
         self,
         limit: int = 100,
