@@ -970,9 +970,7 @@ function trainerComponent() {
             const currentTab = this.activeTab;
 
             // Refresh current tab content
-            if (this.activeTab === 'datasets') {
-                await this.loadDatasetsAfterEnvironmentChange();
-            } else if (this.activeTab !== 'environments') {
+            if (!['datasets', 'environments'].includes(this.activeTab)) {
                 // For other tabs (except environments), reload the tab content to show new config values
                 const tabContainer = document.getElementById('tab-content');
                 if (tabContainer) {
@@ -2023,7 +2021,7 @@ function trainerComponent() {
             dataset.is_regularization_data = dataset.is_regularisation_data;
             dataset.prepend_instance_prompt = this.normalizeBoolean(dataset.prepend_instance_prompt);
             dataset.only_instance_prompt = this.normalizeBoolean(dataset.only_instance_prompt);
-            dataset.disabled = this.normalizeBoolean(dataset.disabled);
+            dataset.disabled = this.normalizeBoolean(dataset.disabled) || this.normalizeBoolean(dataset.disable);
             dataset.vae_cache_clear_each_epoch = this.normalizeBoolean(dataset.vae_cache_clear_each_epoch);
             dataset.vae_cache_ondemand = this.normalizeBoolean(dataset.vae_cache_ondemand);
             dataset.vae_cache_disable = this.normalizeBoolean(dataset.vae_cache_disable);
@@ -3470,29 +3468,6 @@ function trainerComponent() {
             entry._captionsValue = value;
             this.setConditioningCaptionsMode(entry, entry._captionsMode || 'inherit');
         },
-        async loadDatasetsAfterEnvironmentChange() {
-             try {
-                 if (!this.activeEnvironmentConfig) {
-                     await this.fetchActiveEnvironmentConfig();
-                 }
-
-                 const normalized = this.buildNormalizedConfig(this.activeEnvironmentConfig);
-                 const backendPath = this.firstNonEmpty(
-                     normalized.data_backend_config,
-                     normalized.dataloader_config,
-                     normalized.multidatabackend,
-                 );
-
-                 if (backendPath) {
-                     await this.loadDatasetsFromConfig(backendPath);
-                 } else {
-                     await this.loadDatasets();
-                 }
-             } catch (error) {
-                 console.error('Error loading datasets after environment change:', error);
-                 await this.loadDatasets();
-             }
-        },
          // Dataset management
         datasets: [],
         knownConditioningGenerators: [
@@ -3508,6 +3483,7 @@ function trainerComponent() {
          datasetBlueprints: [],
          datasetsLoading: false,
          _datasetsReloadInFlight: null,
+         remoteDatasetConfig: null,
          dataLoaderMode: 'builder', // 'builder' or 'json'
          dataLoaderJson: '',
          hasUnsavedChanges: false,
@@ -3950,189 +3926,115 @@ function trainerComponent() {
         get hasSystemStatus() {
             return this.systemStatusItems.length > 0;
         },
-        async loadDatasets() {
-             this.datasetsLoading = true;
-             try {
-                 // Load dataset plan
-                 const planResponse = await fetch('/api/datasets/plan');
-                if (planResponse.ok) {
-                    const planData = await planResponse.json();
-                    const datasetList = Array.isArray(planData.datasets) ? planData.datasets : [];
-                    this.datasets = this.normalizeDatasets(datasetList);
-                    const sanitized = this.prepareDatasetsForSave(this.datasets);
-                    this.dataLoaderJson = JSON.stringify(sanitized, null, 2);
-                    this.hasUnsavedChanges = false;
-                    this.datasetValidationErrors = {};
+        get datasetConfigReadOnly() {
+            return this.datasetsLoading || this.remoteDatasetConfig !== null;
+        },
+        loadDatasetsAfterEnvironmentChange() {
+            const normalized = this.buildNormalizedConfig(this.activeEnvironmentConfig);
+            const path = this.firstNonEmpty(
+                normalized.data_backend_config,
+                normalized.dataloader_config,
+                normalized.multidatabackend,
+            );
+            return this.loadDatasetConfig(path, true);
+        },
+        loadDatasetsFromConfig(path) {
+            if (this.remoteDatasetConfig) return;
+            return this.loadDatasetConfig(path, false);
+        },
+        async loadDatasetConfig(path, resolveEnvironment) {
+            const environment = this.activeEnvironment;
+            const pending = this._datasetsReloadInFlight;
+            if (pending?.environment === environment && pending.path === path && pending.resolveEnvironment === resolveEnvironment) {
+                return pending.promise;
+            }
+            pending?.controller.abort();
+            const request = { environment, path, resolveEnvironment, controller: new AbortController() };
+            this._datasetsReloadInFlight = request;
+            this.datasetsLoading = true;
+            const { signal } = request.controller;
+            const isCurrent = () => !signal.aborted && this.activeEnvironment === environment;
+            const readJson = async (url) => {
+                const response = await fetch(url, { signal });
+                if (!response.ok) throw new Error('Failed to load dataset configuration');
+                return response.json();
+            };
 
-                    // Store validation errors from the load response + client-side checks
-                    const serverValidations = Array.isArray(planData.validations) ? planData.validations : [];
-                    const clientValidations = this.detectDuplicateIds(this.datasets);
+            request.promise = (async () => {
+                this.remoteDatasetConfig = null;
+                this.datasets = [];
+                this.dataLoaderJson = JSON.stringify([], null, 2);
+                this.hasUnsavedChanges = false;
+                this.datasetValidationErrors = {};
+                this.loadValidationErrors = [];
 
-                    // Merge validations, avoiding duplicates
-                    const allValidations = [...serverValidations];
-                    clientValidations.forEach(cv => {
-                        if (!allValidations.some(sv => sv.field === cv.field && sv.message === cv.message)) {
-                            allValidations.push(cv);
+                try {
+                    const remote = resolveEnvironment && environment
+                        ? await readJson(`/api/datasets/remote-config?environment=${encodeURIComponent(environment)}`)
+                        : null;
+                    if (!isCurrent()) return;
+                    this.remoteDatasetConfig = remote;
+
+                    let plan;
+                    if (remote) {
+                        plan = { datasets: remote.datasets || [] };
+                    } else if (path) {
+                        const url = /^https?:\/\//.test(path)
+                            ? path
+                            : `/api/configs/data-backend-file?path=${encodeURIComponent(path)}`;
+                        plan = { datasets: await readJson(url) };
+                    } else {
+                        plan = await readJson('/api/datasets/plan');
+                    }
+                    if (!isCurrent()) return;
+                    if (!Array.isArray(plan.datasets)) throw new Error('Expected a list of datasets');
+
+                    this.datasets = remote
+                        ? structuredClone(plan.datasets).map((dataset, index) => this.normalizeDataset(dataset, index))
+                        : this.normalizeDatasets(plan.datasets);
+                    const jsonDatasets = remote ? plan.datasets : this.prepareDatasetsForSave(this.datasets);
+                    this.dataLoaderJson = JSON.stringify(jsonDatasets, null, 2);
+                    const validations = Array.isArray(plan.validations) ? [...plan.validations] : [];
+                    for (const error of this.detectDuplicateIds(this.datasets)) {
+                        if (!validations.some(v => v.field === error.field && v.message === error.message)) {
+                            validations.push(error);
                         }
-                    });
-
-                    this.loadValidationErrors = allValidations.filter(v => v.level === 'error' || v.level === 'warning');
-
-                    // Show toast for critical errors (like duplicate IDs, missing paths)
-                    const criticalErrors = this.loadValidationErrors.filter(v => v.level === 'error');
-                    if (criticalErrors.length > 0) {
-                        const errorMessages = criticalErrors.slice(0, 3).map(e => `• ${e.field}: ${e.message}`).join('<br>');
-                        const moreCount = criticalErrors.length > 3 ? `<br>...and ${criticalErrors.length - 3} more` : '';
-                        window.showToast(`<strong>Dataset configuration has errors:</strong><br>${errorMessages}${moreCount}`, 'error', 8000);
+                    }
+                    this.loadValidationErrors = validations.filter(v => v.level === 'error' || v.level === 'warning');
+                    if (!remote && this.loadValidationErrors.some(v => v.level === 'error')) {
+                        window.showToast('Dataset configuration has errors. See Dataset Configuration for details.', 'error');
                     }
 
-                    if (Alpine.store('trainer')) {
-                        Alpine.store('trainer').datasets = this.datasets;
-                        Alpine.store('trainer').dataLoaderJson = this.dataLoaderJson;
-                        Alpine.store('trainer').loadValidationErrors = this.loadValidationErrors;
-                    }
-                    if (window.dataloaderSectionComponentInstance &&
-                        typeof window.dataloaderSectionComponentInstance.syncGeneratorSelectionsForAll === 'function') {
-                        window.dataloaderSectionComponentInstance.syncGeneratorSelectionsForAll();
+                    const component = window.dataloaderSectionComponentInstance;
+                    if (typeof component?.syncGeneratorSelectionsForAll === 'function') {
+                        component.syncGeneratorSelectionsForAll();
                     } else {
                         window.__pendingGeneratorSync = true;
                     }
-                }
-
-                 // Load blueprints for presets
-                 const blueprintResponse = await fetch('/api/datasets/blueprints');
-                 if (blueprintResponse.ok) {
-                     const blueprintData = await blueprintResponse.json();
-                     this.datasetBlueprints = blueprintData.blueprints || [];
-                 }
-            } catch (error) {
-                console.error('Error loading datasets:', error);
-                window.showToast('Failed to load dataset configuration', 'error');
-                this.datasets = [];
-                this.dataLoaderJson = JSON.stringify([], null, 2);
-                this.hasUnsavedChanges = false;
-                this.loadValidationErrors = [];
-                if (Alpine.store('trainer')) {
-                    Alpine.store('trainer').loadValidationErrors = [];
-                }
-            } finally {
-                this.datasetsLoading = false;
-            }
-        },
-         async loadDatasetsFromConfig(dataBackendConfigPath) {
-             this.datasetsLoading = true;
-             try {
-                 // Construct the URL to fetch the dataset configuration file
-                 // The path might be relative or absolute, so we need to handle it properly
-                 let fetchUrl;
-                if (dataBackendConfigPath.startsWith('http://') || dataBackendConfigPath.startsWith('https://')) {
-                    // Full URL
-                    fetchUrl = dataBackendConfigPath;
-                } else {
-                    // Local filesystem path (absolute or relative) should always be resolved via backend API
-                    fetchUrl = `/api/configs/data-backend-file?path=${encodeURIComponent(dataBackendConfigPath)}`;
-                }
-
-                 const response = await fetch(fetchUrl);
-                 if (response.ok) {
-                     const datasets = await response.json();
-
-                     // Validate that we got an array
-                     if (Array.isArray(datasets)) {
-                        this.datasets = this.normalizeDatasets(datasets);
-                        const sanitized = this.prepareDatasetsForSave(this.datasets);
-                        this.dataLoaderJson = JSON.stringify(sanitized, null, 2);
-
-                        // Client-side duplicate ID detection
-                        const clientValidations = this.detectDuplicateIds(this.datasets);
-                        this.loadValidationErrors = clientValidations;
-
-                        // Update the trainer store reference
-                        if (Alpine.store('trainer')) {
-                            Alpine.store('trainer').datasets = this.datasets;
-                            Alpine.store('trainer').dataLoaderJson = this.dataLoaderJson;
-                            Alpine.store('trainer').loadValidationErrors = this.loadValidationErrors;
+                    if (!path && !remote) {
+                        const blueprintResponse = await fetch('/api/datasets/blueprints', { signal });
+                        if (blueprintResponse.ok) {
+                            const blueprints = await blueprintResponse.json();
+                            if (isCurrent()) this.datasetBlueprints = blueprints.blueprints || [];
                         }
-
-                        this.hasUnsavedChanges = false;
-                        this.datasetValidationErrors = {};
-
-                        // Show toast for client-side detected errors
-                        if (clientValidations.length > 0) {
-                            const errorMessages = clientValidations.slice(0, 3).map(e => `• ${e.field}: ${e.message}`).join('<br>');
-                            window.showToast(`<strong>Dataset configuration has errors:</strong><br>${errorMessages}`, 'error', 8000);
-                        }
-
-                        if (window.dataloaderSectionComponentInstance &&
-                            typeof window.dataloaderSectionComponentInstance.syncGeneratorSelectionsForAll === 'function') {
-                            window.dataloaderSectionComponentInstance.syncGeneratorSelectionsForAll();
-                        } else {
-                            window.__pendingGeneratorSync = true;
-                        }
-                        window.showToast('Dataset configuration loaded from environment', 'success');
-                    } else {
-                         throw new Error('Invalid dataset configuration format - expected an array');
-                     }
-                 } else {
-                     throw new Error(`Failed to load dataset configuration from ${dataBackendConfigPath}`);
-                 }
-             } catch (error) {
-                console.error('Error loading dataset configuration:', error);
-                window.showToast(`Failed to load dataset configuration: ${error.message}`, 'error');
-                // Clear datasets on error
-               this.datasets = [];
-               this.dataLoaderJson = JSON.stringify([], null, 2);
-                this.hasUnsavedChanges = false;
-                this.loadValidationErrors = [];
-                if (Alpine.store('trainer')) {
-                    Alpine.store('trainer').loadValidationErrors = [];
-                }
-            } finally {
-               this.datasetsLoading = false;
-            }
-        },
-        async loadDatasetsAfterEnvironmentChange() {
-            if (!this._datasetsReloadInFlight) {
-                this.datasetsLoading = true;
-                this.datasets = [];
-                this.dataLoaderJson = JSON.stringify([], null, 2);
-                this.hasUnsavedChanges = false;
-            }
-
-            if (this._datasetsReloadInFlight) {
-                return this._datasetsReloadInFlight;
-            }
-
-            this._datasetsReloadInFlight = (async () => {
-                try {
-                    if (!this.activeEnvironmentConfig) {
-                        await this.fetchActiveEnvironmentConfig();
-                    }
-
-                    const normalized = this.buildNormalizedConfig(this.activeEnvironmentConfig);
-                    const backendPath = this.firstNonEmpty(
-                        normalized.data_backend_config,
-                        normalized.dataloader_config,
-                        normalized.multidatabackend,
-                    );
-
-                    if (backendPath) {
-                        await this.loadDatasetsFromConfig(backendPath);
-                    } else {
-                        await this.loadDatasets();
                     }
                 } catch (error) {
-                    console.error('Error loading datasets after environment change:', error);
-                    await this.loadDatasets();
+                    if (isCurrent()) {
+                        console.error('Error loading dataset configuration:', error);
+                        window.showToast('Failed to load dataset configuration', 'error');
+                    }
                 }
             })();
 
             try {
-                await this._datasetsReloadInFlight;
+                await request.promise;
             } finally {
-                this._datasetsReloadInFlight = null;
-             }
-         },
+                if (!signal.aborted) {
+                    this.datasetsLoading = false;
+                    this._datasetsReloadInFlight = null;
+                }
+            }
+        },
         async addDataset(type) {
             try {
                 const dataset = {
@@ -4278,6 +4180,7 @@ function trainerComponent() {
             }
         },
         async saveDatasets({ showToast = true, createBackup = false, skipConfirmation = false } = {}) {
+            if (this.datasetConfigReadOnly) return;
             // Show confirmation dialog unless skipped
             if (!skipConfirmation) {
                 // Show the save dialog and wait for user response
@@ -4358,6 +4261,7 @@ function trainerComponent() {
             }
         },
         async saveJsonDatasets() {
+            if (this.datasetConfigReadOnly) return;
             try {
                 // Parse JSON to validate it
                 const parsedDatasets = JSON.parse(this.dataLoaderJson);
@@ -4375,6 +4279,7 @@ function trainerComponent() {
         },
         switchDataLoaderMode(mode) {
             this.dataLoaderMode = mode;
+            if (this.datasetConfigReadOnly) return;
             if (mode === 'json') {
                 this.refreshDatasetsJson();
             } else if (mode === 'builder') {
@@ -7365,7 +7270,7 @@ function trainerComponent() {
                     <button type="button"
                             class="trainer-action-btn btn"
                             :class="$store.trainer.hasUnsavedChanges ? 'btn-warning' : 'btn-outline-secondary'"
-                            x-show="activeTab === 'datasets'"
+                            x-show="activeTab === 'datasets' && !$store.trainer.datasetConfigReadOnly"
                             x-transition
                             @click="$store.trainer.saveDatasets && $store.trainer.saveDatasets({ showToast: true, skipConfirmation: true })"
                             title="Save dataset configuration"

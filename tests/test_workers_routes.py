@@ -711,8 +711,10 @@ class WorkerJobStatusTestCase(APITestCase, unittest.TestCase):
 
     @patch.dict(BaseSQLiteStore._instances, clear=True)
     def test_dataset_reports_follow_job_assignment_and_visibility(self):
+        from dataclasses import replace
+
         from simpletuner.simpletuner_sdk.server.services.cloud.storage.job_repository import JobRepository
-        from simpletuner.simpletuner_sdk.server.services.worker_dataset_service import list_worker_dataset_runs
+        from simpletuner.simpletuner_sdk.server.services.worker_dataset_service import get_worker_dataset_config
 
         directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
         jobs = JobRepository(directory / "jobs.db")
@@ -747,24 +749,58 @@ class WorkerJobStatusTestCase(APITestCase, unittest.TestCase):
         owner.has_permission.return_value = other_user.has_permission.return_value = False
         route = f"/api/workers/job/{job.job_id}/datasets"
         headers = {"X-Worker-Token": self.token}
-        payload = {"datasets": [{"id": "remote-images", "crop": False, "aws_secret_access_key": "excluded"}]}
+        run_async(
+            jobs.add(
+                replace(
+                    job,
+                    job_id="older-run",
+                    started_at=None,
+                    created_at="2026-01-01T00:00:00+00:00",
+                    metadata={**job.metadata, "dataloader": [{"id": "older-images", "hf_token": "excluded"}]},
+                )
+            )
+        )
+        payload = {
+            "dataloader": [
+                {
+                    "id": "remote-images",
+                    "crop": False,
+                    "aws_secret_access_key": "excluded",
+                    "video": {"num_frames": 25, "auth_token": "excluded"},
+                    "manifest_url": "https://account:password@data.example/train.json?signature=excluded",
+                }
+            ]
+        }
 
         self.assertEqual(self.client.post(route, json=payload, headers=headers).status_code, 403)
-        self.assertIsNone(run_async(list_worker_dataset_runs(owner))[0]["datasets"])
+        self.assertIsNone(run_async(get_worker_dataset_config("remote", owner))["datasets"])
         run_async(jobs.update(job.job_id, {"metadata": {"worker_id": self.worker.worker_id}}))
+        legacy = self.client.post(route, json={"datasets": [{"id": "summary"}]}, headers=headers)
+        self.assertEqual(legacy.status_code, 422)
         response = self.client.post(route, json=payload, headers=headers)
         response.raise_for_status()
-        (run,) = run_async(list_worker_dataset_runs(owner))
+        run = run_async(get_worker_dataset_config("remote", owner))
         self.assertEqual(
-            run["datasets"], [{"id": "remote-images", "dataset_type": "image", "disabled": False, "crop": False}]
+            run["datasets"],
+            [
+                {
+                    "id": "remote-images",
+                    "crop": False,
+                    "video": {"num_frames": 25},
+                    "manifest_url": "https://data.example/train.json",
+                }
+            ],
         )
-        self.assertEqual(run_async(list_worker_dataset_runs(other_user)), [])
+        self.assertIsNone(run_async(get_worker_dataset_config("remote", other_user)))
+        self.assertIsNone(run_async(get_worker_dataset_config("local", owner)))
+        self.assertNotIn("remote-images", str(run_async(jobs.get(job.job_id)).metadata))
 
         run_async(jobs.update(job.job_id, {"started_at": "2026-02-01T00:00:00+00:00"}))
-        self.assertIsNone(run_async(list_worker_dataset_runs(owner))[0]["datasets"])
+        self.assertIsNone(run_async(get_worker_dataset_config("remote", owner))["datasets"])
         run_async(jobs.update(job.job_id, {"status": "completed"}))
         self.assertEqual(self.client.post(route, json=payload, headers=headers).status_code, 409)
-        self.assertEqual(run_async(list_worker_dataset_runs(owner)), [])
+        older = run_async(get_worker_dataset_config("remote", owner))
+        self.assertEqual(older["datasets"], [{"id": "older-images"}])
 
     @patch.dict(BaseSQLiteStore._instances, clear=True)
     def test_group_member_failure_cancels_leader_and_late_completion_preserves_error(self):

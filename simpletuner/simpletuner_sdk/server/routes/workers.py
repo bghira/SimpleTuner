@@ -22,7 +22,7 @@ from simpletuner.worker_protocol import (
     WORKER_JOB_ACTIVE_STATUSES,
     WORKER_JOB_PROVIDERS,
     WORKER_LOG_TAIL_SIZE,
-    WorkerDatasetSummary,
+    redact_dataset_config,
 )
 
 from ..models.worker import WorkerStatus, WorkerType
@@ -98,7 +98,7 @@ class JobStatusUpdate(BaseModel):
 
 
 class WorkerDatasets(BaseModel):
-    datasets: list[WorkerDatasetSummary]
+    dataloader: list[dict[str, Any]]
 
 
 class WorkerValidationImages(BaseModel):
@@ -696,12 +696,7 @@ async def report_job_datasets(
     ):
         raise HTTPException(status_code=409, detail="Job is not accepting dataset reports")
 
-    snapshot = {
-        "worker_id": worker.worker_id,
-        "started_at": job.started_at,
-        "datasets": [dataset.model_dump(exclude_none=True) for dataset in request.datasets],
-    }
-    updated = await jobs.update(job_id, {"metadata": {"worker_datasets": snapshot}}, worker_id=worker.worker_id)
+    updated = await jobs.save_worker_dataset_config(job, worker.worker_id, redact_dataset_config(request.dataloader))
     if not updated:
         raise HTTPException(status_code=409, detail="Job assignment changed")
     return {"success": True}

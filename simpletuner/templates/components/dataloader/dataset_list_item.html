@@ -18,6 +18,7 @@
         <input type="text"
                class="form-control form-control-sm list-item-id-input"
                x-model="dataset.id"
+               :readonly="datasetConfigReadOnly"
                @input="markAsUnsaved()"
                :title="dataset.id"
                placeholder="dataset-id">
@@ -26,6 +27,7 @@
     <!-- Type Selector -->
     <select class="form-select form-select-sm list-item-type-select"
             x-model="dataset.dataset_type"
+            :disabled="datasetConfigReadOnly"
             @change="onDatasetTypeChange(dataset)"
             @click.stop>
         <option value="">Type...</option>
@@ -110,7 +112,7 @@
     </div>
 
     <!-- Quick Actions -->
-    <div class="list-item-actions btn-group btn-group-sm">
+    <div class="list-item-actions btn-group btn-group-sm" x-show.important="!datasetConfigReadOnly">
         <button type="button"
                 class="btn btn-sm btn-outline-secondary"
                 title="Test connection"
@@ -211,7 +213,7 @@
     </div>
 
     <!-- Tab Content -->
-    <div class="expanded-content">
+    <fieldset class="expanded-content" :disabled="datasetConfigReadOnly">
         <!-- Basic Tab -->
         <div x-show="getListTab(dataset) === 'basic'" x-cloak>
             {% include 'components/dataloader/sections/basic_body.html' %}
@@ -256,7 +258,7 @@
         <div x-show="getListTab(dataset) === 'scheduling'" x-cloak>
             {% include 'components/dataloader/sections/scheduling_body.html' %}
         </div>
-    </div>
+    </fieldset>
 
     <!-- Expanded Footer -->
     <div class="list-item-expanded-footer">
@@ -265,6 +267,7 @@
                    class="form-check-input"
                    :id="'list-dataset-disabled-' + dataset.id"
                    x-model="dataset.disabled"
+                   :disabled="datasetConfigReadOnly"
                    @change="markAsUnsaved()">
             <label class="form-check-label small" :for="'list-dataset-disabled-' + dataset.id">
                 Disable dataset

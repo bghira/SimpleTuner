@@ -85,6 +85,17 @@ class JobRepository(BaseSQLiteStore):
                 """
             )
 
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS worker_job_dataset_configs (
+                    job_id TEXT PRIMARY KEY REFERENCES jobs(job_id) ON DELETE CASCADE,
+                    worker_id TEXT NOT NULL,
+                    started_at TEXT,
+                    datasets TEXT NOT NULL
+                )
+                """
+            )
+
             # Create indexes for common queries
             cursor.execute(
                 """
@@ -430,6 +441,71 @@ class JobRepository(BaseSQLiteStore):
             try:
                 row = conn.execute("SELECT log_tail FROM worker_job_logs WHERE job_id = ?", (job_id,)).fetchone()
                 return row["log_tail"] if row else None
+            finally:
+                conn.close()
+
+        return await asyncio.to_thread(_read)
+
+    async def get_active_worker_job(self, environment: str, user_id: int | None) -> UnifiedJob | None:
+        """Find the newest worker assignment for an environment visible to the user."""
+
+        def _get():
+            conn = self._get_connection()
+            try:
+                row = conn.execute(
+                    """
+                    SELECT * FROM jobs
+                    WHERE config_name = ? AND provider IN ('worker', 'kubeflow')
+                      AND status IN ('starting', 'running', 'training')
+                      AND (? IS NULL OR user_id = ?)
+                      AND json_extract(metadata, '$.worker_id') IS NOT NULL
+                      AND NOT COALESCE(json_extract(metadata, '$.group_check'), 0)
+                    ORDER BY COALESCE(started_at, created_at) DESC, job_id DESC
+                    LIMIT 1
+                    """,
+                    (environment, user_id, user_id),
+                ).fetchone()
+                return self._row_to_job(row) if row else None
+            finally:
+                conn.close()
+
+        return await asyncio.to_thread(_get)
+
+    async def save_worker_dataset_config(self, job: UnifiedJob, worker_id: str, datasets: list[dict]) -> bool:
+        """Record the dataloader config for the job's current assignment."""
+
+        def _save(conn):
+            return bool(
+                conn.execute(
+                    """
+                    INSERT INTO worker_job_dataset_configs (job_id, worker_id, started_at, datasets)
+                    SELECT job_id, ?, started_at, ? FROM jobs
+                    WHERE job_id = ? AND started_at IS ? AND status IN ('starting', 'running', 'training')
+                      AND json_extract(metadata, '$.worker_id') = ?
+                    ON CONFLICT(job_id) DO UPDATE SET
+                        worker_id = excluded.worker_id,
+                        started_at = excluded.started_at,
+                        datasets = excluded.datasets
+                    """,
+                    (worker_id, json.dumps(datasets), job.job_id, job.started_at, worker_id),
+                ).rowcount
+            )
+
+        (saved,) = await self.execute_in_transaction([_save])
+        return saved
+
+    async def get_worker_dataset_config(self, job: UnifiedJob, worker_id: str) -> list[dict] | None:
+        def _read():
+            conn = self._get_connection()
+            try:
+                row = conn.execute(
+                    """
+                    SELECT datasets FROM worker_job_dataset_configs
+                    WHERE job_id = ? AND worker_id = ? AND started_at IS ?
+                    """,
+                    (job.job_id, worker_id, job.started_at),
+                ).fetchone()
+                return json.loads(row["datasets"]) if row else None
             finally:
                 conn.close()
 

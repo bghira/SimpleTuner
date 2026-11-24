@@ -99,7 +99,9 @@ class _TrainerPageMixin:
 
 class _TrainingWorkerFixture:
 
-    def register_job(self, job_id, worker_name, gpu, *, error_message=None, gpu_info=None, group=None):
+    def register_job(
+        self, job_id, worker_name, gpu, *, error_message=None, gpu_info=None, group=None, config_name="large-batch"
+    ):
         import asyncio
         from datetime import datetime, timezone
         from unittest.mock import patch
@@ -128,7 +130,7 @@ class _TrainingWorkerFixture:
             job_type=JobType.LOCAL,
             provider="worker",
             status="running",
-            config_name="large-batch",
+            config_name=config_name,
             created_at=datetime.now(timezone.utc).isoformat(),
             completed_at=datetime.now(timezone.utc).isoformat() if error_message else None,
             error_message=error_message,
@@ -3389,39 +3391,41 @@ class RemoteWorkerDatasetsTestCase(_TrainingWorkerFixture, _TrainerPageMixin, We
     SERVER_MODE = ServerMode.UNIFIED
     MAX_BROWSERS = 1
 
-    def test_datasets_show_remote_reports_per_job_after_refresh(self):
+    def test_environment_loads_remote_config_into_dataset_builder(self):
         import os
         from unittest.mock import patch
 
         from simpletuner.helpers.webhooks.handler import WebhookHandler
 
-        lead = "remote-dataset-run"
-        second = "other-dataset-run"
-        self.register_job(lead, "Lead GPU", "H200", group={"worker_names": ["Lead GPU", "Peer GPU"]})
-        self.register_job(
-            second,
-            "Second GPU",
-            "L40S",
-            group={"dataloader": [{"id": "bundled-images", "type": "local", "aws_secret_access_key": "hidden-value"}]},
-        )
+        remote_environment = "remote-environment"
+        remote_dir = self.config_dir / remote_environment
+        remote_dir.mkdir()
+        model_config = json.loads((self.config_dir / "default" / "config.json").read_text())
+        dataset_file = "multidatabackend.json"
+        model_config["--data_backend_config"] = str(remote_dir / dataset_file)
+        (remote_dir / "config.json").write_text(json.dumps(model_config))
+        (remote_dir / dataset_file).write_text(json.dumps([{"id": "stale-local-copy", "type": "local"}]))
+        (self.config_dir / "default" / dataset_file).write_text(json.dumps([{"id": "local-images", "type": "local"}]))
+        self.seed_defaults(active_config=remote_environment)
+
+        job_id = "remote-dataset-run"
+        self.register_job(job_id, "Lead GPU", "H200", config_name=remote_environment)
+        self.register_job("other-run", "Other GPU", "L40S", group={"dataloader": [{"id": "other-run-images"}]})
 
         def scenario(driver, _):
             driver.get(f"{self.base_url}/web/trainer#datasets")
             self.dismiss_onboarding(driver)
-            wait = WebDriverWait(driver, 20)
-            lead_detail = (By.CSS_SELECTOR, f'#worker-datasets details[data-job-id="{lead}"]')
-            second_detail = (By.CSS_SELECTOR, f'#worker-datasets details[data-job-id="{second}"]')
-            lead_panel = wait.until(EC.visibility_of_element_located(lead_detail))
-            if lead_panel.get_dom_attribute("open") is None:
-                lead_panel.find_element(By.TAG_NAME, "summary").click()
-            self.assertIn("yet to report", lead_panel.text)
-            self.assertIn("Lead GPU, Peer GPU", lead_panel.text)
+            wait = WebDriverWait(driver, 30)
+            section = (By.ID, "dataloaderSection")
+            wait.until(EC.visibility_of_element_located(section))
+            wait.until(lambda d: "yet to report" in d.find_element(*section).text)
+            self.assertNotIn("stale-local-copy", driver.find_element(*section).get_attribute("outerHTML"))
 
             with patch.dict(
                 os.environ,
                 {
-                    "SIMPLETUNER_WORKER_STATUS_URL": f"{self.base_url}/api/workers/job/{lead}/status",
-                    "SIMPLETUNER_WORKER_TOKEN": f"{lead}-token",
+                    "SIMPLETUNER_WORKER_STATUS_URL": f"{self.base_url}/api/workers/job/{job_id}/status",
+                    "SIMPLETUNER_WORKER_TOKEN": f"{job_id}-token",
                 },
             ):
                 handler = WebhookHandler(None, "remote dataset test")
@@ -3431,33 +3435,58 @@ class RemoteWorkerDatasetsTestCase(_TrainingWorkerFixture, _TrainerPageMixin, We
                             "id": "remote-images",
                             "type": "webshart",
                             "crop": False,
-                            "repeats": 0,
                             "resolution": 256,
-                            "resolution_type": "pixel",
+                            "caption_strategy": "filename",
+                            "webshart_manifest": "data/train.json",
                             "aws_secret_access_key": "hidden-value",
-                        },
-                        {"id": "disabled-embeds", "dataset_type": "text_embeds", "disable": True},
+                        }
                     ]
                 )
                 handler.close_worker_telemetry()
-            wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "#worker-datasets button"))).click()
-            wait.until(EC.staleness_of(lead_panel))
 
-            def show_run(locator):
-                panel = wait.until(EC.visibility_of_element_located(locator))
-                if panel.get_dom_attribute("open") is None:
-                    panel.find_element(By.TAG_NAME, "summary").click()
-                return panel
+            self.dismiss_onboarding(driver)
+            wait.until(EC.element_to_be_clickable((By.XPATH, '//button[normalize-space()="Refresh"]'))).click()
+            row = (By.CSS_SELECTOR, '#dataloaderSection [data-dataset-id="remote-images"]')
+            wait.until(EC.visibility_of_element_located(row))
+            self.assertIn("Lead GPU", driver.find_element(By.ID, "datasets-tab-content").text)
+            self.assertFalse(driver.find_elements(By.CSS_SELECTOR, '[data-dataset-id="other-run-images"]'))
 
-            lead_panel = show_run(lead_detail)
-            self.assertIn("remote-images", lead_panel.text)
-            self.assertIn("256 pixel", lead_panel.text)
-            self.assertIn("disabled-embeds (disabled)", lead_panel.text)
-            self.assertIn("bundled-images", show_run(second_detail).text)
-            self.assertNotIn("hidden-value", driver.find_element(By.ID, "worker-datasets").get_attribute("outerHTML"))
-            self.assertTrue(driver.find_element(By.ID, "dataloaderSection"))
+            wait.until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "#dataloaderSection .mode-switcher button:nth-child(2)"))
+            ).click()
+            json_editor = wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "#dataloaderSection textarea")))
+            self.assertEqual(json_editor.get_dom_attribute("readonly"), "true")
+            self.assertEqual(
+                json.loads(json_editor.get_property("value")),
+                [
+                    {
+                        "id": "remote-images",
+                        "type": "webshart",
+                        "crop": False,
+                        "resolution": 256,
+                        "caption_strategy": "filename",
+                        "webshart_manifest": "data/train.json",
+                    }
+                ],
+            )
 
-        self.for_each_browser("remote_dataset_reports", scenario)
+            self.assertTrue(
+                driver.execute_async_script(
+                    "Alpine.store('trainer').switchEnvironment(arguments[0]).then(arguments[1])", "default"
+                )
+            )
+            self.dismiss_onboarding(driver)
+            driver.execute_script("document.querySelector('#datasets-tab-content .hero-dismiss-btn').click()")
+            builder = wait.until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "#dataloaderSection .mode-switcher button:nth-child(1)"))
+            )
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'})", builder)
+            builder.click()
+            wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, '[data-dataset-id="local-images"]')))
+            self.assertFalse(driver.find_elements(*row))
+            wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, '[aria-label="Save dataset configuration"]')))
+
+        self.for_each_browser("remote_environment_datasets", scenario)
 
 
 class DatasetViewerRevisionTestCase(_TrainerPageMixin, WebUITestCase):

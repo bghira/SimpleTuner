@@ -1,6 +1,6 @@
 """Payloads and limits shared by workers and the orchestrator."""
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+import re
 
 WORKER_LOG_TAIL_SIZE = 50_000
 WORKER_HEARTBEAT_SECONDS = 30
@@ -12,39 +12,39 @@ def bundled_dataloader(metadata: dict) -> list[dict] | None:
     return metadata.get("dataloader", (metadata.get("config") or {}).get("dataloader_config"))
 
 
-class WorkerDatasetSummary(BaseModel):
-    """Dataset settings safe to include in the remote job overview."""
+_CREDENTIAL_FIELDS = {
+    "access_key",
+    "access_key_id",
+    "api_key",
+    "authorization",
+    "aws_access_key_id",
+    "aws_secret_access_key",
+    "aws_session_token",
+    "cookie",
+    "credentials",
+    "headers",
+    "password",
+    "secret",
+    "token",
+    "secret_key",
+    "storage_options",
+}
+_CREDENTIAL_SUFFIXES = ("_password", "_secret", "_token", "_credential", "_credentials", "_api_key")
+_REMOTE_URL = re.compile(r"^([a-z][a-z0-9+.-]*://)([^/?#]*)([^?#]*)", re.IGNORECASE)
 
-    model_config = ConfigDict(allow_inf_nan=False)
 
-    id: str
-    type: str | None = None
-    dataset_type: str = "image"
-    disabled: bool = False
-    resolution: float | int | None = None
-    resolution_type: str | None = None
-    crop: bool | None = None
-    crop_aspect: str | None = None
-    crop_style: str | None = None
-    caption_strategy: str | None = None
-    repeats: int | None = None
+def redact_dataset_config(value):
+    """Copy authored settings with credentials and URL authentication removed."""
+    if isinstance(value, dict):
+        return {key: redact_dataset_config(item) for key, item in value.items() if not _is_credential_field(key)}
+    if isinstance(value, list):
+        return [redact_dataset_config(item) for item in value]
+    if isinstance(value, str) and (match := _REMOTE_URL.match(value)):
+        scheme, host, path = match.groups()
+        return scheme + host.rsplit("@", 1)[-1] + path
+    return value
 
 
-def summarize_worker_datasets(config: list[dict]) -> list[dict]:
-    summaries = []
-    for dataset in config:
-        if not isinstance(dataset, dict):
-            continue
-        try:
-            summary = WorkerDatasetSummary.model_validate(
-                {
-                    **dataset,
-                    "dataset_type": dataset.get("dataset_type") or "image",
-                    "disabled": bool(dataset.get("disabled") or dataset.get("disable")),
-                }
-            )
-        except ValidationError:
-            # A report must not interfere with validation of the training configuration.
-            continue
-        summaries.append(summary.model_dump(exclude_none=True))
-    return summaries
+def _is_credential_field(key: str) -> bool:
+    key = key.lower().replace("-", "_")
+    return key in _CREDENTIAL_FIELDS or key.endswith(_CREDENTIAL_SUFFIXES)

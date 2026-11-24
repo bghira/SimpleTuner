@@ -107,7 +107,7 @@
             </div>
 
             <!-- Modal Body -->
-            <div class="modal-body">
+            <fieldset class="modal-body" :disabled="datasetConfigReadOnly">
                 <!-- Basic Tab -->
                 <div x-show="modalTab === 'basic'" x-cloak>
                     {% include 'components/dataloader/sections/basic_body.html' %}
@@ -152,12 +152,13 @@
                 <div x-show="modalTab === 'scheduling'" x-cloak>
                     {% include 'components/dataloader/sections/scheduling_body.html' %}
                 </div>
-            </div>
+            </fieldset>
 
             <!-- Modal Footer -->
             <div class="modal-footer compact">
                 <button type="button"
                         class="btn btn-sm btn-outline-secondary"
+                        x-show="!datasetConfigReadOnly"
                         @click="testDatasetConnection(editingDataset)"
                         :disabled="editingDataset._connectionTesting || !supportsConnectionTest(editingDataset)">
                     <i class="fas" :class="editingDataset._connectionTesting ? 'fa-spinner fa-spin' : 'fa-plug'"></i>
@@ -170,6 +171,7 @@
                            class="form-check-input"
                            id="modal-dataset-disabled"
                            x-model="editingDataset.disabled"
+                           :disabled="datasetConfigReadOnly"
                            @change="markAsUnsaved()">
                     <label class="form-check-label small" for="modal-dataset-disabled">
                         Disable dataset
@@ -181,12 +183,14 @@
                 <button type="button"
                         class="btn btn-sm btn-outline-secondary"
                         title="Duplicate dataset"
+                        x-show="!datasetConfigReadOnly"
                         @click="duplicateDataset(editingDataset.id); closeDatasetModal()">
                     <i class="fas fa-copy"></i>
                 </button>
                 <button type="button"
                         class="btn btn-sm btn-outline-danger"
                         title="Remove dataset"
+                        x-show="!datasetConfigReadOnly"
                         @click="if (confirm('Remove this dataset?')) { removeDataset(editingDataset.id); closeDatasetModal(); }">
                     <i class="fas fa-trash"></i>
                 </button>

@@ -8,7 +8,7 @@
     <div class="grid-card-header">
         <span class="grid-card-icon" x-text="getDatasetTypeIcon(dataset.dataset_type)"></span>
         <div class="grid-card-title" x-text="dataset.id" :title="dataset.id"></div>
-        <div class="grid-card-actions" @click.stop>
+        <div class="grid-card-actions" @click.stop x-show="!datasetConfigReadOnly">
             <button type="button"
                     class="btn btn-sm btn-link"
                     :class="{

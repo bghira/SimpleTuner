@@ -162,6 +162,9 @@ function dataloaderSectionComponent() {
     get datasets() {
         return this.trainer.datasets || [];
     },
+    get datasetConfigReadOnly() {
+        return this.trainer.datasetConfigReadOnly || false;
+    },
     get datasetsLoading() {
         return this.trainer.datasetsLoading || false;
     },
@@ -1172,6 +1175,7 @@ function dataloaderSectionComponent() {
 
     // Direct method calls with error handling
     async saveDatasets() {
+        if (this.datasetConfigReadOnly) return;
         const trainer = Alpine.store('trainer');
         if (!trainer) {
             window.showToast('Dataset builder not ready. Please wait and try again.', 'error');
@@ -1313,6 +1317,7 @@ function dataloaderSectionComponent() {
     },
 
     async saveJsonDatasets() {
+        if (this.datasetConfigReadOnly) return;
         const trainer = Alpine.store('trainer');
         if (!trainer) {
             window.showToast('Dataset builder not ready. Please wait and try again.', 'error');
