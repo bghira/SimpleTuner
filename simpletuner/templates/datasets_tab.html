@@ -134,7 +134,7 @@
             {'icon': 'fa-comment-alt', 'color': 'text-warning', 'label': 'Captions'},
             {'icon': 'fa-crop-alt', 'color': 'text-success', 'label': 'Cropping & Resolution'},
         ],
-        show_condition='showHeroCTA()',
+        show_condition='showHeroCTA() && !$store.trainer.remoteDatasetConfig && !$store.trainer.datasetsLoading',
         dismiss_method='dismissHeroCTA()',
         cta_primary={'label': 'Launch Dataset Wizard', 'icon': 'fa-magic', 'action': 'launchWizardFromHero()'},
         cta_secondary={'label': 'Dismiss', 'icon': 'fa-times', 'action': 'dismissHeroCTA()'},
@@ -189,7 +189,7 @@
     </div>
     {% endcall %}
 
-    <div x-show="!showHeroCTA()" x-cloak>
+    <div x-show="!showHeroCTA() || $store.trainer.remoteDatasetConfig || $store.trainer.datasetsLoading" x-cloak>
     <!-- Main Card -->
     <div class="card mb-4">
         <div class="card-header">
@@ -201,26 +201,40 @@
                 <div class="btn-group" role="group" style="position: relative; z-index: 10;">
                     <button type="button"
                             class="btn btn-outline-secondary"
+                            x-show="!$store.trainer.datasetConfigReadOnly"
                             @click="restoreHeroCTA()"
                             title="Show introduction">
                         <i class="fas fa-question-circle me-1"></i> Help
                     </button>
                     <button type="button"
                             class="btn btn-primary"
+                            x-show="!$store.trainer.datasetConfigReadOnly"
                             @click.prevent="openNewConfigModal()"
                             title="Create a new multidatabackend configuration file">
                         <i class="fas fa-file-plus me-1"></i> New Configuration
                     </button>
                     <button type="button"
                             class="btn btn-success"
+                            x-show="!$store.trainer.datasetConfigReadOnly"
                             @click.prevent="openWizard()"
                             title="Add a dataset to the current configuration">
                         <i class="fas fa-magic me-1"></i> Dataset Wizard
                     </button>
                 </div>
             </div>
+            <template x-if="$store.trainer.remoteDatasetConfig">
+                <div class="d-flex align-items-center gap-2 mb-2">
+                    <span class="text-muted small">
+                        <span x-text="$store.trainer.remoteDatasetConfig.error ? 'Worker' : 'Loaded from'"></span>
+                        <strong x-text="$store.trainer.remoteDatasetConfig.workers.join(', ')"></strong>
+                        <span aria-hidden="true">·</span> Read-only
+                    </span>
+                    <button type="button" class="btn btn-outline-secondary btn-sm ms-auto"
+                            @click="$store.trainer.loadDatasetsAfterEnvironmentChange()">Refresh</button>
+                </div>
+            </template>
             <!-- Dataloader Config Selector -->
-            <div class="d-flex align-items-center gap-3">
+            <div class="d-flex align-items-center gap-3" x-show.important="!$store.trainer.datasetConfigReadOnly">
                 <div class="flex-grow-1">
                     {% if data_backend_choices %}
                     <div class="mb-0">

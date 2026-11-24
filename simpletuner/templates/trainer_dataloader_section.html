@@ -44,18 +44,6 @@
         // Stop checking after 5 seconds
         setTimeout(() => clearInterval(checkStore), 5000);
 
-        // Listen for environment changes
-        const handleEnvironmentChange = async (event) => {
-            console.log('Environment changed to:', event.detail.environment);
-            const trainer = Alpine.store('trainer');
-            if (trainer && trainer.loadDatasetsAfterEnvironmentChange) {
-                // Reload datasets for the new environment
-                await trainer.loadDatasetsAfterEnvironmentChange();
-            }
-        };
-
-        window.addEventListener('environment-changed', handleEnvironmentChange);
-
         const handleCaptionFiltersUpdated = () => {
             syncCaptionFilterSelections();
         };
@@ -73,7 +61,6 @@
 
         // Clean up event listener when component is destroyed
         $el.addEventListener('x-destroy', () => {
-            window.removeEventListener('environment-changed', handleEnvironmentChange);
             window.removeEventListener('caption-filters-updated', handleCaptionFiltersUpdated);
             window.removeEventListener('config-saved', handleConfigSaved);
             if (this._dangerModeHandler) {
@@ -96,6 +83,8 @@
 
     <!-- Main Content (shown when store is ready) -->
     <div x-show="storeReady">
+        <p x-show="!datasetsLoading && trainer.remoteDatasetConfig?.error" class="alert alert-secondary" role="status"
+           x-text="trainer.remoteDatasetConfig?.error"></p>
         <!-- Mode Switcher (desktop) -->
         <div class="mode-switcher mb-3">
             <button type="button" class="btn"
@@ -129,12 +118,14 @@
                 <i class="fas fa-code"></i><span>JSON</span>
             </button>
             <button type="button" class="btn btn-primary"
+                    x-show="!datasetConfigReadOnly"
                     @click.prevent="openNewConfigModal ? openNewConfigModal() : null"
                     title="Create a new multidatabackend configuration file"
                     aria-label="Create new configuration">
                 <i class="fas fa-file-plus"></i><span>New</span>
             </button>
             <button type="button" class="btn btn-success"
+                    x-show="!datasetConfigReadOnly"
                     @click.prevent="openWizard ? openWizard() : null"
                     title="Add a dataset to the current configuration"
                     aria-label="Open dataset wizard">
@@ -146,7 +137,7 @@
     <template x-if="dataLoaderMode === 'builder'">
     <div>
         <!-- Presets -->
-        <div class="preset-container mb-4">
+        <div class="preset-container mb-4" x-show="!datasetConfigReadOnly">
             <h6 class="subsection-title">Quick Start Presets</h6>
             <div class="preset-grid">
                 <button type="button" class="preset-btn" data-preset="simple-local" @click="loadPreset('simple-local')" :disabled="!storeReady">
@@ -225,7 +216,7 @@
         </div>
 
         <!-- Add Dataset Buttons -->
-        <div class="mb-4" x-show="!datasetsLoading">
+        <div class="mb-4" x-show="!datasetConfigReadOnly">
             <h6 class="subsection-title">Add Dataset Manually</h6>
             <p class="text-muted small mb-3">Configure individual datasets with custom settings. For guided setup, use the Dataset Wizard above.</p>
             <div class="add-dataset-container">
@@ -330,9 +321,9 @@
                 </template>
             </div>
 
-            <div x-show="datasets.length === 0" class="text-center text-muted py-4">
+            <div x-show="datasets.length === 0 && trainer.remoteDatasetConfig?.datasets !== null" class="text-center text-muted py-4">
                 <i class="fas fa-database mb-2" style="font-size: 2rem;"></i>
-                <p>No datasets configured. Add a dataset to get started.</p>
+                <p>No datasets configured.<span x-show="!datasetConfigReadOnly"> Add a dataset to get started.</span></p>
             </div>
 
             <div x-show="datasets.length > 0 && filteredDatasets.length === 0" class="text-center text-muted py-4">
@@ -345,7 +336,7 @@
         {% include 'components/dataloader/dataset_modal.html' %}
 
         <!-- Save Buttons -->
-        <div class="mt-3 d-flex gap-2">
+        <div class="mt-3 d-flex gap-2" x-show.important="!datasetConfigReadOnly">
             <button type="button" class="btn"
                     :class="{'btn-warning': hasUnsavedChanges, 'btn-primary': !hasUnsavedChanges}"
                     @click="saveDatasets()">
@@ -368,7 +359,7 @@
     <template x-if="dataLoaderMode === 'json'">
     <div>
         <div class="json-editor-container">
-            <div class="json-actions">
+            <div class="json-actions" x-show.important="!datasetConfigReadOnly">
                 <button type="button" class="btn btn-secondary" @click="if (trainer.dataLoaderJson) { trainer.dataLoaderJson = JSON.stringify(JSON.parse(trainer.dataLoaderJson), null, 2) }">
                     <i class="fas fa-magic"></i> Format
                 </button>
@@ -389,6 +380,7 @@
                 <textarea
                     class="form-control json-editor"
                     x-model="dataLoaderJson"
+                    :readonly="datasetConfigReadOnly"
                     @input="markAsUnsaved()"
                     rows="20"
                     placeholder='[

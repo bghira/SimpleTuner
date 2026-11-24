@@ -14,6 +14,8 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+from simpletuner.worker_protocol import bundled_dataloader
+
 from ..models.worker import WorkerType
 
 logger = logging.getLogger(__name__)
@@ -258,7 +260,7 @@ class WorkerManager:
             "type": "job_submit",
             "job_id": job.job_id,
             "config": config,
-            "dataloader": metadata.get("dataloader", config.get("dataloader_config")),
+            "dataloader": bundled_dataloader(metadata),
             "provider": job.provider,
             "upload_endpoint": "/api/cloud/storage",
             "upload_token": job.upload_token or "",

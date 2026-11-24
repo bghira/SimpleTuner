@@ -8,7 +8,7 @@
     <div class="grid-card-header">
         <span class="grid-card-icon" x-text="getDatasetTypeIcon(dataset.dataset_type)"></span>
         <div class="grid-card-title" x-text="dataset.id" :title="dataset.id"></div>
-        <div class="grid-card-actions" @click.stop>
+        <div class="grid-card-actions" @click.stop x-show="!datasetConfigReadOnly">
             <button type="button"
                     class="btn btn-sm btn-link"
                     :class="{
@@ -106,40 +106,21 @@
             </span>
         </div>
 
-        <!-- Path Preview (for non-embed types) -->
+        <!-- Dataset or cache location -->
         <div class="grid-card-path"
-             x-show="dataset.dataset_type !== 'text_embeds' && dataset.dataset_type !== 'image_embeds'"
-             :class="{'path-error': !(dataset.instance_data_dir || dataset.aws_bucket_name || dataset.dataset_name)}"
-             :title="dataset.instance_data_dir || dataset.aws_bucket_name || dataset.dataset_name || 'No path configured'">
-            <template x-if="dataset.instance_data_dir || dataset.aws_bucket_name || dataset.dataset_name">
+             x-data="{ get storage() { return datasetStorage(dataset); } }"
+             :class="{'path-error': !storage.label}"
+             :title="storage.title || 'No path configured'">
+            <template x-if="storage.label">
                 <span>
-                    <i class="fas fa-folder-open"></i>
-                    <span x-text="(dataset.instance_data_dir || dataset.aws_bucket_name || dataset.dataset_name).split('/').slice(-2).join('/')"></span>
+                    <i class="fas" :class="storage.icon"></i>
+                    <span x-text="storage.label"></span>
                 </span>
             </template>
-            <template x-if="!(dataset.instance_data_dir || dataset.aws_bucket_name || dataset.dataset_name)">
+            <template x-if="!storage.label">
                 <span class="text-danger">
                     <i class="fas fa-exclamation-triangle"></i>
                     <span>No path configured</span>
-                </span>
-            </template>
-        </div>
-
-        <!-- Cache Path Preview (for embed types) -->
-        <div class="grid-card-path"
-             x-show="dataset.dataset_type === 'text_embeds' || dataset.dataset_type === 'image_embeds'"
-             :class="{'path-error': !dataset.cache_dir}"
-             :title="dataset.cache_dir || 'No cache path configured'">
-            <template x-if="dataset.cache_dir">
-                <span>
-                    <i class="fas fa-database"></i>
-                    <span x-text="dataset.cache_dir.split('/').slice(-2).join('/')"></span>
-                </span>
-            </template>
-            <template x-if="!dataset.cache_dir">
-                <span class="text-danger">
-                    <i class="fas fa-exclamation-triangle"></i>
-                    <span>No cache path configured</span>
                 </span>
             </template>
         </div>

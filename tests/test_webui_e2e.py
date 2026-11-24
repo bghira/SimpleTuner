@@ -99,7 +99,9 @@ class _TrainerPageMixin:
 
 class _TrainingWorkerFixture:
 
-    def register_job(self, job_id, worker_name, gpu, *, error_message=None, gpu_info=None, group=None):
+    def register_job(
+        self, job_id, worker_name, gpu, *, error_message=None, gpu_info=None, group=None, config_name="large-batch"
+    ):
         import asyncio
         from datetime import datetime, timezone
         from unittest.mock import patch
@@ -128,7 +130,7 @@ class _TrainingWorkerFixture:
             job_type=JobType.LOCAL,
             provider="worker",
             status="running",
-            config_name="large-batch",
+            config_name=config_name,
             created_at=datetime.now(timezone.utc).isoformat(),
             completed_at=datetime.now(timezone.utc).isoformat() if error_message else None,
             error_message=error_message,
@@ -3383,6 +3385,160 @@ class DatasetManagementTestCase(_TrainerPageMixin, WebUITestCase):
             self.assertEqual(final_count, initial_count)
 
         self.for_each_browser("test_add_and_remove_dataset", scenario)
+
+
+class RemoteWorkerDatasetsTestCase(_TrainingWorkerFixture, _TrainerPageMixin, WebUITestCase):
+    SERVER_MODE = ServerMode.UNIFIED
+    MAX_BROWSERS = 1
+
+    def test_environment_loads_remote_config_into_dataset_builder(self):
+        import asyncio
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Event
+
+        import httpx
+
+        from simpletuner.worker_agent import WorkerAgent, WorkerConfig
+
+        remote_environment = "remote-environment"
+        remote_dir = self.config_dir / remote_environment
+        remote_dir.mkdir()
+        model_config = json.loads((self.config_dir / "default" / "config.json").read_text())
+        dataset_file = "multidatabackend.json"
+        model_config["--data_backend_config"] = str(remote_dir / dataset_file)
+        (remote_dir / "config.json").write_text(json.dumps(model_config))
+        (remote_dir / dataset_file).write_text(json.dumps([{"id": "stale-local-copy", "type": "local"}]))
+        (self.config_dir / "default" / dataset_file).write_text(json.dumps([{"id": "local-images", "type": "local"}]))
+        self.seed_defaults(active_config=remote_environment)
+
+        job_id = "remote-dataset-run"
+        self.register_job(job_id, "Lead GPU", "H200", config_name=remote_environment)
+        self.register_job("other-run", "Other GPU", "L40S", group={"dataloader": [{"id": "other-run-images"}]})
+
+        worker_file = self.home_path / "worker-datasets.json"
+        worker_config = self.home_path / "worker-launch.json"
+        worker_config.write_text(json.dumps({"--data_backend_config": str(worker_file)}))
+        source = "s3://training-images"
+        dataset = {
+            "id": "remote-images",
+            "type": "webshart",
+            "source": source,
+            "crop": False,
+            "resolution": 256,
+            "caption_strategy": "webshart",
+            "metadata_backend": "webshart",
+            "webshart": {"format": "parquet", "manifest": "data/train.json"},
+        }
+        online = {"id": "online-text", "type": "local", "dataset_type": "text_embeds", "text_cache_encode_only": True}
+        cached = {"id": "cached-text", "type": "local", "dataset_type": "text_embeds", "cache_dir": "cache/text/precomputed"}
+        worker_file.write_text(
+            json.dumps(
+                [{**dataset, "aws_secret_access_key": "hidden-value"}, {**online, "cache_dir": "cache/text/online"}, cached]
+            )
+        )
+        connected = Event()
+
+        async def serve_worker():
+            agent = WorkerAgent(WorkerConfig(self.base_url, f"{job_id}-token", "Lead GPU"))
+            agent.current_job = {"job_id": job_id}
+            agent._job_config_path = worker_config
+            async with httpx.AsyncClient(timeout=25) as client:
+                async with client.stream(
+                    "GET",
+                    f"{self.base_url}/api/workers/stream",
+                    headers={"X-Worker-Token": f"{job_id}-token"},
+                    params={"worker_id": f"worker-{job_id}", "dataset_config": "true"},
+                ) as stream:
+                    stream.raise_for_status()
+                    connected.set()
+                    served = 0
+                    async for line in stream.aiter_lines():
+                        await agent._handle_sse_line(line)
+                        if agent._dataset_config_tasks:
+                            await asyncio.gather(*agent._dataset_config_tasks)
+                            served += 1
+                            if served == 2:
+                                return
+
+        def scenario(driver, _):
+            executor = ThreadPoolExecutor(max_workers=1)
+            self.addCleanup(executor.shutdown)
+            worker = executor.submit(asyncio.run, serve_worker())
+            self.assertTrue(connected.wait(10))
+
+            driver.get(f"{self.base_url}/web/trainer#datasets")
+            self.dismiss_onboarding(driver)
+            wait = WebDriverWait(driver, 30)
+            section = (By.ID, "dataloaderSection")
+
+            def click(locator):
+                button = wait.until(EC.element_to_be_clickable(locator))
+                self.dismiss_onboarding(driver)
+                driver.execute_script("arguments[0].scrollIntoView({block: 'center'})", button)
+                button.click()
+
+            def assert_storage(row, dataset_id, path, label, title):
+                selector = f'#dataloaderSection .{row}[data-dataset-id="{dataset_id}"] .{path}'
+                elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                self.assertEqual(len(elements), 1)
+                self.assertTrue(elements[0].is_displayed())
+                self.assertEqual(elements[0].text, label)
+                self.assertEqual(elements[0].get_dom_attribute("title"), title)
+
+            online_title = "Text embeddings are encoded for each batch without using the cache"
+            click((By.CSS_SELECTOR, 'button[title="List view"]'))
+            wait.until(
+                EC.visibility_of_element_located((By.CSS_SELECTOR, '.dataset-list-item[data-dataset-id="remote-images"]'))
+            )
+            assert_storage("dataset-list-item", "remote-images", "list-item-path", source, source)
+            assert_storage("dataset-list-item", "online-text", "list-item-path", "Online encoding", online_title)
+            assert_storage("dataset-list-item", "cached-text", "list-item-path", "text/precomputed", cached["cache_dir"])
+            self.assertNotIn("stale-local-copy", driver.find_element(*section).get_attribute("outerHTML"))
+
+            updated = {key: value for key, value in dataset.items() if key != "source"}
+            updated.update(id="remote-images-updated", webshart={**dataset["webshart"], "source": source})
+            worker_file.write_text(json.dumps([{**updated, "aws_secret_access_key": "hidden"}, online, cached]))
+            click((By.XPATH, '//button[normalize-space()="Refresh"]'))
+            row = (By.CSS_SELECTOR, '#dataloaderSection [data-dataset-id="remote-images-updated"]')
+            wait.until(EC.visibility_of_element_located(row))
+            click((By.CSS_SELECTOR, 'button[title="Grid view"]'))
+            wait.until(
+                EC.visibility_of_element_located(
+                    (By.CSS_SELECTOR, '.dataset-grid-card[data-dataset-id="remote-images-updated"]')
+                )
+            )
+            assert_storage("dataset-grid-card", "remote-images-updated", "grid-card-path", source, source)
+            assert_storage("dataset-grid-card", "online-text", "grid-card-path", "Online encoding", online_title)
+            assert_storage("dataset-grid-card", "cached-text", "grid-card-path", "text/precomputed", cached["cache_dir"])
+            worker.result(timeout=5)
+            self.assertIn("Lead GPU", driver.find_element(By.ID, "datasets-tab-content").text)
+            self.assertFalse(driver.find_elements(By.CSS_SELECTOR, '[data-dataset-id="other-run-images"]'))
+
+            wait.until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "#dataloaderSection .mode-switcher button:nth-child(2)"))
+            ).click()
+            json_editor = wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "#dataloaderSection textarea")))
+            self.assertEqual(json_editor.get_dom_attribute("readonly"), "true")
+            self.assertEqual(json.loads(json_editor.get_property("value")), [updated, online, cached])
+
+            self.assertTrue(
+                driver.execute_async_script(
+                    "Alpine.store('trainer').switchEnvironment(arguments[0]).then(arguments[1])", "default"
+                )
+            )
+            self.dismiss_onboarding(driver)
+            driver.execute_script("document.querySelector('#datasets-tab-content .hero-dismiss-btn').click()")
+            builder = wait.until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "#dataloaderSection .mode-switcher button:nth-child(1)"))
+            )
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'})", builder)
+            builder.click()
+            local_card = (By.CSS_SELECTOR, '.dataset-grid-card[data-dataset-id="local-images"]')
+            wait.until(EC.visibility_of_element_located(local_card))
+            self.assertFalse(driver.find_elements(*row))
+            wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, '[aria-label="Save dataset configuration"]')))
+
+        self.for_each_browser("remote_environment_datasets", scenario)
 
 
 class DatasetViewerRevisionTestCase(_TrainerPageMixin, WebUITestCase):

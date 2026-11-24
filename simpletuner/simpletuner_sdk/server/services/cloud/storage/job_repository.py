@@ -435,6 +435,31 @@ class JobRepository(BaseSQLiteStore):
 
         return await asyncio.to_thread(_read)
 
+    async def get_active_worker_job(self, environment: str, user_id: int | None) -> UnifiedJob | None:
+        """Find the newest worker assignment for an environment visible to the user."""
+
+        def _get():
+            conn = self._get_connection()
+            try:
+                row = conn.execute(
+                    """
+                    SELECT * FROM jobs
+                    WHERE config_name = ? AND provider IN ('worker', 'kubeflow')
+                      AND status IN ('starting', 'running', 'training')
+                      AND (? IS NULL OR user_id = ?)
+                      AND json_extract(metadata, '$.worker_id') IS NOT NULL
+                      AND NOT COALESCE(json_extract(metadata, '$.group_check'), 0)
+                    ORDER BY COALESCE(started_at, created_at) DESC, job_id DESC
+                    LIMIT 1
+                    """,
+                    (environment, user_id, user_id),
+                ).fetchone()
+                return self._row_to_job(row) if row else None
+            finally:
+                conn.close()
+
+        return await asyncio.to_thread(_get)
+
     async def get(self, job_id: str) -> Optional[UnifiedJob]:
         """Get a job by ID.
 

@@ -14,6 +14,10 @@ else:
     logger.setLevel("ERROR")
 
 
+def config_environment() -> str:
+    return os.environ.get("SIMPLETUNER_ENVIRONMENT", os.environ.get("SIMPLETUNER_ENV", os.environ.get("ENV", "default")))
+
+
 def _candidate_json_paths(env: str | None) -> list[Path]:
     candidates: list[Path] = []
 
@@ -66,10 +70,7 @@ def load_json_config():
     :return: A dictionary containing the configuration.
     """
     config_json_path = None
-    env = os.environ.get(
-        "SIMPLETUNER_ENVIRONMENT",
-        os.environ.get("SIMPLETUNER_ENV", os.environ.get("ENV", None)),
-    )
+    env = config_environment()
 
     for candidate in _candidate_json_paths(env):
         if candidate.is_file():

@@ -96,10 +96,7 @@ def load_config(args: dict = None, exit_on_error: bool = False):
 
     mapped_config = args
     if mapped_config is None or not mapped_config:
-        config_env = os.environ.get(
-            "SIMPLETUNER_ENVIRONMENT",
-            os.environ.get("SIMPLETUNER_ENV", os.environ.get("ENV", "default")),
-        )
+        config_env = json_file.config_environment()
 
         # Auto-detect config backend unless explicitly set
         config_backend = os.environ.get(

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
 import ijson
-from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Response, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ConfigDict
@@ -37,6 +37,7 @@ from simpletuner.simpletuner_sdk.server.services.dataset_upload_service import (
 )
 from simpletuner.simpletuner_sdk.server.services.dataset_viewer_service import DatasetViewerService
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore
+from simpletuner.simpletuner_sdk.server.services.worker_dataset_service import get_worker_dataset_config
 from simpletuner.simpletuner_sdk.server.utils.paths import resolve_config_path
 
 router = APIRouter(prefix="/api/datasets", tags=["datasets"])
@@ -197,6 +198,15 @@ async def list_blueprints(_user: User = Depends(get_current_user)) -> Dict[str, 
     resolution = _get_active_resolution()
     blueprints = _apply_resolution_defaults(blueprints, resolution)
     return {"blueprints": blueprints, "warnings": [], "source": "remote"}
+
+
+@router.get("/remote-config")
+async def get_remote_dataset_config(
+    environment: str, response: Response, user: User = Depends(get_current_user)
+) -> dict | None:
+    """Return the active worker's dataloader config for this environment."""
+    response.headers["Cache-Control"] = "no-store"
+    return await get_worker_dataset_config(environment, user)
 
 
 @router.get("/plan", response_model=DatasetPlanResponse)

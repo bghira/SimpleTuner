@@ -162,6 +162,25 @@ function dataloaderSectionComponent() {
     get datasets() {
         return this.trainer.datasets || [];
     },
+    datasetStorage(dataset) {
+        if (dataset.dataset_type === 'text_embeds' && this.normalizeBoolean(dataset.text_cache_encode_only)) {
+            return {
+                icon: 'fa-bolt',
+                label: 'Online encoding',
+                title: 'Text embeddings are encoded for each batch without using the cache',
+            };
+        }
+        if (dataset.type === 'webshart') {
+            const source = dataset.source ?? dataset.webshart?.source ?? '';
+            return { icon: 'fa-folder-open', label: source, title: source };
+        }
+        const embeds = ['text_embeds', 'image_embeds'].includes(dataset.dataset_type);
+        const path = (embeds ? dataset.cache_dir : dataset.instance_data_dir || dataset.aws_bucket_name || dataset.dataset_name) || '';
+        return { icon: embeds ? 'fa-database' : 'fa-folder-open', label: path.split('/').slice(-2).join('/'), title: path };
+    },
+    get datasetConfigReadOnly() {
+        return this.trainer.datasetConfigReadOnly || false;
+    },
     get datasetsLoading() {
         return this.trainer.datasetsLoading || false;
     },
@@ -1172,6 +1191,7 @@ function dataloaderSectionComponent() {
 
     // Direct method calls with error handling
     async saveDatasets() {
+        if (this.datasetConfigReadOnly) return;
         const trainer = Alpine.store('trainer');
         if (!trainer) {
             window.showToast('Dataset builder not ready. Please wait and try again.', 'error');
@@ -1313,6 +1333,7 @@ function dataloaderSectionComponent() {
     },
 
     async saveJsonDatasets() {
+        if (this.datasetConfigReadOnly) return;
         const trainer = Alpine.store('trainer');
         if (!trainer) {
             window.showToast('Dataset builder not ready. Please wait and try again.', 'error');

@@ -124,7 +124,7 @@ class WorkerAgentJobStartTestCase(unittest.IsolatedAsyncioTestCase):
             "type": "job_submit",
             "job_id": job_id,
             "provider": provider,
-            "config": {"model_family": "sdxl"},
+            "config": {"model_family": "sdxl", "--data_backend_config": "superseded.json"},
             "dataloader": [{"id": "dataset", "type": "local"}],
             "upload_endpoint": "/api/cloud/storage",
         }
@@ -167,6 +167,7 @@ class WorkerAgentJobStartTestCase(unittest.IsolatedAsyncioTestCase):
             written_config = json.loads((job_dir / "config.json").read_text(encoding="utf-8"))
             self.assertEqual(json.loads(dataloader_path.read_text(encoding="utf-8")), event["dataloader"])
             self.assertEqual(written_config["data_backend_config"], str(dataloader_path))
+            self.assertEqual(agent._read_dataset_config(agent._job_config_path), event["dataloader"])
         finally:
             shutil.rmtree(job_dir, ignore_errors=True)
 

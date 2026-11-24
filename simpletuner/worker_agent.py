@@ -30,7 +30,7 @@ from typing import Any, Dict, Optional
 import httpx
 
 from simpletuner.helpers.training.system_metrics import SystemMetricsSampler
-from simpletuner.worker_protocol import WORKER_HEARTBEAT_SECONDS, WORKER_LOG_TAIL_SIZE
+from simpletuner.worker_protocol import WORKER_HEARTBEAT_SECONDS, WORKER_LOG_TAIL_SIZE, redact_dataset_config
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +131,8 @@ class WorkerAgent:
         self.training_process: Optional[Any] = None
         self._heartbeat_task: Optional[asyncio.Task] = None
         self._log_tail = ""
+        self._job_config_path: Path | None = None
+        self._dataset_config_tasks: set[asyncio.Task] = set()
         self._system_metrics = SystemMetricsSampler(output_dir=Path.cwd())
 
     @staticmethod
@@ -239,7 +241,7 @@ class WorkerAgent:
                     "GET",
                     f"{self.config.orchestrator_url}/api/workers/stream",
                     headers={"X-Worker-Token": self.config.worker_token},
-                    params={"worker_id": self.worker_id, "manual_controls": "true"},
+                    params={"worker_id": self.worker_id, "manual_controls": "true", "dataset_config": "true"},
                 ) as response:
                     response.raise_for_status()
                     logger.info("Connected to SSE stream")
@@ -281,6 +283,8 @@ class WorkerAgent:
                 self.training_process = None
         elif event_type == "job_manual_action":
             self._signal_manual_action(event)
+        elif event_type == "job_dataset_config":
+            self._start_dataset_config_response(event)
         elif event_type == "job_cancel" and self.current_job and self.current_job["job_id"] == event.get("job_id"):
             await self._stop_current_job()
         elif event_type == "shutdown":
@@ -288,6 +292,63 @@ class WorkerAgent:
             self.shutdown_requested = True
         elif event_type == "ping":
             pass  # Keepalive, no action needed
+
+    def _start_dataset_config_response(self, event: dict) -> None:
+        job, config_path = self.current_job, self._job_config_path
+        if (
+            not job
+            or job["job_id"] != event.get("job_id")
+            or job.get("group_check")
+            or (job.get("distributed") or {}).get("node_rank", 0) != 0
+            or config_path is None
+        ):
+            return
+        task = asyncio.create_task(self._send_dataset_config(job, config_path, event["request_id"]))
+        self._dataset_config_tasks.add(task)
+        task.add_done_callback(self._dataset_config_tasks.discard)
+
+    @staticmethod
+    def _read_dataset_config(config_path: Path) -> list[dict]:
+        from simpletuner.helpers.configuration.json_file import config_environment, normalize_args
+
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        prefix = "--data_backend_config="
+        argument = next(
+            (arg.removeprefix(prefix) for arg in reversed(normalize_args(config)) if arg.startswith(prefix)), None
+        )
+        if argument:
+            dataloader_path = Path(argument)
+        else:
+            environment = config_environment()
+            config_dir = Path("config") / environment if environment and environment != "default" else Path("config")
+            dataloader_path = config_dir / "multidatabackend.json"
+        if not dataloader_path.is_file():
+            raise FileNotFoundError
+        datasets = json.loads(dataloader_path.read_text(encoding="utf-8"))
+        if not isinstance(datasets, list) or not all(isinstance(dataset, dict) for dataset in datasets):
+            raise ValueError("Expected a list of datasets")
+        return redact_dataset_config(datasets)
+
+    async def _send_dataset_config(self, job: dict, config_path: Path, request_id: str) -> None:
+        try:
+            dataloader = await asyncio.to_thread(self._read_dataset_config, config_path)
+        except (OSError, ValueError):
+            dataloader = None
+        if self.current_job is not job:
+            return
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{self.config.orchestrator_url}/api/workers/job/{job['job_id']}/datasets",
+                    headers={"X-Worker-Token": self.config.worker_token},
+                    json={"request_id": request_id, "dataloader": dataloader},
+                    timeout=5,
+                )
+                if response.status_code not in (404, 409):
+                    response.raise_for_status()
+        except httpx.HTTPError as exc:
+            logger.warning("Could not return the worker dataset configuration: %s", type(exc).__name__)
 
     def _signal_manual_action(self, event: Dict[str, Any]) -> None:
         action = event.get("action")
@@ -353,6 +414,7 @@ class WorkerAgent:
                 job_config.pop(launcher_option, None)
         with config_path.open("w", encoding="utf-8") as handle:
             json.dump(job_config, handle)
+        self._job_config_path = config_path
 
         self._signal_file = job_dir / "triggers.json"
         self._signal_file.write_text("{}")
