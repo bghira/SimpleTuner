@@ -1468,7 +1468,7 @@ Webshart データセットは `webshart` パッケージで WebDataset 形式�
 
 `webshart.columns` は `image`、`captions`、`width`、`height` をソース列名に対応させます。省略時は同名です。画像はバイナリ列または `bytes` を含む構造体です。`url_status != "ok"` や空の `stored_bytes` の行は物理行番号を変えずに除外されます。寸法のない行はバケット対象外です。元 URL は取得しません。SimpleTuner は終端マーカーを補って、一部の途切れた JPEG を修復できます。`delete_problematic_images` を有効にすると、ネイティブインデックスの準備中にデコードできなかったサンプルを除外します。無効の場合、バッチ読み込み時のデコード失敗で学習が停止し、該当サンプルが表示されます。
 
-既存のトップレベル設定 `aws_region_name`、`aws_endpoint_url`、`aws_access_key_id`、`aws_secret_access_key`、`aws_session_token`、`aws_max_pool_connections` を使います。エンドポイントにバケットを含めず、S3 同時リクエスト数は既定で 32 です。キーを省略すると AWS 環境変数、Web ID、コンテナ/インスタンスロールを利用します。共有プロファイルファイルには非対応です。ワーカー表現には認証情報を含めないため、必要なら子プロセス環境に AWS 認証情報を設定してください。
+既存のトップレベル設定 `aws_region_name`、`aws_endpoint_url`、`aws_access_key_id`、`aws_secret_access_key`、`aws_session_token`、`aws_max_pool_connections` を使います。エンドポイントにバケットを含めず、S3 同時リクエスト数は既定で 32 です。キーを省略すると、Webshart はホストの AWS 環境変数、Web ID、コンテナ認証情報を優先し、その後で共有 AWS プロファイルの静的キーを確認します。名前付きプロファイルは `AWS_PROFILE` で選択できます。プロファイルには S3 エンドポイントとリージョンも設定できます。`AWS_PROFILE` が未設定の場合は、S3 エンドポイントが一致するプロファイルのキーを使用します。データセットのスキャンは WebUI サーバーの認証情報を使用し、リモート学習はワーカーの認証情報を使用します。ワーカーから取得したデータセットのコピーにはエンドポイントとリージョンが残り、認証情報は含まれません。
 
 署名、範囲取得、ストリームキャッシュ、並列行グループデコードは Rust が GIL 外で行います。`webshart.parallel_downloads` はバッチ内の行グループ並列数も制限します。全シャードキャッシュは既定 25 GB。`webshart.shard_cache_gb: 0` は範囲読み込みです。保存形式は変わりません。JPEG XL には `pillow-jxl-plugin` が必要です。`webshart_optimize_captions` は tar サイドカー専用です。
 

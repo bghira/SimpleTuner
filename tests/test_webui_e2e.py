@@ -3525,6 +3525,7 @@ class RemoteWorkerDatasetsTestCase(_TrainingWorkerFixture, _TrainerPageMixin, We
         import asyncio
         from concurrent.futures import ThreadPoolExecutor
         from threading import Event
+        from unittest.mock import patch
 
         import httpx
 
@@ -3556,6 +3557,7 @@ class RemoteWorkerDatasetsTestCase(_TrainingWorkerFixture, _TrainerPageMixin, We
         worker_config = self.home_path / "worker-launch.json"
         worker_config.write_text(json.dumps({"--data_backend_config": str(worker_file)}))
         source = "s3://training-images"
+        endpoint = "https://storage.example"
         dataset = {
             "id": "remote-images",
             "type": "webshart",
@@ -3591,12 +3593,13 @@ class RemoteWorkerDatasetsTestCase(_TrainingWorkerFixture, _TrainerPageMixin, We
                     connected.set()
                     served = 0
                     async for line in stream.aiter_lines():
-                        await agent._handle_sse_line(line)
-                        if agent._dataset_config_tasks:
-                            await asyncio.gather(*agent._dataset_config_tasks)
-                            served += 1
-                            if served == 3:
-                                return
+                        with patch.dict("os.environ", {"AWS_ENDPOINT_URL_S3": endpoint, "AWS_REGION": "us-east-2"}):
+                            await agent._handle_sse_line(line)
+                            if agent._dataset_config_tasks:
+                                await asyncio.gather(*agent._dataset_config_tasks)
+                                served += 1
+                                if served == 3:
+                                    return
 
         def scenario(driver, _):
             executor = ThreadPoolExecutor(max_workers=1)
@@ -3669,14 +3672,15 @@ class RemoteWorkerDatasetsTestCase(_TrainingWorkerFixture, _TrainerPageMixin, We
             ).click()
             json_editor = wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "#dataloaderSection textarea")))
             self.assertEqual(json_editor.get_dom_attribute("readonly"), "true")
-            self.assertEqual(json.loads(json_editor.get_property("value")), [updated, online, cached])
+            expected = [{**updated, "aws_endpoint_url": endpoint, "aws_region_name": "us-east-2"}, online, cached]
+            self.assertEqual(json.loads(json_editor.get_property("value")), expected)
 
             click((By.XPATH, '//div[@id="datasets-tab-content"]//button[normalize-space()="Pull locally"]'))
             enable = (By.XPATH, '//button[normalize-space()="Enable local copy"]')
             wait.until(EC.element_to_be_clickable(enable))
             worker.result(timeout=5)
             local_copy = remote_dir / "multidatabackend.worker.json"
-            self.assertEqual(json.loads(local_copy.read_text()), [updated, online, cached])
+            self.assertEqual(json.loads(local_copy.read_text()), expected)
             self.assertEqual(
                 json.loads((remote_dir / dataset_file).read_text()), [{"id": "stale-local-copy", "type": "local"}]
             )
@@ -3714,7 +3718,11 @@ class RemoteWorkerDatasetsTestCase(_TrainingWorkerFixture, _TrainerPageMixin, We
             click((By.XPATH, '//div[@id="dataloaderSection"]//button[contains(., "Apply & Save JSON")]'))
             response = wait.until(lambda d: d.execute_script("return window.datasetSaveResponse"))
             self.assertTrue(response["ok"], response["body"])
-            self.assertEqual(json.loads(local_copy.read_text())[0]["id"], "local-edited-images")
+            saved = json.loads(local_copy.read_text())[0]
+            self.assertEqual(saved["id"], "local-edited-images")
+            self.assertEqual(saved["aws_endpoint_url"], endpoint)
+            self.assertEqual(saved["aws_region_name"], "us-east-2")
+            self.assertNotIn("aws_secret_access_key", saved)
             driver.refresh()
             self.dismiss_onboarding(driver)
             wait.until(EC.element_to_be_clickable(save))

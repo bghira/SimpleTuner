@@ -19,6 +19,7 @@ from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.config.validators import validate_webshart_caption_key
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.data_backend.filters import DatasetFilter
+from simpletuner.helpers.data_backend.s3_settings import resolve_s3_options
 from simpletuner.helpers.image_manipulation.load import load_image, load_video
 from simpletuner.helpers.prompts import PromptHandler
 from simpletuner.helpers.training import video_file_extensions
@@ -156,18 +157,17 @@ class WebshartDataBackend(BaseDataBackend):
                 discovery["catalogue_cache_dir"] = self.metadata_cache_dir
             discovery.update({("caption_column" if k == "captions" else f"{k}_column"): v for k, v in self.columns.items()})
             if self.source.startswith("s3://"):
-                discovery["s3_options"] = {
-                    k: v
-                    for k, v in {
-                        "region_name": aws_region_name,
-                        "endpoint_url": aws_endpoint_url,
-                        "aws_access_key_id": aws_access_key_id,
-                        "aws_secret_access_key": aws_secret_access_key,
-                        "aws_session_token": aws_session_token,
-                        "max_connections": aws_max_pool_connections,
-                    }.items()
-                    if v is not None
+                s3_options = {
+                    "region_name": aws_region_name,
+                    "endpoint_url": aws_endpoint_url,
+                    "aws_access_key_id": aws_access_key_id,
+                    "aws_secret_access_key": aws_secret_access_key,
+                    "aws_session_token": aws_session_token,
+                    "max_connections": aws_max_pool_connections,
                 }
+                discovery["s3_options"] = resolve_s3_options(
+                    {key: value for key, value in s3_options.items() if value is not None}
+                )
         self._discovery_options = discovery
         self.dataset = self._open_source()
         if self.format == "parquet":

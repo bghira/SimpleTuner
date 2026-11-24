@@ -10,6 +10,7 @@ import unittest
 import uuid
 from io import StringIO
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, Mock, patch
 
 from simpletuner.worker_agent import WorkerAgent, WorkerConfig
@@ -18,6 +19,55 @@ from simpletuner.worker_protocol import WORKER_LOG_TAIL_SIZE
 
 class WorkerAgentJobStartTestCase(unittest.IsolatedAsyncioTestCase):
     """Test worker job configuration handoff to the training process."""
+
+    def test_worker_dataset_copy_preserves_s3_connection_without_authentication(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "config.json"
+            dataloader = root / "datasets.json"
+            aws_config = root / "aws-config"
+            aws_credentials = root / "aws-credentials"
+            aws_credentials.write_text(
+                "[default]\naws_access_key_id = profile-access\naws_secret_access_key = profile-secret\n"
+            )
+            config.write_text(json.dumps({"data_backend_config": str(dataloader)}))
+            datasets = [
+                {
+                    "id": "remote",
+                    "type": "webshart",
+                    "source": "s3://images/prefix",
+                    "aws_access_key_id": "private-access",
+                    "aws_secret_access_key": "private-secret",
+                },
+                {"id": "other", "type": "webshart", "source": "org/dataset"},
+            ]
+            dataloader.write_text(json.dumps(datasets))
+            with patch.dict(
+                "os.environ",
+                {
+                    "AWS_CONFIG_FILE": str(aws_config),
+                    "AWS_SHARED_CREDENTIALS_FILE": str(aws_credentials),
+                    "AWS_ENDPOINT_URL_S3": "https://storage.example",
+                    "AWS_DEFAULT_REGION": "us-east-2",
+                },
+                clear=True,
+            ):
+                exported = WorkerAgent._read_dataset_config(config)
+
+            self.assertEqual(
+                exported,
+                [
+                    {
+                        "id": "remote",
+                        "type": "webshart",
+                        "source": "s3://images/prefix",
+                        "aws_endpoint_url": "https://storage.example",
+                        "aws_region_name": "us-east-2",
+                    },
+                    datasets[1],
+                ],
+            )
+            self.assertEqual(json.loads(dataloader.read_text()), datasets)
 
     def test_worker_config_has_no_kubeflow_runtime_fields(self) -> None:
         """Verify Kubernetes integration does not change Worker configuration."""
