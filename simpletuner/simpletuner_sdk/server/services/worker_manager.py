@@ -173,6 +173,16 @@ class WorkerManager:
         if not job or job.is_terminal:
             return
 
+        if ids := (job.metadata or {}).get("worker_ids"):
+            from ..routes.workers import _record_worker_stats, push_to_worker
+
+            error = f"Worker {worker.name} went offline during training"
+            if await self.job_store.finish_group_member(job_id, worker.worker_id, "failed", error, None):
+                if not job.metadata.get("group_check"):
+                    _record_worker_stats(job, worker, "failed", None)
+                for worker_id in ids:
+                    await push_to_worker(worker_id, {"type": "job_cancel", "job_id": job_id})
+            return
         if await self._check_job_outputs_exist(job):
             await self.job_store.update_job(
                 job_id,
@@ -233,9 +243,103 @@ class WorkerManager:
                 pending_jobs = await self.job_store.list_jobs(status="pending")
                 pending_jobs = [job for job in pending_jobs if job.provider == "worker"]
             for job in reversed(pending_jobs):
+                if (job.metadata or {}).get("target_worker_ids"):
+                    await self._dispatch_group(job)
+                    continue
                 worker = await self._find_available_worker(job)
                 if worker:
                     await self._dispatch_job_to_worker(job, worker)
+
+    @staticmethod
+    def _submit_event(job):
+        metadata = job.metadata or {}
+        config = metadata.get("config", {})
+        return {
+            "type": "job_submit",
+            "job_id": job.job_id,
+            "config": config,
+            "dataloader": metadata.get("dataloader", config.get("dataloader_config")),
+            "provider": job.provider,
+            "upload_endpoint": "/api/cloud/storage",
+            "upload_token": job.upload_token or "",
+            "hf_token": metadata.get("hf_token"),
+            **({"group_check": True} if metadata.get("group_check") else {}),
+        }
+
+    async def _dispatch_group(self, job):
+        from ..routes.workers import is_worker_connected, push_group_commands
+
+        ids = job.metadata["target_worker_ids"]
+        from .cloud.auth.user_store import UserStore
+        from .worker_groups import launch_inventory, resolve_worker_group
+
+        user = await UserStore().get_user(job.user_id)
+        inventory = await launch_inventory(user, include_offline=True, repository=self.worker_repository)
+        try:
+            workers = resolve_worker_group(ids, inventory)
+        except ValueError as exc:
+            await self.job_store.update_job(
+                job.job_id, {"status": "failed", "error_message": str(exc)}, expected_status="pending"
+            )
+            return
+        check = job.metadata.get("group_check")
+        if check and not all(w.gpu_info.get("nccl_group_check") for w in workers):
+            await self.job_store.update_job(
+                job.job_id,
+                {"status": "failed", "error_message": "Update all workers to agents with NCCL support."},
+                expected_status="pending",
+            )
+            return
+        if not all(is_worker_connected(w.worker_id) for w in workers) or not await self.worker_repository.reserve_group(
+            ids, job.job_id
+        ):
+            if check:
+                await self.job_store.update_job(
+                    job.job_id,
+                    {"status": "failed", "error_message": "Every worker must be connected and idle to run the group check."},
+                    expected_status="pending",
+                )
+            return
+        delivered = False
+        try:
+            event = self._submit_event(job)
+            claimed = await self.job_store.update_job(
+                job.job_id,
+                {
+                    "status": "running",
+                    "started_at": datetime.now(timezone.utc).isoformat(),
+                    "metadata": {"worker_id": ids[0], "worker_ids": ids, "worker_names": [w.name for w in workers]},
+                },
+                expected_status="pending",
+            )
+            if not claimed:
+                return
+            topology = {
+                "nnodes": len(ids),
+                "nproc_per_node": min(w.multinode_gpus for w in workers),
+                "master_addr": workers[0].gpu_info["distributed_address"],
+                "master_port": event["config"].get("main_process_port") or 29500,
+            }
+            delivered = push_group_commands(
+                {worker_id: {**event, "distributed": {**topology, "node_rank": rank}} for rank, worker_id in enumerate(ids)}
+            )
+            if not delivered:
+                await self.job_store.update_job(
+                    job.job_id,
+                    {
+                        "status": "failed" if check else "pending",
+                        "error_message": "A worker disconnected before the check started." if check else None,
+                        "started_at": None,
+                        "metadata": {"worker_id": None, "worker_ids": None, "worker_names": None},
+                    },
+                    expected_status="running",
+                )
+        finally:
+            if not delivered:
+                for worker_id in ids:
+                    await self.worker_repository.update_worker(
+                        worker_id, {"status": "idle", "current_job_id": None}, expected_job_id=job.job_id
+                    )
 
     async def _find_available_worker(self, job):
         """Find an idle worker that can handle the job."""
@@ -335,21 +439,7 @@ class WorkerManager:
             },
         )
 
-        job_metadata = job.metadata or {}
-        config = job_metadata.get("config", {})
-        success = await push_to_worker(
-            worker.worker_id,
-            {
-                "type": "job_submit",
-                "job_id": job.job_id,
-                "config": config,
-                "dataloader": job_metadata.get("dataloader", config.get("dataloader_config")),
-                "provider": getattr(job, "provider", None),
-                "upload_endpoint": "/api/cloud/storage",
-                "upload_token": job.upload_token or "",
-                "hf_token": job_metadata.get("hf_token"),
-            },
-        )
+        success = await push_to_worker(worker.worker_id, self._submit_event(job))
 
         if success:
             logger.info(f"Dispatched job {job.job_id} to worker {worker.worker_id}")
@@ -389,6 +479,18 @@ class WorkerManager:
 
         for worker in workers:
             if worker.status in (WorkerStatus.IDLE, WorkerStatus.BUSY):
+                if worker.current_job_id:
+                    assigned = await self.job_store.get_job(worker.current_job_id)
+                    if (
+                        assigned
+                        and not assigned.is_terminal
+                        and worker.worker_id in (assigned.metadata or {}).get("worker_ids", [])
+                    ):
+                        # Give all hosts a heartbeat interval to reconnect after an orchestrator restart.
+                        await self.worker_repository.update_worker(
+                            worker.worker_id, {"last_heartbeat": datetime.now(timezone.utc)}
+                        )
+                        continue
                 await self.worker_repository.update_worker(
                     worker.worker_id,
                     {"status": WorkerStatus.OFFLINE},

@@ -73,10 +73,15 @@ def detect_gpu_info() -> Dict[str, Any]:
         import torch
 
         if torch.cuda.is_available():
+            names = [torch.cuda.get_device_name(index) for index in range(torch.cuda.device_count())]
             return {
-                "name": torch.cuda.get_device_name(0),
+                "name": names[0],
+                "nccl_group_check": torch.distributed.is_available() and torch.distributed.is_nccl_available(),
+                "distributed_address": (
+                    (os.environ.get("SIMPLETUNER_WORKER_ADDRESS") or socket.gethostname()) if len(set(names)) == 1 else None
+                ),
                 "vram_gb": round(torch.cuda.get_device_properties(0).total_memory / 1e9, 1),
-                "count": torch.cuda.device_count(),
+                "count": len(names),
                 "driver": torch.version.cuda,
                 "accelerator": "cuda",
             }
@@ -267,10 +272,16 @@ class WorkerAgent:
         logger.debug(f"Received event: {event_type}")
 
         if event_type == "job_submit":
-            await self._start_job(event)
+            try:
+                await self._start_job(event)
+            except Exception as exc:
+                logger.exception("Could not start training")
+                await self._report_job_status("failed", error=str(exc))
+                self.current_job = None
+                self.training_process = None
         elif event_type == "job_manual_action":
             self._signal_manual_action(event)
-        elif event_type == "job_cancel":
+        elif event_type == "job_cancel" and self.current_job and self.current_job["job_id"] == event.get("job_id"):
             await self._stop_current_job()
         elif event_type == "shutdown":
             logger.info(f"Shutdown requested: {event.get('reason', 'unknown')}")
@@ -314,6 +325,9 @@ class WorkerAgent:
 
         # Write config files to temp directory
         job_dir = Path(f"/tmp/simpletuner_job_{job_id}")
+        distributed = event.get("distributed")
+        if distributed:
+            job_dir = job_dir / f"node-{distributed['node_rank']}"
         job_dir.mkdir(parents=True, exist_ok=True)
 
         config_path = job_dir / "config.json"
@@ -332,6 +346,11 @@ class WorkerAgent:
             with dataloader_path.open("w", encoding="utf-8") as handle:
                 yaml.safe_dump(dataloader, handle)
 
+        if distributed:
+            job_config["num_machines"] = distributed["nnodes"]
+            job_config["num_processes"] = distributed["nproc_per_node"] * distributed["nnodes"]
+            for launcher_option in ("machine_rank", "main_process_ip", "main_process_port", "same_network"):
+                job_config.pop(launcher_option, None)
         with config_path.open("w", encoding="utf-8") as handle:
             json.dump(job_config, handle)
 
@@ -368,8 +387,23 @@ class WorkerAgent:
             "simpletuner.train",
         ]
 
+        if distributed:
+            env["SIMPLETUNER_DISTRIBUTED_WORKER"] = "1"
+            cmd = [
+                sys.executable,
+                "-m",
+                "torch.distributed.run",
+                f"--nnodes={distributed['nnodes']}",
+                f"--nproc-per-node={distributed['nproc_per_node']}",
+                f"--node-rank={distributed['node_rank']}",
+                f"--master-addr={distributed['master_addr']}",
+                f"--master-port={distributed['master_port']}",
+                "--module",
+                "simpletuner.worker_group_check" if event.get("group_check") else "simpletuner.train",
+            ]
+
         logger.info(f"Launching training: {' '.join(cmd)}")
-        if is_kubeflow_job:
+        if is_kubeflow_job or event.get("group_check"):
             self.training_process = await asyncio.create_subprocess_exec(
                 *cmd,
                 env=env,
@@ -399,7 +433,22 @@ class WorkerAgent:
         if process is None:
             raise RuntimeError("Training process is not initialized")
 
-        if self._is_async_process(process):
+        check_error = None
+        if job.get("group_check"):
+            try:
+                output, _ = await asyncio.wait_for(process.communicate(), timeout=90)
+                self._log_tail = output.decode("utf-8", errors="replace")[-WORKER_LOG_TAIL_SIZE:]
+            except asyncio.TimeoutError:
+                check_error = "Timed out after 90 seconds during the NCCL group check"
+                if process.returncode is None:
+                    process.terminate()
+                    try:
+                        await asyncio.wait_for(process.communicate(), timeout=10)
+                    except asyncio.TimeoutError:
+                        process.kill()
+                        await process.communicate()
+            exit_code = process.returncode
+        elif self._is_async_process(process):
             await self._report_job_status("running")
             if process.stdout:
                 while line := await process.stdout.readline():
@@ -417,10 +466,13 @@ class WorkerAgent:
             return
         logger.info(f"Training finished with exit code: {exit_code}")
 
-        if exit_code == 0:
+        if exit_code == 0 and not check_error:
             await self._report_job_status("completed")
         else:
-            await self._report_job_status("failed", error=f"Training exited with code {exit_code}")
+            error = check_error or f"Training exited with code {exit_code}"
+            if job.get("group_check") and not check_error:
+                error = f"NCCL check exited with code {exit_code} on {self.config.name}. See the worker log for details."
+            await self._report_job_status("failed", error=error)
 
         if self.current_job is not job:
             return
@@ -428,6 +480,10 @@ class WorkerAgent:
         # Cleanup
         self.current_job = None
         self.training_process = None
+
+        if job.get("group_check"):
+            await self._send_heartbeat()
+            return
 
         # Ephemeral workers check for more jobs or shut down
         if not self.config.persistent:
@@ -474,16 +530,24 @@ class WorkerAgent:
         if status in ("completed", "failed", "cancelled") and self._log_tail:
             payload["log_tail"] = self._log_tail
 
-        try:
-            async with httpx.AsyncClient() as client:
-                await client.post(
-                    f"{self.config.orchestrator_url}/api/workers/job/{job_id}/status",
-                    headers={"X-Worker-Token": self.config.worker_token},
-                    json=payload,
-                    timeout=10,
-                )
-        except Exception as e:
-            logger.error(f"Failed to report job status: {e}")
+        job = self.current_job
+        group_result = job.get("distributed") and status in {"completed", "failed", "cancelled"}
+        while self.current_job is job:
+            try:
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(
+                        f"{self.config.orchestrator_url}/api/workers/job/{job_id}/status",
+                        headers={"X-Worker-Token": self.config.worker_token},
+                        json=payload,
+                        timeout=10,
+                    )
+                    response.raise_for_status()
+                    return
+            except httpx.HTTPError as exc:
+                logger.error("Failed to report job status: %s", exc)
+                if not group_result or (isinstance(exc, httpx.HTTPStatusError) and exc.response.is_client_error):
+                    return
+                await asyncio.sleep(WORKER_HEARTBEAT_SECONDS)
 
     async def _heartbeat_loop(self):
         """Send periodic heartbeats"""

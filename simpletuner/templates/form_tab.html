@@ -1856,6 +1856,7 @@ if (!window.hardwareHeroCTA) {
 
     <div x-show="!showHeroCTA()" x-cloak>
     {% elif tab_name == 'hardware' %}
+    {% include 'components/worker_group_setup.html' %}
     <!-- Hero CTA - Introduction to hardware settings -->
     {% call hero_cta(
         theme='purple',
@@ -1888,10 +1889,8 @@ if (!window.hardwareHeroCTA) {
                 <div class="hero-detail-card">
                     <h6><i class="fas fa-server text-warning me-2"></i>Multi-Node Training</h6>
                     <p class="small text-muted mb-0">
-                        Scale beyond a single machine. <strong>Note:</strong> Multi-node via WebUI is experimental —
-                        for production use, follow
-                        <a href="{{ docs_url('DISTRIBUTED.md') }}" target="_blank" rel="noopener">DISTRIBUTED.md <i class="fas fa-external-link-alt fa-xs"></i></a>
-                        and use the command-line approach.
+                        Choose registered hosts in Multi-node setup, or use the
+                        <a href="{{ docs_url('DISTRIBUTED.md') }}" target="_blank" rel="noopener">manual distributed launch settings</a>.
                     </p>
                 </div>
             </div>
@@ -1994,7 +1993,7 @@ if (!window.hardwareHeroCTA) {
                                        x-model="output_dir"
                                        @input.stop="onOutputDirChange($event.target.value)"
                                        placeholder="simpletuner-results">
-                                <div class="form-text">Where checkpoints and trained weights will be saved. Use absolute paths (like /home/user/models) or relative paths from the SimpleTuner directory.</div>
+                                <div class="form-text">Where checkpoints and trained weights will be saved. Use absolute paths such as /mnt/training/outputs, or relative paths from the SimpleTuner directory.</div>
                             </div>
                         </div>
 

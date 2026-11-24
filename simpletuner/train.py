@@ -95,6 +95,27 @@ def _run_training(trainer: Trainer) -> None:
     signal_file = environ.get("SIMPLETUNER_ACCELERATE_SIGNAL_FILE")
     validation_consumer = _build_signal_consumer(signal_file, "manual_validation")
     checkpoint_consumer = _build_signal_consumer(signal_file, "manual_checkpoint")
+    if environ.get("SIMPLETUNER_DISTRIBUTED_WORKER"):
+        # Read the leader's trigger file once per optimizer step. All ranks must enter
+        # checkpoint and validation collectives at the same step, including on remote hosts.
+        import torch
+
+        pending_validation = False
+        read_validation, read_checkpoint = validation_consumer, checkpoint_consumer
+
+        def checkpoint_consumer():
+            nonlocal pending_validation
+            flags = [read_checkpoint(), read_validation()] if trainer.accelerator.is_main_process else [False, False]
+            signals = torch.tensor(flags, dtype=torch.uint8, device=trainer.accelerator.device)
+            torch.distributed.broadcast(signals, src=0)
+            checkpoint, pending_validation = signals.tolist()
+            return bool(checkpoint)
+
+        def validation_consumer():
+            nonlocal pending_validation
+            requested, pending_validation = pending_validation, False
+            return bool(requested)
+
     if callable(validation_consumer):
         trainer.register_manual_validation_trigger(validation_consumer)
     if callable(checkpoint_consumer):

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -118,6 +119,7 @@ class ConfigMetadata(BaseModel):
     tags: List[str] = Field(default_factory=list)
     is_template: bool = False
     parent_template: Optional[str] = None
+    default_worker_ids: list[str] = Field(default_factory=list)
 
 
 class ConfigValidation(BaseModel):
@@ -382,31 +384,32 @@ class ConfigStore:
         if not metadata_path.exists():
             return None
 
-        try:
-            with metadata_path.open("r", encoding="utf-8") as handle:
-                payload = json.load(handle)
-            if isinstance(payload, dict):
-                return payload
-        except Exception:
-            return None
-        return None
+        with metadata_path.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        if not isinstance(payload, dict):
+            raise ValueError("Invalid environment metadata.")
+        return payload
 
     def _save_metadata_sidecar(self, config_path: Path, metadata: ConfigMetadata) -> None:
         if self.config_type != "model":
             return
 
         # Treat the special "default" configuration as virtual; avoid creating sidecar files
-        if config_path.suffix == ".json" and (
-            config_path.stem.lower() == "default" or config_path.parent.name.lower() == "default"
+        if (
+            not metadata.default_worker_ids
+            and not self._metadata_file_path(config_path).exists()
+            and config_path.suffix == ".json"
+            and (config_path.stem.lower() == "default" or config_path.parent.name.lower() == "default")
         ):
             return
 
         metadata_path = self._metadata_file_path(config_path)
         metadata_payload = metadata.model_dump()
         metadata_path.parent.mkdir(parents=True, exist_ok=True)
-        with metadata_path.open("w", encoding="utf-8") as handle:
-            json.dump(metadata_payload, handle, indent=2, sort_keys=True)
-            handle.write("\n")
+        with tempfile.TemporaryDirectory(dir=metadata_path.parent) as staging:
+            pending = Path(staging) / metadata_path.name
+            pending.write_text(json.dumps(metadata_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            pending.replace(metadata_path)
 
     def _delete_metadata_sidecar(self, config_path: Path) -> None:
         if self.config_type != "model":
@@ -1067,6 +1070,13 @@ class ConfigStore:
             json.dump(config, f, indent=2, sort_keys=True)
             f.write("\n")
 
+        self._cache.set(config_path, config)
+
+    def save_worker_defaults(self, name: str, worker_ids: list[str]) -> None:
+        _, metadata = self.load_config(name)
+        metadata.default_worker_ids = worker_ids
+        self._save_metadata_sidecar(self._get_config_path(name), metadata)
+
     def delete_config(self, name: str) -> bool:
         """Delete a configuration.
 
@@ -1192,6 +1202,7 @@ class ConfigStore:
         new_metadata.model_type = old_metadata.model_type
         new_metadata.tags = old_metadata.tags.copy()
         new_metadata.parent_template = old_metadata.parent_template
+        new_metadata.default_worker_ids = list(old_metadata.default_worker_ids)
 
         def _translate_relative_paths(payload: Any) -> Any:
             if isinstance(payload, dict):
@@ -1504,7 +1515,7 @@ class ConfigStore:
         config, metadata = self.load_config(name)
 
         if include_metadata:
-            return {"_metadata": metadata.model_dump(), "config": config}
+            return {"_metadata": metadata.model_dump(exclude={"default_worker_ids"}), "config": config}
 
         return config
 
@@ -1521,7 +1532,9 @@ class ConfigStore:
         """
         # Extract config and metadata
         if "_metadata" in data:
-            metadata = ConfigMetadata(**data["_metadata"])
+            metadata = ConfigMetadata(
+                **{key: value for key, value in data["_metadata"].items() if key != "default_worker_ids"}
+            )
             config = data.get("config", {})
         else:
             config = data

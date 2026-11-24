@@ -51,7 +51,7 @@
                 aria-controls="training-launch-picker-{{ placement }}"
                 hx-trigger="launch-selected"
                 hx-sync="this:drop"
-                hx-on::config-request="event.detail.headers['X-Training-Destination'] = this.dataset.destination"
+                hx-on::config-request="event.detail.headers['X-Training-Destination'] = this.dataset.destination; event.detail.headers['X-Training-Environment'] = this.dataset.environment"
                 hx-post="/api/training/start"
                 hx-include="#trainer-form"
                 hx-target="#training-status"
@@ -74,6 +74,10 @@
                 </span>
             </span>
         </button>
+
+        <button type="button" class="btn btn-sm btn-outline-secondary me-2"
+                x-show="$store.trainer.activeEnvironmentMetadata?.default_worker_ids?.length"
+                @click="chooseDestination(true)">Change workers for this run</button>
 
         <!-- Cancel Training Button -->
         <button type="button"
@@ -123,13 +127,12 @@
             <button type="button" class="list-group-item list-group-item-action" @click="launch('local')">
                 Local <small class="text-muted">This machine</small>
             </button>
-            <template x-for="worker in workers" :key="worker.id">
-                <button type="button" class="list-group-item list-group-item-action" @click="launch(worker.id)">
-                    <strong x-text="worker.name"></strong>
-                    <small class="d-block" x-text="[worker.gpu, worker.status === 'busy' ? 'Busy · queue here' : 'Available'].filter(Boolean).join(' · ')"></small>
-                </button>
-            </template>
+            {% include 'components/worker_group_choices.html' %}
         </div>
+        <small class="d-block mb-2" x-show="workers.some(w => w.multinode_gpus && workers.some(other => other.id !== w.id && other.multinode_gpus && other.gpu === w.gpu))">Select hosts in rank order. The first checked host is rank 0.</small>
+        <p x-show="selected.length > 1" x-text="groupSummary()"></p>
+        <button type="button" class="btn btn-primary btn-sm" :disabled="!selected.length"
+                @click="launch(selected.join(','))">Run on selected workers</button>
         <button type="button" class="btn btn-outline-secondary btn-sm" @click="$refs.picker.close()">Cancel</button>
     </dialog>
 </div>
@@ -477,23 +480,18 @@ if (!window.__trainerActionHTMXBound) {
     });
 
     window.trainingLaunchPicker = () => ({
-        workers: [],
-        loading: false,
-        async chooseDestination() {
+        ...window.workerGroupSelection(),
+        async chooseDestination(override = false) {
             if (this.loading) return;
-            this.loading = true;
-            try {
-                const response = await ApiClient.fetch('/api/training/launch-workers');
-                if (!response.ok) throw new Error('Could not load training workers.');
-                this.workers = await response.json();
-            } catch (error) {
-                window.showToast(error.message, 'error');
-                return;
-            } finally {
-                this.loading = false;
-            }
-            await this.$nextTick();
-            if (this.workers.length) {
+            const environment = this.$store.trainer.activeEnvironment || 'default';
+            const group = await this.loadWorkers(environment);
+            if (!group || environment !== (this.$store.trainer.activeEnvironment || 'default')) return;
+            this.$refs.run.dataset.environment = environment;
+            this.selected = group.default_worker_ids.filter(id => this.workers.some(w => w.id === id));
+            if (group.default_worker_ids.length && !override) {
+                this.launch('saved-group');
+            } else if (this.workers.length || override) {
+                await this.$nextTick();
                 this.$refs.picker.showModal();
             } else {
                 this.launch('local-only');

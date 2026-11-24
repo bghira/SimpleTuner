@@ -16,7 +16,7 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # websockets may not be installed in all environments
     ConnectionClosed = ConnectionClosedOK = RuntimeError
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from simpletuner.helpers.utils.checkpoint_manager import CheckpointManager
 from simpletuner.simpletuner_sdk import process_keeper
@@ -25,6 +25,9 @@ from simpletuner.simpletuner_sdk.server.services import training_service
 from simpletuner.simpletuner_sdk.server.services.callback_service import get_default_callback_service
 from simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware import get_current_user, get_current_user_ws
 from simpletuner.simpletuner_sdk.server.services.cloud.auth.models import User
+
+from ..services.worker_groups import launch_inventory as _launch_workers
+from ..services.worker_groups import resolve_worker_group
 
 logger = logging.getLogger(__name__)
 
@@ -118,59 +121,137 @@ async def save_config(request: Request, _user: User = Depends(get_current_user))
 
     try:
         bundle = training_service.build_config_bundle(form_data)
+        if bundle.default_worker_ids:
+            resolve_worker_group(bundle.default_worker_ids, await _launch_workers(_user))
         training_service.persist_config_bundle(bundle)
         return """
         <div class="text-success" x-data="{ show: true }" x-show="show" x-init="setTimeout(() => show = false, 3000)" x-transition.opacity.duration.500ms>
             <i class="fas fa-check"></i> Configuration saved
         </div>
         """
+    except ValueError as exc:
+        return HTMLResponse(f'<div class="text-danger">{escape(str(exc))}</div>', status_code=422)
     except Exception as exc:
-        return f"""
-        <div class="text-danger">
-            <i class="fas fa-exclamation-triangle"></i> Failed to save: {str(exc)}
-        </div>
-        """
-
-
-async def _launch_workers(user: User):
-    from ..models.worker import WorkerStatus
-    from ..services.worker_repository import get_worker_repository
-    from .workers import is_worker_connected
-
-    if not user.has_permission("job.submit"):
-        return []
-    return [
-        worker
-        for worker in await get_worker_repository().list_workers()
-        if is_worker_connected(worker.worker_id)
-        and (worker.user_id == user.id or user.has_permission("admin.workers"))
-        and not worker.is_job_bound
-        and worker.status in (WorkerStatus.IDLE, WorkerStatus.BUSY)
-    ]
+        return HTMLResponse(f'<div class="text-danger">Failed to save: {escape(str(exc))}</div>', status_code=500)
 
 
 @router.get("/launch-workers")
-async def list_launch_workers(_user: User = Depends(get_current_user)):
-    return [
-        {"id": worker.worker_id, "name": worker.name, "gpu": worker.gpu_info.get("name"), "status": worker.status.value}
-        for worker in await _launch_workers(_user)
+async def list_launch_workers(
+    _user: User = Depends(get_current_user), include_offline: bool = False, environment: str | None = None
+):
+    from .workers import is_worker_connected
+
+    workers = [
+        {
+            "id": worker.worker_id,
+            "name": worker.name,
+            "gpu": worker.gpu_info.get("name"),
+            "status": worker.status.value if is_worker_connected(worker.worker_id) else "offline",
+            "multinode_gpus": worker.multinode_gpus,
+            "address": worker.gpu_info.get("distributed_address"),
+            "group_check": bool(worker.gpu_info.get("nccl_group_check")),
+        }
+        for worker in await _launch_workers(_user, include_offline=include_offline)
     ]
+    if environment is None:
+        return workers
+    store = training_service.get_config_store()
+    if environment != (store.get_active_config() or "default"):
+        raise HTTPException(409, "The active environment changed. Reload this page.")
+    try:
+        _, metadata = store.load_config(environment)
+        ids = metadata.default_worker_ids
+    except FileNotFoundError:
+        ids = []
+    return {"workers": workers, "default_worker_ids": ids}
+
+
+class WorkerGroupCheck(BaseModel):
+    worker_ids: list[str] = Field(min_length=2)
+    port: int = Field(default=29500, ge=1, le=65535)
+
+
+@router.post("/worker-group-checks")
+async def check_worker_group(body: WorkerGroupCheck, user: User = Depends(get_current_user)):
+    from .queue import submit_worker_job
+
+    try:
+        hosts = resolve_worker_group(body.worker_ids, await _launch_workers(user))
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if any(w.status.value != "idle" or w.current_job_id for w in hosts):
+        raise HTTPException(409, "The group check requires every selected worker to be idle.")
+    if not all(w.gpu_info.get("nccl_group_check") for w in hosts):
+        raise HTTPException(422, "Update all selected agents to a version with NCCL group check support.")
+    result = await submit_worker_job(
+        "NCCL group check",
+        {"main_process_port": body.port},
+        user,
+        target_worker_id=body.worker_ids[0],
+        target_worker_ids=body.worker_ids,
+        group_check=True,
+    )
+    if not result.success:
+        raise HTTPException(503, result.error)
+    return {"job_id": result.job_id}
+
+
+@router.get("/worker-group-checks/{job_id}")
+async def worker_group_check_status(job_id: str, user: User = Depends(get_current_user)):
+    from ..services.cloud.storage.job_repository import get_job_repository
+
+    job = await get_job_repository().get(job_id)
+    if (
+        not job
+        or not (job.metadata or {}).get("group_check")
+        or (job.user_id != user.id and not user.has_permission("job.view.all"))
+    ):
+        raise HTTPException(404, "Group check not found")
+    names = job.metadata.get("worker_names") or []
+    results = job.metadata.get("check_results", {})
+    return {
+        "status": job.status,
+        "terminal": job.is_terminal,
+        "error": job.error_message,
+        "hosts": [
+            {
+                "rank": rank,
+                "name": names[rank] if rank < len(names) else worker_id,
+                "status": results.get(worker_id, "No result" if job.is_terminal else "Waiting"),
+            }
+            for rank, worker_id in enumerate(job.metadata["target_worker_ids"])
+        ],
+    }
 
 
 @router.post("/start", response_class=HTMLResponse)
 async def start_training(request: Request, _user: User = Depends(get_current_user)):
     """Start training with current configuration."""
-    destination = request.headers.get("X-Training-Destination", "local")
-    worker = None
-    if destination == "local-only" and await _launch_workers(_user):
-        return '<div class="alert alert-warning">A worker just connected. Run again to choose a destination.</div>'
-    if destination not in ("local", "local-only"):
-        worker = next((w for w in await _launch_workers(_user) if w.worker_id == destination), None)
-        if worker is None:
-            return '<div class="alert alert-danger">The selected worker is unavailable. Run again to choose a destination.</div>'
-
+    destination = request.headers.get("X-Training-Destination", "environment")
     form_data = await request.form()
     bundle = training_service.build_config_bundle(form_data)
+    environment = request.headers.get("X-Training-Environment")
+    if environment and environment != bundle.active_config:
+        return HTMLResponse("The active environment changed. Retry from the current environment.", status_code=409)
+
+    selected = []
+    if destination in ("environment", "saved-group", "local-only"):
+        try:
+            _, metadata = bundle.store.load_config(bundle.active_config)
+            ids = metadata.default_worker_ids
+        except FileNotFoundError:
+            ids = []
+        if destination == "saved-group" and not ids:
+            return '<div class="alert alert-warning">The default workers changed. Run again to choose a destination.</div>'
+        if destination == "local-only" and not ids and await _launch_workers(_user):
+            return '<div class="alert alert-warning">A worker just connected. Run again to choose a destination.</div>'
+    else:
+        ids = [] if destination == "local" else destination.split(",")
+    if ids:
+        try:
+            selected = resolve_worker_group(ids, await _launch_workers(_user))
+        except ValueError as exc:
+            return f'<div class="alert alert-danger">{escape(str(exc))}</div>'
 
     validation_result = training_service.validate_training_config(
         bundle.store,
@@ -194,33 +275,19 @@ async def start_training(request: Request, _user: User = Depends(get_current_use
         """
 
     try:
-        if worker:
-            from ..utils.paths import resolve_config_path
-            from .queue import submit_worker_job
+        if selected:
+            from .queue import submit_selected_worker_job
 
             config = {key.removeprefix("--"): value for key, value in bundle.complete_config.items()}
             # The local launcher injects a loopback webhook into the form snapshot.
             config["webhook_config"] = bundle.save_config.get("webhook_config", [])
-            # Snapshot managed dataset definitions. External paths are interpreted on the selected worker.
-            dataloader = None
-            if path := config.get("data_backend_config"):
-                resolved = resolve_config_path(path, config_dir=bundle.store.config_dir, check_cwd_first=False)
-                if (
-                    resolved
-                    and resolved.resolve().is_relative_to(bundle.store.config_dir.resolve())
-                    and resolved.suffix == ".json"
-                ):
-                    dataloader = json.loads(resolved.read_text(encoding="utf-8"))
-                    if not isinstance(dataloader, list):
-                        raise ValueError("The selected dataset configuration must contain a list of datasets.")
-            result = await submit_worker_job(
-                bundle.active_config, config, _user, target_worker_id=worker.worker_id, dataloader=dataloader
-            )
+            result = await submit_selected_worker_job(bundle.active_config, config, bundle.store, _user, ids)
             if not result.success:
                 return f'<div class="alert alert-danger">{escape(result.error)}</div>'
             state = "queued for" if result.status == "queued" else "submitted to"
+            names = ", ".join(escape(w.name) for w in selected)
             return (
-                f'<div class="alert alert-info">Training {state} <strong>{escape(worker.name)}</strong>.'
+                f'<div class="alert alert-info">Training {state} <strong>{names}</strong>.'
                 f"<br><small>Job ID: {escape(result.job_id)}</small></div>"
             )
 

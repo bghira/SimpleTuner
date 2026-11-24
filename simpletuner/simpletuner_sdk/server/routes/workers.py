@@ -192,6 +192,15 @@ async def push_to_worker(worker_id: str, event: Dict[str, Any]) -> bool:
     return False
 
 
+def push_group_commands(commands: dict[str, dict]) -> bool:
+    """Check and enqueue the complete group without yielding between workers."""
+    if any(worker_id not in worker_streams or worker_streams[worker_id].full() for worker_id in commands):
+        return False
+    for worker_id, command in commands.items():
+        worker_streams[worker_id].put_nowait(command)
+    return True
+
+
 def is_worker_connected(worker_id: str) -> bool:
     """Check if worker is connected to SSE stream.
 
@@ -342,6 +351,16 @@ async def register_worker(
     resume_job = None
     abandon_job = None
 
+    if not request.current_job_id and worker.current_job_id and not worker.is_job_bound:
+        from ..services.cloud.storage.job_repository import get_job_repository
+        from ..services.worker_manager import get_worker_manager
+
+        assigned = await get_job_repository().get(worker.current_job_id)
+        if assigned and worker.worker_id in (assigned.metadata or {}).get("worker_ids", []):
+            manager = get_worker_manager()
+            if manager:
+                await manager._handle_orphaned_job(worker.current_job_id, worker)
+
     if request.current_job_id:
         # Worker thinks it's running a job - verify if it should continue
         from ..services.cloud.storage.job_repository import get_job_repository
@@ -355,7 +374,10 @@ async def register_worker(
         elif (
             job
             and job.status in {"running", "starting", "training"}
-            and (job.metadata or {}).get("worker_id") == worker.worker_id
+            and (
+                worker.worker_id == (job.metadata or {}).get("worker_id")
+                or worker.worker_id in (job.metadata or {}).get("worker_ids", [])
+            )
         ):
             updates["status"] = WorkerStatus.BUSY
             updates["current_job_id"] = job.job_id
@@ -479,7 +501,8 @@ async def _assigned_job(job_repo, job_id: str, worker, *, reports_progress: bool
         )
 
     # Verify worker is assigned to this job
-    if (job.metadata or {}).get("worker_id") != worker_id:
+    metadata = job.metadata or {}
+    if metadata.get("worker_id") != worker_id and worker_id not in metadata.get("worker_ids", []):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Worker not assigned to this job",
@@ -507,7 +530,8 @@ def _record_worker_stats(job, worker, status: str, progress: dict | None, valida
         event,
         assigned_worker={
             "assigned_worker": True,
-            "worker": worker.name,
+            "worker": (job.metadata or {}).get("worker_names", [worker.name])[0],
+            "worker_names": (job.metadata or {}).get("worker_names"),
             "gpu": (worker.gpu_info or {}).get("name") or job.hardware_type,
             "config_name": job.config_name,
             "user_id": job.user_id,
@@ -571,7 +595,7 @@ async def worker_heartbeat(
         job = await _assigned_job(
             get_job_repository(), request.current_job_id, worker, reports_progress=request.status == WorkerStatus.BUSY
         )
-        if request.job_progress and not job.is_terminal:
+        if request.job_progress and not job.is_terminal and (job.metadata or {}).get("worker_id") == worker.worker_id:
             _record_worker_stats(job, worker, "running", request.job_progress)
 
     if request.status == WorkerStatus.BUSY and request.current_job_id and not worker.is_job_bound:
@@ -626,7 +650,13 @@ async def worker_has_pending_jobs(worker_id: str, x_worker_token: str = Header(.
     if worker.worker_type == WorkerType.PEER:
         return {"has_jobs": False}
     jobs = await get_job_store().list_jobs(status="pending", provider="worker", limit=-1)
-    return {"has_jobs": any((job.metadata or {}).get("target_worker_id") in (None, worker_id) for job in jobs)}
+    return {
+        "has_jobs": any(
+            (job.metadata or {}).get("target_worker_id") in (None, worker_id)
+            or worker_id in (job.metadata or {}).get("target_worker_ids", [])
+            for job in jobs
+        )
+    }
 
 
 @router.post("/job/{job_id}/status")
@@ -656,6 +686,23 @@ async def update_job_status(
     job = await _assigned_job(
         job_repo, job_id, worker, reports_progress=bool(request.progress) and request.status in (None, "training", "running")
     )
+    group = (job.metadata or {}).get("worker_ids", [])
+    group_finished = False
+    if group:
+        if request.status in {"completed", "failed", "cancelled"}:
+            group_finished = await job_repo.finish_group_member(
+                job_id, worker.worker_id, request.status, request.error, request.log_tail
+            )
+            if not group_finished:
+                return {"success": True}
+            if request.status != "completed":
+                for member in group:
+                    if member != worker.worker_id:
+                        await push_to_worker(member, {"type": "job_cancel", "job_id": job_id})
+        elif job.is_terminal or worker.worker_id != group[0]:
+            return {"success": True}
+    if (job.metadata or {}).get("group_check"):
+        return {"success": True}
     if not request.status:
         if not request.progress and request.validation is None:
             raise HTTPException(status_code=422, detail="Expected worker status, progress, or validation")
@@ -702,11 +749,12 @@ async def update_job_status(
     if request.status in ["completed", "failed", "cancelled"]:
         updates["completed_at"] = datetime.now(timezone.utc).isoformat()
 
-    updated = await job_repo.update(
+    updated = group_finished or await job_repo.update(
         job_id,
         updates,
         worker_id=worker.worker_id,
         worker_log_tail=request.log_tail if job.provider == "worker" else None,
+        **({"expected_status": job.status} if group else {}),
     )
     if not updated:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Job assignment changed")

@@ -361,6 +361,45 @@ class JobRepository(BaseSQLiteStore):
             (job_id, log_tail),
         )
 
+    async def finish_group_member(self, job_id, worker_id, status, error, log_tail) -> bool:
+        """Return true only to the reporter that moved the whole job to a terminal state."""
+
+        def finish(conn):
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT metadata, status FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
+            if not row:
+                return False
+            metadata = json.loads(row["metadata"])
+            members = metadata.get("worker_ids", [])
+            completed = set(metadata.get("completed_workers", []))
+            if worker_id not in members:
+                return False
+            if metadata.get("group_check") and worker_id not in metadata.get("check_results", {}):
+                conn.execute(
+                    "UPDATE jobs SET metadata = json_patch(metadata, ?) WHERE job_id = ?",
+                    (json.dumps({"check_results": {worker_id: status}}), job_id),
+                )
+            if row["status"] not in {"starting", "running", "training"} or worker_id in completed:
+                return False
+            if status == "completed":
+                completed.add(worker_id)
+                conn.execute(
+                    "UPDATE jobs SET metadata = json_set(metadata, '$.completed_workers', json(?)) WHERE job_id = ?",
+                    (json.dumps(sorted(completed)), job_id),
+                )
+                if completed != set(members):
+                    return False
+            if log_tail is not None:
+                self._write_worker_log_tail(conn, job_id, log_tail)
+            conn.execute(
+                "UPDATE jobs SET status = ?, completed_at = ?, error_message = ? WHERE job_id = ?",
+                (status, datetime.now(timezone.utc).isoformat(), error, job_id),
+            )
+            return True
+
+        (result,) = await self.execute_in_transaction([finish])
+        return result
+
     async def record_worker_heartbeat(self, job_id: str, worker_id: str, log_tail: str | None) -> None:
         """Store output and clear a stale local PID error for an active remote job."""
         orphan_error = "Job orphaned (no PID tracked)"

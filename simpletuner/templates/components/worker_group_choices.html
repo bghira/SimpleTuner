@@ -1,0 +1,11 @@
+<template x-for="worker in workers" :key="worker.id">
+                <label class="list-group-item d-flex gap-2 align-items-center">
+                    <input type="checkbox" :value="worker.id" :checked="selected.includes(worker.id)"
+                           :disabled="!selected.includes(worker.id) && !compatible(worker)" @change="toggle(worker.id, $el.checked)">
+                    <span>
+                        <strong x-text="worker.name"></strong>
+                        <small class="d-block" x-text="[worker.multinode_gpus ? worker.multinode_gpus + ' × ' + worker.gpu : worker.gpu, worker.status === 'busy' ? 'Busy · queue here' : worker.status === 'idle' ? 'Available' : worker.status].filter(Boolean).join(' · ')"></small>
+                    </span>
+                    <small class="ms-auto" x-show="selected.includes(worker.id)" x-text="'Rank ' + selected.indexOf(worker.id)"></small>
+                </label>
+            </template>

@@ -215,6 +215,16 @@ The scheduler matches jobs to workers based on:
 2. Label matching (glob patterns supported)
 3. Worker availability (IDLE status)
 
+## Launch a job on several workers
+
+To reuse a group, open **Hardware → Multi-node setup** for the environment. Check the hosts, use **Move up** or **Move down** to set their ranks, review the dataset and shared output paths, then click **Save**. **Run** uses the saved hosts. **Change workers for this run** overrides them once. A busy group queues together. An unavailable rank must be reconnected or replaced. Local copies retain the group, while portable exports omit the worker IDs.
+
+With the selected workers idle, **Test group** runs a short NCCL all-reduce across the GPUs in the selection. The result lists each host by machine rank. The test uses the displayed rendezvous address and port and does not load a model.
+
+In **Run**, check hosts with the same CUDA GPU model in machine-rank order. The first checked host is rank 0. The job waits until every selected host is idle. Each host uses as many GPUs as the smallest host in the group. Training Progress lists the workers together in rank order.
+
+Run an up-to-date worker agent on each host. The hosts must be able to reach each other and resolve rank 0’s hostname. Set `SIMPLETUNER_WORKER_ADDRESS` on a worker before starting its agent to advertise a reachable hostname or IP. Allow the configured `main_process_port` (default 29500) on rank 0 and the traffic required by your distributed backend. Dataset paths must work on every host. Use shared storage for checkpoints and output.
+
 ## Monitor another node in a distributed job
 
 Create a peer token for each additional node after the job is assigned. Use the orchestrator job ID shown in the Job Queue. Run the returned connection command on that node. Each peer appears in Workers and reports its own GPU metrics. The original worker controls the job and reports training progress. Removing a peer stops monitoring that node.

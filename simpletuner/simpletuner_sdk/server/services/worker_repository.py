@@ -330,6 +330,29 @@ class WorkerRepository(BaseSQLiteStore):
         async with self._lock:
             return await loop.run_in_executor(None, _update)
 
+    async def reserve_group(self, worker_ids: list[str], job_id: str) -> bool:
+        """Reserve every selected host or roll the whole reservation back."""
+
+        def reserve():
+            conn = self._get_connection()
+            try:
+                placeholders = ",".join("?" for _ in worker_ids)
+                cursor = conn.execute(
+                    f"UPDATE workers SET status = 'busy', current_job_id = ? WHERE worker_id IN ({placeholders})"
+                    " AND status = 'idle' AND current_job_id IS NULL AND worker_type != 'peer'",
+                    (job_id, *worker_ids),
+                )
+                if cursor.rowcount != len(worker_ids):
+                    conn.rollback()
+                    return False
+                conn.commit()
+                return True
+            finally:
+                conn.close()
+
+        async with self._lock:
+            return await asyncio.to_thread(reserve)
+
     async def delete_worker(self, worker_id: str) -> bool:
         """Delete a worker from the repository.
 

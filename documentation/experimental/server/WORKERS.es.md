@@ -215,6 +215,16 @@ El scheduler empareja trabajos con workers basado en:
 2. Match de etiquetas (patrones glob soportados)
 3. Disponibilidad del worker (estado IDLE)
 
+## Lanzar un trabajo en varios workers
+
+Para reutilizar un grupo, abre **Hardware → Multi-node setup** en el entorno. Marca los hosts, ordénalos con **Move up** y **Move down**, revisa las rutas de datos y salida compartida y pulsa **Save**. **Run** usa el grupo guardado. **Change workers for this run** cambia los hosts solo para esa ejecución. Si un host está ocupado, el grupo espera. Reconecta o reemplaza los hosts no disponibles. Las copias locales conservan el grupo y las exportaciones omiten los identificadores.
+
+Con todos los workers libres, **Test group** ejecuta una reducción colectiva NCCL en las GPU seleccionadas y muestra el resultado por host y rango. Usa la dirección y el puerto indicados sin cargar un modelo.
+
+En **Run**, marca los hosts con el mismo modelo de GPU CUDA en el orden de rango deseado. El primero tendrá el rango 0. El trabajo espera hasta que todos estén libres. Cada host usa tantas GPU como el host del grupo que tenga menos. Training Progress muestra los workers juntos en orden de rango.
+
+Actualiza el agente en cada host. Los hosts deben poder comunicarse entre sí y resolver el nombre del host de rango 0. Antes de iniciar el agente, puedes definir `SIMPLETUNER_WORKER_ADDRESS` con un nombre o una IP accesible. Permite el tráfico del backend distribuido y el puerto `main_process_port` (29500 por defecto) en el rango 0. Las rutas de los datos deben ser accesibles desde todos los hosts. Usa almacenamiento compartido para los checkpoints y la salida.
+
 ## Monitorizar otro nodo de un trabajo distribuido
 
 Una vez asignado el trabajo, crea un token de par para cada nodo adicional. Usa el ID del trabajo que aparece en la cola del orquestador. Ejecuta el comando de conexión devuelto en ese nodo. Cada par aparece en Workers y envía sus propias métricas de GPU. El worker original controla el trabajo e informa del progreso. Eliminar un par detiene la monitorización de ese nodo.

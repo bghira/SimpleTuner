@@ -14,6 +14,9 @@
      x-on:input="$store.trainer.markFormDirty()"
      x-on:change="$store.trainer.markFormDirty()"
      data-field-name="{{ field.name }}"
+     {% if field_name in ['num_machines', 'num_processes', 'machine_rank', 'main_process_ip'] %}
+     :class="{'d-none': $store.trainer.usesWorkerGroup}"
+     {% endif %}
      {% if field.conditional_on %}
      data-conditional-on="{{ field.conditional_on }}"
      {% endif %}>
