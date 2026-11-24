@@ -867,6 +867,7 @@ class TestIterationUnseenIndex(unittest.TestCase):
             self.assertEqual(sum(state["seen_images"].values()), 4)
 
             resumed = runtime()
+            resumed.config["timestep_sampling_offset"] = 0.5
             resumed.sampler.state_manager.load_state = lambda path: state
             resumed.sampler.load_states(filename)
             replay = fetch(resumed, first["dataset_mixer_state"])

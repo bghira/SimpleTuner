@@ -285,13 +285,19 @@ class DatasetRuntime:
     def read_page(self, *, bucket=None, offset=0, limit=50):
         return self.metadata_backend.read_page(bucket=bucket, offset=offset, limit=limit)
 
-    def occurrence_revision(self, args):
+    def occurrence_revision(self, args, *, include_timestep_offset=False):
         """Identify inputs that can change the caption, conditioning or transform for a scheduled sample."""
         from simpletuner.helpers.configuration.sanitization import make_public_config_serializable
 
+        def occurrence_config(config):
+            if include_timestep_offset or "timestep_sampling_offset" not in config:
+                return config
+            # The model applies this offset after the dataloader yields the batch.
+            return {key: value for key, value in config.items() if key != "timestep_sampling_offset"}
+
         def describe_binding(dataset):
             description = dataset.describe()
-            return [dataset.id, description.source_revision, description.view_revision, dataset.config]
+            return [dataset.id, description.source_revision, description.view_revision, occurrence_config(dataset.config)]
 
         dataset_config = self.config
         webshart = dataset_config.get("webshart")
@@ -301,7 +307,7 @@ class DatasetRuntime:
             webshart.pop("sampling_order")
             dataset_config = {**dataset_config, "webshart": webshart}
         inputs = {
-            "dataset": dataset_config,
+            "dataset": occurrence_config(dataset_config),
             "conditioning": [describe_binding(dataset) for dataset in self.conditioning_datasets],
             "audio": [describe_binding(dataset) for dataset in self.audio_datasets],
             "conditioning_sampling": getattr(args, "conditioning_multidataset_sampling", "combined"),

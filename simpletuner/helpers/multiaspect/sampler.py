@@ -330,10 +330,16 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         return True
 
     def load_states(self, state_path: str, *, next_epoch: int | None = None):
-        try:
-            previous_state = self.state_manager.load_state(state_path)
-        except Exception as e:
-            raise e
+        previous_state = self.state_manager.load_state(state_path)
+        cursor_key = "native_epoch" if self.epoch_provider is not None else "legacy_cursor"
+        checkpoint_cursor = previous_state.get(cursor_key)
+        if isinstance(checkpoint_cursor, dict) and isinstance(layout := checkpoint_cursor.get("layout"), dict):
+            args = StateTracker.get_args()
+            revision = self.dataset_runtime.occurrence_revision(args)
+            saved = layout.get("occurrence_revision")
+            if saved != revision and saved == self.dataset_runtime.occurrence_revision(args, include_timestep_offset=True):
+                # Older checkpoints hashed the explicit offset along with the dataset configuration.
+                layout["occurrence_revision"] = revision
 
         if self.epoch_provider is not None:
             saved = previous_state.get("native_epoch")

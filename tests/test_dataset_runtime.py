@@ -167,6 +167,9 @@ class DatasetRuntimeTests(unittest.TestCase):
             related.metadata_backend.describe.return_value = DatasetDescription(view_revision="view-1")
         self.runtime.conditioning_datasets = (a, b)
         original = self.runtime.occurrence_revision(args)
+        with patch.dict(a.config, timestep_sampling_offset=0.5):
+            self.assertEqual(self.runtime.occurrence_revision(args), original)
+            self.assertEqual(a.config["timestep_sampling_offset"], 0.5)
         self.runtime.conditioning_datasets = (b, a)
         self.assertNotEqual(self.runtime.occurrence_revision(args), original)
         self.runtime.conditioning_datasets = (a, b)

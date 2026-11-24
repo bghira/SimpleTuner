@@ -2586,10 +2586,26 @@ class TestWebshartParquetBackend(unittest.TestCase):
             sampler.save_state(name)
             validation_second = sampler.validation_cursor.next_refs(1)
             self.assertNotEqual(validation_first, validation_second)
+            runtime.config["timestep_sampling_offset"] = 0.7
             sampler.load_states(name)
             self.assertEqual(sampler.validation_cursor.next_refs(1), validation_second)
-            again = next(iter(sampler))[0]
-            self.assertEqual(again, second)
+            self.assertEqual(next(iter(sampler))[0], second)
+            self.assertEqual(runtime.config["timestep_sampling_offset"], 0.7)
+
+            # Reproduce a checkpoint written when the configured offset was part of the hash.
+            checkpoint = sampler.state_manager.load_state(name)
+            old_layout = checkpoint["native_epoch"]["layout"]
+            old_revision = runtime.occurrence_revision(args, include_timestep_offset=True)
+            self.assertNotEqual(old_layout["occurrence_revision"], old_revision)
+            old_layout["occurrence_revision"] = old_revision
+            sampler.state_manager.save_state(checkpoint, name)
+            with patch.dict(runtime.config, crop=True), self.assertRaisesRegex(ValueError, "unchanged"):
+                sampler.load_states(name)
+            sampler.load_states(name)
+            sampler.save_state(name)
+            runtime.config["timestep_sampling_offset"] = -0.5
+            sampler.load_states(name)
+            self.assertEqual(next(iter(sampler))[0], second)
             import random
 
             training_state = sampler.training_cursor.state_dict()
