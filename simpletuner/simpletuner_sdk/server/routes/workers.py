@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field, FiniteFloat
 
 from simpletuner.worker_protocol import WORKER_LOG_TAIL_SIZE
 
-from ..models.worker import WorkerStatus
+from ..models.worker import WorkerStatus, WorkerType
 from ..services.callback_events import StageStatus
 from ..services.callback_service import get_default_callback_service
 from ..services.cloud.auth import User, get_optional_user
@@ -96,7 +96,8 @@ class CreateWorkerRequest(BaseModel):
     """Create worker request."""
 
     name: str
-    worker_type: Literal["persistent", "ephemeral"] = "persistent"
+    worker_type: Literal["persistent", "ephemeral", "peer"] = "persistent"
+    job_id: str | None = None
     labels: Dict[str, str] = Field(default_factory=dict)
 
 
@@ -248,6 +249,22 @@ async def _reported_worker_job(job_repo, job_id, worker):
     return job
 
 
+async def _check_peer_binding(worker, reported_job_id: str | None) -> None:
+    """Keep a peer attached only to the job selected by its administrator."""
+    from ..services.cloud.storage.job_repository import get_job_repository
+    from ..services.worker_repository import get_worker_repository
+
+    if reported_job_id is not None and reported_job_id != worker.current_job_id:
+        raise HTTPException(status_code=409, detail="Peer is bound to another job")
+    job = await get_job_repository().get(worker.current_job_id) if worker.current_job_id else None
+    if job is None or job.is_terminal:
+        await get_worker_repository().update_worker(
+            worker.worker_id, {"status": WorkerStatus.OFFLINE, "current_job_id": None}, expected_job_id=worker.current_job_id
+        )
+        await push_to_worker(worker.worker_id, {"type": "shutdown", "reason": "Peer job ended"})
+        raise HTTPException(status_code=410, detail="Peer job ended")
+
+
 @router.post("/register", response_model=WorkerRegistrationResponse)
 async def register_worker(
     request: WorkerRegistrationRequest,
@@ -267,7 +284,6 @@ async def register_worker(
     Raises:
         HTTPException: 401 if token is invalid
     """
-    from ..models.worker import WorkerType
     from ..services.worker_repository import get_worker_repository
 
     worker = await validate_worker_token(x_worker_token)
@@ -283,6 +299,17 @@ async def register_worker(
     )
 
     now = datetime.now(timezone.utc)
+
+    if worker.worker_type == WorkerType.PEER:
+        await _check_peer_binding(worker, request.current_job_id)
+        await worker_repo.update_worker(
+            worker.worker_id,
+            {"gpu_info": request.gpu_info, "status": WorkerStatus.BUSY, "connected_at": now, "last_heartbeat": now},
+            expected_job_id=worker.current_job_id,
+        )
+        return WorkerRegistrationResponse(
+            worker_id=worker.worker_id, sse_url=f"/api/workers/stream?worker_id={worker.worker_id}"
+        )
 
     if worker.is_job_bound and request.current_job_id is not None and request.current_job_id != worker.current_job_id:
         raise HTTPException(
@@ -388,7 +415,7 @@ async def worker_stream(
     # Create queue for this worker
     queue = asyncio.Queue()
     worker_streams[worker_id] = queue
-    if manual_controls:
+    if manual_controls and worker.worker_type != WorkerType.PEER:
         manual_control_workers.add(worker_id)
     else:
         manual_control_workers.discard(worker_id)
@@ -518,6 +545,19 @@ async def worker_heartbeat(
 
     worker_repo = get_worker_repository()
 
+    now = datetime.now(timezone.utc)
+    updates = {"last_heartbeat": now}
+    if request.system_metrics:
+        updates["system_sample"] = {"sampled_at": now.isoformat(), "metrics": request.system_metrics}
+
+    if worker.worker_type == WorkerType.PEER:
+        await _check_peer_binding(worker, request.current_job_id)
+        if request.job_progress is not None or request.log_tail is not None:
+            raise HTTPException(status_code=403, detail="Only the assigned worker can report job progress or logs")
+        updates["status"] = WorkerStatus.BUSY
+        await worker_repo.update_worker(worker.worker_id, updates, expected_job_id=worker.current_job_id)
+        return {"success": True}
+
     # Update worker with heartbeat info
     if worker.is_job_bound and request.current_job_id is not None and request.current_job_id != worker.current_job_id:
         raise HTTPException(
@@ -537,13 +577,7 @@ async def worker_heartbeat(
     if request.status == WorkerStatus.BUSY and request.current_job_id and not worker.is_job_bound:
         await get_job_repository().record_worker_heartbeat(request.current_job_id, worker.worker_id, request.log_tail)
 
-    now = datetime.now(timezone.utc)
-    updates = {
-        "status": request.status,
-        "last_heartbeat": now,
-    }
-    if request.system_metrics:
-        updates["system_sample"] = {"sampled_at": now.isoformat(), "metrics": request.system_metrics}
+    updates["status"] = request.status
     if worker.is_job_bound:
         updates["status"] = WorkerStatus.BUSY if request.status == WorkerStatus.BUSY.value else WorkerStatus.CONNECTING
         updates["current_job_id"] = worker.current_job_id
@@ -589,6 +623,8 @@ async def worker_has_pending_jobs(worker_id: str, x_worker_token: str = Header(.
     worker = await validate_worker_token(x_worker_token)
     if worker.worker_id != worker_id:
         raise HTTPException(status_code=403, detail="Worker ID mismatch")
+    if worker.worker_type == WorkerType.PEER:
+        return {"has_jobs": False}
     jobs = await get_job_store().list_jobs(status="pending", provider="worker", limit=-1)
     return {"has_jobs": any((job.metadata or {}).get("target_worker_id") in (None, worker_id) for job in jobs)}
 
@@ -792,7 +828,7 @@ async def create_worker(
     body: CreateWorkerRequest,
     user: Optional[User] = Depends(get_optional_user),
 ) -> CreateWorkerResponse:
-    """Manually create a persistent worker.
+    """Provision a worker token, optionally bound to a distributed job as a peer.
 
     Args:
         http_request: The HTTP request
@@ -805,7 +841,6 @@ async def create_worker(
     Raises:
         HTTPException: 403 if user lacks permission
     """
-    from ..models.worker import WorkerType
     from ..services.worker_repository import get_worker_repository
 
     if not user or not user.has_permission("admin.workers"):
@@ -816,6 +851,17 @@ async def create_worker(
 
     client_ip = get_client_ip(http_request)
     worker_repo = get_worker_repository()
+
+    if (body.worker_type == "peer") != (body.job_id is not None):
+        raise HTTPException(status_code=422, detail="Supply job_id when creating a peer worker")
+    if body.worker_type == "peer":
+        from ..services.cloud.storage.job_repository import get_job_repository
+
+        job = await get_job_repository().get(body.job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Peer job does not exist")
+        if job.provider != "worker" or job.is_terminal or not (job.metadata or {}).get("worker_id"):
+            raise HTTPException(status_code=409, detail="Peer requires a live job assigned to a worker")
 
     # Generate worker ID and token
     worker_id = f"worker-{secrets.token_urlsafe(8)}"
@@ -833,6 +879,7 @@ async def create_worker(
         token_hash=token_hash,
         user_id=user.id if user else 0,
         labels=body.labels,
+        current_job_id=body.job_id,
         created_at=datetime.now(timezone.utc),
     )
 
@@ -911,7 +958,7 @@ async def delete_worker(
         )
 
     # Check if worker has active job
-    if worker.current_job_id and not force:
+    if worker.current_job_id and worker.worker_type != WorkerType.PEER and not force:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Worker has active job {worker.current_job_id}. Use force=true to delete anyway.",
@@ -990,6 +1037,9 @@ async def drain_worker(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Worker not found: {worker_id}",
         )
+
+    if worker.worker_type == WorkerType.PEER:
+        raise HTTPException(status_code=409, detail="Remove the peer to stop monitoring this node")
 
     # Set status to draining
     await worker_repo.update_worker(worker_id, {"status": WorkerStatus.DRAINING.value})

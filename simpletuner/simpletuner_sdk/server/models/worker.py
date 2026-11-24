@@ -10,6 +10,7 @@ class WorkerType(str, Enum):
     """Type of GPU worker."""
 
     EPHEMERAL = "ephemeral"  # Cloud-launched, shuts down after job
+    PEER = "peer"  # Reports system metrics for one externally launched training node
     PERSISTENT = "persistent"  # Always-on, user-managed
 
 

@@ -373,7 +373,8 @@ class WorkerRepository(BaseSQLiteStore):
             try:
                 cursor = conn.cursor()
                 cursor.execute(
-                    "SELECT * FROM workers WHERE status = ? AND current_job_id IS NULL", (WorkerStatus.IDLE.value,)
+                    "SELECT * FROM workers WHERE status = ? AND current_job_id IS NULL AND worker_type != ?",
+                    (WorkerStatus.IDLE.value, WorkerType.PEER.value),
                 )
                 rows = cursor.fetchall()
 
