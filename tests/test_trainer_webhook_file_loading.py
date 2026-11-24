@@ -18,12 +18,15 @@ class TestTrainerWebhookFileLoading(unittest.TestCase):
         trainer.model = None
         trainer.job_id = "worker-job"
         trainer.webhook_handler = None
+        trainer._cleanup_invoked = False
 
         with (
             patch.dict(os.environ, {}, clear=True),
             patch("simpletuner.helpers.training.trainer.StateTracker.set_webhook_handler"),
             patch("simpletuner.helpers.training.trainer.get_gpu_circuit_breaker"),
-            patch("simpletuner.helpers.webhooks.handler.requests.post") as post,
+            patch("simpletuner.helpers.training.trainer.StateTracker.clear_data_backends"),
+            patch("simpletuner.helpers.training.trainer.reclaim_memory"),
+            patch("requests.Session.post") as post,
         ):
             trainer.configure_webhook(send_startup_message=False, raw_config={})
             self.assertIsNone(trainer.webhook_handler)
@@ -31,6 +34,7 @@ class TestTrainerWebhookFileLoading(unittest.TestCase):
             os.environ.update(SIMPLETUNER_WORKER_STATUS_URL=url, SIMPLETUNER_WORKER_TOKEN="test-token")
             trainer.configure_webhook(send_startup_message=False, raw_config={})
             trainer._emit_event({"type": "training.status", "progress": {"current": 1}})
+            trainer.cleanup()
             self.assertEqual(post.call_args.args, (url,))
             self.assertEqual(post.call_args.kwargs["json"], {"progress": {"current": 1}})
 
