@@ -25,7 +25,7 @@ import trainingsample as tsr
 from PIL import Image
 from pydantic import BaseModel, Field
 
-from simpletuner.helpers.data_backend.source_inventory import SourceShard
+from simpletuner.helpers.data_backend.source_inventory import SourceShard, SourceShardSample
 from simpletuner.helpers.image_manipulation.load import load_image
 from simpletuner.helpers.metadata.backends.webshart_exclusions import read_exclusion_page
 from simpletuner.helpers.metadata.backends.webshart_geometry import (
@@ -256,8 +256,8 @@ class AudioPreview(BaseModel):
     channels: Optional[int] = None
 
 
-def _pil_to_thumbnail(img: Image.Image, max_size: int = 256) -> str:
-    """Convert a PIL Image to a base64-encoded JPEG thumbnail data URL."""
+def _pil_to_jpeg(img: Image.Image, max_size: int) -> bytes:
+    """Fit an image within the requested bounds and encode it as JPEG."""
     if img.mode in ("RGBA", "P", "LA"):
         background = Image.new("RGB", img.size, (255, 255, 255))
         if img.mode == "P":
@@ -276,10 +276,29 @@ def _pil_to_thumbnail(img: Image.Image, max_size: int = 256) -> str:
 
     buffer = io.BytesIO()
     img.save(buffer, format="JPEG", quality=85)
-    buffer.seek(0)
+    return buffer.getvalue()
 
-    b64 = base64.b64encode(buffer.read()).decode("utf-8")
-    return f"data:image/jpeg;base64,{b64}"
+
+def _jpeg_data_url(jpeg: bytes) -> str:
+    encoded = base64.b64encode(jpeg).decode("ascii")
+    return f"data:image/jpeg;base64,{encoded}"
+
+
+def _pil_to_thumbnail(img: Image.Image, max_size: int = 256) -> str:
+    """Convert a PIL image to a JPEG thumbnail data URL."""
+    return _jpeg_data_url(_pil_to_jpeg(img, max_size))
+
+
+def _shard_sample_jpeg(row: SourceShardSample, max_size: int) -> tuple[bytes | None, str | None]:
+    if not row.image:
+        return None, "No image stored for this sample"
+    try:
+        return _pil_to_jpeg(load_image(row.image), max_size), None
+    except (OSError, ValueError, RuntimeError):
+        if row.image.startswith((b"\xff\x0a", b"\x00\x00\x00\x0cJXL ")) and ".jxl" not in Image.registered_extensions():
+            return None, "JPEG XL previews require the SimpleTuner jxl extra."
+        logger.debug("Unable to decode source shard sample %s", row.index, exc_info=True)
+        return None, "Image preview unavailable"
 
 
 # Extensions that require video frame extraction instead of Image.open()
@@ -597,7 +616,8 @@ class DatasetViewerService:
             offset=offset,
         )
 
-    def get_shard_samples(self, dataset_config, global_config, shard_path: str, *, offset: int, limit: int):
+    @contextmanager
+    def _read_shard_page(self, dataset_config, global_config, shard_path: str, *, offset: int, limit: int):
         from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 
         shards = self._source_shards(dataset_config, global_config)
@@ -605,37 +625,40 @@ class DatasetViewerService:
         if shard is None:
             raise FileNotFoundError("The selected shard is outside this dataset's shard catalogue.")
 
-        samples = []
         try:
             total, rows = DatasetRuntime.read_source_shard(dataset_config, global_config, shard, offset=offset, limit=limit)
-            for row in rows:
-                thumbnail = None
-                error = "No image stored for this sample"
-                if row.image:
-                    error = "Image preview unavailable"
-                    try:
-                        thumbnail = generate_thumbnail_from_pil(load_image(row.image))
-                    except (OSError, ValueError, RuntimeError):
-                        if (
-                            row.image.startswith((b"\xff\x0a", b"\x00\x00\x00\x0cJXL "))
-                            and ".jxl" not in Image.registered_extensions()
-                        ):
-                            error = "JPEG XL previews require the SimpleTuner jxl extra."
-                        logger.debug("Unable to decode source shard sample %s", row.index, exc_info=True)
-                samples.append(
-                    ViewerThumbnailInfo(
-                        path=str(row.index),
-                        filename=row.name,
-                        thumbnail=thumbnail,
-                        error=None if thumbnail else error,
-                    )
-                )
+            yield total, rows
         except (NotImplementedError, ValueError):
             raise
         except Exception as exc:
             logger.debug("Source shard read failed", exc_info=True)
             raise OSError("Unable to read samples from this shard.") from exc
+
+    def get_shard_samples(self, dataset_config, global_config, shard_path: str, *, offset: int, limit: int):
+        with self._read_shard_page(dataset_config, global_config, shard_path, offset=offset, limit=limit) as (total, rows):
+            samples = []
+            for row in rows:
+                jpeg, error = _shard_sample_jpeg(row, 256)
+                samples.append(
+                    ViewerThumbnailInfo(
+                        path=str(row.index),
+                        filename=row.name,
+                        thumbnail=_jpeg_data_url(jpeg) if jpeg else None,
+                        error=error,
+                    )
+                )
         return ShardSamplePage(samples=samples, total=total, offset=offset, limit=limit)
+
+    def get_shard_preview(self, dataset_config, global_config, shard_path: str, *, offset: int) -> bytes:
+        with self._read_shard_page(dataset_config, global_config, shard_path, offset=offset, limit=1) as (_, rows):
+            row = next(rows, None)
+            if row is not None:
+                jpeg, error = _shard_sample_jpeg(row, 1600)
+                if jpeg is not None:
+                    return jpeg
+            else:
+                error = "Sample not found in this shard."
+        raise FileNotFoundError(error)
 
     def get_dataset_summary(self, dataset_config: Dict[str, Any]) -> DatasetSummary:
         """Read bucket indices cache and return a summary."""

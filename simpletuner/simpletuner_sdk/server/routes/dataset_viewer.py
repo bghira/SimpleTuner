@@ -11,7 +11,7 @@ import json
 from contextlib import contextmanager
 from typing import Annotated, Any, Dict, List, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field, conlist
 
 from simpletuner.helpers.metadata.preparation import DatasetViewChangedError
@@ -140,6 +140,18 @@ def get_viewer_source_shards(
         ) from exc
 
 
+@contextmanager
+def _shard_sample_access():
+    try:
+        yield
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (NotImplementedError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except (ImportError, OSError) as exc:
+        raise HTTPException(status_code=503, detail="Unable to read samples from this shard.") from exc
+
+
 @router.get("/viewer/shard-samples", response_model=ShardSamplePage)
 def get_viewer_shard_samples(
     dataset_id: str,
@@ -150,14 +162,22 @@ def get_viewer_shard_samples(
 ) -> ShardSamplePage:
     """Read a page of image previews from a shard in the active dataset."""
     config = _require_dataset_config(dataset_id)
-    try:
+    with _shard_sample_access():
         return _get_viewer_service().get_shard_samples(config, _get_global_config(), shard_path, offset=offset, limit=limit)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except (NotImplementedError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except (ImportError, OSError) as exc:
-        raise HTTPException(status_code=503, detail="Unable to read samples from this shard.") from exc
+
+
+@router.get("/viewer/shard-preview", response_class=Response, responses={200: {"content": {"image/jpeg": {}}}})
+def get_viewer_shard_preview(
+    dataset_id: str,
+    shard_path: str,
+    offset: int = Query(ge=0),
+    _user: User = Depends(get_current_user),
+) -> Response:
+    """Render a larger JPEG preview for one sample in a source shard."""
+    config = _require_dataset_config(dataset_id)
+    with _shard_sample_access():
+        image = _get_viewer_service().get_shard_preview(config, _get_global_config(), shard_path, offset=offset)
+    return Response(image, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
 @router.get("/viewer/files", response_model=DatasetFilePage)

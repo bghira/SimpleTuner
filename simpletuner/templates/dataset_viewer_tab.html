@@ -245,11 +245,17 @@
                                     <p x-show="!shardSamplesLoading && shardSamples?.total === 0" class="text-muted small mb-0">
                                         This shard has no samples.
                                     </p>
-                                    <div x-show="!shardSamplesLoading" class="viewer-thumbnail-grid">
-                                        <template x-for="sample in shardSamples?.samples || []" :key="sample.path">
+                                    <div x-show="!shardSamplesLoading" class="viewer-thumbnail-grid" data-lightbox-gallery>
+                                        <template x-for="(sample, position) in shardSamples?.samples || []" :key="sample.path">
                                             <figure class="viewer-thumbnail-item viewer-shard-sample mb-0">
                                                 <template x-if="sample.thumbnail">
-                                                    <img :src="sample.thumbnail" :alt="sample.filename" loading="lazy">
+                                                    <button type="button" class="viewer-shard-preview"
+                                                            aria-haspopup="dialog"
+                                                            :aria-label="'Preview ' + sample.filename"
+                                                            :data-lightbox-label="sample.filename"
+                                                            :data-lightbox-src="shardPreviewUrl(ds.dataset_id, shardSamples.offset + position)">
+                                                        <img :src="sample.thumbnail" :alt="sample.filename" loading="lazy">
+                                                    </button>
                                                 </template>
                                                 <template x-if="!sample.thumbnail">
                                                     <div class="viewer-thumbnail-placeholder" role="img" :aria-label="sample.error" :title="sample.error">

@@ -105,6 +105,20 @@
     cursor: default;
 }
 
+.viewer-shard-preview {
+    display: block;
+    width: 100%;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    cursor: zoom-in;
+}
+
+.viewer-shard-preview:focus-visible {
+    outline: 2px solid var(--bs-primary);
+    outline-offset: -2px;
+}
+
 .viewer-dashboard {
     display: grid;
     grid-template-columns: 1fr 1fr;

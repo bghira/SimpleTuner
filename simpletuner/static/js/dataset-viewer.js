@@ -739,6 +739,11 @@ window.datasetViewerComponent = function () {
             }
         },
 
+        shardPreviewUrl(datasetId, offset) {
+            const params = new URLSearchParams({dataset_id: datasetId, shard_path: this.selectedSourceShard, offset});
+            return '/api/datasets/viewer/shard-preview?' + params;
+        },
+
         async loadShardSamples(datasetId, path, offset = 0) {
             if (this.expandedDataset !== datasetId) return;
             const request = ++this._shardSamplesRequest;

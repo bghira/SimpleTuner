@@ -736,7 +736,7 @@ class TestSourceShardListing(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             payload = io.BytesIO()
-            Image.new("RGB", (8, 8), "red").save(payload, format="PNG")
+            Image.new("RGB", (640, 320), "red").save(payload, format="PNG")
             pq.write_table(
                 pa.table({"pixels": [{"bytes": payload.getvalue(), "path": "first.png"}, None, None]}),
                 root / "chosen.parquet",
@@ -758,6 +758,12 @@ class TestSourceShardListing(unittest.TestCase):
                 self.assertEqual([sample.filename for sample in page.samples], ["Row 1", "Row 2"])
                 self.assertTrue(page.samples[0].thumbnail.startswith("data:image/jpeg;base64,"))
                 self.assertIsNone(page.samples[1].thumbnail)
+                preview = service.get_shard_preview(config, {}, "chosen.parquet", offset=0)
+                with Image.open(io.BytesIO(preview)) as image:
+                    self.assertEqual(image.format, "JPEG")
+                    self.assertEqual(image.size, (640, 320))
+                with self.assertRaises(FileNotFoundError):
+                    service.get_shard_preview(config, {}, "chosen.parquet", offset=1)
                 self.assertEqual(
                     service.get_shard_samples(config, {}, "chosen.parquet", offset=2, limit=2).samples[0].path, "2"
                 )

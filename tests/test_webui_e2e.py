@@ -3861,7 +3861,7 @@ class DatasetSaveActiveRunTestCase(_TrainingWorkerFixture, _TrainerPageMixin, We
         self.for_each_browser("restart_notice_on_dataset_save", scenario)
 
 
-class DatasetViewerSourceShardsTestCase(_TrainerPageMixin, WebUITestCase):
+class DatasetViewerSourceShardsTestCase(_ImagesEnabledBrowserMixin, _TrainerPageMixin, WebUITestCase):
     SERVER_MODE = ServerMode.UNIFIED
     MAX_BROWSERS = 1
 
@@ -3878,9 +3878,9 @@ class DatasetViewerSourceShardsTestCase(_TrainerPageMixin, WebUITestCase):
         from PIL import Image
 
         with io.BytesIO() as buffer:
-            Image.new("RGB", (16, 16), "red").save(buffer, format="PNG")
+            Image.new("RGB", (640, 320), "red").save(buffer, format="PNG")
             payload = buffer.getvalue()
-        pq.write_table(pa.table({"image": [payload] * 13}), source / "shard-017.parquet")
+        pq.write_table(pa.table({"image": [payload, None] + [payload] * 11}), source / "shard-017.parquet")
         pq.write_table(pa.table({"image": [payload]}), source / "special.parquet")
         plan = [
             {
@@ -3945,8 +3945,36 @@ class DatasetViewerSourceShardsTestCase(_TrainerPageMixin, WebUITestCase):
             samples = (By.CSS_SELECTOR, '[aria-label="Shard samples"]')
             wait.until(EC.text_to_be_present_in_element(samples, "1–12 of 13"))
             image_selector = (By.CSS_SELECTOR, '[aria-label="Shard samples"] img')
-            wait.until(lambda d: len(d.find_elements(*image_selector)) == 12)
+            wait.until(lambda d: len(d.find_elements(*image_selector)) == 11)
             self.assertTrue(driver.find_element(*image_selector).get_attribute("src").startswith("data:image/jpeg;base64,"))
+            trigger = driver.find_element(By.CSS_SELECTOR, '[aria-label="Preview Row 1"]')
+            self.assertFalse(
+                driver.execute_script(
+                    "return performance.getEntriesByType('resource').some(entry => entry.name.includes('/viewer/shard-preview?'))"
+                )
+            )
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'})", trigger)
+            trigger.send_keys(Keys.ENTER)
+            lightbox = (By.ID, "event-lightbox")
+            wait.until(EC.visibility_of_element_located(lightbox))
+
+            def preview_loaded(browser, name, offset):
+                return browser.execute_script(
+                    """
+                    const image = document.querySelector('#event-lightbox .event-lightbox-image');
+                    return image.alt === arguments[0] && image.naturalWidth === 640
+                        && new URL(image.src).searchParams.get('offset') === arguments[1];
+                    """,
+                    name,
+                    str(offset),
+                )
+
+            wait.until(lambda d: preview_loaded(d, "Row 1", 0))
+            driver.switch_to.active_element.send_keys(Keys.ARROW_RIGHT)
+            wait.until(lambda d: preview_loaded(d, "Row 3", 2))
+            driver.switch_to.active_element.send_keys(Keys.ESCAPE)
+            wait.until(EC.invisibility_of_element_located(lightbox))
+            self.assertEqual(driver.switch_to.active_element, trigger)
             next_samples = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[text()='Next samples']")))
             driver.execute_script("arguments[0].scrollIntoView({block: 'center'})", next_samples)
             next_samples.click()
