@@ -180,7 +180,7 @@ class TestWebhookHTTPSending(unittest.TestCase):
             self.assertTrue(row["data"]["images"][0].startswith("iVBORw0KGgo"))
             self.assertEqual(row["headers"]["X-Worker-Token"], "test-token")
 
-    def test_worker_validation_uses_configured_callback_for_the_same_orchestrator(self):
+    def test_worker_validation_uses_authenticated_delivery_for_the_same_orchestrator(self):
         status_url = "http://127.0.0.1:8999/api/workers/job/test-job/status"
         env = {"SIMPLETUNER_WORKER_STATUS_URL": status_url, "SIMPLETUNER_WORKER_TOKEN": "test-token"}
         with patch.dict(os.environ, env):
@@ -193,9 +193,55 @@ class TestWebhookHTTPSending(unittest.TestCase):
             handler.close_worker_telemetry()
 
         (report,) = TestWebhookHTTPServer.received_requests
-        self.assertEqual(report["path"], "/callback")
-        self.assertNotIn("X-Worker-Token", report["headers"])
-        self.assertEqual(report["data"]["type"], "training.validation")
+        self.assertEqual(report["path"], "/api/workers/job/test-job/validation")
+        self.assertEqual(report["headers"]["X-Worker-Token"], "test-token")
+        self.assertEqual(report["data"]["message"], "Validation")
+
+    def test_worker_validation_retries_without_delaying_progress_or_changing_delivery_id(self):
+        validation_started = Event()
+        progress_delivered = Event()
+        validation_attempts = []
+        env = {
+            "SIMPLETUNER_WORKER_STATUS_URL": "https://orchestrator.example/api/workers/job/job/status",
+            "SIMPLETUNER_WORKER_TOKEN": "test-token",
+        }
+
+        def post(url, **kwargs):
+            if url.endswith("/status"):
+                self.assertEqual(kwargs["json"], {"progress": {"current": 12}})
+                progress_delivered.set()
+            else:
+                validation_attempts.append(kwargs["json"])
+                if len(validation_attempts) == 1:
+                    validation_started.set()
+                    if not progress_delivered.wait(4):
+                        raise AssertionError("Progress was blocked by validation delivery")
+                    raise requests.ConnectionError("Response lost after delivery")
+            return MagicMock()
+
+        with (
+            patch.dict(os.environ, env),
+            patch("requests.Session.post", side_effect=post),
+            patch("simpletuner.helpers.webhooks.worker_telemetry._RETRY_INTERVAL", 0.01),
+        ):
+            handler = WebhookHandler(None, "worker")
+            try:
+                handler.send_raw(
+                    {"message": "Validation"},
+                    message_type="training.validation",
+                    videos=[b"video"],
+                    audios=[b"audio"],
+                )
+                self.assertTrue(validation_started.wait(4))
+                handler.send_raw({"type": "training.progress", "progress": {"current": 12}})
+            finally:
+                handler.close_worker_telemetry()
+
+        self.assertEqual(len(validation_attempts), 2)
+        self.assertEqual(validation_attempts[0], validation_attempts[1])
+        self.assertTrue(validation_attempts[1]["delivery_id"])
+        self.assertTrue(validation_attempts[1]["videos"][0]["src"].startswith("data:video/mp4;base64,"))
+        self.assertTrue(validation_attempts[1]["audios"][0]["src"].startswith("data:audio/wav;base64,"))
 
     def test_simple_message_sent(self):
         """Test that a simple text message is sent via HTTP."""

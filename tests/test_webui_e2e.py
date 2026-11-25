@@ -1421,28 +1421,74 @@ class _ImagesEnabledBrowserMixin:
         return self._driver_cache[browser]
 
 
-class ValidationEventReplayFlowTestCase(_ImagesEnabledBrowserMixin, _TrainerPageMixin, WebUITestCase):
+class ValidationEventReplayFlowTestCase(
+    _ImagesEnabledBrowserMixin, _TrainingWorkerFixture, _TrainerPageMixin, WebUITestCase
+):
     SERVER_MODE = ServerMode.UNIFIED
 
-    def test_completed_validation_image_survives_refresh(self) -> None:
+    def test_worker_validation_image_survives_retry_and_refresh(self) -> None:
         import base64
+        from os import environ
+        from unittest.mock import patch
+
+        from simpletuner.helpers.webhooks.handler import WebhookHandler
 
         buffer = BytesIO()
         Image.new("RGB", (8, 8), color="red").save(buffer, format="PNG")
         image = base64.b64encode(buffer.getvalue()).decode("ascii")
         headline = "Completed validation replay check"
-        for kind, message in (("validation.image", "Sampling preview for replay check"), ("training.validation", headline)):
-            requests.post(
-                f"{self.base_url}/callback",
-                json={"type": kind, "job_id": "validation-replay-test", "message": message, "images": [image]},
-                timeout=10,
-            ).raise_for_status()
+        job_id = "validation-replay-test"
+        self.register_job(job_id, "Remote validation worker", "GPU")
+        requests.post(
+            f"{self.base_url}/callback",
+            json={
+                "type": "validation.image",
+                "job_id": job_id,
+                "message": "Sampling preview for replay check",
+                "images": [image],
+            },
+            timeout=10,
+        ).raise_for_status()
+
+        env = {
+            "SIMPLETUNER_WORKER_STATUS_URL": f"{self.base_url}/api/workers/job/{job_id}/status",
+            "SIMPLETUNER_WORKER_TOKEN": f"{job_id}-token",
+        }
+
+        def send_validation():
+            post = requests.Session.post
+            deliveries = []
+
+            def lose_first_response(session, url, **kwargs):
+                response = post(session, url, **kwargs)
+                if url.endswith("/validation"):
+                    deliveries.append(response.status_code)
+                    if len(deliveries) == 1 and response.ok:
+                        raise requests.ConnectionError("Lost validation response")
+                return response
+
+            with (
+                patch.dict(environ, env),
+                patch.object(requests.Session, "post", new=lose_first_response),
+                patch("simpletuner.helpers.webhooks.worker_telemetry._RETRY_INTERVAL", 0.01),
+            ):
+                handler = WebhookHandler(
+                    None, "test", webhook_config={"webhook_type": "raw", "callback_url": f"{self.base_url}/callback"}
+                )
+                handler.send_raw(
+                    {"message": headline}, message_type="training.validation", images=[Image.new("RGB", (8, 8), "red")]
+                )
+                handler.close_worker_telemetry()
+            self.assertEqual(deliveries, [200, 200])
 
         def scenario(driver, _browser):
             self._trainer_page(driver).navigate_to_trainer()
             wait = WebDriverWait(driver, 15)
+            wait.until(lambda d: d.execute_script("return window.sseManager?.getState().connectionState === 'connected'"))
+            send_validation()
             result = (By.CSS_SELECTOR, f'#eventList img.event-image[alt="{headline}"]')
             wait.until(EC.presence_of_element_located(result))
+            self.assertEqual(len(driver.find_elements(*result)), 1)
             driver.refresh()
             wait.until(EC.presence_of_element_located(result))
             self.assertEqual(len(driver.find_elements(*result)), 1)
@@ -1450,7 +1496,7 @@ class ValidationEventReplayFlowTestCase(_ImagesEnabledBrowserMixin, _TrainerPage
                 driver.find_elements(By.CSS_SELECTOR, '#eventList img[alt*="Sampling preview for replay check"]'), []
             )
 
-        self.for_each_browser("test_completed_validation_image_survives_refresh", scenario)
+        self.for_each_browser("test_worker_validation_image_survives_retry_and_refresh", scenario)
 
 
 class EventLightboxFlowTestCase(_ImagesEnabledBrowserMixin, _TrainerPageMixin, WebUITestCase):
