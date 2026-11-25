@@ -3628,10 +3628,12 @@ class TestTrainer(unittest.TestCase):
                 wait_for_everyone=Mock(),
             )
 
-            with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_datasets", return_value={}):
-                with self.assertLogs("SimpleTuner", level="WARNING") as warnings:
-                    save_path = trainer.checkpoint_state_save(tmpdir, next_epoch=3)
-            self.assertIn(str(checkpoint_dir), warnings.output[0])
+            with (
+                patch("simpletuner.helpers.training.state_tracker.StateTracker.get_datasets", return_value={}),
+                patch("simpletuner.helpers.training.trainer.logger.warning") as warn,
+            ):
+                save_path = trainer.checkpoint_state_save(tmpdir, next_epoch=3)
+            warn.assert_called_once_with("Removing existing checkpoint directory %s before saving.", str(checkpoint_dir))
             self.assertFalse(stale_weights.exists())
 
             self.assertEqual(save_path, str(checkpoint_dir))
