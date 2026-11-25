@@ -1,6 +1,6 @@
 /**
  * Event Lightbox Module
- * Handles lightbox functionality for event images
+ * Displays training event images and image galleries.
  */
 
 class EventLightbox {
@@ -8,6 +8,10 @@ class EventLightbox {
         this.lightboxElement = null;
         this.currentIndex = 0;
         this.images = [];
+        this.trigger = null;
+        this.previousOverflow = '';
+        this.imageRequest = 0;
+        this.imageSelector = '[data-lightbox="event-images"], [data-lightbox-src]';
 
         this.init();
     }
@@ -32,11 +36,12 @@ class EventLightbox {
 
         // Create lightbox HTML structure
         const lightboxHTML = `
-            <div id="event-lightbox" class="event-lightbox" style="display: none;">
+            <div id="event-lightbox" class="event-lightbox" role="dialog" aria-modal="true"
+                 aria-labelledby="event-lightbox-title" style="display: none;">
                 <div class="event-lightbox-backdrop"></div>
                 <div class="event-lightbox-content">
                     <div class="event-lightbox-header">
-                        <h4 class="event-lightbox-title">Event Image</h4>
+                        <h4 class="event-lightbox-title" id="event-lightbox-title">Image</h4>
                         <button class="event-lightbox-close" aria-label="Close">&times;</button>
                     </div>
                     <div class="event-lightbox-image-container">
@@ -76,12 +81,9 @@ class EventLightbox {
     }
 
     setupEventDelegation() {
-        // Use event delegation to handle clicks on event images
         document.addEventListener('click', (event) => {
-            const target = event.target;
-
-            // Check if clicked element is an event image with lightbox data
-            if (target.matches('[data-lightbox="event-images"]')) {
+            const target = event.target.closest(this.imageSelector);
+            if (target) {
                 event.preventDefault();
                 this.open(target);
             }
@@ -109,25 +111,25 @@ class EventLightbox {
     }
 
     open(clickedImage) {
-        const container = clickedImage.closest('.event-images');
-        this.images = Array.from(container.querySelectorAll('[data-lightbox="event-images"]'));
+        const gallery = clickedImage.closest('[data-lightbox-gallery], .event-images');
+        this.images = gallery ? Array.from(gallery.querySelectorAll(this.imageSelector)) : [clickedImage];
         this.currentIndex = this.images.indexOf(clickedImage);
+        this.trigger = clickedImage;
+        this.previousOverflow = document.body.style.overflow;
 
-        // Show lightbox
         this.lightboxElement.style.display = 'flex';
-        document.body.style.overflow = 'hidden'; // Prevent background scrolling
-
-        // Load and display the current image
+        document.body.style.overflow = 'hidden';
         this.showImage(this.currentIndex);
-
-        // Focus management for accessibility
-        this.lightboxElement.focus();
+        this.lightboxElement.querySelector('.event-lightbox-close').focus();
     }
 
     close() {
+        this.imageRequest++;
         this.lightboxElement.style.display = 'none';
-        document.body.style.overflow = ''; // Restore scrolling
+        document.body.style.overflow = this.previousOverflow;
         this.images = [];
+        this.trigger?.focus();
+        this.trigger = null;
     }
 
     navigate(direction) {
@@ -156,12 +158,13 @@ class EventLightbox {
         const counterElement = this.lightboxElement.querySelector('.event-lightbox-counter');
         const titleElement = this.lightboxElement.querySelector('.event-lightbox-title');
 
-        // Show loading state
+        const request = ++this.imageRequest;
         loadingElement.style.display = 'block';
+        loadingElement.style.color = '';
+        loadingElement.textContent = 'Loading...';
         imgElement.style.opacity = '0';
 
-        // Update title from alt text or group name
-        const altText = image.getAttribute('alt') || 'Event Image';
+        const altText = image.dataset.lightboxLabel || image.getAttribute('alt') || 'Image';
         titleElement.textContent = altText;
 
         // Update counter
@@ -170,21 +173,21 @@ class EventLightbox {
         // Update navigation buttons state
         this.updateNavigationButtons();
 
-        // Load the image
-        const tempImg = new Image();
-        tempImg.onload = () => {
-            imgElement.src = image.src;
-            imgElement.alt = altText;
-            imgElement.style.opacity = '1';
+        const preview = new Image();
+        preview.className = imgElement.className;
+        preview.alt = altText;
+        preview.onload = () => {
+            if (request !== this.imageRequest) return;
+            imgElement.replaceWith(preview);
+            preview.style.opacity = '1';
             loadingElement.style.display = 'none';
         };
-
-        tempImg.onerror = () => {
+        preview.onerror = () => {
+            if (request !== this.imageRequest) return;
             loadingElement.textContent = 'Failed to load image';
             loadingElement.style.color = '#dc3545';
         };
-
-        tempImg.src = image.src;
+        preview.src = image.dataset.lightboxSrc || image.src;
     }
 
     updateNavigationButtons() {

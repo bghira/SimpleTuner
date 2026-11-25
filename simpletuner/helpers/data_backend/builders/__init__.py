@@ -19,12 +19,13 @@ __all__ = [
     "HuggingfaceBackendBuilder",
     "WebshartBackendBuilder",
     "create_backend_builder",
+    "supports_shard_listing",
     "build_backend_from_config",
 ]
 
 
-def create_backend_builder(backend_type: str, accelerator, args: Optional[Any] = None) -> BaseBackendBuilder:
-    builder_mapping = {
+def _backend_builders() -> dict[str, type[BaseBackendBuilder]]:
+    return {
         "local": LocalBackendBuilder,
         "memory": MemoryBackendBuilder,
         "aws": AwsBackendBuilder,
@@ -33,10 +34,18 @@ def create_backend_builder(backend_type: str, accelerator, args: Optional[Any] =
         "webshart": WebshartBackendBuilder,
     }
 
-    if backend_type not in builder_mapping:
-        raise ValueError(f"Unknown backend type: {backend_type}. Supported types: {list(builder_mapping.keys())}")
 
-    builder_class = builder_mapping[backend_type]
+def supports_shard_listing(backend_type: str) -> bool:
+    builder = _backend_builders().get(backend_type)
+    return builder is not None and builder.supports_shard_listing
+
+
+def create_backend_builder(backend_type: str, accelerator, args: Optional[Any] = None) -> BaseBackendBuilder:
+    builders = _backend_builders()
+    builder_class = builders.get(backend_type)
+    if builder_class is None:
+        raise ValueError(f"Unknown backend type: {backend_type}. Supported types: {list(builders)}")
+
     builder = builder_class(accelerator)
     if args is not None:
         builder.args = args

@@ -3,17 +3,21 @@ import logging
 import os
 import random
 import time
+from collections.abc import Iterator
+from contextlib import closing
 from copy import copy
 from dataclasses import dataclass
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path, PurePosixPath
+from tempfile import TemporaryDirectory
 from typing import Any, List, Optional, Tuple, Union
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 import requests
 import torch
 from atomicwrites import atomic_write
+from httpx import RequestError
 from PIL import Image
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
@@ -22,6 +26,7 @@ from simpletuner.helpers.data_backend.config.validators import validate_webshart
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.data_backend.filters import DatasetFilter
 from simpletuner.helpers.data_backend.s3_settings import resolve_s3_options
+from simpletuner.helpers.data_backend.source_inventory import SourceShard, SourceShardSample
 from simpletuner.helpers.image_manipulation.load import load_image, load_video
 from simpletuner.helpers.prompts import PromptHandler
 from simpletuner.helpers.training import video_file_extensions
@@ -33,6 +38,192 @@ if should_log():
     logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 else:
     logger.setLevel("ERROR")
+
+
+def _webshart_hub_repo(source: str) -> str:
+    repo = source.removeprefix("https://huggingface.co/datasets/").rstrip("/")
+    if "://" in repo or source.startswith(("/", "./", "../", "~")):
+        raise ValueError("Use a Hugging Face dataset repository, an S3 URL, or an existing local directory.")
+    return repo
+
+
+def _webshart_storage_options(config: ImageBackendConfig) -> dict:
+    return {
+        "region_name": config.aws_region_name,
+        "endpoint_url": config.aws_endpoint_url,
+        "aws_access_key_id": config.aws_access_key_id,
+        "aws_secret_access_key": config.aws_secret_access_key,
+        "aws_session_token": config.aws_session_token,
+    }
+
+
+def iter_webshart_shards(config: ImageBackendConfig) -> Iterator[SourceShard]:
+    """Read source catalogue entries without opening shards or preparing sample metadata."""
+    source = config.webshart_source
+    if not isinstance(source, str) or not source.strip():
+        raise ValueError("A WebShart dataset source is required.")
+    source = source.strip()
+    settings = config.webshart or {}
+    format = settings.get("format", "tar")
+    if format not in {"tar", "parquet"}:
+        raise ValueError("WebShart format must be Tar or Parquet.")
+    suffix = f".{format}"
+    subfolder = (config.webshart_subfolder or "").rstrip("/")
+    folder = PurePosixPath(subfolder)
+    if folder.is_absolute() or ".." in folder.parts:
+        raise ValueError("The WebShart subfolder must be relative to the source.")
+    prefix = f"{folder.as_posix()}/" if folder.parts else ""
+
+    manifest = settings.get("manifest")
+    if source.startswith("s3://") or manifest:
+        if format != "parquet":
+            raise ValueError("WebShart S3 sources and capture manifests require the Parquet format.")
+        from webshart.parquet import _Repository
+
+        options = _webshart_storage_options(config)
+        options = {key: value for key, value in options.items() if value is not None}
+        storage = resolve_s3_options(options) if source.startswith("s3://") else None
+        repo = _Repository(source, config.webshart_hf_token, s3_options=storage)
+        if manifest:
+            try:
+                path = repo.capture_manifest_path(manifest)
+            except (KeyError, TypeError) as exc:
+                raise ValueError("The WebShart capture descriptor is malformed.") from exc
+            records = (
+                _iter_s3_capture_records(repo, path, storage) if repo.s3 is not None else repo.iter_capture_records(path)
+            )
+            try:
+                for record in records:
+                    if record["path"].startswith(prefix):
+                        yield SourceShard(record["path"], record["size"], record["num_rows"])
+            except (KeyError, TypeError) as exc:
+                raise ValueError("The WebShart capture catalogue is malformed.") from exc
+        else:
+            for entry in repo.s3.list(repo.prefix + prefix):
+                key = entry["key"]
+                if key.startswith(repo.prefix + prefix) and key.endswith(suffix):
+                    yield SourceShard(key.removeprefix(repo.prefix), entry["size"])
+        return
+
+    root = Path(source)
+    if root.is_dir():
+        for path in (root / subfolder).rglob(f"*{suffix}"):
+            if path.is_file():
+                yield SourceShard(path.relative_to(root).as_posix(), path.stat().st_size)
+        return
+
+    from huggingface_hub import HfApi, RepoFile
+    from huggingface_hub.errors import HfHubHTTPError, HFValidationError
+
+    hub = HfApi(token=config.webshart_hf_token)
+    try:
+        for entry in hub.list_repo_tree(
+            _webshart_hub_repo(source), path_in_repo=subfolder or None, recursive=True, repo_type="dataset"
+        ):
+            if isinstance(entry, RepoFile) and entry.path.endswith(suffix):
+                yield SourceShard(entry.path, entry.size)
+    except (HfHubHTTPError, RequestError, requests.RequestException, HFValidationError) as exc:
+        raise ValueError("Unable to list WebShart shards on Hugging Face. Check the repository, path and token.") from exc
+
+
+def read_webshart_shard(
+    config: ImageBackendConfig, shard: SourceShard, *, offset: int, limit: int
+) -> tuple[int, Iterator[SourceShardSample]]:
+    """Read a page of source samples from a selected, catalogue-validated shard."""
+    source = config.webshart_source.strip()
+    options = config.webshart or {}
+    token = config.webshart_hf_token
+    if token is None and not source.startswith("s3://") and not Path(source).is_dir():
+        from huggingface_hub import get_token
+
+        token = get_token()
+    if options.get("format", "tar") == "tar":
+        return _read_webshart_tar_shard(config, source, shard.path, token=token, offset=offset, limit=limit)
+
+    from webshart.parquet import _ParquetFile, _Repository
+
+    storage = None
+    if source.startswith("s3://"):
+        storage = resolve_s3_options({k: v for k, v in _webshart_storage_options(config).items() if v is not None})
+    repo = _Repository(source, token, s3_options=storage)
+    reader = _ParquetFile(repo.location(shard.path), size=shard.size_bytes, s3=repo.s3, hf_token=repo.token)
+    info = reader.info()
+    total = info["num_rows"]
+    column = (options.get("columns") or {}).get("image") or "image"
+    if column not in info["columns"]:
+        raise ValueError("The selected Parquet shard has no configured image column.")
+
+    def samples():
+        if offset >= total:
+            return
+        rows = reader.rows(columns=[column], start=offset, stop=min(offset + limit, total))
+        for index, row in enumerate(rows, offset):
+            payload = row[column]
+            if isinstance(payload, dict):
+                payload = payload.get("bytes")
+            yield SourceShardSample(index, f"Row {index + 1:,}", payload if isinstance(payload, bytes) else None)
+
+    return total, samples()
+
+
+def _read_webshart_tar_shard(config, source, path, *, token, offset, limit):
+    from webshart import TarDataLoader, discover_dataset
+
+    root = Path(source)
+    relative = PurePosixPath(path)
+    if root.is_dir():
+        if not (root / path).resolve().is_relative_to(root.resolve()):
+            raise ValueError("The selected shard is outside the dataset source.")
+        dataset = discover_dataset(source, hf_token=token, metadata=config.webshart_metadata)
+        name = relative.with_suffix("").as_posix()
+    else:
+        source = _webshart_hub_repo(source)
+        parent = relative.parent.as_posix() if relative.parent.parts else None
+        dataset = discover_dataset(source, hf_token=token, subfolder=parent, metadata=config.webshart_metadata)
+        name = relative.stem
+
+    match = next((entry for entry in dataset.get_stats()["shard_details"] if entry["name"] == name), None)
+    if match is None:
+        raise ValueError("The selected TAR shard does not have a WebShart index.")
+    index = match["index"]
+    if dataset.is_remote:
+        location = unquote(urlsplit(dataset.get_shard_info(index)["tar_path"]).path)
+        if location != f"/datasets/{source}/resolve/main/{path}":
+            raise ValueError("The selected TAR shard does not have a WebShart index.")
+    loader = TarDataLoader(dataset, max_file_size=config.webshart_max_file_size or 50_000_000)
+    entries = loader.list_samples_in_shard(index)
+
+    def samples():
+        for entry in entries[offset : offset + limit]:
+            sample = loader.load_sample(index, entry["sample_idx"])
+            yield SourceShardSample(entry["sample_idx"], entry["filename"], bytes(sample.data) if sample else None)
+
+    return len(entries), samples()
+
+
+def _iter_s3_capture_records(repo, path: str, storage: dict) -> Iterator[dict]:
+    from boto3.s3.transfer import TransferConfig
+    from botocore.config import Config
+    from botocore.exceptions import BotoCoreError, ClientError
+
+    from simpletuner.helpers.data_backend.aws import _s3_client
+
+    # Use ranged S3 transfers for large catalogues and WebShart's parser to validate them.
+    with TemporaryDirectory() as directory:
+        filename = "manifest.jsonl"
+        target = Path(directory) / filename
+        try:
+            with closing(_s3_client(storage, Config(connect_timeout=10, read_timeout=30))) as client:
+                key = repo.prefix + path
+                if client.head_object(Bucket=repo.bucket, Key=key)["ContentLength"] > 512 * 1024**2:
+                    raise ValueError("The WebShart capture catalogue exceeds 512 MiB.")
+                client.download_file(repo.bucket, key, str(target), Config=TransferConfig())
+        except (BotoCoreError, ClientError) as exc:
+            raise OSError("Unable to download the WebShart capture catalogue from S3.") from exc
+
+        local = type(repo)(directory, None)
+        local.capture_digest = repo.capture_digest
+        yield from local.iter_capture_records(filename)
 
 
 def test_webshart_connection(config: ImageBackendConfig) -> dict:
@@ -65,11 +256,8 @@ def test_webshart_connection(config: ImageBackendConfig) -> dict:
             raise ValueError("The WebShart capture manifest was not found.")
         return {"transport": "local", "manifest_checked": bool(manifest)}
 
-    repo = source.removeprefix("https://huggingface.co/datasets/").rstrip("/")
-    if "://" in repo or source.startswith(("/", "./", "../", "~")):
-        raise ValueError("Use a Hugging Face dataset repository, an S3 URL, or an existing local directory.")
+    repo = _webshart_hub_repo(source)
 
-    from httpx import RequestError
     from huggingface_hub import HfApi
     from huggingface_hub.errors import HfHubHTTPError, HFValidationError
 
@@ -94,13 +282,7 @@ def _probe_s3_source(source: str, config: ImageBackendConfig, manifest: str | No
     if not parsed.netloc or parsed.query or parsed.fragment or "@" in parsed.netloc:
         raise ValueError("The WebShart S3 source must be s3://bucket or s3://bucket/prefix.")
     prefix = parsed.path.strip("/")
-    options = {
-        "region_name": config.aws_region_name,
-        "endpoint_url": config.aws_endpoint_url,
-        "aws_access_key_id": config.aws_access_key_id,
-        "aws_secret_access_key": config.aws_secret_access_key,
-        "aws_session_token": config.aws_session_token,
-    }
+    options = _webshart_storage_options(config)
     if manifest:
         from webshart._webshart import _S3Store
 

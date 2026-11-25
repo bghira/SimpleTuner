@@ -682,6 +682,161 @@ class TestGetDatasetSummary(unittest.TestCase):
         self.assertFalse(summary.has_cache)
 
 
+class TestSourceShardListing(unittest.TestCase):
+    def test_capture_shards_are_filterable_and_pageable_without_preparation(self):
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            service = DatasetViewerService(root)
+            capture = root / "capture.json"
+            files = root / "files.jsonl"
+            capture.write_text(
+                json.dumps({"format": "parquet-image-capture", "version": 2, "files_manifest": "files.jsonl"})
+            )
+            config = {
+                "id": "capture",
+                "type": "webshart",
+                "source": str(root),
+                "webshart": {"format": "parquet", "manifest": "capture.json", "subfolder": "train"},
+            }
+            records = [
+                {"key": f"{folder}/{name}.parquet", "size_bytes": size, "num_rows": rows}
+                for folder, name, size, rows in [
+                    ("train", "B", 32, 7),
+                    ("train", "A", 64, 12),
+                    ("test", "A", 16, 4),
+                ]
+            ]
+            files.write_text("\n".join(json.dumps(item) for item in records))
+            with patch(
+                "simpletuner.helpers.data_backend.dataset_runtime.DatasetRuntime.from_config",
+                side_effect=AssertionError("Shard browsing must not open sample metadata."),
+            ):
+                summary = service.get_dataset_summary(config)
+                self.assertTrue(summary.supports_shard_listing)
+                self.assertFalse(summary.has_cache)
+                page = service.list_source_shards(config, {}, limit=1, offset=0)
+                self.assertEqual((page.total, page.total_shards), (2, 2))
+                self.assertEqual(page.shards[0].path, "train/A.parquet")
+                self.assertEqual((page.shards[0].size_bytes, page.shards[0].rows), (64, 12))
+                page = service.list_source_shards(config, {}, limit=1, offset=1)
+                self.assertEqual(page.shards[0].path, "train/B.parquet")
+                page = service.list_source_shards(config, {}, limit=1, offset=0, query="b.PARQUET")
+                self.assertEqual((page.total, page.total_shards), (1, 2))
+                existing = files.read_text()
+                files.write_text(existing + "\n" + json.dumps({"key": "train/C.parquet", "size_bytes": 8, "num_rows": 2}))
+                self.assertEqual(service.list_source_shards(config, {}, limit=1, offset=0).total, 2)
+                self.assertEqual(service.list_source_shards(config, {}, limit=1, offset=0, refresh=True).total, 3)
+
+    def test_reads_selected_parquet_rows_without_opening_dataset_preparation(self):
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            payload = io.BytesIO()
+            Image.new("RGB", (640, 320), "red").save(payload, format="PNG")
+            pq.write_table(
+                pa.table({"pixels": [{"bytes": payload.getvalue(), "path": "first.png"}, None, None]}),
+                root / "chosen.parquet",
+            )
+            (root / "unopened.parquet").touch()
+            config = {
+                "id": "test-shards",
+                "type": "webshart",
+                "source": directory,
+                "webshart": {"format": "parquet", "columns": {"image": "pixels"}},
+            }
+            service = DatasetViewerService(root)
+            with patch(
+                "simpletuner.helpers.data_backend.dataset_runtime.DatasetRuntime.from_config",
+                side_effect=AssertionError("Shard browsing must not open dataset preparation."),
+            ):
+                page = service.get_shard_samples(config, {}, "chosen.parquet", offset=0, limit=2)
+                self.assertEqual(page.total, 3)
+                self.assertEqual([sample.filename for sample in page.samples], ["Row 1", "Row 2"])
+                self.assertTrue(page.samples[0].thumbnail.startswith("data:image/jpeg;base64,"))
+                self.assertIsNone(page.samples[1].thumbnail)
+                preview = service.get_shard_preview(config, {}, "chosen.parquet", offset=0)
+                with Image.open(io.BytesIO(preview)) as image:
+                    self.assertEqual(image.format, "JPEG")
+                    self.assertEqual(image.size, (640, 320))
+                with self.assertRaises(FileNotFoundError):
+                    service.get_shard_preview(config, {}, "chosen.parquet", offset=1)
+                self.assertEqual(
+                    service.get_shard_samples(config, {}, "chosen.parquet", offset=2, limit=2).samples[0].path, "2"
+                )
+                self.assertEqual(service.get_shard_samples(config, {}, "chosen.parquet", offset=3, limit=2).samples, [])
+                with self.assertRaises(FileNotFoundError):
+                    service.get_shard_samples(config, {}, "../chosen.parquet", offset=0, limit=2)
+
+    def test_reads_samples_from_an_indexed_tar_shard(self):
+        import tarfile
+
+        from webshart import MetadataExtractor
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            image = io.BytesIO()
+            Image.new("RGB", (8, 8), "red").save(image, format="PNG")
+            data = image.getvalue()
+            with tarfile.open(root / "samples.tar", "w") as archive:
+                member = tarfile.TarInfo("sample.png")
+                member.size = len(data)
+                archive.addfile(member, io.BytesIO(data))
+
+            MetadataExtractor().extract_metadata(directory, directory)
+            config = {"id": "samples", "type": "webshart", "source": directory, "webshart": {"format": "tar"}}
+            page = DatasetViewerService(root).get_shard_samples(config, {}, "samples.tar", offset=0, limit=1)
+
+            self.assertEqual(page.total, 1)
+            self.assertEqual(page.samples[0].filename, "sample.png")
+            self.assertTrue(page.samples[0].thumbnail.startswith("data:image/jpeg;base64,"))
+
+    def test_s3_capture_reads_the_catalogue_through_the_aws_client(self):
+        from hashlib import sha256
+
+        files = b'{"key":"train/A.parquet","size_bytes":64,"num_rows":12}\n'
+        descriptor = json.dumps(
+            {
+                "format": "parquet-image-capture",
+                "version": 2,
+                "files_manifest": "files.jsonl",
+                "manifest_sha256": sha256(files).hexdigest(),
+            }
+        ).encode()
+        config = {
+            "id": "capture",
+            "type": "webshart",
+            "source": "s3://example/captures",
+            "webshart": {"format": "parquet", "manifest": "capture.json"},
+        }
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch("webshart.parquet._S3Store") as native_store,
+            patch("simpletuner.helpers.data_backend.aws._s3_client") as aws_client,
+        ):
+            native_store.return_value.head.return_value = {"size": len(descriptor)}
+            native_store.return_value.read.return_value = descriptor
+            boto = aws_client.return_value
+            boto.head_object.return_value = {"ContentLength": len(files)}
+            contents = iter((files, files.replace(b"64", b"65")))
+            boto.download_file.side_effect = lambda bucket, key, filename, **kwargs: Path(filename).write_bytes(
+                next(contents)
+            )
+            viewer = DatasetViewerService(Path(directory))
+            page = viewer.list_source_shards(config, {}, limit=5, offset=0)
+            self.assertEqual(
+                [("train/A.parquet", 64, 12)], [(shard.path, shard.size_bytes, shard.rows) for shard in page.shards]
+            )
+            boto.head_object.assert_called_once_with(Bucket="example", Key="captures/files.jsonl")
+            self.assertEqual(boto.download_file.call_args.args[:2], ("example", "captures/files.jsonl"))
+            native_store.return_value.download_manifest.assert_not_called()
+            with self.assertRaisesRegex(ValueError, "Manifest SHA-256 mismatch"):
+                viewer.list_source_shards(config, {}, limit=5, offset=0, refresh=True)
+
+
 class TestThumbnailGeneration(unittest.TestCase):
     """Verify thumbnail generation from file paths and PIL images."""
 

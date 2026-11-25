@@ -581,9 +581,7 @@ class CacheJobService:
     def _create_dataset_runtime(self, dataset_config, args, accelerator, *, preparation_only=False):
         from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 
-        from .dataset_scan_service import DatasetScanService
-
-        config = DatasetScanService._convert_pixel_area(dataset_config, args)
+        config = DatasetRuntime.preparation_config(dataset_config, args)
         return DatasetRuntime.from_config(config, args, accelerator, preparation_only=preparation_only)
 
     @staticmethod

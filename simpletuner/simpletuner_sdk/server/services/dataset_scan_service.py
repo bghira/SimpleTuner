@@ -10,7 +10,7 @@ import shutil
 import threading
 import time
 import uuid
-from contextlib import ExitStack, contextmanager
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -197,33 +197,6 @@ class DatasetScanService:
         args = _ScanArgsNamespace({key: settings[key] for key in scan_keys if key in settings})
         args.output_dir = cls._resolve_scan_output_dir(configured.get("output_dir") or args.output_dir)
         return args
-
-    @staticmethod
-    def _convert_pixel_area(dataset_config: Dict[str, Any], scan_args: _ScanArgsNamespace) -> Dict[str, Any]:
-        """Convert pixel_area resolution_type to area with megapixel values.
-
-        Mirrors DataBackendFactory._handle_resolution_conversion() which normally
-        runs during training init but is bypassed by the scan service.
-        """
-        resolution_type = dataset_config.get("resolution_type", scan_args.resolution_type)
-        if resolution_type != "pixel_area":
-            return dataset_config
-
-        dataset_config = dataset_config.copy()
-        pixel_edge = dataset_config.get("resolution", scan_args.resolution)
-        if pixel_edge is None:
-            return dataset_config
-
-        pixel_edge = int(pixel_edge)
-        dataset_config["resolution_type"] = "area"
-        dataset_config["resolution"] = (pixel_edge * pixel_edge) / (1000**2)
-
-        for key in ("maximum_image_size", "target_downsample_size", "minimum_image_size"):
-            val = dataset_config.get(key)
-            if val is not None and val > 0:
-                dataset_config[key] = (val * val) / 1_000_000
-
-        return dataset_config
 
     def _resolve_vae_cache_dir(self, dataset_config: Dict[str, Any], global_config: Dict[str, Any]) -> Optional[str]:
         """Resolve the cache_dir_vae path, expanding template variables."""
@@ -617,33 +590,12 @@ class DatasetScanService:
         scan_args = self._build_scan_args(dataset_config, global_config)
         accelerator = _ScanAcceleratorStub()
 
-        # Apply pixel_area -> area conversion (normally done by DataBackendFactory)
-        dataset_config = self._convert_pixel_area(dataset_config, scan_args)
-
         StateTracker.set_args(scan_args)
         StateTracker.set_accelerator(accelerator)
 
-        with ExitStack() as scope:
-            dataset = DatasetRuntime.from_config(dataset_config, scan_args, accelerator)
-            scope.callback(dataset.close)
-            audio = dataset_config.get("audio") or {}
-            source_id = dataset_config.get("source_dataset_id") or audio.get("source_dataset_id")
-            if audio.get("source_from_video") and source_id:
-                source_config = next(
-                    (
-                        source
-                        for source in dataset_plan or ()
-                        if source.get("id") == source_id and not (source.get("disabled") or source.get("disable"))
-                    ),
-                    None,
-                )
-                if source_config is None:
-                    raise ValueError(f"Dataset {dataset.id} requires an enabled video source {source_id}.")
-                source_config = self._convert_pixel_area(source_config, scan_args)
-                dataset.source_dataset = DatasetRuntime.from_config(
-                    source_config, scan_args, accelerator, preparation_only=True
-                )
-                scope.callback(dataset.source_dataset.close)
+        with DatasetRuntime.open_preparation(
+            dataset_config, scan_args, accelerator, dataset_plan=dataset_plan or ()
+        ) as dataset:
             dataset.prepare_view(force_rescan=force_rescan, progress_callback=on_progress)
 
 

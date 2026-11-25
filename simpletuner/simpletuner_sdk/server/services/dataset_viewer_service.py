@@ -25,6 +25,8 @@ import trainingsample as tsr
 from PIL import Image
 from pydantic import BaseModel, Field
 
+from simpletuner.helpers.data_backend.source_inventory import SourceShard, SourceShardSample
+from simpletuner.helpers.image_manipulation.load import load_image
 from simpletuner.helpers.metadata.backends.webshart_exclusions import read_exclusion_page
 from simpletuner.helpers.metadata.backends.webshart_geometry import (
     _read_index,
@@ -42,6 +44,8 @@ from simpletuner.helpers.metadata.preparation import (
     read_bucket_page,
 )
 from simpletuner.helpers.utils.pathing import normalize_data_path
+
+from .cloud.cache import TTLCache
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +67,7 @@ class DatasetSummary(BaseModel):
     dataset_id: str
     has_cache: bool = False
     scan_incomplete: bool = False
+    supports_shard_listing: bool = False
     accepted_samples: Optional[int] = None
     physical_rows: Optional[int] = None
     source_captions_required: Optional[bool] = None
@@ -91,6 +96,14 @@ class DatasetFileMutationUnavailable(ValueError):
     """The prepared provider does not support direct file edits."""
 
 
+class DatasetShardPage(BaseModel):
+    shards: list[SourceShard]
+    total: int
+    total_shards: int
+    limit: int
+    offset: int
+
+
 class DatasetFilePage(BaseModel):
     """Paginated file listing from a dataset."""
 
@@ -109,6 +122,13 @@ class ViewerThumbnailInfo(BaseModel):
     filename: str
     thumbnail: Optional[str] = None
     error: Optional[str] = None
+
+
+class ShardSamplePage(BaseModel):
+    samples: list[ViewerThumbnailInfo]
+    total: int
+    offset: int
+    limit: int
 
 
 class FileMetadata(BaseModel):
@@ -236,8 +256,8 @@ class AudioPreview(BaseModel):
     channels: Optional[int] = None
 
 
-def _pil_to_thumbnail(img: Image.Image, max_size: int = 256) -> str:
-    """Convert a PIL Image to a base64-encoded JPEG thumbnail data URL."""
+def _pil_to_jpeg(img: Image.Image, max_size: int) -> bytes:
+    """Fit an image within the requested bounds and encode it as JPEG."""
     if img.mode in ("RGBA", "P", "LA"):
         background = Image.new("RGB", img.size, (255, 255, 255))
         if img.mode == "P":
@@ -256,10 +276,29 @@ def _pil_to_thumbnail(img: Image.Image, max_size: int = 256) -> str:
 
     buffer = io.BytesIO()
     img.save(buffer, format="JPEG", quality=85)
-    buffer.seek(0)
+    return buffer.getvalue()
 
-    b64 = base64.b64encode(buffer.read()).decode("utf-8")
-    return f"data:image/jpeg;base64,{b64}"
+
+def _jpeg_data_url(jpeg: bytes) -> str:
+    encoded = base64.b64encode(jpeg).decode("ascii")
+    return f"data:image/jpeg;base64,{encoded}"
+
+
+def _pil_to_thumbnail(img: Image.Image, max_size: int = 256) -> str:
+    """Convert a PIL image to a JPEG thumbnail data URL."""
+    return _jpeg_data_url(_pil_to_jpeg(img, max_size))
+
+
+def _shard_sample_jpeg(row: SourceShardSample, max_size: int) -> tuple[bytes | None, str | None]:
+    if not row.image:
+        return None, "No image stored for this sample"
+    try:
+        return _pil_to_jpeg(load_image(row.image), max_size), None
+    except (OSError, ValueError, RuntimeError):
+        if row.image.startswith((b"\xff\x0a", b"\x00\x00\x00\x0cJXL ")) and ".jxl" not in Image.registered_extensions():
+            return None, "JPEG XL previews require the SimpleTuner jxl extra."
+        logger.debug("Unable to decode source shard sample %s", row.index, exc_info=True)
+        return None, "Image preview unavailable"
 
 
 # Extensions that require video frame extraction instead of Image.open()
@@ -335,6 +374,7 @@ def _array_to_thumbnail(array: np.ndarray, max_size: int = 256) -> str:
     return f"data:image/jpeg;base64,{base64.b64encode(buffer.read()).decode('utf-8')}"
 
 
+_shard_listing_cache: TTLCache[list[SourceShard]] = TTLCache(default_ttl=600, max_size=2)
 _data_backend_cache = OrderedDict()
 _data_backend_cache_lock = Lock()
 _DATA_BACKEND_CACHE_LIMIT = 8
@@ -553,8 +593,77 @@ class DatasetViewerService:
 
         return default_name
 
+    def _source_shards(self, dataset_config, global_config, *, refresh=False):
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+
+        key = self._source_cache_key([dataset_config, global_config])
+        shards = None if refresh else _shard_listing_cache.get(key)
+        if shards is None:
+            shards = sorted(DatasetRuntime.iter_source_shards(dataset_config, global_config), key=lambda item: item.path)
+            _shard_listing_cache.set(key, shards)
+        return shards
+
+    def list_source_shards(self, dataset_config, global_config, *, limit, offset, query="", refresh=False):
+        """Page through provider-owned shard descriptors independently of sample indexes."""
+        shards = self._source_shards(dataset_config, global_config, refresh=refresh)
+        search = query.strip().casefold()
+        matched = [item for item in shards if search in item.path.casefold()] if search else shards
+        return DatasetShardPage(
+            shards=matched[offset : offset + limit],
+            total=len(matched),
+            total_shards=len(shards),
+            limit=limit,
+            offset=offset,
+        )
+
+    @contextmanager
+    def _read_shard_page(self, dataset_config, global_config, shard_path: str, *, offset: int, limit: int):
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+
+        shards = self._source_shards(dataset_config, global_config)
+        shard = next((shard for shard in shards if shard.path == shard_path), None)
+        if shard is None:
+            raise FileNotFoundError("The selected shard is outside this dataset's shard catalogue.")
+
+        try:
+            total, rows = DatasetRuntime.read_source_shard(dataset_config, global_config, shard, offset=offset, limit=limit)
+            yield total, rows
+        except (NotImplementedError, ValueError):
+            raise
+        except Exception as exc:
+            logger.debug("Source shard read failed", exc_info=True)
+            raise OSError("Unable to read samples from this shard.") from exc
+
+    def get_shard_samples(self, dataset_config, global_config, shard_path: str, *, offset: int, limit: int):
+        with self._read_shard_page(dataset_config, global_config, shard_path, offset=offset, limit=limit) as (total, rows):
+            samples = []
+            for row in rows:
+                jpeg, error = _shard_sample_jpeg(row, 256)
+                samples.append(
+                    ViewerThumbnailInfo(
+                        path=str(row.index),
+                        filename=row.name,
+                        thumbnail=_jpeg_data_url(jpeg) if jpeg else None,
+                        error=error,
+                    )
+                )
+        return ShardSamplePage(samples=samples, total=total, offset=offset, limit=limit)
+
+    def get_shard_preview(self, dataset_config, global_config, shard_path: str, *, offset: int) -> bytes:
+        with self._read_shard_page(dataset_config, global_config, shard_path, offset=offset, limit=1) as (_, rows):
+            row = next(rows, None)
+            if row is not None:
+                jpeg, error = _shard_sample_jpeg(row, 1600)
+                if jpeg is not None:
+                    return jpeg
+            else:
+                error = "Sample not found in this shard."
+        raise FileNotFoundError(error)
+
     def get_dataset_summary(self, dataset_config: Dict[str, Any]) -> DatasetSummary:
         """Read bucket indices cache and return a summary."""
+        from simpletuner.helpers.data_backend.builders import supports_shard_listing
+
         dataset_id = dataset_config.get("id", "")
 
         # Extract conditioning relationship fields from the plan config
@@ -569,7 +678,8 @@ class DatasetViewerService:
         cond_generators_raw = dataset_config.get("conditioning")
         cond_generators = cond_generators_raw if isinstance(cond_generators_raw, list) and cond_generators_raw else None
 
-        cond_fields = dict(
+        summary_fields = dict(
+            supports_shard_listing=supports_shard_listing(dataset_config.get("type", "local")),
             conditioning_data=cond_data,
             source_dataset_id=dataset_config.get("source_dataset_id"),
             conditioning_type=dataset_config.get("conditioning_type"),
@@ -581,15 +691,15 @@ class DatasetViewerService:
         cache_path = self._find_cache_file(dataset_config, "indices")
 
         if cache_path is None:
-            return DatasetSummary(dataset_id=dataset_id, has_cache=False, **cond_fields)
+            return DatasetSummary(dataset_id=dataset_id, has_cache=False, **summary_fields)
 
         try:
             data, counts = self.read_membership_summary(cache_path)
         except IncompleteWebshartMembership:
-            return DatasetSummary(dataset_id=dataset_id, scan_incomplete=True, **cond_fields)
+            return DatasetSummary(dataset_id=dataset_id, scan_incomplete=True, **summary_fields)
         except (ijson.JSONError, ValueError, OSError) as e:
             logger.warning("Failed to read cache for %s: %s", dataset_id, e)
-            return DatasetSummary(dataset_id=dataset_id, has_cache=False, **cond_fields)
+            return DatasetSummary(dataset_id=dataset_id, has_cache=False, **summary_fields)
 
         buckets = [BucketSummary(key=key, file_count=count) for key, count in counts.items()]
         total_files = sum(b.file_count for b in buckets)
@@ -608,7 +718,7 @@ class DatasetViewerService:
             filtering_statistics=data.get("filtering_statistics"),
             config=data.get("config"),
             cache_file_path=str(cache_path),
-            **cond_fields,
+            **summary_fields,
         )
 
     @classmethod
@@ -843,6 +953,7 @@ class DatasetViewerService:
     ):
         """Recalculate per-file geometry using the resolved dataset settings."""
         from simpletuner.helpers.data_backend.config import create_backend_config
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
         from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
         from simpletuner.helpers.multiaspect.image import ImageGeometry, MultiaspectImage
         from simpletuner.simpletuner_sdk.server.services.dataset_scan_service import DatasetScanService
@@ -852,7 +963,7 @@ class DatasetViewerService:
             if not original_size:
                 return None
             scan_args = DatasetScanService._build_scan_args(dataset_config, global_config)
-            resolved = DatasetScanService._convert_pixel_area(dataset_config, scan_args)
+            resolved = DatasetRuntime.preparation_config(dataset_config, scan_args)
             config = create_backend_config(resolved, vars(scan_args))
             geometry = ImageGeometry(
                 MultiaspectImage._get_alignment(args=scan_args),

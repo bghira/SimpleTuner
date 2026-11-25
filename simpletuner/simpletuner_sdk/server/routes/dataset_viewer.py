@@ -11,7 +11,7 @@ import json
 from contextlib import contextmanager
 from typing import Annotated, Any, Dict, List, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field, conlist
 
 from simpletuner.helpers.metadata.preparation import DatasetViewChangedError
@@ -25,11 +25,13 @@ from simpletuner.simpletuner_sdk.server.services.dataset_viewer_service import (
     DatasetFileMutationUnavailable,
     DatasetFilePage,
     DatasetGraph,
+    DatasetShardPage,
     DatasetSummary,
     DatasetViewChanged,
     DatasetViewerService,
     FilteredFilesReport,
     OrphanReport,
+    ShardSamplePage,
     VideoPreview,
     ViewerThumbnailInfo,
 )
@@ -112,6 +114,70 @@ async def get_viewer_summaries(
         for ds in datasets
         if str(ds.get("dataset_type", "")).lower() not in ("text_embeds", "image_embeds")
     ]
+
+
+@router.get("/viewer/shards", response_model=DatasetShardPage)
+def get_viewer_source_shards(
+    dataset_id: str,
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    query: str = Query("", max_length=256),
+    refresh: bool = False,
+    _user: User = Depends(get_current_user),
+) -> DatasetShardPage:
+    """Page through source shards without preparing sample metadata."""
+    config = _require_dataset_config(dataset_id)
+    try:
+        return _get_viewer_service().list_source_shards(
+            config, _get_global_config(), limit=limit, offset=offset, query=query, refresh=refresh
+        )
+    except (NotImplementedError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except (ImportError, OSError) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Unable to read the source shard catalogue. Check the source and this server’s storage access.",
+        ) from exc
+
+
+@contextmanager
+def _shard_sample_access():
+    try:
+        yield
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (NotImplementedError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except (ImportError, OSError) as exc:
+        raise HTTPException(status_code=503, detail="Unable to read samples from this shard.") from exc
+
+
+@router.get("/viewer/shard-samples", response_model=ShardSamplePage)
+def get_viewer_shard_samples(
+    dataset_id: str,
+    shard_path: str,
+    limit: int = Query(12, ge=1, le=24),
+    offset: int = Query(0, ge=0),
+    _user: User = Depends(get_current_user),
+) -> ShardSamplePage:
+    """Read a page of image previews from a shard in the active dataset."""
+    config = _require_dataset_config(dataset_id)
+    with _shard_sample_access():
+        return _get_viewer_service().get_shard_samples(config, _get_global_config(), shard_path, offset=offset, limit=limit)
+
+
+@router.get("/viewer/shard-preview", response_class=Response, responses={200: {"content": {"image/jpeg": {}}}})
+def get_viewer_shard_preview(
+    dataset_id: str,
+    shard_path: str,
+    offset: int = Query(ge=0),
+    _user: User = Depends(get_current_user),
+) -> Response:
+    """Render a larger JPEG preview for one sample in a source shard."""
+    config = _require_dataset_config(dataset_id)
+    with _shard_sample_access():
+        image = _get_viewer_service().get_shard_preview(config, _get_global_config(), shard_path, offset=offset)
+    return Response(image, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
 @router.get("/viewer/files", response_model=DatasetFilePage)
