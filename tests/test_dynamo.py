@@ -3,6 +3,8 @@ import sys
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar
+from functools import cache
+from threading import Event
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -24,6 +26,43 @@ def _autograd_graph_contains(fn, needle: str) -> bool:
 
 
 class DynamoCudagraphWorkaroundTests(unittest.TestCase):
+    def test_inductor_builds_its_fx_graph_before_prefetched_encoders(self):
+        from torch._inductor.loop_body import InterpreterShim
+
+        from simpletuner.helpers.training.dynamo import dynamo_config_context
+
+        config = SimpleNamespace(dynamo_backend="inductor", dataloader_prefetch=True)
+        encoder = torch.nn.Sequential(torch.nn.Linear(2, 2))
+        inputs = torch.ones(1, 2)
+        expected = encoder(inputs)
+        start_encoding = Event()
+        encoding = None
+        create_node = torch.fx.Tracer.create_node
+
+        def encode():
+            self.assertTrue(start_encoding.wait(timeout=10))
+            return encoder(inputs)
+
+        def create_node_while_prefetching(tracer, kind, *args, **kwargs):
+            if kind == "output" and encoding is not None:
+                start_encoding.set()
+                encoding.result(timeout=10)
+            return create_node(tracer, kind, *args, **kwargs)
+
+        cold_graph = staticmethod(cache(InterpreterShim._dummy_gm.__wrapped__))
+        with (
+            patch.object(InterpreterShim, "_dummy_gm", cold_graph),
+            patch.object(torch.fx.Tracer, "create_node", create_node_while_prefetching),
+            dynamo_config_context(config),
+            ThreadPoolExecutor(max_workers=1) as pool,
+        ):
+            encoding = pool.submit(encode)
+            try:
+                InterpreterShim._dummy_gm()
+            finally:
+                start_encoding.set()
+            torch.testing.assert_close(encoding.result(timeout=10), expected)
+
     def test_distillation_compile_cache_budget_is_scoped_and_preserves_larger_limits(self):
         from simpletuner.helpers.training.dynamo import dynamo_config_context
 

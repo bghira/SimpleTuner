@@ -42,16 +42,21 @@ def dynamo_config_patches(config: Any) -> dict[str, Any]:
 @contextlib.contextmanager
 def dynamo_config_context(config: Any) -> Iterator[None]:
     patches = dynamo_config_patches(config)
+    backend = _effective_dynamo_backend(config)
+    if backend == "inductor" and _coerce_flag(getattr(config, "dataloader_prefetch", False)):
+        from torch._inductor.loop_body import InterpreterShim
+
+        # FX temporarily patches nn.Module methods process-wide. Trace Inductor's cached graph
+        # before the batch prefetch thread can call an eager encoder.
+        InterpreterShim._dummy_gm()
+
     with contextlib.ExitStack() as stack:
         if patches:
             stack.enter_context(torch._dynamo.config.patch(patches))
-            if (
-                _coerce_flag(getattr(config, "dynamo_use_regional_compilation", False))
-                and _effective_dynamo_backend(config) != "no"
-            ):
+            if _coerce_flag(getattr(config, "dynamo_use_regional_compilation", False)) and backend != "no":
                 token = _REGIONAL_CHECKPOINT_PATCHES.set(patches)
                 stack.callback(_REGIONAL_CHECKPOINT_PATCHES.reset, token)
-        if _effective_dynamo_backend(config) == "inductor" and getattr(config, "disk_low_threshold", None) not in (
+        if backend == "inductor" and getattr(config, "disk_low_threshold", None) not in (
             None,
             "",
             "None",
