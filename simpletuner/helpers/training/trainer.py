@@ -4388,7 +4388,10 @@ class Trainer:
         should_log = self.accelerator.is_main_process
         # TwinFlow requires EMA on all ranks for teacher passes; create EMA everywhere when enabled.
         twinflow_requires_full_rank = bool(getattr(self.config, "twinflow_enabled", False))
-        instantiate_on_rank = should_log or is_fsdp2_run or twinflow_requires_full_rank
+        distributed_ema_validation = self.config.ema_validation in ("comparison", "ema_only") and (
+            Validation.uses_distributed_validation(self.config, self.accelerator)
+        )
+        instantiate_on_rank = should_log or is_fsdp2_run or twinflow_requires_full_rank or distributed_ema_validation
         if should_log:
             logger.info("Using EMA. Creating EMAModel.")
 

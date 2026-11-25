@@ -1907,6 +1907,27 @@ class TestTrainer(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "ema_cpu_only is not supported with FSDP2"):
             trainer.init_ema_model()
 
+    def test_peer_creates_ema_for_distributed_validation(self):
+        trainer = object.__new__(Trainer)
+        trainer.accelerator = SimpleNamespace(is_main_process=False, num_processes=2, wait_for_everyone=Mock())
+        trainer.model = Mock()
+        trainer._get_trainable_parameters = lambda: [torch.nn.Parameter(torch.ones(1))]
+        trainer.config = SimpleNamespace(
+            use_ema=True, ema_device="cpu", ema_cpu_only=True, controlnet=False, ema_decay=0.99, ema_foreach_disable=False
+        )
+        for mode, validation, expected in (
+            ("batch-parallel", "comparison", True),
+            ("batch-parallel", "ema_only", True),
+            ("batch-parallel", "none", False),
+            ("single-gpu", "comparison", False),
+        ):
+            with self.subTest(mode=mode, validation=validation):
+                trainer.config.validation_multigpu = mode
+                trainer.config.ema_validation = validation
+                trainer.init_ema_model()
+                self.assertEqual(trainer.ema_model is not None, expected)
+                self.assertIs(trainer.ema_model, trainer.model.ema_model)
+
     def test_place_ema_model_skips_dtensor_weights_for_fsdp2(self):
         trainer = object.__new__(Trainer)
         trainer.ema_model = Mock()
