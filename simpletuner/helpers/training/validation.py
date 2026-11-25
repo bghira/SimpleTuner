@@ -2006,20 +2006,16 @@ class Validation:
         subprocess.run(command, check=True)
         return True
 
-    def _validation_multigpu_mode(self) -> str:
-        """
-        Return the requested validation multi-GPU behaviour while accounting for single-process runs.
-        """
-        raw_mode = getattr(self.config, "validation_multigpu", "batch-parallel")
+    @staticmethod
+    def uses_distributed_validation(config, accelerator) -> bool:
+        raw_mode = getattr(config, "validation_multigpu", "batch-parallel")
         mode = str(raw_mode).strip().lower() if raw_mode is not None else "batch-parallel"
-        if mode not in {"single-gpu", "batch-parallel"}:
-            mode = "single-gpu"
-        if getattr(self.accelerator, "num_processes", 1) <= 1:
-            return "single-gpu"
-        return mode
+        if mode == "batch-parallel" and getattr(accelerator, "num_processes", 1) > 1:
+            return True
+        return get_cp_info(accelerator)[0]
 
     def _use_distributed_validation(self) -> bool:
-        return self._validation_multigpu_mode() == "batch-parallel" or self._use_context_parallel_validation()
+        return self.uses_distributed_validation(self.config, self.accelerator)
 
     def _context_parallel_validation_info(self) -> tuple[bool, int, int, int, int]:
         cp_info = get_cp_info(self.accelerator)

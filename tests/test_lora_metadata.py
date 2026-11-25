@@ -291,6 +291,23 @@ class SaveHookMetadataTests(unittest.TestCase):
         self.assertTrue(materialized["regular"].is_contiguous())
         self.assertIsNot(materialized["regular"], regular)
 
+    def test_peer_restores_replicated_ema_from_main_rank_checkpoint(self):
+        from simpletuner.helpers.training.ema import EMAModel
+
+        manager, model, _ = self._make_manager(args_overrides={"use_ema": True, "model_type": "full"})
+        model.fuse_qkv_projections = MagicMock()
+        parameter = torch.nn.Parameter(torch.ones(2))
+        manager.ema_model = EMAModel(manager.args, manager.accelerator, [parameter])
+        manager.ema_model.optimization_step = 17
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manager._save_ema_state(tmpdir, is_main_process=True)
+            manager.accelerator.is_main_process = False
+            manager.ema_model.shadow_params[0].zero_()
+            manager.ema_model.optimization_step = 0
+            manager._load_ema_state(tmpdir)
+        torch.testing.assert_close(manager.ema_model.shadow_params[0], torch.ones(2))
+        self.assertEqual(manager.ema_model.optimization_step, 17)
+
     def test_fsdp2_ema_save_uses_distributed_checkpoint(self):
         manager, _, _ = self._make_manager(args_overrides={"use_ema": True, "model_type": "full"})
         manager.accelerator.distributed_type = DistributedType.FSDP

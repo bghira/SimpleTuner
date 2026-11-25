@@ -452,9 +452,6 @@ class SaveHookManager:
             self._load_fsdp2_ema_state(checkpoint_dir)
             return
 
-        if not self.accelerator.is_main_process:
-            return
-
         try:
             self.model.fuse_qkv_projections()  # if we don't fuse first, we might never load.
             self.ema_model.load_state_dict(self._ema_checkpoint_path(checkpoint_dir))
