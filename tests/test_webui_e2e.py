@@ -3865,13 +3865,23 @@ class DatasetViewerSourceShardsTestCase(_TrainerPageMixin, WebUITestCase):
     SERVER_MODE = ServerMode.UNIFIED
     MAX_BROWSERS = 1
 
-    def test_viewer_filters_and_pages_shards_before_sample_preparation(self):
+    def test_viewer_filters_shards_and_pages_selected_samples_without_preparation(self):
         self.seed_defaults()
         source = self.home_path / "viewer-shard-source"
         source.mkdir()
         for index in range(55):
             (source / f"shard-{index:03d}.parquet").touch()
-        (source / "special.parquet").touch()
+        import io
+
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        from PIL import Image
+
+        with io.BytesIO() as buffer:
+            Image.new("RGB", (16, 16), "red").save(buffer, format="PNG")
+            payload = buffer.getvalue()
+        pq.write_table(pa.table({"image": [payload] * 13}), source / "shard-017.parquet")
+        pq.write_table(pa.table({"image": [payload]}), source / "special.parquet")
         plan = [
             {
                 "id": "viewer-shards",
@@ -3929,6 +3939,29 @@ class DatasetViewerSourceShardsTestCase(_TrainerPageMixin, WebUITestCase):
             wait.until(EC.text_to_be_present_in_element(panel, "of 1 matching shard"))
             wait.until(EC.text_to_be_present_in_element(panel, "shard-017.parquet"))
             self.assertNotIn("special.parquet", driver.find_element(*panel).text)
+            shard = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[text()='shard-017.parquet']")))
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'})", shard)
+            shard.click()
+            samples = (By.CSS_SELECTOR, '[aria-label="Shard samples"]')
+            wait.until(EC.text_to_be_present_in_element(samples, "1–12 of 13"))
+            image_selector = (By.CSS_SELECTOR, '[aria-label="Shard samples"] img')
+            wait.until(lambda d: len(d.find_elements(*image_selector)) == 12)
+            self.assertTrue(driver.find_element(*image_selector).get_attribute("src").startswith("data:image/jpeg;base64,"))
+            next_samples = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[text()='Next samples']")))
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'})", next_samples)
+            next_samples.click()
+            wait.until(EC.text_to_be_present_in_element(samples, "Row 13"))
+            self.assertEqual(len(driver.find_elements(*image_selector)), 1)
+            field.send_keys(Keys.END, Keys.BACKSPACE * len("ShArD-017"), "special")
+            other = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[text()='special.parquet']")))
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'})", other)
+            other.click()
+            wait.until(EC.text_to_be_present_in_element(samples, "1–1 of 1"))
+            self.assertNotIn("Row 13", driver.find_element(*samples).text)
+            close = driver.find_element(By.CSS_SELECTOR, '[aria-label="Close shard samples"]')
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'})", close)
+            close.click()
+            wait.until(EC.invisibility_of_element_located(samples))
             self.assertEqual(driver.execute_script("return window.viewerScanRequests"), 0)
 
         self.for_each_browser("browse_source_shards", scenario)

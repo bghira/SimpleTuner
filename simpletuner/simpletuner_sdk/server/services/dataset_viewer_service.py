@@ -26,6 +26,7 @@ from PIL import Image
 from pydantic import BaseModel, Field
 
 from simpletuner.helpers.data_backend.source_inventory import SourceShard
+from simpletuner.helpers.image_manipulation.load import load_image
 from simpletuner.helpers.metadata.backends.webshart_exclusions import read_exclusion_page
 from simpletuner.helpers.metadata.backends.webshart_geometry import (
     _read_index,
@@ -121,6 +122,13 @@ class ViewerThumbnailInfo(BaseModel):
     filename: str
     thumbnail: Optional[str] = None
     error: Optional[str] = None
+
+
+class ShardSamplePage(BaseModel):
+    samples: list[ViewerThumbnailInfo]
+    total: int
+    offset: int
+    limit: int
 
 
 class FileMetadata(BaseModel):
@@ -566,8 +574,7 @@ class DatasetViewerService:
 
         return default_name
 
-    def list_source_shards(self, dataset_config, global_config, *, limit, offset, query="", refresh=False):
-        """Page through provider-owned shard descriptors independently of sample indexes."""
+    def _source_shards(self, dataset_config, global_config, *, refresh=False):
         from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 
         key = self._source_cache_key([dataset_config, global_config])
@@ -575,6 +582,11 @@ class DatasetViewerService:
         if shards is None:
             shards = sorted(DatasetRuntime.iter_source_shards(dataset_config, global_config), key=lambda item: item.path)
             _shard_listing_cache.set(key, shards)
+        return shards
+
+    def list_source_shards(self, dataset_config, global_config, *, limit, offset, query="", refresh=False):
+        """Page through provider-owned shard descriptors independently of sample indexes."""
+        shards = self._source_shards(dataset_config, global_config, refresh=refresh)
         search = query.strip().casefold()
         matched = [item for item in shards if search in item.path.casefold()] if search else shards
         return DatasetShardPage(
@@ -584,6 +596,46 @@ class DatasetViewerService:
             limit=limit,
             offset=offset,
         )
+
+    def get_shard_samples(self, dataset_config, global_config, shard_path: str, *, offset: int, limit: int):
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+
+        shards = self._source_shards(dataset_config, global_config)
+        shard = next((shard for shard in shards if shard.path == shard_path), None)
+        if shard is None:
+            raise FileNotFoundError("The selected shard is outside this dataset's shard catalogue.")
+
+        samples = []
+        try:
+            total, rows = DatasetRuntime.read_source_shard(dataset_config, global_config, shard, offset=offset, limit=limit)
+            for row in rows:
+                thumbnail = None
+                error = "No image stored for this sample"
+                if row.image:
+                    error = "Image preview unavailable"
+                    try:
+                        thumbnail = generate_thumbnail_from_pil(load_image(row.image))
+                    except (OSError, ValueError, RuntimeError):
+                        if (
+                            row.image.startswith((b"\xff\x0a", b"\x00\x00\x00\x0cJXL "))
+                            and ".jxl" not in Image.registered_extensions()
+                        ):
+                            error = "JPEG XL previews require the SimpleTuner jxl extra."
+                        logger.debug("Unable to decode source shard sample %s", row.index, exc_info=True)
+                samples.append(
+                    ViewerThumbnailInfo(
+                        path=str(row.index),
+                        filename=row.name,
+                        thumbnail=thumbnail,
+                        error=None if thumbnail else error,
+                    )
+                )
+        except (NotImplementedError, ValueError):
+            raise
+        except Exception as exc:
+            logger.debug("Source shard read failed", exc_info=True)
+            raise OSError("Unable to read samples from this shard.") from exc
+        return ShardSamplePage(samples=samples, total=total, offset=offset, limit=limit)
 
     def get_dataset_summary(self, dataset_config: Dict[str, Any]) -> DatasetSummary:
         """Read bucket indices cache and return a summary."""

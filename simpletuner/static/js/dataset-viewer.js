@@ -17,6 +17,11 @@ window.datasetViewerComponent = function () {
         shardLoading: false,
         shardError: '',
         _shardRequest: 0,
+        selectedSourceShard: null,
+        shardSamples: null,
+        shardSamplesLoading: false,
+        shardSamplesError: '',
+        _shardSamplesRequest: 0,
         selectedBucket: null,
         thumbnails: [],
         loadingThumbnails: false,
@@ -693,7 +698,16 @@ window.datasetViewerComponent = function () {
             }
         },
 
+        clearShardSamples() {
+            this._shardSamplesRequest++;
+            this.selectedSourceShard = null;
+            this.shardSamples = null;
+            this.shardSamplesLoading = false;
+            this.shardSamplesError = '';
+        },
+
         _clearSourceShards() {
+            this.clearShardSamples();
             this._shardRequest++;
             this.sourceShards = null;
             this.shardSearch = '';
@@ -703,6 +717,7 @@ window.datasetViewerComponent = function () {
 
         async loadSourceShards(datasetId, offset = 0, refresh = false) {
             if (this.expandedDataset !== datasetId) return;
+            if (refresh) this.clearShardSamples();
             const request = ++this._shardRequest;
             const query = this.shardSearch.trim();
             this.shardLoading = true;
@@ -721,6 +736,28 @@ window.datasetViewerComponent = function () {
                 this.shardError = error.message;
             } finally {
                 if (request === this._shardRequest) this.shardLoading = false;
+            }
+        },
+
+        async loadShardSamples(datasetId, path, offset = 0) {
+            if (this.expandedDataset !== datasetId) return;
+            const request = ++this._shardSamplesRequest;
+            if (this.selectedSourceShard !== path) this.shardSamples = null;
+            this.selectedSourceShard = path;
+            this.shardSamplesLoading = true;
+            this.shardSamplesError = '';
+            try {
+                const params = new URLSearchParams({dataset_id: datasetId, shard_path: path, offset});
+                const response = await fetch('/api/datasets/viewer/shard-samples?' + params);
+                const result = await response.json();
+                if (request !== this._shardSamplesRequest) return;
+                if (!response.ok) throw new Error(result.detail || 'Unable to read samples from this shard.');
+                this.shardSamples = result;
+            } catch (error) {
+                if (request !== this._shardSamplesRequest) return;
+                this.shardSamplesError = error.message;
+            } finally {
+                if (request === this._shardSamplesRequest) this.shardSamplesLoading = false;
             }
         },
 

@@ -5,8 +5,8 @@ from collections.abc import Iterator
 from typing import Any, Dict
 
 from simpletuner.helpers.data_backend.config.base import BaseBackendConfig
-from simpletuner.helpers.data_backend.source_inventory import SourceShard
-from simpletuner.helpers.data_backend.webshart import WebshartDataBackend, iter_webshart_shards
+from simpletuner.helpers.data_backend.source_inventory import SourceShard, SourceShardSample
+from simpletuner.helpers.data_backend.webshart import WebshartDataBackend, iter_webshart_shards, read_webshart_shard
 
 from .base import BaseBackendBuilder
 
@@ -18,6 +18,11 @@ class WebshartBackendBuilder(BaseBackendBuilder):
 
     def iter_source_shards(self, config: BaseBackendConfig) -> Iterator[SourceShard]:
         return iter_webshart_shards(config)
+
+    def read_source_shard(
+        self, config: BaseBackendConfig, shard: SourceShard, *, offset: int, limit: int
+    ) -> tuple[int, Iterator[SourceShardSample]]:
+        return read_webshart_shard(config, shard, offset=offset, limit=limit)
 
     def _create_backend(self, config: BaseBackendConfig) -> WebshartDataBackend:
         self._validate_webshart_config(config)

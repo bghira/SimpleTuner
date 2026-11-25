@@ -12,7 +12,7 @@ from io import BytesIO
 from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
 from typing import Any, List, Optional, Tuple, Union
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 import requests
 import torch
@@ -26,7 +26,7 @@ from simpletuner.helpers.data_backend.config.validators import validate_webshart
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.data_backend.filters import DatasetFilter
 from simpletuner.helpers.data_backend.s3_settings import resolve_s3_options
-from simpletuner.helpers.data_backend.source_inventory import SourceShard
+from simpletuner.helpers.data_backend.source_inventory import SourceShard, SourceShardSample
 from simpletuner.helpers.image_manipulation.load import load_image, load_video
 from simpletuner.helpers.prompts import PromptHandler
 from simpletuner.helpers.training import video_file_extensions
@@ -124,6 +124,81 @@ def iter_webshart_shards(config: ImageBackendConfig) -> Iterator[SourceShard]:
                 yield SourceShard(entry.path, entry.size)
     except (HfHubHTTPError, RequestError, requests.RequestException, HFValidationError) as exc:
         raise ValueError("Unable to list WebShart shards on Hugging Face. Check the repository, path and token.") from exc
+
+
+def read_webshart_shard(
+    config: ImageBackendConfig, shard: SourceShard, *, offset: int, limit: int
+) -> tuple[int, Iterator[SourceShardSample]]:
+    """Read a page of source samples from a selected, catalogue-validated shard."""
+    source = config.webshart_source.strip()
+    options = config.webshart or {}
+    token = config.webshart_hf_token
+    if token is None and not source.startswith("s3://") and not Path(source).is_dir():
+        from huggingface_hub import get_token
+
+        token = get_token()
+    if options.get("format", "tar") == "tar":
+        return _read_webshart_tar_shard(config, source, shard.path, token=token, offset=offset, limit=limit)
+
+    from webshart.parquet import _ParquetFile, _Repository
+
+    storage = None
+    if source.startswith("s3://"):
+        storage = resolve_s3_options({k: v for k, v in _webshart_storage_options(config).items() if v is not None})
+    repo = _Repository(source, token, s3_options=storage)
+    reader = _ParquetFile(repo.location(shard.path), size=shard.size_bytes, s3=repo.s3, hf_token=repo.token)
+    info = reader.info()
+    total = info["num_rows"]
+    column = (options.get("columns") or {}).get("image") or "image"
+    if column not in info["columns"]:
+        raise ValueError("The selected Parquet shard has no configured image column.")
+
+    def samples():
+        if offset >= total:
+            return
+        rows = reader.rows(columns=[column], start=offset, stop=min(offset + limit, total))
+        for index, row in enumerate(rows, offset):
+            payload = row[column]
+            if isinstance(payload, dict):
+                payload = payload.get("bytes")
+            yield SourceShardSample(index, f"Row {index + 1:,}", payload if isinstance(payload, bytes) else None)
+
+    return total, samples()
+
+
+def _read_webshart_tar_shard(config, source, path, *, token, offset, limit):
+    from webshart import TarDataLoader, discover_dataset
+
+    root = Path(source)
+    relative = PurePosixPath(path)
+    if root.is_dir():
+        if not (root / path).resolve().is_relative_to(root.resolve()):
+            raise ValueError("The selected shard is outside the dataset source.")
+        dataset = discover_dataset(source, hf_token=token, metadata=config.webshart_metadata)
+        name = relative.with_suffix("").as_posix()
+    else:
+        source = _webshart_hub_repo(source)
+        parent = relative.parent.as_posix() if relative.parent.parts else None
+        dataset = discover_dataset(source, hf_token=token, subfolder=parent, metadata=config.webshart_metadata)
+        name = relative.stem
+
+    match = next((entry for entry in dataset.get_stats()["shard_details"] if entry["name"] == name), None)
+    if match is None:
+        raise ValueError("The selected TAR shard does not have a WebShart index.")
+    index = match["index"]
+    if dataset.is_remote:
+        location = unquote(urlsplit(dataset.get_shard_info(index)["tar_path"]).path)
+        if location != f"/datasets/{source}/resolve/main/{path}":
+            raise ValueError("The selected TAR shard does not have a WebShart index.")
+    loader = TarDataLoader(dataset, max_file_size=config.webshart_max_file_size or 50_000_000)
+    entries = loader.list_samples_in_shard(index)
+
+    def samples():
+        for entry in entries[offset : offset + limit]:
+            sample = loader.load_sample(index, entry["sample_idx"])
+            yield SourceShardSample(entry["sample_idx"], entry["filename"], bytes(sample.data) if sample else None)
+
+    return len(entries), samples()
 
 
 def _iter_s3_capture_records(repo, path: str, storage: dict) -> Iterator[dict]:

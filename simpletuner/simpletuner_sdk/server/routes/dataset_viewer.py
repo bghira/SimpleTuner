@@ -31,6 +31,7 @@ from simpletuner.simpletuner_sdk.server.services.dataset_viewer_service import (
     DatasetViewerService,
     FilteredFilesReport,
     OrphanReport,
+    ShardSamplePage,
     VideoPreview,
     ViewerThumbnailInfo,
 )
@@ -137,6 +138,26 @@ def get_viewer_source_shards(
             status_code=503,
             detail="Unable to read the source shard catalogue. Check the source and this server’s storage access.",
         ) from exc
+
+
+@router.get("/viewer/shard-samples", response_model=ShardSamplePage)
+def get_viewer_shard_samples(
+    dataset_id: str,
+    shard_path: str,
+    limit: int = Query(12, ge=1, le=24),
+    offset: int = Query(0, ge=0),
+    _user: User = Depends(get_current_user),
+) -> ShardSamplePage:
+    """Read a page of image previews from a shard in the active dataset."""
+    config = _require_dataset_config(dataset_id)
+    try:
+        return _get_viewer_service().get_shard_samples(config, _get_global_config(), shard_path, offset=offset, limit=limit)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (NotImplementedError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except (ImportError, OSError) as exc:
+        raise HTTPException(status_code=503, detail="Unable to read samples from this shard.") from exc
 
 
 @router.get("/viewer/files", response_model=DatasetFilePage)

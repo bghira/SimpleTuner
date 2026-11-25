@@ -6,7 +6,7 @@
     <div class="d-flex justify-content-between align-items-center mb-3">
         <div>
             <h5 class="mb-1"><i class="fas fa-eye me-2"></i>Dataset Viewer</h5>
-            <p class="text-muted mb-0 small">Browse cached dataset contents, bucket distributions, and thumbnails</p>
+            <p class="text-muted mb-0 small">Browse source shards, prepared buckets, and sample previews</p>
         </div>
         <div class="d-flex gap-2">
             <button type="button"
@@ -202,7 +202,12 @@
                                     <tbody>
                                         <template x-for="shard in sourceShards?.shards || []" :key="shard.path">
                                             <tr>
-                                                <td x-text="shard.path"></td>
+                                                <td>
+                                                    <button type="button" class="btn btn-link btn-sm text-start p-0"
+                                                            :aria-pressed="selectedSourceShard === shard.path"
+                                                            @click="loadShardSamples(ds.dataset_id, shard.path)"
+                                                            x-text="shard.path"></button>
+                                                </td>
                                                 <td x-text="shard.size_bytes == null ? '—' : $store.trainer.formatBytes(shard.size_bytes)"></td>
                                                 <td x-text="shard.rows == null ? '—' : shard.rows.toLocaleString()"></td>
                                             </tr>
@@ -221,6 +226,54 @@
                                             @click="loadSourceShards(ds.dataset_id, sourceShards.offset + sourceShards.limit)">Next</button>
                                 </div>
                             </div>
+                            <template x-if="selectedSourceShard">
+                                <section class="mt-3 border-top pt-3" aria-label="Shard samples"
+                                         x-init="$nextTick(() => $el.scrollIntoView({block: 'nearest'}))">
+                                    <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+                                        <div class="text-break">
+                                            <h6 class="mb-1">Shard Samples</h6>
+                                            <span class="text-muted small" x-text="selectedSourceShard"></span>
+                                        </div>
+                                        <button type="button" class="btn-close" aria-label="Close shard samples"
+                                                @click="clearShardSamples()"></button>
+                                    </div>
+                                    <p x-show="shardSamplesLoading" class="text-muted small mb-0" role="status">
+                                        Loading shard samples…
+                                    </p>
+                                    <p x-show="shardSamplesError" class="text-danger small mb-0" role="alert"
+                                       x-text="shardSamplesError"></p>
+                                    <p x-show="!shardSamplesLoading && shardSamples?.total === 0" class="text-muted small mb-0">
+                                        This shard has no samples.
+                                    </p>
+                                    <div x-show="!shardSamplesLoading" class="viewer-thumbnail-grid">
+                                        <template x-for="sample in shardSamples?.samples || []" :key="sample.path">
+                                            <figure class="viewer-thumbnail-item viewer-shard-sample mb-0">
+                                                <template x-if="sample.thumbnail">
+                                                    <img :src="sample.thumbnail" :alt="sample.filename" loading="lazy">
+                                                </template>
+                                                <template x-if="!sample.thumbnail">
+                                                    <div class="viewer-thumbnail-placeholder" role="img" :aria-label="sample.error" :title="sample.error">
+                                                        <i class="fas fa-image" aria-hidden="true"></i>
+                                                    </div>
+                                                </template>
+                                                <figcaption class="viewer-thumbnail-label" x-text="sample.filename"></figcaption>
+                                            </figure>
+                                        </template>
+                                    </div>
+                                    <div x-show="shardSamples?.total > 0" class="d-flex align-items-center justify-content-between gap-2 mt-2">
+                                        <span class="text-muted small"
+                                              x-text="shardSamples ? ((shardSamples.offset + 1) + '–' + (shardSamples.offset + shardSamples.samples.length) + ' of ' + shardSamples.total.toLocaleString()) : ''"></span>
+                                        <div x-show="shardSamples?.total > shardSamples?.limit" class="btn-group btn-group-sm">
+                                            <button type="button" class="btn btn-outline-secondary"
+                                                    :disabled="shardSamplesLoading || !shardSamples?.offset"
+                                                    @click="loadShardSamples(ds.dataset_id, selectedSourceShard, shardSamples.offset - shardSamples.limit)">Previous samples</button>
+                                            <button type="button" class="btn btn-outline-secondary"
+                                                    :disabled="shardSamplesLoading || !shardSamples || shardSamples.offset + shardSamples.limit >= shardSamples.total"
+                                                    @click="loadShardSamples(ds.dataset_id, selectedSourceShard, shardSamples.offset + shardSamples.limit)">Next samples</button>
+                                        </div>
+                                    </div>
+                                </section>
+                            </template>
                         </section>
                     </template>
 
@@ -228,7 +281,7 @@
                     <div x-show="!ds.has_cache" class="text-center py-4 px-3">
                         <p class="text-muted small mb-2">
                             <i class="fas fa-info-circle text-warning me-1"></i>
-                            <span x-text="ds.scan_incomplete ? 'The metadata scan has no completed publication yet.' : ds.supports_shard_listing ? 'Prepare metadata to browse samples and aspect ratio buckets.' : 'Run a metadata scan to browse this dataset.'"></span>
+                            <span x-text="ds.scan_incomplete ? 'The metadata scan has no completed publication yet.' : ds.supports_shard_listing ? 'Prepare metadata to browse aspect ratio buckets.' : 'Run a metadata scan to browse this dataset.'"></span>
                         </p>
                         <button type="button"
                                 class="btn btn-outline-warning btn-sm"

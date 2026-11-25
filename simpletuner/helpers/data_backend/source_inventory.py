@@ -20,6 +20,13 @@ class SourceShard:
     rows: int | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class SourceShardSample:
+    index: int
+    name: str
+    image: bytes | None
+
+
 class SourceFileInventory:
     def __init__(self, path: Path | None = None, bucket_report=None):
         self.path = path

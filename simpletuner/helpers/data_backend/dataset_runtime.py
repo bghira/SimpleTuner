@@ -18,7 +18,7 @@ from PIL import Image
 from simpletuner.helpers.configuration.template_vars import resolve_dataset_config_placeholders
 from simpletuner.helpers.data_backend.base import BaseDataBackend, ordered_sample_payloads
 from simpletuner.helpers.data_backend.dataset_types import get_arg_value
-from simpletuner.helpers.data_backend.source_inventory import SourceShard
+from simpletuner.helpers.data_backend.source_inventory import SourceShard, SourceShardSample
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.helpers.metadata.preparation import DatasetReadView
@@ -60,6 +60,11 @@ class DatasetRuntime:
         """Open only the source catalogue through the configured dataset provider."""
         _, _, settings, builder = cls._resolve_provider(config, args, None)
         return builder.iter_source_shards(settings)
+
+    @classmethod
+    def read_source_shard(cls, config, args, shard: SourceShard, *, offset: int, limit: int):
+        _, _, settings, builder = cls._resolve_provider(config, args, None)
+        return builder.read_source_shard(settings, shard, offset=offset, limit=limit)
 
     @classmethod
     def from_config(cls, config, args, accelerator, *, preparation_only=False):

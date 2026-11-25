@@ -17,7 +17,7 @@ from simpletuner.helpers.data_backend.dataset_types import (
     resolve_dataset_train_batch_size,
 )
 from simpletuner.helpers.data_backend.filters import resolve_filter_config
-from simpletuner.helpers.data_backend.source_inventory import SourceShard
+from simpletuner.helpers.data_backend.source_inventory import SourceShard, SourceShardSample
 
 # Import metadata backends at module load so tests can patch these names.
 from simpletuner.helpers.metadata.backends.aligned_conditioning import AlignedConditioningMetadata
@@ -165,6 +165,11 @@ class BaseBackendBuilder(ABC):
 
     def iter_source_shards(self, config: BaseBackendConfig) -> Iterator[SourceShard]:
         raise NotImplementedError("This dataset provider does not expose a shard listing.")
+
+    def read_source_shard(
+        self, config: BaseBackendConfig, shard: SourceShard, *, offset: int, limit: int
+    ) -> tuple[int, Iterator[SourceShardSample]]:
+        raise NotImplementedError("This dataset provider does not expose shard samples.")
 
     def __init__(self, accelerator: Any, args: Optional[Any] = None) -> None:
         self.accelerator = accelerator

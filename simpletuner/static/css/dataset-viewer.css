@@ -101,6 +101,10 @@
     overflow-wrap: anywhere;
 }
 
+.viewer-shard-sample {
+    cursor: default;
+}
+
 .viewer-dashboard {
     display: grid;
     grid-template-columns: 1fr 1fr;
