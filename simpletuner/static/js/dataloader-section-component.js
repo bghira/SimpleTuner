@@ -157,7 +157,7 @@ function dataloaderSectionComponent() {
         return this._trainerCache;
     },
     get dataLoaderMode() {
-        return this.trainer.dataLoaderMode || 'builder';
+        return this.datasetConfigReadOnly ? 'builder' : (this.trainer.dataLoaderMode || 'builder');
     },
     get datasets() {
         return this.trainer.datasets || [];
