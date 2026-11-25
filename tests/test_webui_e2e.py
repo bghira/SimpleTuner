@@ -3759,25 +3759,27 @@ class RemoteWorkerDatasetsTestCase(_TrainingWorkerFixture, _TrainerPageMixin, We
             row = (By.CSS_SELECTOR, '#dataloaderSection [data-dataset-id="remote-images-updated"]')
             wait.until(EC.visibility_of_element_located(row))
             click((By.CSS_SELECTOR, 'button[title="Grid view"]'))
-            wait.until(
-                EC.visibility_of_element_located(
-                    (By.CSS_SELECTOR, '.dataset-grid-card[data-dataset-id="remote-images-updated"]')
-                )
-            )
+            grid_row = (By.CSS_SELECTOR, '.dataset-grid-card[data-dataset-id="remote-images-updated"]')
+            wait.until(EC.visibility_of_element_located(grid_row))
             assert_storage("dataset-grid-card", "remote-images-updated", "grid-card-path", source, source)
             assert_storage("dataset-grid-card", "online-text", "grid-card-path", "Online encoding", online_title)
             assert_storage("dataset-grid-card", "cached-text", "grid-card-path", "text/precomputed", cached["cache_dir"])
             self.assertIn("Lead GPU", driver.find_element(By.ID, "datasets-tab-content").text)
             self.assertFalse(driver.find_elements(By.CSS_SELECTOR, '[data-dataset-id="other-run-images"]'))
 
-            wait.until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, "#dataloaderSection .mode-switcher button:nth-child(2)"))
-            ).click()
-            json_editor = wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "#dataloaderSection textarea")))
-            self.assertEqual(json_editor.get_dom_attribute("readonly"), "true")
-            expected = [{**updated, "aws_endpoint_url": endpoint, "aws_region_name": "us-east-2"}, online, cached]
-            self.assertEqual(json.loads(json_editor.get_property("value")), expected)
+            driver.execute_script("Alpine.store('trainer').switchDataLoaderMode('json')")
+            controls = "#dataloaderSection .mode-switcher button, #dataloaderSection .dataset-actions-row button"
+            json_editor_locator = (By.CSS_SELECTOR, "#dataloaderSection .json-editor-container textarea")
+            window_size = driver.get_window_size()
+            for width in (1280, 390):
+                driver.set_window_size(width, window_size["height"])
+                self.assertEqual(driver.execute_script("return matchMedia('(max-width: 768px)').matches"), width <= 768)
+                wait.until(EC.visibility_of_element_located(grid_row))
+                self.assertFalse(any(button.is_displayed() for button in driver.find_elements(By.CSS_SELECTOR, controls)))
+                self.assertFalse(driver.find_elements(*json_editor_locator))
+            driver.set_window_size(window_size["width"], window_size["height"])
 
+            expected = [{**updated, "aws_endpoint_url": endpoint, "aws_region_name": "us-east-2"}, online, cached]
             click((By.XPATH, '//div[@id="datasets-tab-content"]//button[normalize-space()="Pull locally"]'))
             enable = (By.XPATH, '//button[normalize-space()="Enable local copy"]')
             wait.until(EC.element_to_be_clickable(enable))
@@ -3787,7 +3789,7 @@ class RemoteWorkerDatasetsTestCase(_TrainingWorkerFixture, _TrainerPageMixin, We
             self.assertEqual(
                 json.loads((remote_dir / dataset_file).read_text()), [{"id": "stale-local-copy", "type": "local"}]
             )
-            self.assertEqual(json_editor.get_dom_attribute("readonly"), "true")
+            self.assertFalse(driver.find_elements(*json_editor_locator))
             self.assertEqual(json.loads((remote_dir / "config.json").read_text()), model_config)
 
             click(enable)
@@ -3799,6 +3801,8 @@ class RemoteWorkerDatasetsTestCase(_TrainingWorkerFixture, _TrainerPageMixin, We
             )
             driver.execute_script("Alpine.$data(document.querySelector('.dashboard-wrapper')).eventDockCollapsed = true")
             wait.until(EC.invisibility_of_element_located((By.CSS_SELECTOR, ".toast.show")))
+            click((By.CSS_SELECTOR, "#dataloaderSection .mode-switcher button:nth-child(2)"))
+            json_editor = wait.until(EC.visibility_of_element_located(json_editor_locator))
             self.assertIsNone(json_editor.get_dom_attribute("readonly"))
             edited = json.loads(json_editor.get_property("value"))
             edited[0]["id"] = "local-edited-images"

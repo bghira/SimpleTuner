@@ -86,7 +86,7 @@
         <p x-show="!datasetsLoading && trainer.remoteDatasetConfig?.error" class="alert alert-secondary" role="status"
            x-text="trainer.remoteDatasetConfig?.error"></p>
         <!-- Mode Switcher (desktop) -->
-        <div class="mode-switcher mb-3">
+        <div class="mode-switcher mb-3" x-show.important="!datasetConfigReadOnly" x-cloak>
             <button type="button" class="btn"
                     :class="{ 'active': dataLoaderMode === 'builder' }"
                     @click="switchDataLoaderMode('builder')"
@@ -102,7 +102,7 @@
         </div>
 
         <!-- Unified Actions Row (mobile) - All buttons in one row -->
-        <div class="dataset-actions-row">
+        <div class="dataset-actions-row" x-show.important="!datasetConfigReadOnly" x-cloak>
             <button type="button" class="btn"
                     :class="{ 'active': dataLoaderMode === 'builder' }"
                     @click="switchDataLoaderMode('builder')"
@@ -118,14 +118,12 @@
                 <i class="fas fa-code"></i><span>JSON</span>
             </button>
             <button type="button" class="btn btn-primary"
-                    x-show="!datasetConfigReadOnly"
                     @click.prevent="openNewConfigModal ? openNewConfigModal() : null"
                     title="Create a new multidatabackend configuration file"
                     aria-label="Create new configuration">
                 <i class="fas fa-file-plus"></i><span>New</span>
             </button>
             <button type="button" class="btn btn-success"
-                    x-show="!datasetConfigReadOnly"
                     @click.prevent="openWizard ? openWizard() : null"
                     title="Add a dataset to the current configuration"
                     aria-label="Open dataset wizard">
