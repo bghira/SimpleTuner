@@ -1278,6 +1278,76 @@ class TestWebshartParquetBackend(unittest.TestCase):
                 self.assertEqual(cls.call_args.kwargs[key], payload[key])
             self.assertEqual(cls.call_args.kwargs["format"], "parquet")
 
+    def test_s3_discovery_uses_host_profile_without_serializing_credentials(self):
+        config = self.root / "aws-config"
+        credentials = self.root / "aws-credentials"
+        config.write_text(
+            "[profile scan]\nregion = us-east-2\nservices = capture\n"
+            "[services capture]\ns3 =\n  endpoint_url = https://storage.example\n"
+        )
+        credentials.write_text(
+            "[scan]\naws_access_key_id = profile-access\naws_secret_access_key = profile-secret\n"
+            "aws_session_token = profile-token\n"
+            "[default]\naws_access_key_id = default-access\naws_secret_access_key = default-secret\n"
+        )
+        profile_env = {
+            "AWS_PROFILE": "scan",
+            "AWS_CONFIG_FILE": str(config),
+            "AWS_SHARED_CREDENTIALS_FILE": str(credentials),
+        }
+        with (
+            patch.dict("os.environ", profile_env, clear=True),
+            patch("webshart.discover_dataset", return_value=self.backend.dataset) as discover,
+        ):
+            backend = WebshartDataBackend(
+                None, "profile-images", "s3://images", format="parquet", cache_dir=str(self.root / "profile-cache")
+            )
+            self.assertEqual(
+                discover.call_args.kwargs["s3_options"],
+                {
+                    "aws_access_key_id": "profile-access",
+                    "aws_secret_access_key": "profile-secret",
+                    "aws_session_token": "profile-token",
+                    "endpoint_url": "https://storage.example",
+                    "region_name": "us-east-2",
+                    "max_connections": 32,
+                },
+            )
+            serialized = json.dumps(backend.get_instance_representation())
+            for marker in ("profile-access", "profile-secret", "profile-token"):
+                self.assertNotIn(marker, serialized)
+
+            with patch.dict("os.environ", {"AWS_CONTAINER_CREDENTIALS_RELATIVE_URI": "/role"}):
+                WebshartDataBackend(
+                    None, "role-images", "s3://images", format="parquet", cache_dir=str(self.root / "role-cache")
+                )
+                self.assertNotIn("aws_access_key_id", discover.call_args.kwargs["s3_options"])
+
+        profile_env.pop("AWS_PROFILE")
+        with (
+            patch.dict("os.environ", profile_env, clear=True),
+            patch("webshart.discover_dataset", return_value=self.backend.dataset) as discover,
+        ):
+            WebshartDataBackend(
+                None,
+                "copied-images",
+                "s3://images",
+                format="parquet",
+                cache_dir=str(self.root / "copied-cache"),
+                aws_endpoint_url="https://storage.example",
+            )
+            self.assertEqual(discover.call_args.kwargs["s3_options"]["aws_access_key_id"], "profile-access")
+            with patch.dict("os.environ", {"AWS_PROFILE": "default"}):
+                WebshartDataBackend(
+                    None,
+                    "explicit-profile",
+                    "s3://images",
+                    format="parquet",
+                    cache_dir=str(self.root / "explicit-profile-cache"),
+                    aws_endpoint_url="https://storage.example",
+                )
+                self.assertEqual(discover.call_args.kwargs["s3_options"]["aws_access_key_id"], "default-access")
+
     def test_missing_and_corrupt_images_are_counted_as_decode_failures(self):
         self.rows[2]["image"]["bytes"] = b"broken image"
         pq.write_table(pa.Table.from_pylist(self.rows), self.source / "part.parquet", row_group_size=2)

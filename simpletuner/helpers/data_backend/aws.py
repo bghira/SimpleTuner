@@ -63,6 +63,14 @@ def normalise_s3_prefixes(prefix: Union[str, Sequence[str], None]) -> tuple[str,
     raise ValueError("aws_data_prefix must be a string or a list of strings.")
 
 
+def _s3_client(options: dict, config: Config):
+    from simpletuner.helpers.data_backend.s3_settings import resolve_s3_options
+
+    resolved = resolve_s3_options({key: value for key, value in options.items() if value is not None})
+    resolved.setdefault("region_name", "us-east-1")
+    return boto3.client("s3", config=config, **resolved)
+
+
 class S3DataBackend(BaseDataBackend):
     supports_artifact_presence_listing = True
 
@@ -100,19 +108,15 @@ class S3DataBackend(BaseDataBackend):
         self.aws_session_token = aws_session_token
         self.type = "aws"
 
-        extra_args = {"region_name": region_name}
-        if endpoint_url:
-            # If using endpoint_url, we do not use region
-            extra_args = {"endpoint_url": endpoint_url}
-
-        s3_config = Config(max_pool_connections=self.max_pool_connections)
-        self.client = boto3.client(
-            "s3",
-            aws_access_key_id=aws_access_key_id,
-            aws_secret_access_key=aws_secret_access_key,
-            aws_session_token=aws_session_token,
-            config=s3_config,
-            **extra_args,
+        self.client = _s3_client(
+            {
+                "region_name": region_name,
+                "endpoint_url": endpoint_url,
+                "aws_access_key_id": aws_access_key_id,
+                "aws_secret_access_key": aws_secret_access_key,
+                "aws_session_token": aws_session_token,
+            },
+            Config(max_pool_connections=self.max_pool_connections),
         )
 
     def get_instance_representation(self) -> dict:
@@ -569,33 +573,24 @@ def test_s3_connection(
     aws_session_token: Optional[str] = None,
     max_keys: int = 5,
 ) -> Dict[str, Any]:
-    """Run a minimal connectivity check against an S3 bucket."""
+    """Check S3 access using a bounded listing for each configured prefix."""
 
     if not bucket_name:
         raise ValueError("aws_bucket_name is required")
 
-    extra_args = {"region_name": region_name or "us-east-1"}
-    if endpoint_url:
-        extra_args = {"endpoint_url": endpoint_url}
-
-    s3_config = Config(max_pool_connections=32)
-
     try:
-        client = boto3.client(
-            "s3",
-            aws_access_key_id=aws_access_key_id,
-            aws_secret_access_key=aws_secret_access_key,
-            aws_session_token=aws_session_token,
-            config=s3_config,
-            **extra_args,
+        client = _s3_client(
+            {
+                "region_name": region_name,
+                "endpoint_url": endpoint_url,
+                "aws_access_key_id": aws_access_key_id,
+                "aws_secret_access_key": aws_secret_access_key,
+                "aws_session_token": aws_session_token,
+            },
+            Config(connect_timeout=5, read_timeout=10, retries={"total_max_attempts": 2}),
         )
     except Exception as exc:  # pragma: no cover - boto3 raises varied subclasses
-        raise ValueError(f"Failed to create S3 client: {exc}") from exc
-
-    try:
-        client.head_bucket(Bucket=bucket_name)
-    except Exception as exc:
-        raise ValueError(f"Unable to access bucket '{bucket_name}': {exc}") from exc
+        raise ValueError("Failed to create S3 client. Check the endpoint, region and credentials.") from exc
 
     prefixes = normalise_s3_prefixes(prefix)
     sample_keys = []
@@ -618,7 +613,7 @@ def test_s3_connection(
                 sample_keys = sample_keys[:max_keys]
                 break
     except Exception as exc:
-        raise ValueError(f"Failed to list objects in bucket '{bucket_name}': {exc}") from exc
+        raise ValueError(f"Unable to list objects for the configured prefix in bucket '{bucket_name}'.") from exc
 
     return {
         "bucket": bucket_name,

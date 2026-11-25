@@ -327,6 +327,22 @@ class WorkerAgent:
         datasets = json.loads(dataloader_path.read_text(encoding="utf-8"))
         if not isinstance(datasets, list) or not all(isinstance(dataset, dict) for dataset in datasets):
             raise ValueError("Expected a list of datasets")
+        from simpletuner.helpers.data_backend.s3_settings import resolve_s3_options
+
+        for dataset in datasets:
+            if dataset.get("type") != "webshart":
+                continue
+            webshart = dataset.get("webshart") or {}
+            source = dataset.get("source") or webshart.get("source") or ""
+            if not source.startswith("s3://"):
+                continue
+            keys = {"region_name": "aws_region_name", "endpoint_url": "aws_endpoint_url"}
+            explicit = {key: dataset[field] for key, field in keys.items() if dataset.get(field)}
+            resolved = resolve_s3_options(explicit, use_profile_credentials=False)
+            for key, field in keys.items():
+                if key in resolved:
+                    dataset[field] = resolved[key]
+
         return redact_dataset_config(datasets)
 
     async def _send_dataset_config(self, job: dict, config_path: Path, request_id: str) -> None:

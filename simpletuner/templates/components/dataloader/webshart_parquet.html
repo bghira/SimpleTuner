@@ -37,7 +37,7 @@
             <div class="col-md-3"><label class="form-label small">Height Column</label>
                 <input class="form-control form-control-sm" x-model="{{ storage_dataset }}.webshart.columns.height" @input="touchConnectionField({{ storage_dataset }})" placeholder="height"></div>
         </div>
-        <div class="form-text small">S3 credentials may be supplied through AWS environment variables or the fields below.</div>
+        <div class="form-text small">S3 can use the host’s AWS environment or shared profile. Enter an endpoint below for S3-compatible storage if the host does not already supply one.</div>
         <label class="form-label small mt-2">S3 Region</label>
         <input type="text" class="form-control form-control-sm" x-model="{{ storage_dataset }}.aws_region_name" @input="touchConnectionField({{ storage_dataset }})" autocomplete="off">
         <label class="form-label small mt-2">S3 Endpoint</label>

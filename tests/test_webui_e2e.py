@@ -3517,6 +3517,63 @@ class DatasetManagementTestCase(_TrainerPageMixin, WebUITestCase):
         self.for_each_browser("test_add_and_remove_dataset", scenario)
 
 
+class WebShartConnectionTestCase(_TrainerPageMixin, WebUITestCase):
+    SERVER_MODE = ServerMode.UNIFIED
+    MAX_BROWSERS = 1
+
+    def test_plug_enables_for_webshart_and_displays_connection_result(self):
+        self.seed_defaults()
+        source = self.home_path / "local-webshart"
+        source.mkdir()
+        datasets = [
+            {
+                "id": dataset_id,
+                "type": "webshart",
+                "dataset_type": "image",
+                "source": path,
+                "resolution": 256,
+                "caption_strategy": "webshart",
+                "metadata_backend": "webshart",
+                "webshart": {"format": "parquet"},
+            }
+            for dataset_id, path in (("local-webshart", str(source)), ("network-webshart", "s3:///missing-bucket"))
+        ]
+        (self.config_dir / "default" / "multidatabackend.json").write_text(json.dumps(datasets))
+
+        def scenario(driver, _):
+            driver.get(f"{self.base_url}/web/trainer#datasets")
+            wait = WebDriverWait(driver, 20)
+            self.dismiss_onboarding(driver)
+
+            def click(locator):
+                button = wait.until(EC.element_to_be_clickable(locator))
+                self.dismiss_onboarding(driver)
+                driver.execute_script("arguments[0].scrollIntoView({block: 'center'})", button)
+                button.click()
+
+            click((By.CSS_SELECTOR, "#datasets-tab-content .hero-dismiss-btn"))
+            click((By.CSS_SELECTOR, '#dataloaderSection button[title="Grid view"]'))
+            selector = '.dataset-grid-card[data-dataset-id="{}"] button[title="Test connection"]'
+            local = selector.format("local-webshart")
+            click((By.CSS_SELECTOR, local))
+            wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, local + ".text-success")))
+            network = selector.format("network-webshart")
+            wait.until(EC.invisibility_of_element_located((By.CSS_SELECTOR, ".toast.show")))
+            click((By.CSS_SELECTOR, network))
+            wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, network + ".text-danger")))
+            self.assertIn(
+                "s3://bucket",
+                driver.execute_script(
+                    """
+                return Alpine.store('trainer').datasets
+                    .find(dataset => dataset.id === 'network-webshart')._connectionMessage;
+                """
+                ),
+            )
+
+        self.for_each_browser("webshart_connection", scenario)
+
+
 class RemoteWorkerDatasetsTestCase(_TrainingWorkerFixture, _TrainerPageMixin, WebUITestCase):
     SERVER_MODE = ServerMode.UNIFIED
     MAX_BROWSERS = 1
@@ -3525,6 +3582,7 @@ class RemoteWorkerDatasetsTestCase(_TrainingWorkerFixture, _TrainerPageMixin, We
         import asyncio
         from concurrent.futures import ThreadPoolExecutor
         from threading import Event
+        from unittest.mock import patch
 
         import httpx
 
@@ -3556,6 +3614,7 @@ class RemoteWorkerDatasetsTestCase(_TrainingWorkerFixture, _TrainerPageMixin, We
         worker_config = self.home_path / "worker-launch.json"
         worker_config.write_text(json.dumps({"--data_backend_config": str(worker_file)}))
         source = "s3://training-images"
+        endpoint = "https://storage.example"
         dataset = {
             "id": "remote-images",
             "type": "webshart",
@@ -3591,12 +3650,13 @@ class RemoteWorkerDatasetsTestCase(_TrainingWorkerFixture, _TrainerPageMixin, We
                     connected.set()
                     served = 0
                     async for line in stream.aiter_lines():
-                        await agent._handle_sse_line(line)
-                        if agent._dataset_config_tasks:
-                            await asyncio.gather(*agent._dataset_config_tasks)
-                            served += 1
-                            if served == 3:
-                                return
+                        with patch.dict("os.environ", {"AWS_ENDPOINT_URL_S3": endpoint, "AWS_REGION": "us-east-2"}):
+                            await agent._handle_sse_line(line)
+                            if agent._dataset_config_tasks:
+                                await asyncio.gather(*agent._dataset_config_tasks)
+                                served += 1
+                                if served == 3:
+                                    return
 
         def scenario(driver, _):
             executor = ThreadPoolExecutor(max_workers=1)
@@ -3669,14 +3729,15 @@ class RemoteWorkerDatasetsTestCase(_TrainingWorkerFixture, _TrainerPageMixin, We
             ).click()
             json_editor = wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "#dataloaderSection textarea")))
             self.assertEqual(json_editor.get_dom_attribute("readonly"), "true")
-            self.assertEqual(json.loads(json_editor.get_property("value")), [updated, online, cached])
+            expected = [{**updated, "aws_endpoint_url": endpoint, "aws_region_name": "us-east-2"}, online, cached]
+            self.assertEqual(json.loads(json_editor.get_property("value")), expected)
 
             click((By.XPATH, '//div[@id="datasets-tab-content"]//button[normalize-space()="Pull locally"]'))
             enable = (By.XPATH, '//button[normalize-space()="Enable local copy"]')
             wait.until(EC.element_to_be_clickable(enable))
             worker.result(timeout=5)
             local_copy = remote_dir / "multidatabackend.worker.json"
-            self.assertEqual(json.loads(local_copy.read_text()), [updated, online, cached])
+            self.assertEqual(json.loads(local_copy.read_text()), expected)
             self.assertEqual(
                 json.loads((remote_dir / dataset_file).read_text()), [{"id": "stale-local-copy", "type": "local"}]
             )
@@ -3714,7 +3775,11 @@ class RemoteWorkerDatasetsTestCase(_TrainingWorkerFixture, _TrainerPageMixin, We
             click((By.XPATH, '//div[@id="dataloaderSection"]//button[contains(., "Apply & Save JSON")]'))
             response = wait.until(lambda d: d.execute_script("return window.datasetSaveResponse"))
             self.assertTrue(response["ok"], response["body"])
-            self.assertEqual(json.loads(local_copy.read_text())[0]["id"], "local-edited-images")
+            saved = json.loads(local_copy.read_text())[0]
+            self.assertEqual(saved["id"], "local-edited-images")
+            self.assertEqual(saved["aws_endpoint_url"], endpoint)
+            self.assertEqual(saved["aws_region_name"], "us-east-2")
+            self.assertNotIn("aws_secret_access_key", saved)
             driver.refresh()
             self.dismiss_onboarding(driver)
             wait.until(EC.element_to_be_clickable(save))

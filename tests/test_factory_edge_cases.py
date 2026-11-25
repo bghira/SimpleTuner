@@ -1424,8 +1424,19 @@ class TestFactoryEdgeCases(unittest.TestCase):
             with self.assertRaises((ValueError, KeyError)):
                 factory.configure_data_backends(loaded_config)
 
-    def test_aws_backend_invalid_config(self):
-        """Test AWS backend with missing credentials."""
+    @patch("boto3.DEFAULT_SESSION", None)
+    @patch.dict(
+        os.environ,
+        {
+            "AWS_CONFIG_FILE": os.devnull,
+            "AWS_SHARED_CREDENTIALS_FILE": os.devnull,
+            "AWS_EC2_METADATA_DISABLED": "true",
+        },
+        clear=True,
+    )
+    def test_aws_backend_without_host_or_dataset_credentials(self):
+        from botocore.exceptions import NoCredentialsError
+
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
 
         config = [
@@ -1460,8 +1471,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
         with patch("simpletuner.helpers.data_backend.factory.StateTracker") as mock_state_tracker:
             self._setup_state_tracker_mocks(mock_state_tracker)
 
-            # Should raise an error during AWS config validation
-            with self.assertRaises((ValueError, KeyError)):
+            with self.assertRaises(NoCredentialsError):
                 factory.configure_data_backends(loaded_config)
 
     @patch("simpletuner.helpers.data_backend.factory.FactoryRegistry._validate_dataset_paths")

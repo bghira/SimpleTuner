@@ -607,18 +607,12 @@ function dataloaderSectionComponent() {
         });
     },
     supportsConnectionTest(dataset) {
-        if (!dataset) {
-            return false;
+        if (!dataset) return false;
+        if (dataset.type === 'webshart') {
+            const source = dataset.source || dataset.webshart?.source;
+            return typeof source === 'string' && Boolean(source.trim());
         }
-        const type = dataset.type || '';
-        const datasetType = dataset.dataset_type || '';
-        if (['aws', 'csv', 'huggingface'].includes(type)) {
-            return true;
-        }
-        if (datasetType === 'image_embeds') {
-            return true;
-        }
-        return false;
+        return ['aws', 'csv', 'huggingface'].includes(dataset.type);
     },
     touchConnectionField(dataset) {
         if (!dataset) {

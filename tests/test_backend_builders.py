@@ -412,23 +412,14 @@ class TestAwsBackendBuilder(unittest.TestCase):
         # Should not raise any exceptions
         self.builder._validate_aws_config(config)
 
-    def test_validate_aws_config_missing_field(self):
-        """Test AWS config validation with missing required field"""
-        config = ImageBackendConfig.from_dict(
-            {
-                "id": "test_aws",
-                "type": "aws",
-                "aws_bucket_name": "test-bucket",
-                "aws_region_name": "us-east-1",
-                # Missing other required fields
-            },
-            self.args,
-        )
+    def test_validate_aws_config_allows_host_credentials(self):
+        config = ImageBackendConfig.from_dict({"id": "test_aws", "type": "aws", "aws_bucket_name": "test-bucket"}, self.args)
+        self.builder._validate_aws_config(config)
 
-        with self.assertRaises(ValueError) as context:
+    def test_validate_aws_config_requires_bucket(self):
+        config = ImageBackendConfig.from_dict({"id": "test_aws", "type": "aws"}, self.args)
+        with self.assertRaisesRegex(ValueError, "aws_bucket_name"):
             self.builder._validate_aws_config(config)
-
-        self.assertIn("Missing required AWS configuration", str(context.exception))
 
 
 class TestCsvBackendBuilder(unittest.TestCase):

@@ -245,6 +245,9 @@
                         :disabled="$store.trainer.workerDatasetCopyPending"
                         @click="$store.trainer.updateWorkerDatasetCopy('enable')">Enable local copy</button>
             </div>
+            <p class="text-muted small mb-2" x-show="$store.trainer.workerDatasetCopy?.enabled">
+                Dataset scans use this server’s storage credentials. Remote training uses each worker’s credentials.
+            </p>
             <!-- Dataloader Config Selector -->
             <div class="d-flex align-items-center gap-3" x-show.important="!$store.trainer.datasetConfigReadOnly">
                 <div class="flex-grow-1">

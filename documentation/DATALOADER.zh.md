@@ -1466,7 +1466,7 @@ Webshart 数据集通过 `webshart` 包加载 WebDataset 风格的 tar shards。
 
 `webshart.columns` 将 `image`、`captions`、`width`、`height` 映射到源列名；省略时使用这些默认名称。图像列可以是二进制数据或包含 `bytes` 的结构体。`url_status != "ok"` 或 `stored_bytes` 为空的捕获行会被排除，物理行号保持不变。缺少尺寸的行不参与分桶。不会请求原始 URL；SimpleTuner 可以通过恢复结束标记来修复部分截断的 JPEG。启用 `delete_problematic_images` 可在原生索引准备期间排除仍无法解码的样本。未启用时，批次加载中的解码失败会停止训练并指出对应样本。
 
-使用现有顶层设置 `aws_region_name`、`aws_endpoint_url`、`aws_access_key_id`、`aws_secret_access_key`、`aws_session_token`、`aws_max_pool_connections`。端点不含桶名，并发 S3 请求默认为 32。省略密钥可使用 AWS 环境变量、Web 身份或容器/实例角色。此原生传输不读取共享配置文件。工作进程表示不包含凭据；需要时在子进程环境中导出 AWS 凭据。
+使用现有顶层设置 `aws_region_name`、`aws_endpoint_url`、`aws_access_key_id`、`aws_secret_access_key`、`aws_session_token`、`aws_max_pool_connections`。端点不含桶名，并发 S3 请求默认为 32。省略密钥时，Webshart 优先使用主机的 AWS 环境变量、Web 身份或容器凭据，然后读取共享 AWS 配置中的静态密钥。使用 `AWS_PROFILE` 选择具名配置。该配置也可提供 S3 端点和区域。未设置 `AWS_PROFILE` 时，S3 端点匹配的配置提供自己的密钥。数据集扫描使用 WebUI 服务器的凭据，远程训练使用工作进程的凭据。数据集副本保留端点和区域，并省略凭据。
 
 Rust 在 GIL 之外执行签名、范围请求、流式缓存下载和并行行组解码。`webshart.parallel_downloads` 还限制批次行组并发数。整片缓存默认为 25 GB；`webshart.shard_cache_gb: 0` 使用范围读取。字节保留存储格式；JPEG XL 需要安装 `pillow-jxl-plugin`。`webshart_optimize_captions` 仅用于 tar 边车文件。
 
