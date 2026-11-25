@@ -194,7 +194,12 @@ class CallbackService:
         self._bootstrap_from_store()
 
     def handle_incoming(
-        self, raw_payload: Mapping[str, Any], *, assigned_worker: Mapping[str, Any] | None = None
+        self,
+        raw_payload: Mapping[str, Any],
+        *,
+        assigned_worker: Mapping[str, Any] | None = None,
+        record_only: bool = False,
+        validation_delivery_id: str | None = None,
     ) -> CallbackEvent | None:
         """Normalise and persist a raw webhook payload."""
         if not isinstance(raw_payload, Mapping):
@@ -205,16 +210,27 @@ class CallbackService:
 
         if message_type == "configure_webhook":
             normalized_payload.setdefault("reset_history", True)
+        if validation_delivery_id is not None:
+            normalized_payload["worker_validation_delivery_id"] = validation_delivery_id
 
         event = CallbackEvent.from_message(normalized_payload)
 
-        status = self._training_status(event)
+        status = None if record_only else self._training_status(event)
         context = assigned_worker or {}
         if assigned_worker is None and event.job_id and status:
             context = _job_context(event.job_id)
         worker_terminal = assigned_worker is not None and status in TERMINAL_STATUSES
 
         with self._lock:
+            if validation_delivery_id is not None:
+                for index in reversed(self._index_order):
+                    previous = self._typed_by_index[index]
+                    if (
+                        previous.type == EventType.VALIDATION
+                        and previous.job_id == event.job_id
+                        and previous.raw.get("worker_validation_delivery_id") == validation_delivery_id
+                    ):
+                        return previous
             if self._should_suppress_event(event) and not worker_terminal:
                 return None
             if event.reset_history:
@@ -224,6 +240,8 @@ class CallbackService:
                 self._typed_by_index.clear()
                 self._index_order.clear()
             record = self._prepare_record(normalized_payload)
+            if record_only:
+                record["record_only"] = True
             index = self._store.add_event(record)
             typed_event = event.with_index(index)
             record["typed"] = typed_event.to_payload()
@@ -328,7 +346,7 @@ class CallbackService:
             return
 
         self._typed_by_index[index] = event
-        if event.job_id and (status := self._training_status(event)):
+        if event.job_id and not record.get("record_only") and (status := self._training_status(event)):
             self._update_training_state(event, status, _job_context(event.job_id), replay=True)
         self._append_index(index)
 

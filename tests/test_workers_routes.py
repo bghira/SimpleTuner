@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -656,7 +656,7 @@ class WorkerJobStatusTestCase(APITestCase, unittest.TestCase):
         self.client.close()
         super().tearDown()
 
-    def test_only_group_lead_publishes_validation_image_events(self):
+    def test_only_group_lead_publishes_idempotent_validation_events(self):
         from simpletuner.simpletuner_sdk.server.services.callback_service import CallbackService
         from simpletuner.simpletuner_sdk.server.services.event_store import EventStore
 
@@ -676,6 +676,7 @@ class WorkerJobStatusTestCase(APITestCase, unittest.TestCase):
         payload = {
             "message": "Validation: sample",
             "timestamp": "2026-01-01T00:00:00Z",
+            "delivery_id": "ccf3f45c-f488-4f89-96ed-05e54401956f",
             "images": ["iVBORw0KGgo="],
         }
         headers = {"X-Worker-Token": self.token}
@@ -705,9 +706,29 @@ class WorkerJobStatusTestCase(APITestCase, unittest.TestCase):
             self.assertEqual(event.data["worker"], self.worker.name)
 
             job.status = "completed"
+            job.completed_at = datetime.now(timezone.utc).isoformat()
             response = self.client.post(route, json=payload, headers=headers)
-            self.assertEqual(response.status_code, 409)
+            response.raise_for_status()
             self.assertEqual(len(callback_service.stream_since(-1)), 1)
+            late = {
+                "timestamp": payload["timestamp"],
+                "delivery_id": "c28bd33d-c280-4012-9734-4fd0b7ac2808",
+                "videos": [{"src": "data:video/mp4;base64,dmlkZW8=", "mime_type": "video/mp4"}],
+                "audios": [{"src": "data:audio/wav;base64,YXVkaW8=", "mime_type": "audio/wav"}],
+            }
+            response = self.client.post(route, json=late, headers=headers)
+            response.raise_for_status()
+            (late_event,) = callback_service.stream_since(event.index)
+            self.assertEqual(late_event.message, "Validation complete")
+            self.assertEqual(late_event.videos, tuple(late["videos"]))
+            self.assertEqual(late_event.audios, tuple(late["audios"]))
+            self.assertEqual(callback_service.training_runs_since(-1)[1], [])
+
+            job.metadata["group_check"] = True
+            self.assertEqual(self.client.post(route, json=late, headers=headers).status_code, 409)
+            job.metadata.pop("group_check")
+            job.completed_at = (datetime.now(timezone.utc) - timedelta(minutes=3)).isoformat()
+            self.assertEqual(self.client.post(route, json=late, headers=headers).status_code, 409)
 
     @patch.dict(BaseSQLiteStore._instances, clear=True)
     def test_dataset_request_is_scoped_to_the_visible_job_and_its_lead(self):

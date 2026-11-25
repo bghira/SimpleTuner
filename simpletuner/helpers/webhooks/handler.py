@@ -741,9 +741,25 @@ class WebhookHandler:
             else:
                 exclude_urls.update([url for url in exclude_webhook_urls if isinstance(url, str) and url])
 
-        # Send to all raw webhook backends that meet the log level
         telemetry = self._worker_telemetry
-        report_validation_images = telemetry is not None and payload.get("type") == "training.validation" and bool(images)
+        managed_validation = (
+            telemetry is not None and payload.get("type") == "training.validation" and any((images, videos, audios))
+        )
+        if managed_validation:
+            try:
+                media = {
+                    "images": self._encode_images(images),
+                    "videos": [item for source in videos or [] if (item := self._convert_video_to_base64(source))],
+                    "audios": [item for source in audios or [] if (item := self._convert_audio_to_base64(source))],
+                }
+                if any(media.values()):
+                    telemetry.enqueue_validation(
+                        {"message": payload.get("message"), "timestamp": payload["timestamp"], **media}
+                    )
+            except Exception as exc:
+                logging.warning("Could not prepare worker validation output: %s", exc)
+
+        # Send to all raw webhook backends that meet the log level.
         for backend in self.backends:
             if backend["webhook_type"] != "raw":
                 continue
@@ -751,8 +767,8 @@ class WebhookHandler:
                 continue
             if not self._check_level(message_level, backend["log_level"]):
                 continue
-            if report_validation_images and backend["webhook_url"].rstrip("/") == telemetry.callback_url:
-                report_validation_images = False
+            if managed_validation and backend["webhook_url"].rstrip("/") == telemetry.callback_url:
+                continue
 
             try:
                 self._send_request_to_backend(
@@ -766,15 +782,6 @@ class WebhookHandler:
                 )
             except Exception as e:
                 logging.error(f"Error sending raw webhook to {backend['webhook_url']}: {e}")
-
-        if report_validation_images:
-            try:
-                if encoded := self._encode_images(images):
-                    telemetry.enqueue_validation_images(
-                        {"message": payload.get("message"), "timestamp": payload["timestamp"], "images": encoded}
-                    )
-            except Exception as exc:
-                logging.warning("Could not prepare worker validation images: %s", exc)
 
     def send_lifecycle_stage(
         self,

@@ -11,13 +11,13 @@ import asyncio
 import json
 import logging
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, Dict, Literal, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field, FiniteFloat, StringConstraints
+from pydantic import BaseModel, Field, FiniteFloat, StringConstraints, model_validator
 
 from simpletuner.worker_protocol import WORKER_JOB_ACTIVE_STATUSES, WORKER_JOB_PROVIDERS, WORKER_LOG_TAIL_SIZE
 
@@ -99,10 +99,31 @@ class WorkerDatasets(BaseModel):
     dataloader: list[dict[str, Any]] | None
 
 
-class WorkerValidationImages(BaseModel):
+class WorkerValidationVideo(BaseModel):
+    src: Annotated[str, StringConstraints(pattern=r"^data:video/(mp4|webm);base64,[A-Za-z0-9+/]+={0,2}$")]
+    mime_type: Literal["video/mp4", "video/webm"]
+
+
+class WorkerValidationAudio(BaseModel):
+    src: Annotated[str, StringConstraints(pattern=r"^data:audio/(wav|mpeg|ogg|flac);base64,[A-Za-z0-9+/]+={0,2}$")]
+    mime_type: Literal["audio/wav", "audio/mpeg", "audio/ogg", "audio/flac"]
+
+
+class WorkerValidationOutput(BaseModel):
     message: str | None = None
     timestamp: datetime
-    images: list[Annotated[str, StringConstraints(pattern=r"^iVBORw0KGgo[A-Za-z0-9+/]*={0,2}$")]] = Field(min_length=1)
+    delivery_id: UUID | None = None
+    images: list[Annotated[str, StringConstraints(pattern=r"^iVBORw0KGgo[A-Za-z0-9+/]*={0,2}$")]] = Field(
+        default_factory=list
+    )
+    videos: list[WorkerValidationVideo] = Field(default_factory=list)
+    audios: list[WorkerValidationAudio] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def require_output(self) -> WorkerValidationOutput:
+        if not (self.images or self.videos or self.audios):
+            raise ValueError("Expected at least one validation output")
+        return self
 
 
 class CreateWorkerRequest(BaseModel):
@@ -708,12 +729,12 @@ async def return_job_datasets(
 
 
 @router.post("/job/{job_id}/validation")
-async def publish_validation_images(
+async def publish_validation_output(
     job_id: str,
-    request: WorkerValidationImages,
+    request: WorkerValidationOutput,
     x_worker_token: str = Header(..., alias="X-Worker-Token"),
 ) -> Dict[str, Any]:
-    """Publish completed validation images from the worker leading a job."""
+    """Publish completed validation outputs from the worker leading a job."""
     from ..services.cloud.storage.job_repository import get_job_repository
 
     worker = await validate_worker_token(x_worker_token)
@@ -721,20 +742,28 @@ async def publish_validation_images(
     metadata = job.metadata or {}
     if metadata.get("worker_id") != worker.worker_id:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="Only the lead worker can publish validation images"
+            status_code=status.HTTP_403_FORBIDDEN, detail="Only the lead worker can publish validation output"
         )
-    if job.is_terminal or metadata.get("group_check"):
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Job is not accepting validation images")
+    accepting_output = job.status in WORKER_JOB_ACTIVE_STATUSES
+    if job.is_terminal and job.completed_at:
+        completed_at = datetime.fromisoformat(job.completed_at)
+        accepting_output = datetime.now(timezone.utc) - completed_at <= timedelta(minutes=2)
+    if job.provider not in WORKER_JOB_PROVIDERS or metadata.get("group_check") or not accepting_output:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Job is not accepting validation output")
 
     get_default_callback_service().handle_incoming(
         {
             "type": EventType.VALIDATION.value,
             "job_id": job.job_id,
-            "message": request.message,
+            "message": request.message or "Validation complete",
             "timestamp": request.timestamp,
             "images": request.images,
+            "videos": [output.model_dump() for output in request.videos],
+            "audios": [output.model_dump() for output in request.audios],
             "data": {"worker": worker.name},
-        }
+        },
+        record_only=True,
+        validation_delivery_id=str(request.delivery_id) if request.delivery_id is not None else None,
     )
     return {"success": True}
 
