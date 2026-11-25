@@ -63,6 +63,7 @@ def _checkpoint_worker(rank, port, output_dir):
     trainer.model = SimpleNamespace()
     trainer.distiller = None
     trainer.hub_manager = None
+    trainer._hub_upload_futures = []
     trainer.checkpoint_manager = CheckpointManager(output_dir)
     for name in [
         "mark_optimizer_eval",
@@ -105,7 +106,7 @@ def _checkpoint_worker(rank, port, output_dir):
     dataset.sampler = sampler
     StateTracker.set_args(trainer.config)
     original_parameters = [p.detach().clone() for p in model.parameters()]
-    for tempdir, rolling in [(True, False), (False, True)]:
+    for tempdir, rolling in [(True, False), (False, True), (True, True)]:
         trainer.config.checkpointing_use_tempdir = tempdir
         trainer.state["global_step"] += 1
         random.seed(100 + rank)
@@ -154,12 +155,20 @@ class TestDistributedCheckpoint(unittest.TestCase):
             sock.bind(("127.0.0.1", 0))
             port = sock.getsockname()[1]
         with tempfile.TemporaryDirectory() as output_dir:
+            existing = Path(output_dir, "checkpoint-4-rolling")
+            existing.mkdir()
+            stale_file = existing / "stale.bin"
+            stale_file.write_bytes(b"old")
+            sibling = Path(output_dir, "checkpoint-4")
+            sibling.mkdir()
             context = mp.spawn(_checkpoint_worker, args=(port, output_dir), nprocs=2, join=False)
             try:
                 deadline = time.monotonic() + 120
                 while not context.join(timeout=1):
                     if time.monotonic() > deadline:
                         self.fail("Distributed checkpoint test timed out")
+                self.assertFalse(stale_file.exists())
+                self.assertTrue(sibling.is_dir())
             finally:
                 for process in context.processes:
                     if process.is_alive():

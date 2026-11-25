@@ -3604,11 +3604,16 @@ class TestTrainer(unittest.TestCase):
 
             checkpoint_dir = Path(tmpdir) / "checkpoint-100"
             stale_guard = checkpoint_dir / ".guard"
+            trainer._drain_hub_upload_futures = Mock()
             checkpoint_dir.mkdir()
+            stale_weights = checkpoint_dir / "old_weights.bin"
+            stale_weights.write_bytes(b"old")
             stale_guard.write_text("stale", encoding="utf-8")
 
             def save_state(path):
-                Path(path).mkdir(parents=True, exist_ok=True)
+                self.assertFalse(checkpoint_dir.exists())
+                trainer._drain_hub_upload_futures.assert_called_once_with(wait=True)
+                Path(path).mkdir(parents=True)
                 (Path(path) / "pytorch_lora_weights.safetensors").write_bytes(b"weights")
                 (Path(path) / "training_state.json").write_text(
                     json.dumps({"epoch": 2, "epoch_step": 20, "global_step": 100})
@@ -3624,7 +3629,10 @@ class TestTrainer(unittest.TestCase):
             )
 
             with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_datasets", return_value={}):
-                save_path = trainer.checkpoint_state_save(tmpdir, next_epoch=3)
+                with self.assertLogs("SimpleTuner", level="WARNING") as warnings:
+                    save_path = trainer.checkpoint_state_save(tmpdir, next_epoch=3)
+            self.assertIn(str(checkpoint_dir), warnings.output[0])
+            self.assertFalse(stale_weights.exists())
 
             self.assertEqual(save_path, str(checkpoint_dir))
             self.assertEqual(stale_guard.read_text(encoding="utf-8"), "complete\n")
@@ -3684,6 +3692,7 @@ class TestTrainer(unittest.TestCase):
                             _models=[],
                             is_main_process=is_main_process,
                             distributed_type=distributed_type,
+                            process_index=0 if is_main_process else 1,
                             save_state=Mock(side_effect=save_state),
                             wait_for_everyone=Mock(side_effect=wait_for_everyone),
                         )

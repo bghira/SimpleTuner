@@ -6646,11 +6646,13 @@ class Trainer:
         is_main_process = getattr(self.accelerator, "is_main_process", True)
         if fsdp_v2_run:
             logger.info("FSDP v2 detected; saving with sharded state dict (_use_dtensor disabled for NCCL compatibility).")
-        if is_main_process:
-            try:
-                os.remove(os.path.join(save_path_tmp, CHECKPOINT_GUARD_FILENAME))
-            except FileNotFoundError:
-                pass
+        with agree_process_failure("Preparing checkpoint directory", self.accelerator.process_index):
+            if is_main_process:
+                for path in dict.fromkeys((save_path, save_path_tmp)):
+                    if os.path.isdir(path):
+                        logger.warning("Removing existing checkpoint directory %s before saving.", path)
+                        self._drain_hub_upload_futures(wait=True)
+                        shutil.rmtree(path)
         if distributed_type != DistributedType.NO:
             self.accelerator.wait_for_everyone()
         self.accelerator.save_state(save_path_tmp)
