@@ -1003,7 +1003,7 @@ _BLUEPRINTS: List[BackendBlueprint] = [
                 {
                     "id": "webshart.shard_cache_dir",
                     "label": "shard cache directory",
-                    "description": "Storage for downloaded shards. Defaults to shard_cache under the dataset cache.",
+                    "description": "Storage for downloaded shards. Defaults to shard_cache under the dataset cache. Use {rank_group:2} in the path to group adjacent ranks with the same shard order.",
                     "type": "text",
                     "advanced": True,
                 },

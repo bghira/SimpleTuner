@@ -54,6 +54,21 @@ class TestConfigTemplateExpansion(unittest.TestCase):
                     },
                 )
 
+    def test_rank_group_is_resolved_when_the_dataset_is_opened(self):
+        template = "{env:CACHE_ROOT}/shards/{rank_group:2}"
+        config = [{"webshart": {"shard_cache_dir": template}}]
+        for rank in (0, 1, 2, 3, 8):
+            with self.subTest(rank=rank), patch.dict("os.environ", {"RANK": str(rank), "CACHE_ROOT": "cache"}):
+                cli_args = mapping_to_cli_args({"output_dir": template})
+                self.assertIn("--output_dir=cache/shards/{rank_group:2}", cli_args)
+                result = fill_variables_in_config_paths(args={}, config=config)
+                self.assertEqual(result[0]["webshart"]["shard_cache_dir"], f"cache/shards/{rank // 2}")
+
+    def test_rank_group_rejects_invalid_sizes(self):
+        for size in ("", "0", "-1", "1.5", "two"):
+            with self.subTest(size=size), self.assertRaisesRegex(ValueError, "positive integer"):
+                fill_variables_in_config_paths({}, [{"cache_dir": "{rank_group:" + size + "}"}])
+
     def test_modelspec_comment_runtime_placeholders_are_resolved(self):
         rendered = render_modelspec_comment(
             "step={current_step} epoch={current_epoch} ts={timestamp}",
