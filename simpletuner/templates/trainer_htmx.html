@@ -7435,12 +7435,8 @@ function trainerComponent() {
                             </button>
                             <dl class="training-run-heading">
                                 <div class="training-run-worker">
-                                    <dt x-text="run.worker_names?.length > 1 ? run.worker_names.length + ' workers' : run.worker ? 'Worker' : 'Job'"></dt>
-                                    <dd :title="run.worker_names?.join(', ') || run.job_id" x-text="run.worker_names?.join(', ') || run.worker || run.job_id"></dd>
-                                </div>
-                                <div class="training-run-gpu">
-                                    <dt>GPU</dt>
-                                    <dd x-text="run.gpu || '—'"></dd>
+                                    <dt>Workers</dt>
+                                    <dd x-text="run.worker_names?.length || 1"></dd>
                                 </div>
                                 <div class="training-run-env">
                                     <dt>Environment</dt>
@@ -7720,8 +7716,13 @@ function trainerComponent() {
                             <template x-for="target in manualTargets" :key="target.job_id">
                                 <button type="button" class="dropdown-item" :disabled="!target.available || manualPending"
                                         @click.stop="sendManualAction('{{ action }}', target)">
+                                    {% if action == 'validation' %}
+                                    <strong x-text="target.worker_count + (target.worker_count === 1 ? ' worker' : ' workers')"></strong>
+                                    <small x-text="target.config_name || '—'"></small>
+                                    {% else %}
                                     <strong x-text="target.name"></strong>
                                     <small :title="target.job_id" x-text="[target.gpu, target.config_name || target.job_id].filter(Boolean).join(' · ')"></small>
+                                    {% endif %}
                                     <small x-show="!target.available">Worker agent update required</small>
                                 </button>
                             </template>

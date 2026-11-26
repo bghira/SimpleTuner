@@ -1756,15 +1756,14 @@ body {
 
 .training-run-heading {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.35fr) 8rem;
-    grid-template-areas: "worker gpu env progress";
+    grid-template-columns: auto minmax(0, 1fr) 8rem;
+    grid-template-areas: "worker env progress";
     gap: 0.375rem 1rem;
     margin: 0 0 0.375rem;
     line-height: 1.25;
 }
 
 .training-run-worker { grid-area: worker; }
-.training-run-gpu { grid-area: gpu; }
 .training-run-env { grid-area: env; }
 .training-run-progress { grid-area: progress; }
 
@@ -1801,7 +1800,7 @@ body {
 @container (max-width: 40rem) {
     .training-run-heading {
         grid-template-columns: repeat(2, minmax(0, 1fr));
-        grid-template-areas: "worker progress" "gpu env";
+        grid-template-areas: "worker progress" "env env";
     }
 }
 

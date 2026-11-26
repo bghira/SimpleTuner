@@ -1109,10 +1109,21 @@ class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
 
         def scenario(driver, browser):
             with ExitStack() as connections:
-                jobs = [f"action-{browser}-{name}" for name in ("L40S", "H200", "Legacy")]
+                names = ("L40S", "H200", "Legacy")
+                environments = ("distributed-env", "single-env", "legacy-env")
+                jobs = [f"action-{browser}-{name}" for name in names]
                 streams = []
-                for job in jobs:
-                    self.register_job(job, job.rsplit("-", 1)[1], "GPU")
+                for index, (job, name, environment) in enumerate(zip(jobs, names, environments)):
+                    group = None
+                    if index == 0:
+                        group = {"worker_ids": [f"worker-{job}", "peer-worker"], "worker_names": [name, "Peer worker"]}
+                    self.register_job(job, name, "Test GPU", config_name=environment, group=group)
+                    requests.post(
+                        f"{self.base_url}/api/workers/job/{job}/status",
+                        headers={"X-Worker-Token": job + "-token"},
+                        json={"progress": {"current": 1, "total": 10}},
+                        timeout=5,
+                    ).raise_for_status()
                     stream = connections.enter_context(
                         requests.get(
                             f"{self.base_url}/api/workers/stream",
@@ -1131,6 +1142,13 @@ class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
                 driver.get(f"{self.base_url}/web")
                 self.dismiss_onboarding(driver)
                 wait = WebDriverWait(driver, 15)
+                for job, count, environment in zip(jobs, ("2", "1", "1"), environments):
+                    heading = (By.CSS_SELECTOR, f'.training-run[aria-label="{job}"] .training-run-heading')
+                    row = wait.until(EC.visibility_of_element_located(heading))
+                    self.assertEqual(
+                        [element.text for element in row.find_elements(By.TAG_NAME, "dd") if element.is_displayed()],
+                        [count, environment, "10%"],
+                    )
                 for action, idx in (("checkpoint", 1), ("validation", 0)):
                     button = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, f'[aria-controls="{action}-targets"]')))
                     self.dismiss_onboarding(driver)
@@ -1146,11 +1164,20 @@ class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
                     menu = wait.until(EC.visibility_of_element_located((By.ID, action + "-targets")))
                     choices = menu.find_elements(By.TAG_NAME, "button")
                     self.assertEqual(len(choices), 3)
-                    self.assertFalse(next(item for item in choices if "Legacy" in item.text).is_enabled())
                     self.assertGreaterEqual(menu.rect["x"], 0)
                     self.assertLessEqual(menu.rect["x"] + menu.rect["width"], driver.execute_script("return innerWidth"))
-                    expected = jobs[idx].rsplit("-", 1)[1]
-                    next(item for item in choices if expected in item.text).click()
+                    if action == "validation":
+                        by_environment = {item.find_element(By.TAG_NAME, "small").text: item for item in choices}
+                        for environment, label in zip(environments, ("2 workers", "1 worker", "1 worker")):
+                            choice = by_environment[environment]
+                            self.assertEqual(choice.find_element(By.TAG_NAME, "strong").text, label)
+                            self.assertNotIn("Test GPU", choice.text)
+                            self.assertNotIn("Peer worker", choice.text)
+                        self.assertFalse(by_environment["legacy-env"].is_enabled())
+                        by_environment[environments[idx]].click()
+                    else:
+                        self.assertFalse(next(item for item in choices if "Legacy" in item.text).is_enabled())
+                        next(item for item in choices if names[idx] in item.text).click()
                     message = next(line for line in streams[idx] if line.startswith(b"data: "))
                     self.assertEqual(
                         json.loads(message[6:]), {"type": "job_manual_action", "job_id": jobs[idx], "action": action}
@@ -1193,8 +1220,8 @@ class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
                 return driver.find_element(By.CSS_SELECTOR, f'.training-run[aria-label="{job}"]')
 
             wait.until(lambda _: "8 samples/s" in row(first).text)
-            gpu = "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition"
-            self.register_job(second, "large-batch", gpu)
+            environment = "large-batch-with-a-long-environment-name-for-responsive-layout"
+            self.register_job(second, "large-batch", "H200", config_name=environment)
             worker_url = f"{self.base_url}/api/workers/job/{second}/status"
             headers = {"X-Worker-Token": second + "-token"}
             requests.post(
@@ -1250,9 +1277,9 @@ class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
                 field.find_element(By.TAG_NAME, "dt").text: field.find_element(By.TAG_NAME, "dd").text
                 for field in row(second).find_elements(By.CSS_SELECTOR, ".training-run-heading > div")
             }
-            self.assertEqual(fields["Worker"], "large-batch")
-            self.assertEqual(fields["Environment"], "large-batch")
-            self.assertEqual(fields["GPU"], gpu)
+            self.assertEqual(fields["Workers"], "1")
+            self.assertEqual(fields["Environment"], environment)
+            self.assertNotIn("GPU", fields)
             report(first, "running", {"current": 9, "total": 10})
             wait.until(lambda _: "90%" in row(first).text)
             self.assertIn("8 samples/s", row(first).text)
@@ -1310,7 +1337,8 @@ class SplitWorkerStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
             )
             self.assertIn("Loss 0.7500", row.text)
             self.assertIn("20%", row.text)
-            self.assertIn("training-worker", row.text)
+            self.assertEqual(row.find_element(By.CSS_SELECTOR, ".training-run-worker dd").text, "1")
+            self.assertEqual(row.find_element(By.CSS_SELECTOR, ".training-run-env dd").text, "large-batch")
 
         self.for_each_browser("split_worker_heartbeat", scenario)
 
