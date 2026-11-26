@@ -350,7 +350,8 @@
                                         @click="viewLogs(selectedJob.job_id)">
                                     <i class="fas fa-file-alt me-1"></i>View Logs
                                 </button>
-                                <template x-if="$store.trainingProgressVisibility.isDismissed(selectedJob.job_id)">
+                                <template x-if="$store.trainingProgressVisibility.isDismissed(selectedJob.job_id)
+                                                && $store.trainer.trainingRuns.some(run => run.job_id === selectedJob.job_id)">
                                     <button type="button"
                                             class="btn btn-sm btn-outline-secondary flex-grow-1"
                                             @click="$store.trainingProgressVisibility.restore(selectedJob.job_id); $dispatch('training-progress-restored', selectedJob.job_id)"

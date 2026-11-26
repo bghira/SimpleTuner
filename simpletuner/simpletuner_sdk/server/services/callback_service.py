@@ -22,6 +22,8 @@ from .sse_manager import get_sse_manager
 logger = logging.getLogger(__name__)
 
 TERMINAL_STATUSES = {"completed", "success", "failed", "error", "fatal", "crashed", "cancelled", "stopped", "terminated"}
+ACTIVE_TRAINING_STATUSES = {"starting", "initializing", "training", "running"}
+RUN_STATUS_REFRESH_SECONDS = 2
 
 
 def _update_job_store_status(job_id: str | None, status: str) -> None:
@@ -191,6 +193,9 @@ class CallbackService:
         self._job_status: dict[str, str] = {}
         self._runs: dict[str, dict[str, Any]] = {}
         self._runs_revision = 0
+        self._inactive_run_statuses: dict[str, str] = {}
+        self._next_run_status_refresh = 0.0
+        self._run_status_refresh_lock = asyncio.Lock()
         self._bootstrap_from_store()
 
     def handle_incoming(
@@ -616,6 +621,30 @@ class CallbackService:
         current = APIState.get_state("current_job_id")
         return not run.get("assigned_worker") and (job_id == current if current else bool(run.get("local")))
 
+    async def training_progress_since(
+        self, revision: int, user: User | None = None
+    ) -> tuple[int, list[dict[str, Any]] | None]:
+        """Reconcile progress events with job states changed outside the callback feed."""
+        from .cloud.storage.job_repository import get_job_repository
+
+        async with self._run_status_refresh_lock:
+            if time.monotonic() >= self._next_run_status_refresh:
+                with self._lock:
+                    job_ids = [job_id for job_id, run in self._runs.items() if run["status"] in ACTIVE_TRAINING_STATUSES]
+                jobs = await get_job_repository().list(job_ids=job_ids, limit=len(job_ids)) if job_ids else []
+                inactive = {}
+                for job in jobs:
+                    if job.status not in ACTIVE_TRAINING_STATUSES:
+                        inactive[job.job_id] = job.status
+                    elif job.metadata.get("orphaned") or job.completed_at:
+                        inactive[job.job_id] = "orphaned"
+                with self._lock:
+                    if self._inactive_run_statuses != inactive:
+                        self._inactive_run_statuses = inactive
+                        self._runs_revision += 1
+                self._next_run_status_refresh = time.monotonic() + RUN_STATUS_REFRESH_SECONDS
+        return self.training_runs_since(revision, user)
+
     def training_runs_since(self, revision: int, user: User | None = None) -> tuple[int, list[dict[str, Any]] | None]:
         with self._lock:
             if revision == self._runs_revision:
@@ -654,13 +683,21 @@ class CallbackService:
                         "gpu",
                         "config_name",
                         "updated_at",
-                        "status",
                         "validation",
                         "validation_at",
                     )
                 }
+                status = run["status"]
+                if status in ACTIVE_TRAINING_STATUSES:
+                    status = self._inactive_run_statuses.get(run["job_id"], status)
                 snapshots.append(
-                    {**summary, "is_local": local, "progress": stats, "terminal": run["status"] in TERMINAL_STATUSES}
+                    {
+                        **summary,
+                        "status": status,
+                        "is_local": local,
+                        "progress": stats,
+                        "terminal": status in TERMINAL_STATUSES,
+                    }
                 )
             return self._runs_revision, snapshots
 

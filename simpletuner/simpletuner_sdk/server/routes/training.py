@@ -635,7 +635,7 @@ async def get_training_events(request: Request, since_index: int = 0, _user: Use
 
     result = {"events": [], "job_id": job_id}
     if request.app.state.mode.value == "trainer":
-        _, result["training_runs"] = get_default_callback_service().training_runs_since(-1, _user)
+        _, result["training_runs"] = await get_default_callback_service().training_progress_since(-1, _user)
     if not job_id:
         return result
 
@@ -657,7 +657,7 @@ async def stream_training_events(websocket: WebSocket, _user: User = Depends(get
         runs_revision = -1
         while True:
             if websocket.app.state.mode.value == "trainer":
-                runs_revision, runs = get_default_callback_service().training_runs_since(runs_revision, _user)
+                runs_revision, runs = await get_default_callback_service().training_progress_since(runs_revision, _user)
                 if runs is not None:
                     await websocket.send_json({"training_runs": runs})
 

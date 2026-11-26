@@ -443,6 +443,10 @@ function trainingProgressVisibility() {
     };
 }
 
+function isActiveTrainingRun(run) {
+    return !run.terminal && ['starting', 'initializing', 'training', 'running'].includes(run.status);
+}
+
 function trainingProgressList() {
     return {
         query: '',
@@ -764,29 +768,20 @@ function trainerComponent() {
                     byJob.set(run.job_id, run);
                     continue;
                 }
-                // The same job can report to both servers. The worker owns its final status.
+                // Newer progress from either server cannot revive an inactive job.
                 const latest = run.progress.step > previous.progress.step ||
                     (run.progress.step === previous.progress.step && run.updated_at >= previous.updated_at) ? run : previous;
-                const state = run.terminal ? run : previous.terminal ? previous : latest;
+                const state = !isActiveTrainingRun(run) ? run : !isActiveTrainingRun(previous) ? previous : latest;
                 const phase = (run.validation_at ?? 0) >= (previous.validation_at ?? 0) ? run : previous;
                 byJob.set(run.job_id, {
-                    ...latest, validation_at: phase.validation_at, validation: state.terminal ? null : phase.validation, worker: run.worker || previous.worker, gpu: run.gpu || previous.gpu,
+                    ...latest, validation_at: phase.validation_at, validation: phase.validation, worker: run.worker || previous.worker, gpu: run.gpu || previous.gpu,
                     worker_names: run.worker_names || previous.worker_names,
                     config_name: run.config_name || previous.config_name, status: state.status,
                     terminal: state.terminal, updated_at: state.updated_at, is_local: run.is_local ?? previous.is_local,
                     progress: { ...latest.progress, percent: Math.max(previous.progress.percent, run.progress.percent) }
                 });
             }
-            // Older trainer and callback servers identify local jobs only by the worker label.
-            const localJobs = [...byJob.values()].filter(run => run.is_local ?? (run.worker === 'Local'));
-            if (localJobs.length > 1) {
-                const latestFinished = localJobs.some(run => !run.terminal) ? null :
-                    localJobs.reduce((latest, run) => run.updated_at >= latest.updated_at ? run : latest);
-                for (const run of localJobs) {
-                    if (run.terminal && run !== latestFinished) byJob.delete(run.job_id);
-                }
-            }
-            this.trainingRuns = Array.from(byJob.values(), run => {
+            this.trainingRuns = [...byJob.values()].filter(isActiveTrainingRun).map(run => {
                 const metrics = run.progress.metrics || {};
                 const stepSpeed = metrics.step_speed_seconds ?? metrics.iteration_step_time_seconds
                     ?? (metrics.steps_per_second > 0 ? 1 / metrics.steps_per_second : null);

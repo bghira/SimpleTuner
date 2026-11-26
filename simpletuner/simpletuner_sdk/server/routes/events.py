@@ -281,7 +281,7 @@ async def events_stream(request: Request, _user: User = Depends(get_current_user
                 runs_revision = -1
                 while connection.active:
                     try:
-                        runs_revision, runs = callback_service.training_runs_since(runs_revision, _user)
+                        runs_revision, runs = await callback_service.training_progress_since(runs_revision, _user)
                         if runs is not None:
                             await sse_manager.send_to_connection(
                                 connection.connection_id, {"type": "training.runs", "runs": runs}, event_type="message"
