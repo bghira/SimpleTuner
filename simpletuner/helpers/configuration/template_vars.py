@@ -22,6 +22,11 @@ def resolve_string_placeholders(value: str, *, variables: Mapping[str, object] |
         token = match.group(1)
         if token.startswith("env:"):
             return os.environ.get(token[4:], "")
+        if token.startswith("rank_group:") and variables is not None and "global_rank" in variables:
+            size = token.removeprefix("rank_group:")
+            if not re.fullmatch(r"[1-9][0-9]*", size):
+                raise ValueError("rank_group requires a positive integer group size, for example {rank_group:2}")
+            return str(int(variables["global_rank"]) // int(size))
         if variables is not None and token in variables:
             resolved = variables[token]
             return "" if resolved is None else str(resolved)

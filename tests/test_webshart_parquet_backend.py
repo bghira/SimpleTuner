@@ -143,7 +143,7 @@ class TestWebshartParquetBackend(unittest.TestCase):
                     if pad:
                         self.assertEqual(len(samples[0] | samples[1]), sum(range(2, 9)))
 
-    def test_standalone_ranks_open_separate_shard_caches(self):
+    def test_standalone_ranks_open_configured_shard_caches(self):
         from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
         from simpletuner.helpers.metadata.preparation import TrainingPreparation
         from simpletuner.simpletuner_sdk.server.services.cache_job_service import _CacheAcceleratorStub, _CacheArgsNamespace
@@ -161,20 +161,25 @@ class TestWebshartParquetBackend(unittest.TestCase):
                 "manifest": "capture.json",
                 "sampling_policy": "shard_local",
                 "cache_dir": str(cache_root),
-                "shard_cache_dir": "{env:CACHE_ROOT}/shards/{global_rank}",
             },
         }
         args = _CacheArgsNamespace({"output_dir": str(self.root), "max_train_steps": 20, "seed": 19})
         online = TrainingPreparation(online_text=True, ondemand_latents=True, requires_complete_view=False)
-        for rank in (0, 7):
+        for token, rank, directory in (
+            ("global_rank", 0, 0),
+            ("global_rank", 7, 7),
+            ("rank_group:2", 6, 3),
+            ("rank_group:2", 7, 3),
+        ):
+            config["webshart"]["shard_cache_dir"] = "{env:CACHE_ROOT}/shards/{" + token + "}"
             accelerator = _CacheAcceleratorStub(device="cpu")
             accelerator.is_local_main_process = rank == 0
             with (
-                self.subTest(rank=rank),
+                self.subTest(token=token, rank=rank),
                 patch.dict("os.environ", {"CACHE_ROOT": str(cache_root), "RANK": str(rank)}),
                 closing(DatasetRuntime.from_config(config, args, accelerator)) as runtime,
             ):
-                shards = cache_root / "shards" / str(rank)
+                shards = cache_root / "shards" / str(directory)
                 self.assertEqual(Path(runtime.data_backend.shard_cache_dir), shards)
                 self.assertTrue(shards.is_dir())
                 self.assertEqual(Path(runtime.data_backend.metadata_cache_dir), cache_root / "metadata_cache")
