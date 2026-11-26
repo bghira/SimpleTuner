@@ -1166,18 +1166,14 @@ class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
                     self.assertEqual(len(choices), 3)
                     self.assertGreaterEqual(menu.rect["x"], 0)
                     self.assertLessEqual(menu.rect["x"] + menu.rect["width"], driver.execute_script("return innerWidth"))
-                    if action == "validation":
-                        by_environment = {item.find_element(By.TAG_NAME, "small").text: item for item in choices}
-                        for environment, label in zip(environments, ("2 workers", "1 worker", "1 worker")):
-                            choice = by_environment[environment]
-                            self.assertEqual(choice.find_element(By.TAG_NAME, "strong").text, label)
-                            self.assertNotIn("Test GPU", choice.text)
-                            self.assertNotIn("Peer worker", choice.text)
-                        self.assertFalse(by_environment["legacy-env"].is_enabled())
-                        by_environment[environments[idx]].click()
-                    else:
-                        self.assertFalse(next(item for item in choices if "Legacy" in item.text).is_enabled())
-                        next(item for item in choices if names[idx] in item.text).click()
+                    by_environment = {item.find_element(By.TAG_NAME, "small").text: item for item in choices}
+                    for environment, label in zip(environments, ("2 workers", "1 worker", "1 worker")):
+                        choice = by_environment[environment]
+                        self.assertEqual(choice.find_element(By.TAG_NAME, "strong").text, label)
+                        self.assertNotIn("Test GPU", choice.text)
+                        self.assertNotIn("Peer worker", choice.text)
+                    self.assertFalse(by_environment["legacy-env"].is_enabled())
+                    by_environment[environments[idx]].click()
                     message = next(line for line in streams[idx] if line.startswith(b"data: "))
                     self.assertEqual(
                         json.loads(message[6:]), {"type": "job_manual_action", "job_id": jobs[idx], "action": action}

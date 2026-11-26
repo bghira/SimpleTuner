@@ -7716,13 +7716,8 @@ function trainerComponent() {
                             <template x-for="target in manualTargets" :key="target.job_id">
                                 <button type="button" class="dropdown-item" :disabled="!target.available || manualPending"
                                         @click.stop="sendManualAction('{{ action }}', target)">
-                                    {% if action == 'validation' %}
                                     <strong x-text="target.worker_count + (target.worker_count === 1 ? ' worker' : ' workers')"></strong>
                                     <small x-text="target.config_name || '—'"></small>
-                                    {% else %}
-                                    <strong x-text="target.name"></strong>
-                                    <small :title="target.job_id" x-text="[target.gpu, target.config_name || target.job_id].filter(Boolean).join(' · ')"></small>
-                                    {% endif %}
                                     <small x-show="!target.available">Worker agent update required</small>
                                 </button>
                             </template>
