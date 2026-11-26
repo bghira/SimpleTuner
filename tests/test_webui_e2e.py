@@ -805,11 +805,12 @@ class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
 
         self.for_each_browser("training_progress_list", scenario)
 
-    def test_previous_local_results_yield_to_active_jobs_from_either_feed(self):
-        def scenario(driver, browser):
+    def test_only_active_jobs_are_shown_across_both_feeds(self):
+        def scenario(driver, _):
             driver.get(f"{self.base_url}/web")
             wait = WebDriverWait(driver, 15)
-            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".training-progress-section")))
+            section = (By.CSS_SELECTOR, ".training-progress-section")
+            wait.until(EC.presence_of_element_located(section))
             driver.execute_script(
                 """
                 for (const name of ['training-runs', 'worker-training-runs']) {
@@ -825,7 +826,7 @@ class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
                     "worker": worker,
                     "is_local": local,
                     "status": status,
-                    "terminal": status == "completed",
+                    "terminal": status in {"completed", "failed", "cancelled"},
                     "updated_at": timestamp,
                     "progress": {
                         "step": 0 if status == "starting" else 1,
@@ -846,28 +847,76 @@ class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
                     == set(expected)
                 )
 
-            first, second = run("first", "completed", 1), run("second", "completed", 2)
-            remote = run("remote", "completed", 1, local=False)
-            # Already-running servers send the worker label without the locality field.
-            del first["is_local"]
-            feed("callback", [second, first, remote])
-            rows(["second", "remote"])
+            completed = run("completed", "completed", 1)
+            failed = run("failed", "failed", 2, local=False)
+            feed("callback", [completed, failed])
+            rows([])
+            wait.until(EC.invisibility_of_element_located(section))
             startup = run("startup", "starting", 3)
             feed("worker", [startup])
-            rows(["startup", "remote"])
+            rows(["startup"])
             live = run("concurrent", "running", 4)
-            feed("callback", [first, second, remote, live])
-            rows(["startup", "concurrent", "remote"])
-            # A delayed callback with more metrics cannot reverse a terminal worker report.
+            feed("callback", [completed, failed, live])
+            rows(["startup", "concurrent"])
+            # A delayed callback with more metrics cannot revive an orphaned job.
             stale = run("startup", "running", 6)
             stale["progress"]["step"] = 4
-            feed("callback", [first, second, remote, live, stale])
-            feed("worker", [run("startup", "completed", 5)])
-            rows(["concurrent", "remote"])
-            feed("callback", [first, second, remote, run("concurrent", "completed", 7), stale])
-            rows(["concurrent", "remote"])
+            feed("worker", [run("startup", "orphaned", 5)])
+            feed("callback", [completed, failed, live, stale])
+            rows(["concurrent"])
+            feed("callback", [completed, failed, run("concurrent", "cancelled", 7), stale])
+            rows([])
+            wait.until(EC.invisibility_of_element_located(section))
 
-        self.for_each_browser("local_run_rollover", scenario)
+        self.for_each_browser("active_training_runs", scenario)
+
+    def test_job_queue_failure_removes_a_run_without_a_final_callback(self):
+        import asyncio
+        from unittest.mock import patch
+
+        from simpletuner.simpletuner_sdk.server.services.cloud.storage.job_repository import JobRepository
+
+        job_id = "orphaned-training"
+        self.register_job(job_id, "Remote worker", "L40S")
+        requests.post(
+            f"{self.base_url}/api/workers/job/{job_id}/status",
+            headers={"X-Worker-Token": f"{job_id}-token"},
+            json={"progress": {"current": 42, "total": 100}},
+            timeout=5,
+        ).raise_for_status()
+
+        def scenario(driver, _):
+            driver.get(f"{self.base_url}/web")
+            wait = WebDriverWait(driver, 15)
+            row = (By.CSS_SELECTOR, f'.training-run[aria-label="{job_id}"]')
+            section = (By.CSS_SELECTOR, ".training-progress-section")
+            wait.until(EC.visibility_of_element_located(row))
+
+            with patch.dict(JobRepository._instances, clear=True):
+                repo = JobRepository(self.home_path / ".simpletuner" / "cloud" / "jobs.db")
+                asyncio.run(repo.mark_failed(job_id, "Job orphaned (no PID tracked)"))
+            wait.until(EC.invisibility_of_element_located(row))
+            wait.until(EC.invisibility_of_element_located(section))
+
+            driver.refresh()
+            status = driver.execute_async_script(
+                """
+                const [jobId, done] = arguments;
+                const events = new EventSource('/api/events');
+                events.onmessage = ({data}) => {
+                    const event = JSON.parse(data);
+                    if (event.type === 'training.runs') {
+                        events.close();
+                        done(event.runs.find(run => run.job_id === jobId)?.status);
+                    }
+                };
+                """,
+                job_id,
+            )
+            self.assertEqual(status, "failed")
+            self.assertFalse(driver.find_elements(*row))
+
+        self.for_each_browser("orphaned_training_run", scenario)
 
     def test_local_stop_tracks_the_local_job_through_remote_updates(self):
         def scenario(driver, browser):
@@ -1204,12 +1253,9 @@ class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
             self.assertEqual(fields["Worker"], "large-batch")
             self.assertEqual(fields["Environment"], "large-batch")
             self.assertEqual(fields["GPU"], gpu)
-            requests.post(worker_url, headers=headers, json={"status": "failed"}, timeout=5).raise_for_status()
-            wait.until(lambda _: "failed" in row(second).text)
             report(first, "running", {"current": 9, "total": 10})
             wait.until(lambda _: "90%" in row(first).text)
             self.assertIn("8 samples/s", row(first).text)
-            self.assertIn("0%", row(second).text)
             self.assertFalse(driver.execute_script("return Alpine.store('trainer').showTrainingProgress"))
             bar_widths = []
             for width in (1440, 720, 390):
@@ -1234,6 +1280,9 @@ class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
             self.assertEqual(len(set(bar_widths)), 1)
             self.assertGreater(bar_widths[0], 0)
             self.assertLess(bar_widths[0], 100)
+            requests.post(worker_url, headers=headers, json={"status": "failed"}, timeout=5).raise_for_status()
+            wait.until(EC.invisibility_of_element_located((By.CSS_SELECTOR, f'.training-run[aria-label="{second}"]')))
+            self.assertIn("90%", row(first).text)
 
         self.for_each_browser("interleaved_training_runs", scenario)
 
