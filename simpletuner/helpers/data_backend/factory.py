@@ -471,6 +471,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
             "metadata_cache_dir",
             "shard_cache_dir",
             "shard_cache_gb",
+            "repacked_cache_gb",
             "sampling_policy",
             "sampling_order",
             "shuffle_seed",

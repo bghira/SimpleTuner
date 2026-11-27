@@ -1260,6 +1260,25 @@ class TestWebshartParquetBackend(unittest.TestCase):
                 self.assertEqual(worker.shard_cache_dir, backend.shard_cache_dir)
                 self.assertEqual(worker.shuffle_seed, 0)
 
+    def test_repacked_cache_is_enabled_for_training_and_reopened_readers(self):
+        import webshart
+
+        cache = self.root / "cache"
+        with patch.object(webshart, "discover_dataset") as discover, patch.object(webshart, "ParquetDataLoader"):
+            backend = WebshartDataBackend(
+                None,
+                "edits",
+                "org/edits",
+                format="parquet",
+                cache_dir=str(cache),
+                shard_cache_dir=str(cache),
+                repacked_cache_gb=32,
+            )
+            worker = WebshartDataBackend.from_instance_representation(backend.get_instance_representation())
+            self.assertEqual(worker.repacked_cache_gb, 32)
+            self.assertEqual(discover.return_value.enable_repacked_cache.call_count, 2)
+            discover.return_value.enable_repacked_cache.assert_called_with(cache / ".repacked", 32)
+
     def test_remote_shard_cache_bounds_retained_readers(self):
         import webshart
 

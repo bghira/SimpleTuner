@@ -347,6 +347,7 @@ class WebshartDataBackend(BaseDataBackend):
         aws_session_token: Optional[str] = None,
         aws_max_pool_connections: int = 32,
         shuffle_seed: Optional[int] = None,
+        repacked_cache_gb: float = 0,
     ):
         if not source:
             raise ValueError("source is required for Webshart data backends.")
@@ -400,6 +401,13 @@ class WebshartDataBackend(BaseDataBackend):
         ):
             # Webshart permits one active prefill order per cache directory.
             self.shard_cache_dir = str(Path(self.shard_cache_dir) / f"rank-{accelerator.process_index}")
+        self.repacked_cache_gb = float(repacked_cache_gb)
+        if not 0 <= self.repacked_cache_gb < float("inf"):
+            raise ValueError("repacked_cache_gb must be finite and non-negative.")
+        if self.repacked_cache_gb and (
+            format != "parquet" or not self.shard_cache_dir or Path(source).is_dir() or str(source).startswith("s3://")
+        ):
+            raise ValueError("repacked_cache_gb requires a Hub Parquet source with a whole-shard cache.")
         self.parallel_downloads = int(parallel_downloads)
         self.buffer_size = int(buffer_size)
         self.max_file_size = int(max_file_size)
@@ -483,6 +491,10 @@ class WebshartDataBackend(BaseDataBackend):
                 cache_limit_gb=self.shard_cache_gb,
                 parallel_downloads=self.parallel_downloads,
             )
+        if self.repacked_cache_gb:
+            if not hasattr(dataset, "enable_repacked_cache"):
+                raise ValueError("repacked_cache_gb requires Webshart with enable_repacked_cache support.")
+            dataset.enable_repacked_cache(Path(self.shard_cache_dir) / ".repacked", self.repacked_cache_gb)
         return dataset
 
     def seeded_shards(self, seed):
@@ -1079,6 +1091,7 @@ class WebshartDataBackend(BaseDataBackend):
             "metadata_cache_dir": self.metadata_cache_dir,
             "shard_cache_dir": self.shard_cache_dir,
             "shard_cache_gb": self.shard_cache_gb,
+            "repacked_cache_gb": self.repacked_cache_gb,
             "parallel_downloads": self.parallel_downloads,
             "buffer_size": self.buffer_size,
             "max_file_size": self.max_file_size,
@@ -1109,6 +1122,7 @@ class WebshartDataBackend(BaseDataBackend):
             metadata_cache_dir=representation.get("metadata_cache_dir"),
             shard_cache_dir=representation.get("shard_cache_dir"),
             shard_cache_gb=representation.get("shard_cache_gb", 25.0),
+            repacked_cache_gb=representation.get("repacked_cache_gb", 0),
             parallel_downloads=representation.get("parallel_downloads", 4),
             buffer_size=representation.get("buffer_size", 100),
             max_file_size=representation.get("max_file_size", 500 * 1024 * 1024),

@@ -5256,6 +5256,52 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
 
         self.for_each_browser("test_audio_relationship_settings_survive_a_form_edit", scenario)
 
+    def test_webshart_repacked_cache_edit_and_save(self) -> None:
+        self.seed_defaults()
+        config_path = self.config_dir / "default" / "multidatabackend.json"
+        config_path.write_text(
+            json.dumps(
+                [
+                    {
+                        "id": "repacked",
+                        "type": "webshart",
+                        "dataset_type": "image",
+                        "source": "org/images",
+                        "caption_strategy": "webshart",
+                        "metadata_backend": "webshart",
+                        "webshart": {"format": "parquet"},
+                    }
+                ]
+            )
+        )
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.switch_to_datasets_tab()
+            trainer_page.wait_for_tab("datasets")
+            driver.execute_script(
+                """
+                document.querySelector('#datasets-tab-content .hero-dismiss-btn')?.click();
+                const row = document.querySelector('[data-dataset-id="repacked"]');
+                if (row.querySelector('.list-item-toggle').getAttribute('aria-expanded') !== 'true')
+                    row.querySelector('.list-item-toggle').click();
+                const item = row.closest('.dataset-list-item-wrapper');
+                [...item.querySelectorAll('button')].find(b => b.textContent.trim() === 'Storage').click();
+            """
+            )
+            field = WebDriverWait(driver, 10).until(
+                EC.visibility_of_element_located(
+                    (By.CSS_SELECTOR, '.dataset-list-item-expanded input[placeholder="0"][min="0"].webshart-repacked-cache')
+                )
+            )
+            field.send_keys("64", Keys.TAB)
+            DatasetsTab(driver, base_url=self.base_url).save_datasets()
+            self.assertEqual(json.loads(config_path.read_text())[0]["webshart"]["repacked_cache_gb"], 64)
+
+        self.for_each_browser("test_webshart_repacked_cache_edit_and_save", scenario)
+
     def test_webshart_parquet_settings_edit_and_save(self) -> None:
         self.seed_defaults()
         config_path = self.config_dir / "default" / "multidatabackend.json"

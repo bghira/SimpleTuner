@@ -1446,6 +1446,7 @@ Webshart 数据集通过 `webshart` 包加载 WebDataset 风格的 tar shards。
 - `metadata` 可选，可指向包含 captions 的独立 metadata location。对于 `webshart/conceptual-captions-12m-webdataset-metadata` 这样的 Hugging Face metadata repo，传 repo id 即可；Webshart 会跟随 source shard 的 `data/` 等子目录布局。
 - `metadata_backend` 必须为 `webshart`；`caption_strategy` 应为 `webshart` 或 `instanceprompt`。
 - `webshart.cache_dir` 存储 SimpleTuner metadata 与 Webshart caches。`shard_cache_gb` 和 `parallel_downloads` 会传给 Webshart 的 shard cache；将 `shard_cache_gb` 设为 `0` 可禁用整 shard cache，并保留基于索引的 range reads。
+- 对于以扁平二进制列存储图像的 Hub Parquet 分片，可用 `webshart.repacked_cache_gb` 指定额外的磁盘预算（GiB）。Webshart 会验证小数据页副本并将其保存在分片缓存的 `.repacked` 目录中。默认值为 0（关闭）。需启用源分片缓存，并安装支持此功能的 Webshart 和 PyArrow。缓存未命中时仍可从原 Hub 修订版本读取。
 - 按窗口顺序训练远程 Parquet 数据时，支持 `sequential_prefill` 的 Webshart 会依次预取后续分片，直到再加入一个分片就会超过 `shard_cache_gb`。每个共享缓存由一个工作进程负责，最多同时执行 `parallel_downloads` 个下载。恢复训练时从已保存的窗口开始，已用完的分片可被缓存淘汰。 恢复训练时，可以用 `SIMPLETUNER_WEBSHART_PREFILL_DOWNLOADS` 单独调整后台并发下载数。
 - `webshart.metadata_cache_dir` 存放分片目录和采集清单索引。默认位于 `webshart.cache_dir` 下的 `metadata_cache`。
 - `webshart.shard_cache_dir` 存放已下载的分片。默认位于 `webshart.cache_dir` 下的 `shard_cache`。

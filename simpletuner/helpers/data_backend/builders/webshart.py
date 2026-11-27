@@ -48,6 +48,7 @@ class WebshartBackendBuilder(BaseBackendBuilder):
             "metadata_cache_dir": webshart_config.get("metadata_cache_dir"),
             "shard_cache_dir": webshart_config.get("shard_cache_dir"),
             "shard_cache_gb": shard_cache_gb,
+            "repacked_cache_gb": webshart_config.get("repacked_cache_gb", 0),
             "parallel_downloads": getattr(config, "webshart_parallel_downloads", None) or 4,
             "buffer_size": getattr(config, "webshart_buffer_size", None) or 100,
             "max_file_size": getattr(config, "webshart_max_file_size", None) or 500 * 1024 * 1024,
