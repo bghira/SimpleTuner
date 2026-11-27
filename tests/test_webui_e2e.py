@@ -1276,16 +1276,42 @@ class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
             self.assertEqual(fields["Workers"], "1")
             self.assertEqual(fields["Environment"], environment)
             self.assertNotIn("GPU", fields)
-            report(first, "running", {"current": 9, "total": 10})
-            wait.until(lambda _: "90%" in row(first).text)
+            report(first, "running", {"current": 9_999, "total": 10_000})
+            requests.post(
+                worker_url,
+                headers=headers,
+                json={"progress": {"current": 200, "total": 200}},
+                timeout=5,
+            ).raise_for_status()
+            wait.until(lambda _: "99.99%" in row(first).text and "100%" in row(second).text)
             self.assertIn("8 samples/s", row(first).text)
             self.assertFalse(driver.execute_script("return Alpine.store('trainer').showTrainingProgress"))
-            bar_widths = []
-            for width in (1440, 720, 390):
+            for width in (1440, 720, 390, 320):
                 driver.set_window_size(width, 900)
+                if browser == "chrome":
+                    driver.execute_cdp_cmd(
+                        "Emulation.setDeviceMetricsOverride",
+                        {"width": width, "height": 900, "deviceScaleFactor": 1, "mobile": False},
+                    )
                 for job in (first, second):
                     article = row(job)
-                    bar_widths.append(article.find_element(By.TAG_NAME, "progress").rect["width"])
+                    self.assertTrue(
+                        driver.execute_script(
+                            """
+                            const row = arguments[0].querySelector('.training-run-progress dd');
+                            const bar = row.querySelector('progress').getBoundingClientRect();
+                            const value = row.querySelector('b');
+                            const text = document.createRange();
+                            text.selectNodeContents(value);
+                            const label = value.getBoundingClientRect();
+                            return text.getClientRects().length === 1 && bar.width > 0 && bar.width < 100
+                                && bar.right <= label.left
+                                && Math.abs((bar.top + bar.bottom) - (label.top + label.bottom)) <= 2;
+                            """,
+                            article,
+                        ),
+                        f"Progress percentage wraps at {width}px for {job}",
+                    )
                     self.assertTrue(
                         driver.execute_script(
                             """
@@ -1300,12 +1326,11 @@ class TrainingRunStatsTestCase(_TrainingWorkerFixture, WebUITestCase):
                         ),
                         f"Field overflow at {width}px for {job}",
                     )
-            self.assertEqual(len(set(bar_widths)), 1)
-            self.assertGreater(bar_widths[0], 0)
-            self.assertLess(bar_widths[0], 100)
+            if browser == "chrome":
+                driver.execute_cdp_cmd("Emulation.clearDeviceMetricsOverride", {})
             requests.post(worker_url, headers=headers, json={"status": "failed"}, timeout=5).raise_for_status()
             wait.until(EC.invisibility_of_element_located((By.CSS_SELECTOR, f'.training-run[aria-label="{second}"]')))
-            self.assertIn("90%", row(first).text)
+            self.assertIn("99.99%", row(first).text)
 
         self.for_each_browser("interleaved_training_runs", scenario)
 
