@@ -616,6 +616,8 @@ class WebshartMetadataBackend(MetadataBackend):
             if self.native_policy:
                 self._check_publication(MembershipPages.open(source))
                 source.seek(0)
+            if self.native_policy == "shard_local" and spec.sampling_order == "sequential" and shard_at is None:
+                prefill = self.data_backend.sequential_prefill(1)
             return WebshartEpoch(
                 source,
                 spec,

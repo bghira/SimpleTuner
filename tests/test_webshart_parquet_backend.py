@@ -191,6 +191,41 @@ class TestWebshartParquetBackend(unittest.TestCase):
                 ):
                     self.assertIs(epoch.prefill, prefill.return_value)
 
+    def test_published_sequential_prefill_follows_consumed_shards_after_resume(self):
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+        from simpletuner.simpletuner_sdk.server.services.cache_job_service import _CacheAcceleratorStub, _CacheArgsNamespace
+
+        for name in ("second", "third"):
+            pq.write_table(pa.Table.from_pylist(self.rows), self.source / f"{name}.parquet")
+        config = dict(
+            id="paired",
+            type="webshart",
+            source=str(self.source),
+            resolution=8,
+            resolution_type="pixel",
+            caption_strategy="webshart",
+            crop=False,
+            webshart=dict(format="parquet", sampling_policy="shard_local", sampling_order="sequential"),
+        )
+        args = _CacheArgsNamespace(
+            dict(output_dir=str(self.root), seed=42, max_train_steps=0, gradient_accumulation_steps=1)
+        )
+        with closing(DatasetRuntime.from_config(config, args, _CacheAcceleratorStub(device="cpu"))) as runtime:
+            mb = runtime.metadata_backend
+            mb.compute_aspect_ratio_bucket_indices()
+            spec = mb.epoch_spec(1, 1)
+            first, resumed = Mock(), Mock()
+            with patch.object(runtime.data_backend, "sequential_prefill", side_effect=[first, resumed]):
+                with closing(runtime.open_epoch(spec)) as cursor:
+                    for _ in range(3):
+                        cursor.next_batch()
+                    state = cursor.state_dict()
+                with closing(runtime.open_epoch(spec)) as cursor:
+                    cursor.load_state_dict(state)
+                    _, refs = cursor.next_batch()
+                    resumed.advance.assert_called_once_with(runtime.data_backend.shard_of(refs[0]))
+            self.assertEqual([call.args[0] for call in first.advance.call_args_list], [0, 1])
+
     def test_prefill_concurrency_uses_a_separate_reader(self):
         backend = self.backend
         backend.source = "s3://capture"
