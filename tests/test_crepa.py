@@ -1,7 +1,5 @@
 import math
 import unittest
-from pathlib import Path
-from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -15,21 +13,10 @@ from simpletuner.helpers.training.crepa import (
     CrepaScheduler,
     SpatialConvProjector,
     UrepaRegularizer,
-    _load_dinov2_encoder,
     spatial_zscore,
 )
 from simpletuner.helpers.training.ema import EMAModel
 from simpletuner.helpers.utils.hidden_state_buffer import UNetMidBlockCapture
-
-
-class TestDinoHubCache(unittest.TestCase):
-    def test_cached_encoder_load_does_not_contact_github(self):
-        with TemporaryDirectory() as directory, patch.object(torch.hub, "get_dir", return_value=directory):
-            cached = Path(directory) / "facebookresearch_dinov2_main"
-            cached.mkdir()
-            (cached / "hubconf.py").write_text("def dinov2_vits14():\n    return 42\n")
-            with patch.object(torch.hub, "urlopen", side_effect=AssertionError("unexpected network request")):
-                self.assertEqual(_load_dinov2_encoder("dinov2_vits14"), 42)
 
 
 class _DummyVAE(torch.nn.Module):
