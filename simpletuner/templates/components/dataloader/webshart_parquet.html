@@ -3,6 +3,18 @@
     <select class="form-select form-select-sm webshart-format" x-model="{{ storage_dataset }}.webshart.format" @change="touchConnectionField({{ storage_dataset }})">
         <option value="tar">Tar</option><option value="parquet">Parquet</option>
     </select>
+    <div class="row g-2 mt-1">
+        {% for color in ['white', 'black'] %}
+        <label class="col-md-6 form-label small">
+            Maximum {{ color }} pixel fraction
+            <input type="number" min="0" max="1" step="any" class="form-control form-control-sm webshart-max-{{ color }}"
+                   :value="{{ storage_dataset }}.filter_func?.max_{{ color }}_fraction ?? ''"
+                   @change="setWebshartFractionLimit({{ storage_dataset }}, 'max_{{ color }}_fraction', $event.target)"
+                   @input="markAsUnsaved()">
+        </label>
+        {% endfor %}
+        <div class="col-12 form-text small">Leave blank to disable a limit. A limit skips images above it and images missing that measurement in the index.</div>
+    </div>
     <label class="form-label small mt-2">Sampling policy</label>
     <select class="form-select form-select-sm webshart-sampling-policy" x-model="{{ storage_dataset }}.webshart.sampling_policy" @change="touchConnectionField({{ storage_dataset }})">
         <option value="">Existing sampler</option>

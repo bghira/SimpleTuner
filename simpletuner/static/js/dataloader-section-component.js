@@ -1359,6 +1359,16 @@ function dataloaderSectionComponent() {
             trainer.markDatasetsDirty();
         }
     },
+    setWebshartFractionLimit(dataset, key, input) {
+        if (input.value !== '') {
+            dataset.filter_func ||= {};
+            dataset.filter_func[key] = input.valueAsNumber;
+        } else if (dataset.filter_func) {
+            delete dataset.filter_func[key];
+            if (!Object.keys(dataset.filter_func).length) delete dataset.filter_func;
+        }
+        this.markAsUnsaved();
+    },
     setWebshartCaptionKeys(dataset, value) {
         const keys = value.split('\n').map(key => key.trim()).filter(Boolean);
         if (keys.length) {

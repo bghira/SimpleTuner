@@ -89,7 +89,14 @@ else:
 def _empty_filtering_statistics():
     return {
         "total_processed": 0,
-        "skipped": {"already_exists": 0, "metadata_missing": 0, "caption_missing": 0, "too_small": 0, "error": 0},
+        "skipped": {
+            "already_exists": 0,
+            "metadata_missing": 0,
+            "caption_missing": 0,
+            "fraction_filter": 0,
+            "too_small": 0,
+            "error": 0,
+        },
     }
 
 
@@ -178,6 +185,11 @@ class WebshartMetadataBackend(MetadataBackend):
         )
         if self.dataset_type not in {DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.CONDITIONING, DatasetType.EVAL}:
             raise ValueError("WebshartMetadataBackend supports image, video, conditioning, and eval datasets only.")
+
+        if self.dataset_filter and self.dataset_filter.fraction_limits:
+            digest = sha256(json.dumps(self.dataset_filter.config, sort_keys=True).encode()).hexdigest()[:16]
+            self.cache_file = self.cache_file.with_stem(f"{self.cache_file.stem}_filter_{digest}")
+            self.metadata_file = self.metadata_file.with_stem(f"{self.metadata_file.stem}_filter_{digest}")
 
         self._geometry_digest = None
         self.maximum_canvas_size = maximum_canvas_size
@@ -1352,6 +1364,7 @@ class WebshartMetadataBackend(MetadataBackend):
             if self.dataset_type is DatasetType.VIDEO and worker_count > 1
             else None
         )
+        fraction_filter = self.dataset_filter if self.dataset_filter and self.dataset_filter.fraction_limits else None
         prepare_entry = self._prepare_bucket_entry
         if window_captions is not None:
             prepare_entry = partial(prepare_entry, window_captions=window_captions)
@@ -1373,6 +1386,8 @@ class WebshartMetadataBackend(MetadataBackend):
                     and self.dataset_type is not DatasetType.VIDEO
                 )
                 fields = {"width", "height", "json_path", "json_metadata", "offset", "size"}
+                if fraction_filter:
+                    fields.update(fraction_filter.fraction_limits)
                 if require_captions:
                     fields.update(self.data_backend.caption_fields() if projected or native_rows else ())
                 if native_rows:
@@ -1422,6 +1437,16 @@ class WebshartMetadataBackend(MetadataBackend):
                             shard_idx, [entry["sample_idx"] for entry, _ in chunk], fields=fields
                         )
                         shard_metadata = {entry["filename"]: row for (entry, _), row in zip(chunk, rows, strict=True)}
+                    if fraction_filter:
+                        accepted = [
+                            (entry, ref)
+                            for entry, ref in chunk
+                            if fraction_filter.matches_fractions(shard_metadata.get(entry["filename"], {}))
+                        ]
+                        statistics["skipped"]["fraction_filter"] += len(chunk) - len(accepted)
+                        if not accepted:
+                            continue
+                        chunk = accepted
                     if transforms is not None:
                         cached = transforms.read_cached_batch([ref for _, ref in chunk])
                         results = [

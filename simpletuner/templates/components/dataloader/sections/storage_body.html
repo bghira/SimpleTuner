@@ -292,7 +292,7 @@
     </div>
 
     <!-- Webshart -->
-    <div class="section-group" x-show="editingDataset.type === 'webshart' && matchesParamFilter('webshart', 'webdataset', 'source', 'metadata', 'shard', 'cache', 'caption', 'key')" x-cloak>
+    <div class="section-group" x-show="editingDataset.type === 'webshart' && matchesParamFilter('webshart', 'webdataset', 'source', 'metadata', 'shard', 'cache', 'caption', 'key', 'white', 'black', 'fraction', 'filter')" x-cloak>
         <h6 class="modal-section-title">Webshart Dataset</h6>
         {% with caption_dataset='editingDataset' %}
         {% include 'components/dataloader/webshart_caption_key.html' %}

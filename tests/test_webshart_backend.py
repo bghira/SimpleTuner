@@ -1,6 +1,7 @@
 import json
 import tarfile
 import unittest
+from contextlib import closing
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -317,6 +318,7 @@ class TestWebshartMetadataCaptionFiltering(unittest.TestCase):
         backend.removed_samples = set()
         backend._runtime_args = SimpleNamespace(only_instance_prompt=False)
         backend.bind_dataset_config({"caption_strategy": "webshart"})
+        backend.dataset_filter = None
         backend.max_num_samples = None
         backend.metadata_update_interval = 3600
         backend.aspect_ratio_bucket_indices = {}
@@ -568,6 +570,44 @@ class TestWebshartCaptionKeyIntegration(unittest.TestCase):
             resolution_type="pixel",
             **kwargs,
         )
+
+    def test_whitespace_limits_control_prepared_membership_across_config_changes(self):
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+        from simpletuner.simpletuner_sdk.server.services.cache_job_service import _CacheAcceleratorStub, _CacheArgsNamespace
+
+        self.files["sample.jpg"].update(white_fraction=0.75, black_fraction=0.25)
+        self.files["missing.jpg"]["white_fraction"] = 1
+        self._write_index(embedded=True)
+        args = _CacheArgsNamespace({"output_dir": str(self.root), "seed": 42})
+        accel = _CacheAcceleratorStub(device="cpu")
+        for policy in (None, "shard_local"):
+            config = {
+                "id": "whitespace",
+                "type": "webshart",
+                "source": str(self.source),
+                "webshart": {"cache_dir": str(self.root / str(policy)), "shard_cache_gb": 0},
+                "caption_strategy": "webshart",
+                "resolution": 512,
+                "resolution_type": "pixel",
+            }
+            if policy:
+                config["webshart"]["sampling_policy"] = policy
+            for filters, expected in (
+                ({}, ["sample.jpg", "missing.jpg"]),
+                ({"max_white_fraction": 0.75}, ["sample.jpg"]),
+                ({"max_white_fraction": 1, "max_black_fraction": 0.25}, ["sample.jpg"]),
+                ({"max_white_fraction": 1, "path_include": "missing.jpg"}, ["missing.jpg"]),
+                ({}, ["sample.jpg", "missing.jpg"]),
+            ):
+                with (
+                    self.subTest(policy=policy, filters=filters),
+                    closing(DatasetRuntime.from_config({**config, "filter_func": filters}, args, accel)) as runtime,
+                ):
+                    runtime.prepare_view()
+                    with runtime.metadata_backend.open_preparation_view() as view:
+                        self.assertCountEqual([runtime.data_backend.parse_sample_id(ref).filename for ref in view], expected)
+                    if filters.get("max_black_fraction") is not None:
+                        self.assertEqual(runtime.metadata_backend.filtering_statistics["skipped"]["fraction_filter"], 1)
 
     def test_membership_never_serializes_source_credentials(self):
         source = self._backend("short")

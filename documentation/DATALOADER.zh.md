@@ -1454,6 +1454,7 @@ Webshart 数据集通过 `webshart` 包加载 WebDataset 风格的 tar shards。
 - 为远程 Parquet 启用整分片缓存时，每个后端在两次读取之间保留一个已缓存分片的读取器。除 `shard_cache_gb` 外，还需为并发下载和仍被读取器锁定的分片预留磁盘空间。Webshart 先将下载内容写入临时文件，再清理旧分片。
 - 将 `webshart.sampling_policy` 设为 `global`，可在每个准备好的宽高比分桶内打乱样本顺序。设为 `shard_local` 时，批次优先从存储位置相近的样本组成，从而减少 DataComp 等远程数据集的分片缓存换入换出。省略此字段可保留现有采样器。
 - 使用 Parquet 分片局部采样时，`webshart.sampling_order` 默认为 `sequential`。此模式按存储顺序访问分片窗口，并在每个宽高比分桶内保留原始行顺序。若要在局部采样中打乱样本，或从引入此选项之前创建的检查点恢复，请设为 `shuffled`。恢复时请保持相同的顺序设置。
+- 在数据集顶层的 `filter_func` 中设置一个或两个上限，例如 `"filter_func": {"max_white_fraction": 0.98, "max_black_fraction": 0.95}`。Webshart 在准备分桶时从索引读取 `white_fraction` 和 `black_fraction`，取值范围为 0 到 1。只有每个设置了上限的测量值都存在且小于或等于对应上限时，才会保留图像。未测量或无效的值仅在该项设置了上限时导致图像被跳过。省略两个上限可保留未经扫描的图像。
 - Webshart 0.9.3 及以上版本支持设置 `webshart.shuffle_seed`（例如 `42`），为每个数据并行进程和每轮训练独立打乱 Parquet 分片顺序。每个进程只使用各分片宽高比分桶中分配给自己的行，重复和填充也遵循此规则。行数少于数据并行进程数的分桶会被跳过。预取按训练顺序进行。每个进程在远程分片缓存中使用独立的 `rank-N` 子目录和容量限额。恢复时请保留相同的种子和分布式布局。
 - 对于尚无索引的 Parquet 图像数据集，使用 `shard_local`、固定的 `max_train_steps`、`data_backend_sampling=uniform` 以及按需文本和潜变量编码时，训练会在访问每个小分片组时准备图像几何信息。文本编码仅对已调度的批次执行。每个分片组末尾不足一个全局批次的样本将被丢弃。已有索引、全局打乱、自动加权和离线缓存准备均使用已建立索引的样本集合。
 - 使用 Webshart 原生采样策略时，`scan_for_errors` 会按有界批次检查已准备视图中的 VAE 缓存条目。设置 `vae_cache_scan_behaviour: recreate` 可从制品存储中删除已读取且数值或空间尺寸无效的潜变量。已准备视图不可变。

@@ -16,6 +16,20 @@ class TestDatasetFilter(unittest.TestCase):
         self.assertTrue(dataset_filter.matches_path("/data/keep/sample.png"))
         self.assertFalse(dataset_filter.matches_path("/data/drop/sample.png"))
 
+    def test_fraction_limits_require_valid_indexed_measurements(self):
+        limits = build_dataset_filter({"filter_func": {"max_white_fraction": 0.98, "max_black_fraction": 0}})
+        self.assertTrue(limits.matches_item({"white_fraction": 0.98, "black_fraction": 0}))
+        self.assertFalse(limits.matches_item({"white_fraction": 0.981, "black_fraction": 0}))
+        self.assertFalse(limits.matches_item({"white_fraction": 0, "black_fraction": 0.01}))
+        for value in (None, -0.1, 1.2, "0", False, float("nan"), float("inf")):
+            with self.subTest(value=value):
+                self.assertFalse(limits.matches_item({"white_fraction": value, "black_fraction": 0}))
+                with self.assertRaisesRegex(ValueError, "max_white_fraction"):
+                    DatasetFilter({"max_white_fraction": value})
+        self.assertFalse(limits.matches_item({"white_fraction": 0}))
+        self.assertTrue(DatasetFilter({"max_black_fraction": 1}).matches_item({"black_fraction": 1}))
+        self.assertTrue(DatasetFilter({}).matches_item({}))
+
     def test_flat_path_filter_takes_precedence_over_nested_path_filter(self):
         dataset_filter = DatasetFilter(
             {
