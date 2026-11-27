@@ -296,7 +296,8 @@ class EMAModel:
         ema_model.load_state_dict(ema_kwargs)
         return ema_model
 
-    def save_pretrained(self, path, max_shard_size: str = "10GB"):
+    def save_pretrained(self, path, max_shard_size: str = "10GB", *, source_parameters=None):
+        """Export inference weights. Supply the live inference parameters when training tracks extra heads."""
         if self.model_cls is None:
             raise ValueError("`save_pretrained` can only be used if `model_cls` was defined at __init__.")
 
@@ -308,15 +309,23 @@ class EMAModel:
         state_dict.pop("shadow_params", None)
 
         model.register_to_config(**state_dict)
-        # Copy shadow params to the new model by position (not by ID).
-        # from_config creates an identical architecture, so param order matches.
-        model_params = list(model.parameters())
-        if len(model_params) != len(self.shadow_params):
+        model_params = dict(model.named_parameters())
+        shadows = self.shadow_params
+        if source_parameters is not None:
+            if source_parameters.keys() != model_params.keys():
+                raise RuntimeError("EMA export parameter names differ from the reconstructed inference model.")
+            tracked = dict(zip(self._tracked_param_ids, shadows, strict=True))
+            shadows = []
+            for name in model_params:
+                param = source_parameters[name]
+                if id(param) not in tracked and param.requires_grad:
+                    raise RuntimeError(f"EMA does not track trainable inference parameter {name!r}.")
+                shadows.append(tracked.get(id(param), param))
+        if len(model_params) != len(shadows):
             raise RuntimeError(
-                f"EMA save_pretrained failed: model has {len(model_params)} parameters "
-                f"but EMA tracks {len(self.shadow_params)}."
+                f"EMA save_pretrained failed: model has {len(model_params)} parameters " f"but EMA tracks {len(shadows)}."
             )
-        for param, shadow in zip(model_params, self.shadow_params):
+        for param, shadow in zip(model_params.values(), shadows, strict=True):
             param.data.copy_(shadow.to(device=param.device, dtype=param.dtype))
         model.save_pretrained(path, max_shard_size=max_shard_size)
 

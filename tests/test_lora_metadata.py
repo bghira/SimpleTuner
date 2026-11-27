@@ -379,6 +379,7 @@ class SaveHookMetadataTests(unittest.TestCase):
 
     def test_validate_fsdp2_pipeline_export_populates_spec(self):
         trained_component = _DummyExportComponent(width=3)
+        trained_component.nextlat_predictor = torch.nn.Linear(3, 3)
         model = _DummyFullModel(trained_component=trained_component)
         manager = SaveHookManager(
             args=SimpleNamespace(
@@ -430,6 +431,46 @@ class SaveHookMetadataTests(unittest.TestCase):
                 manager.validate_fsdp2_pipeline_export()
 
         compare_versions.assert_called_once_with("accelerate", ">=", "1.8.0")
+
+    def test_ema_export_keeps_training_heads_in_resume_state(self):
+        from diffusers import UNet2DModel
+
+        from simpletuner.helpers.training.ema import EMAModel
+
+        component = UNet2DModel(
+            sample_size=8,
+            block_out_channels=(8,),
+            down_block_types=("DownBlock2D",),
+            up_block_types=("UpBlock2D",),
+            norm_num_groups=4,
+        )
+        component.conv_in.bias.requires_grad_(False)
+        component.nextlat_predictor = torch.nn.Linear(8, 8)
+        component.crepa_projector = torch.nn.Linear(8, 8)
+        manager, model, _ = self._make_manager(
+            args_overrides={"model_type": "full", "use_ema": True, "ema_device": "cpu", "ema_cpu_only": True}
+        )
+        model._trained_component = component
+        # Deliberately track in a different order from the inference model.
+        params = [p for p in reversed(list(component.parameters())) if p.requires_grad]
+        manager.ema_model = EMAModel(
+            manager.args, None, parameters=params, model_cls=UNet2DModel, model_config=component.config
+        )
+        expected = component.conv_in.weight.detach().clone()
+        with torch.no_grad():
+            component.conv_in.weight.add_(1)
+        with tempfile.TemporaryDirectory() as root, patch.object(manager, "_build_modelspec_metadata", return_value={}):
+            output = os.path.join(root, "checkpoint-1")
+            os.makedirs(output)
+            manager._save_full_model([], [], output, distributed_type=DistributedType.NO)
+            directory = os.path.join(output, manager.ema_model_subdir)
+            exported, info = UNet2DModel.from_pretrained(directory, output_loading_info=True)
+            self.assertFalse(info["unexpected_keys"])
+            self.assertFalse(info["missing_keys"])
+            torch.testing.assert_close(exported.conv_in.weight, expected)
+            torch.testing.assert_close(exported.conv_in.bias, component.conv_in.bias)
+            state = torch.load(os.path.join(directory, "ema_model.pt"), weights_only=True)
+            self.assertEqual(sum(key.startswith("shadow_params.") for key in state), len(params))
 
     def test_materialize_fsdp2_state_dict_for_save_applies_ema_weights(self):
         component = _DummyExportComponent(width=2)

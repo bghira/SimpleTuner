@@ -180,7 +180,7 @@ def _materialize_lycoris_state_dict_for_save(network) -> dict[str, torch.Tensor]
     return {name: tensor.to(dtype) for name, tensor in _materialize_state_dict_for_save(network.state_dict()).items()}
 
 
-_TRAINING_PROJECTOR_PREFIXES = ("crepa_projector.", "urepa_projector.")
+_TRAINING_PROJECTOR_PREFIXES = ("crepa_projector.", "urepa_projector.", "nextlat_predictor.")
 
 
 def _inference_state_dict(state_dict):
@@ -1011,9 +1011,13 @@ class SaveHookManager:
             except Exception as e:
                 logger.error(f"Error saving EMA model: {e}")
             logger.info("Saving EMA safetensors variant.")
+            component = _get_trained_component_for_save(self.model)
+            parameters = dict(component.named_parameters())
+            inference_parameters = _inference_state_dict(parameters)
             self.ema_model.save_pretrained(
                 os.path.join(temporary_dir, self.ema_model_subdir),
                 max_shard_size="10GB",
+                source_parameters=inference_parameters if len(inference_parameters) != len(parameters) else None,
             )
 
         sub_dir = "controlnet" if self.args.controlnet else self.model.MODEL_SUBFOLDER
