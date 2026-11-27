@@ -95,12 +95,6 @@ class TestWebshartParquetBackend(unittest.TestCase):
                     self.assertEqual([runtime.data_backend.parse_sample_id(ref).sample_idx for ref in view], [2])
 
     def test_seeded_shards_keep_rank_rows_disjoint_and_resume_in_prefetch_order(self):
-        from importlib.metadata import version
-
-        from packaging.version import Version
-
-        if Version(version("webshart")) < Version("0.9.3"):
-            self.skipTest("Seeded shard order requires Webshart 0.9.3.")
         from webshart.parquet import _shuffled_shard_order
 
         from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
@@ -271,7 +265,7 @@ class TestWebshartParquetBackend(unittest.TestCase):
         groups = list(_shuffled_shard_order(count // width, seed))
         expected = [group * width + offset for group in groups for offset in range(width)] + [16, 17, 18]
         with patch.object(backend.dataset, "_shards", [{"size": 1}] * count):
-            shard_at, prefill = backend.shuffled_windows(width, seed)
+            shard_at, prefill = backend.seeded_shards(seed, window_shards=width)
             self.assertIsNone(prefill)
             self.assertEqual([shard_at(slot) for slot in range(count)], expected)
             with (
@@ -279,7 +273,7 @@ class TestWebshartParquetBackend(unittest.TestCase):
                 patch.object(backend.dataset._source_repo, "local", False),
                 patch.dict("os.environ", clear=True),
             ):
-                shard_at, prefill = backend.shuffled_windows(width, seed)
+                shard_at, prefill = backend.seeded_shards(seed, window_shards=width)
                 with closing(prefill):
                     self.assertEqual([shard_at(slot) for slot in range(count)], expected)
                     acquired = []
@@ -1164,6 +1158,7 @@ class TestWebshartParquetBackend(unittest.TestCase):
 
     def test_prepared_view_uses_factory_bound_settings_without_tracker_lookups(self):
         from simpletuner.helpers.data_backend.builders.base import create_metadata_provider
+        from simpletuner.helpers.logging import _suspend_webhook
         from simpletuner.helpers.training.state_tracker import StateTracker
 
         config = {
@@ -1176,6 +1171,7 @@ class TestWebshartParquetBackend(unittest.TestCase):
         args = {"train_batch_size": 1, "disable_bucket_pruning": False, "aspect_bucket_alignment": 8, "seed": 123}
         accelerator = SimpleNamespace(num_processes=1, process_index=0, is_main_process=True)
         with (
+            _suspend_webhook(),
             patch.object(StateTracker, "get_data_backend_config", side_effect=AssertionError("dataset settings lookup")),
             patch.object(StateTracker, "get_args", side_effect=AssertionError("run settings lookup")),
             patch.object(StateTracker, "get_model", return_value=None),

@@ -454,7 +454,6 @@ class WebshartMetadataBackend(MetadataBackend):
         config = self.active_dataset_config
         if not (
             self.native_policy == "shard_local"
-            and (self.data_backend.format == "parquet" or hasattr(self.data_backend.dataset, "shard_locations"))
             and self.dataset_type is DatasetType.IMAGE
             and self._published is None
             and request.online_text
@@ -723,7 +722,7 @@ class WebshartMetadataBackend(MetadataBackend):
             shard_at, prefill = self.data_backend.seeded_shards(spec.rank_shuffle_seed)
         elif spec.sampling_order == "shuffled":
             seed = (spec.seed + spec.epoch - 1) % (1 << 64)
-            shard_at, prefill = self.data_backend.shuffled_windows(width, seed)
+            shard_at, prefill = self.data_backend.seeded_shards(seed, window_shards=width)
         else:
             prefill = self.data_backend.sequential_prefill(width)
         if self._window_recipe is not None:

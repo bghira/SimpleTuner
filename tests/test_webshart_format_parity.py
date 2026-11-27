@@ -54,10 +54,6 @@ class FormatSamplingTests(unittest.TestCase):
                 self.assertEqual(len(set.union(*by_rank)), sum(map(len, by_rank)))
 
     def test_training_cursors_share_rows_across_formats_and_preparation_modes(self):
-        import webshart
-
-        if not hasattr(webshart.DiscoveredDataset, "shard_locations"):
-            self.skipTest("Requires Webshart TAR window support")
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             tar = root / "tar"
