@@ -350,6 +350,12 @@ class DatasetRuntime:
         from simpletuner.helpers.configuration.sanitization import make_public_config_serializable
 
         def occurrence_config(config):
+            webshart = config.get("webshart")
+            if webshart and "repacked_cache_gb" in webshart:
+                config = {
+                    **config,
+                    "webshart": {key: value for key, value in webshart.items() if key != "repacked_cache_gb"},
+                }
             if include_timestep_offset or "timestep_sampling_offset" not in config:
                 return config
             # The model applies this offset after the dataloader yields the batch.
