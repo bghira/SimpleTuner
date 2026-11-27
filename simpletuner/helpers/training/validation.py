@@ -1613,11 +1613,12 @@ class _PreviewMetadata:
     resolution: tuple[int, int]
     validation_type: str | None
     total_steps: int | None = None
+    stage: str | None = None
 
 
 class ValidationPreviewer:
     """
-    Handles Tiny AutoEncoder powered previews emitted during validation.
+    Streams validation previews from RGB samples or a Tiny AutoEncoder.
     """
 
     def __init__(self, model: ModelFoundation, accelerator, config):
@@ -1631,7 +1632,6 @@ class ValidationPreviewer:
         except (ValueError, TypeError):
             interval = 1
         self.step_interval = max(1, interval)
-        self._decoder = None
         self._decoder_failed = False
         self._warned_unsupported = False
         self._warned_callback = False
@@ -1641,9 +1641,7 @@ class ValidationPreviewer:
             logger.warning("validation_preview is enabled but no webhook is configured; previews are disabled.")
             self.enabled = False
         if self.enabled and not self.model.supports_validation_preview():
-            logger.warning(
-                "validation_preview requested but %s does not provide Tiny AutoEncoder metadata.", self.model.NAME
-            )
+            logger.warning("validation_preview requested but %s does not support validation previews.", self.model.NAME)
             self.enabled = False
 
     def _is_main_process(self) -> bool:
@@ -1663,56 +1661,77 @@ class ValidationPreviewer:
             return False
         return True
 
-    def _pipeline_supports_preview(self, pipeline) -> bool:
-        if pipeline is None:
-            return False
-        signature = inspect.signature(pipeline.__call__)
-        return "callback_on_step_end" in signature.parameters
-
     @contextmanager
     def attach(self, pipeline, pipeline_kwargs: dict, metadata: _PreviewMetadata):
-        if not self.enabled or not self._is_main_process():
+        if not self.enabled or not self._is_main_process() or self._decoder_failed:
             yield
             return
-        if not self._ensure_decoder():
+
+        tensor_name = "latents"
+        if self.model.PIXEL_PREVIEW_INPUTS:
+            tensor_name = next(
+                (key for cls, key in self.model.PIXEL_PREVIEW_INPUTS.items() if isinstance(pipeline, cls)), None
+            )
+            if tensor_name is None:
+                yield
+                return
+        elif not self._ensure_decoder():
             yield
             return
-        if not self._pipeline_supports_preview(pipeline):
+
+        def emit(step, timestep, sample):
+            should_abort = getattr(self.config, "should_abort", None)
+            if callable(should_abort) and should_abort():
+                raise ValidationAbortedException("Validation aborted")
+            self._handle_callback(step, timestep, sample, metadata)
+
+        signature = inspect.signature(pipeline.__call__).parameters
+        if "callback_on_step_end" in signature:
+            original = pipeline_kwargs.get("callback_on_step_end")
+            original_inputs = pipeline_kwargs.get("callback_on_step_end_tensor_inputs", ["latents"])
+
+            def callback(pipe, step, timestep, tensors):
+                sample = tensors.get(tensor_name)
+                if original is not None:
+                    tensors = original(pipe, step, timestep, tensors)
+                emit(step, timestep, sample)
+                return tensors
+
+            updates = {"callback_on_step_end": callback}
+            if "callback_on_step_end_tensor_inputs" in signature:
+                updates["callback_on_step_end_tensor_inputs"] = list(dict.fromkeys([*original_inputs, tensor_name]))
+        elif self.model.PIXEL_PREVIEW_INPUTS and "callback" in signature and "callback_steps" in signature:
+            # Diffusers IF stages I and II expose post-step RGB through the legacy callback.
+            original = pipeline_kwargs.get("callback")
+            original_interval = pipeline_kwargs.get("callback_steps", 1)
+
+            def callback(step, timestep, sample):
+                if original is not None and step % original_interval == 0:
+                    original(step, timestep, sample)
+                emit(step, timestep, sample)
+
+            updates = {"callback": callback, "callback_steps": 1}
+        else:
             if not self._warned_callback:
-                logger.warning(
-                    "validation_preview is enabled but pipeline %s does not expose callback_on_step_end.",
-                    type(pipeline).__name__,
-                )
+                logger.warning("Pipeline %s has no supported validation preview callback.", type(pipeline).__name__)
                 self._warned_callback = True
             yield
             return
 
-        def _callback(pipe, step, timestep, callback_kwargs):
-            # Check for abort before handling preview
-            if hasattr(self.config, "should_abort") and callable(self.config.should_abort):
-                if self.config.should_abort():
-                    logger.info("Validation aborted during pipeline execution (preview callback)")
-                    from simpletuner.helpers.training.validation import ValidationAbortedException
-
-                    raise ValidationAbortedException("Validation aborted")
-            self._handle_callback(step, timestep, callback_kwargs, metadata)
-            return callback_kwargs
-
-        pipeline_kwargs["callback_on_step_end"] = _callback
-        pipeline_kwargs.setdefault("callback_on_step_end_tensor_inputs", ["latents"])
+        previous = {key: pipeline_kwargs[key] for key in updates if key in pipeline_kwargs}
+        pipeline_kwargs.update(updates)
         try:
             yield
         finally:
-            pipeline_kwargs.pop("callback_on_step_end", None)
-            if pipeline_kwargs.get("callback_on_step_end_tensor_inputs") == ["latents"]:
-                pipeline_kwargs.pop("callback_on_step_end_tensor_inputs", None)
+            for key in updates:
+                pipeline_kwargs.pop(key)
+            pipeline_kwargs.update(previous)
 
-    def _handle_callback(self, step: int, timestep, callback_kwargs: dict, metadata: _PreviewMetadata):
+    def _handle_callback(self, step: int, timestep, latents: torch.Tensor, metadata: _PreviewMetadata):
         if not self.enabled or self._decoder_failed:
             return
         if not self._should_emit_for_step(step):
             return
-        latents = callback_kwargs.get("latents")
         if latents is None:
             return
         try:
@@ -1727,7 +1746,10 @@ class ValidationPreviewer:
         self._emit_event(image_payloads, video_payloads, metadata, step, timestep_value)
 
     def _decode_preview(self, latents: torch.Tensor):
-        # Use unified decode interface - always TAE for validation preview
+        if self.model.PIXEL_PREVIEW_INPUTS:
+            rgb = (latents[0].detach().float() + 1) / 2
+            return [self._tensor_to_pil(rgb)], None
+
         decoded = self.model.decode_latents_to_pixels(latents, use_tae=True)
         # decoded is (B, T, C, H, W) in [0, 1] range
 
@@ -1770,6 +1792,8 @@ class ValidationPreviewer:
         else:
             step_label = f"{int(step + 1)}"
         message_text = f"Validation (step {step_label}): {metadata.shortname or '(validation)'}"
+        if metadata.stage:
+            message_text += f" ({metadata.stage})"
         payload = {
             "type": "validation.image",
             "title": message_text,
@@ -1785,6 +1809,8 @@ class ValidationPreviewer:
                 "step_label": step_label,
             },
         }
+        if metadata.stage:
+            payload["data"]["stage"] = metadata.stage
         if callable(self._preview_callback):
             self._preview_callback(structured_data=payload, images=images, videos=videos)
         if self._webhook_handler is not None:
@@ -4783,28 +4809,40 @@ class Validation:
                         elif "callback_on_step_end" not in pipeline_kwargs:
                             pipeline_kwargs["callback_on_step_end"] = abort_check_callback
 
-                    def _pipeline_call(pipeline, kwargs, target_stage: str | Sequence[str] | None = None):
-                        stage_kwargs = self._filter_pipeline_kwargs_for_call(pipeline, kwargs)
-                        with self._temporary_validation_stage_adapters(pipeline, target_stage):
-                            return pipeline(**stage_kwargs)
+                    multistage = self.model.supports_multistage_validation()
+                    preview_per_stage = multistage and bool(self.model.PIXEL_PREVIEW_INPUTS)
 
-                    # run in autocast ctx
-                    preview_ctx = nullcontext()
-                    if self.preview and current_validation_type == "checkpoint":
-                        preview_ctx = self.preview.attach(
-                            self.model.pipeline,
-                            pipeline_kwargs,
+                    def preview_context(pipeline, kwargs, stage=None):
+                        if not self.preview or not self.preview.enabled or current_validation_type != "checkpoint":
+                            return nullcontext()
+                        return self.preview.attach(
+                            pipeline,
+                            kwargs,
                             _PreviewMetadata(
                                 shortname=validation_shortname,
                                 prompt=prompt,
-                                resolution=(int(validation_resolution_width), int(validation_resolution_height)),
+                                resolution=(
+                                    int(kwargs.get("width") or validation_resolution_width),
+                                    int(kwargs.get("height") or validation_resolution_height),
+                                ),
                                 validation_type=validation_type,
-                                total_steps=getattr(self.config, "validation_num_inference_steps", None),
+                                total_steps=kwargs.get("num_inference_steps"),
+                                stage=stage,
                             ),
                         )
+
+                    def _pipeline_call(pipeline, kwargs, target_stage: str | Sequence[str] | None = None):
+                        stage_kwargs = self._filter_pipeline_kwargs_for_call(pipeline, kwargs)
+                        ctx = preview_context(pipeline, stage_kwargs, target_stage) if preview_per_stage else nullcontext()
+                        with ctx, self._temporary_validation_stage_adapters(pipeline, target_stage):
+                            return pipeline(**stage_kwargs)
+
+                    preview_ctx = (
+                        nullcontext() if preview_per_stage else preview_context(self.model.pipeline, pipeline_kwargs)
+                    )
                     with preview_ctx:
                         filtered_pipeline_kwargs = pipeline_kwargs
-                        if not self.model.supports_multistage_validation():
+                        if not multistage:
                             filtered_pipeline_kwargs = self._filter_pipeline_kwargs_for_call(
                                 self.model.pipeline,
                                 pipeline_kwargs,
@@ -4821,7 +4859,7 @@ class Validation:
                             autocast_ctx,
                             self.model.internal_guidance_inference_context(enabled=validation_type != "base_model"),
                         ):
-                            if self.model.supports_multistage_validation():
+                            if multistage:
                                 pipeline_result = self.model.run_multistage_validation(
                                     filtered_pipeline_kwargs,
                                     _pipeline_call,

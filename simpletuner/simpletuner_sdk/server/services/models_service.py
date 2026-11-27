@@ -197,7 +197,7 @@ class ModelsService:
         capabilities["strict_i2v_flavours"] = strict_i2v_flavours
         capabilities["strict_i2v_all_flavours"] = bool(getattr(model_cls, "STRICT_I2V_FOR_ALL_FLAVOURS", False))
         preview_spec = getattr(model_cls, "VALIDATION_PREVIEW_SPEC", None)
-        supports_preview = preview_spec is not None
+        supports_preview = preview_spec is not None or bool(getattr(model_cls, "PIXEL_PREVIEW_INPUTS", None))
         if not supports_preview:
             base_method = getattr(ModelFoundation, "get_validation_preview_spec")
             current_method = getattr(model_cls, "get_validation_preview_spec", base_method)

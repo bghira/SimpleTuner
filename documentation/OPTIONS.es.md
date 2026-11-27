@@ -1089,11 +1089,11 @@ Muchas configuraciones se establecen a través del [dataloader config](DATALOADE
 
 ### `--validation_preview`
 
-- **Qué**: Transmite vistas previas intermedias de validación durante el muestreo de difusión usando Tiny AutoEncoders
+- **Qué**: Envía imágenes intermedias de validación a los webhooks de tipo `raw` configurados durante el muestreo.
 - **Predeterminado**: False
-- **Por qué**: Habilita la vista previa en tiempo real de imágenes de validación a medida que se generan, decodificadas mediante modelos Tiny AutoEncoder livianos y enviadas a través de callbacks de webhook. Esto permite monitorear la progresión de las muestras de validación paso a paso en lugar de esperar a la generación completa.
+- **Por qué**: Las etapas I y II de DeepFloyd IF envían la imagen en proceso de eliminación de ruido. Se excluye el escalador opcional de la etapa III.
 - **Notas**:
-  - Solo disponible en familias de modelos con soporte de Tiny AutoEncoder (p. ej., Flux, SDXL, SD3)
+  - Los modelos en espacio latente como Cosmos2, Flux, SDXL y SD3 usan su Tiny AutoEncoder registrado.
   - Requiere configuración de webhook para recibir imágenes de vista previa
   - Usa `--validation_preview_steps` para controlar con qué frecuencia se decodifican las vistas previas
 
@@ -1102,7 +1102,7 @@ Muchas configuraciones se establecen a través del [dataloader config](DATALOADE
 - **Qué**: Intervalo para decodificar y transmitir vistas previas de validación
 - **Predeterminado**: 1
 - **Por qué**: Controla con qué frecuencia se decodifican los latentes intermedios durante el muestreo de validación. Establecerlo en un valor más alto (p. ej., 3) reduce el overhead de ejecutar el Tiny AutoEncoder al decodificar solo cada N pasos de muestreo.
-- **Ejemplo**: Con `--validation_num_inference_steps=20` y `--validation_preview_steps=5`, recibirás 4 imágenes de vista previa durante el proceso de generación (en los pasos 5, 10, 15, 20).
+- **Ejemplo**: Con 20 pasos y un intervalo de 5, se envían vistas previas en los pasos 1, 5, 10, 15 y 20.
 
 ### `--evaluation_type`
 

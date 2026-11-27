@@ -1086,11 +1086,11 @@ Muitas configuracoes sao definidas no [dataloader config](DATALOADER.md), mas es
 
 ### `--validation_preview`
 
-- **O que**: Transmite previews intermediarios durante a amostragem de difusao usando Tiny AutoEncoders.
+- **O que**: Envia imagens intermediárias de validação aos webhooks configurados com o tipo `raw` durante a amostragem.
 - **Padrao**: False
-- **Por que**: Habilita preview em tempo real das imagens de validacao enquanto sao geradas, decodificando via Tiny AutoEncoder e enviando por webhook. Isso permite monitorar o progresso passo a passo em vez de esperar a geracao completa.
+- **Por que**: Os estágios I e II do DeepFloyd IF enviam a imagem em processo de remoção de ruído. O ampliador opcional do estágio III fica de fora.
 - **Notas**:
-  - Disponivel apenas para familias de modelos com suporte a Tiny AutoEncoder (ex.: Flux, SDXL, SD3)
+  - Modelos no espaço latente como Cosmos2, Flux, SDXL e SD3 usam seu Tiny AutoEncoder registrado.
   - Requer configuracao de webhook para receber previews
   - Use `--validation_preview_steps` para controlar a frequencia de decodificacao
 
@@ -1099,7 +1099,7 @@ Muitas configuracoes sao definidas no [dataloader config](DATALOADER.md), mas es
 - **O que**: Intervalo para decodificar e transmitir previews de validacao
 - **Padrao**: 1
 - **Por que**: Controla com que frequencia latentes intermediarios sao decodificados durante a amostragem. Um valor maior (ex.: 3) reduz o overhead ao decodificar apenas a cada N passos.
-- **Exemplo**: Com `--validation_num_inference_steps=20` e `--validation_preview_steps=5`, voce recebera 4 previews durante a geracao (passos 5, 10, 15, 20).
+- **Exemplo**: Com 20 passos e intervalo de 5, as prévias são enviadas nos passos 1, 5, 10, 15 e 20.
 
 ### `--evaluation_type`
 

@@ -46,6 +46,7 @@ class DeepFloydIF(ImageModelFoundation):
     MODEL_TYPE = ModelTypes.UNET
     # DeepFloyd-IF is a pixel space model.
     AUTOENCODER_CLASS = None
+    PIXEL_PREVIEW_INPUTS = {IFPipeline: "latents", IFSuperResolutionPipeline: "latents"}
     LATENT_CHANNEL_COUNT = None
     DEFAULT_NOISE_SCHEDULER = "ddpm"
     # The safe diffusers default value for LoRA training targets.

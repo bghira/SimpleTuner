@@ -19,10 +19,11 @@ class TestModelsServiceValidationPreview(unittest.TestCase):
         capabilities = details["capabilities"]
         self.assertTrue(capabilities.get("supports_validation_preview"))
 
-    def test_deepfloyd_lacks_validation_preview(self):
-        details = self.service.get_model_details("deepfloyd")
-        capabilities = details["capabilities"]
-        self.assertFalse(capabilities.get("supports_validation_preview"))
+    def test_pixel_models_and_cosmos_support_validation_preview(self):
+        for family in ("deepfloyd", "cosmos"):
+            with self.subTest(family=family):
+                details = self.service.get_model_details(family)
+                self.assertTrue(details["capabilities"]["supports_validation_preview"])
 
     def test_ace_step_supports_lyrics(self):
         """ACE Step should advertise lyrics support via capabilities."""

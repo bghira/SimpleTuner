@@ -1088,11 +1088,11 @@ Alternative attention mechanisms समर्थित हैं, जिनक�
 
 ### `--validation_preview`
 
-- **What**: Tiny AutoEncoders का उपयोग करके diffusion sampling के दौरान intermediate validation previews stream करता है
+- **What**: सैंपलिंग के दौरान मध्यवर्ती सत्यापन छवियाँ कॉन्फ़िगर किए गए `raw` वेबहुक पर भेजता है।
 - **Default**: False
-- **Why**: validation images के generate होने के दौरान real‑time preview सक्षम करता है; lightweight Tiny AutoEncoder models द्वारा decode होकर webhook callbacks से भेजे जाते हैं। इससे आप पूरी generation का इंतज़ार किए बिना step‑by‑step progress देख सकते हैं।
+- **Why**: DeepFloyd IF के चरण I और II शोर हटाने के दौरान वर्तमान छवि भेजते हैं। वैकल्पिक चरण III का अपस्केलर पूर्वावलोकन नहीं भेजता।
 - **Notes**:
-  - केवल Tiny AutoEncoder support वाले model families पर उपलब्ध (उदा., Flux, SDXL, SD3)
+  - Cosmos2, Flux, SDXL और SD3 जैसे लेटेंट मॉडल अपने पंजीकृत Tiny AutoEncoder का उपयोग करते हैं।
   - preview images प्राप्त करने के लिए webhook configuration आवश्यक
   - previews कितनी बार decode हों, यह नियंत्रित करने के लिए `--validation_preview_steps` उपयोग करें
 
@@ -1101,7 +1101,7 @@ Alternative attention mechanisms समर्थित हैं, जिनक�
 - **What**: validation previews decode और stream करने का interval
 - **Default**: 1
 - **Why**: validation sampling के दौरान intermediate latents कितनी बार decode हों, यह नियंत्रित करता है। उच्च मान (उदा. 3) Tiny AutoEncoder का overhead घटाता है क्योंकि हर N steps पर decode होता है।
-- **Example**: `--validation_num_inference_steps=20` और `--validation_preview_steps=5` के साथ, generation process के दौरान 4 preview images मिलेंगी (steps 5, 10, 15, 20 पर)।
+- **Example**: 20 सैंपलिंग चरण और 5 का अंतराल होने पर चरण 1, 5, 10, 15 और 20 पर पूर्वावलोकन भेजे जाते हैं।
 
 ### `--evaluation_type`
 
