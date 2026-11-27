@@ -267,6 +267,54 @@ class TestWebshartParquetBackend(unittest.TestCase):
                 ]
                 self.assertEqual(active, [stage["id"]])
 
+    def test_paired_decode_excludes_either_side_and_preserves_consumed_cursor(self):
+        from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBackend
+
+        def reader(column, failed):
+            def read(refs):
+                keys = [ref for ref in refs if ref not in failed]
+                return keys, [f"{column}-{ref}" for ref in keys]
+
+            return SimpleNamespace(columns={"image": column}, read_image_batch=Mock(side_effect=read))
+
+        target = reader("edited", {"a"})
+        target.shard_of = lambda _: 0
+        target.dataset = SimpleNamespace(source_revision_for_shard=lambda _: "physical-pin")
+        source = reader("source", {"b"})
+        metadata = SimpleNamespace(data_backend=target, membership_path=self.root / "membership.json", id="edits")
+        reference = SimpleNamespace(data_backend=source)
+
+        class Cursor:
+            position = 1
+            batches = 2
+            spec = SimpleNamespace(dp_rank=0)
+
+            def next_batch(self):
+                self.position += 1
+                return "square", ["c", "d"]
+
+        cursor = Cursor()
+        for attempt in range(2):
+            target.read_image_batch.reset_mock()
+            bucket, refs, edits, inputs = WebshartMetadataBackend.read_paired_batch(
+                metadata, cursor, "square", ["a", "b"], reference
+            )
+            self.assertEqual((bucket, refs, cursor.position), ("square", ["c", "d"], 1))
+            self.assertEqual([edits[r] for r in refs], ["edited-c", "edited-d"])
+            self.assertEqual([inputs[r] for r in refs], ["source-c", "source-d"])
+            if attempt:
+                target.read_image_batch.assert_called_once_with(["c", "d"])
+        (path,) = self.root.glob("*.pairs-*.sqlite")
+        with closing(sqlite3.connect(path)) as db:
+            self.assertEqual(
+                dict(db.execute("SELECT ref,reason FROM exclusions")), {"a": "target_decode", "b": "reference_decode"}
+            )
+        _, refs, _, _ = WebshartMetadataBackend.read_paired_batch(metadata, cursor, "square", ["a", "d"], reference)
+        self.assertEqual(refs, ["d", "d"])
+        target.read_image_batch.side_effect = TimeoutError("fetch")
+        with self.assertRaises(TimeoutError):
+            WebshartMetadataBackend.read_paired_batch(metadata, cursor, "square", ["z"], reference)
+
     def test_streaming_decode_exclusions_keep_ranks_and_resume_aligned(self):
         from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
         from simpletuner.helpers.metadata.preparation import TrainingPreparation
@@ -2001,6 +2049,42 @@ class TestWebshartParquetBackend(unittest.TestCase):
             self.addCleanup(geometry.close)
             geometry.compute_aspect_ratio_bucket_indices()
         source = DatasetRuntime(self.backend.id, self.backend, geometry, native)
+        paired_backend = WebshartDataBackend(
+            None, "reference", str(self.source), format="parquet", cache_dir=str(self.root / "reference")
+        )
+        paired_config = {
+            "id": "reference",
+            "type": "webshart",
+            "metadata_backend": "webshart",
+            "dataset_type": "conditioning",
+            "conditioning_type": "reference_strict",
+            "source_dataset_id": source.id,
+            "resolution": 8,
+            "resolution_type": "pixel",
+        }
+        paired_factory = object.__new__(FactoryRegistry)
+        paired_factory.accelerator, paired_factory.args, paired_factory.model = accelerator, args, None
+        entry = {
+            "id": "reference",
+            "data_backend": paired_backend,
+            "instance_data_dir": paired_backend.cache_dir,
+            "config": paired_config,
+        }
+        with (
+            patch.object(StateTracker, "get_datasets", return_value={source.id: source}),
+            patch.object(StateTracker, "set_data_backend_config"),
+        ):
+            paired_factory._configure_metadata_backend(paired_config, entry)
+        paired = entry["metadata_backend"]
+        self.addCleanup(paired.close)
+        source_refs, count = source.read_page(limit=2)
+        self.assertEqual(count, 2)
+        self.assertEqual(paired.read_page(limit=2), (source_refs, count))
+        for ref in source_refs:
+            self.assertEqual(paired.conditioning_ref(ref), ref)
+            self.assertEqual(paired.caption_cache_entry(ref), self.backend.get_caption(ref))
+            self.assertEqual(paired.get_metadata_by_filepath(ref)["training_sample_path"], ref)
+
         local_root = self.root / "paired"
         local_files = [local_root / "part.parquet" / f"{index:012d}.png" for index in (0, 2)]
         local_files[0].parent.mkdir(parents=True)

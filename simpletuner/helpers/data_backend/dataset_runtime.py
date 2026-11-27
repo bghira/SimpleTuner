@@ -464,7 +464,7 @@ class DatasetRuntime:
         return self.metadata_backend.conditioning_ref(relative_ref)
 
     def read_conditioning_sample(
-        self, relative_ref, *, source=None, source_ref=None, source_view=None, model=None, rng=None
+        self, relative_ref, *, source=None, source_ref=None, source_view=None, model=None, rng=None, decoded_image=None
     ):
         """Resolve and read one conditioning input for the supplied source occurrence."""
         if source_view is not None:
@@ -475,7 +475,7 @@ class DatasetRuntime:
             return None
         (metadata,) = self.read_samples([ref], view=view)
         try:
-            image = self.data_backend.read_image(ref)
+            image = self.data_backend.read_image(ref) if decoded_image is None else decoded_image
         except Exception as error:
             logger.error("Could not read conditioning sample %s: %s", ref, error)
             return None

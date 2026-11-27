@@ -2794,7 +2794,10 @@ class FactoryRegistry:
             source = StateTracker.get_dataset(backend["metadata_clone_source_id"])
             if source is not None and source.uses_native_schedule is True:
                 aligned_source = source
-        elif backend.get("type") == "local" and backend.get("conditioning_type") in ("mask", "reference_strict"):
+        elif backend.get("type") in {"local", "webshart"} and backend.get("conditioning_type") in (
+            "mask",
+            "reference_strict",
+        ):
             sources = StateTracker.get_datasets(DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.EVAL)
             target = backend["id"]
             linked = [
@@ -2816,16 +2819,27 @@ class FactoryRegistry:
                     None,
                 )
             if source is not None and source.uses_native_schedule is True and source.data_backend.format == "parquet":
-                revision = source.describe().view_revision
-                for linked_source in linked:
-                    if linked_source is source:
-                        continue
-                    if linked_source.uses_native_schedule is not True or linked_source.describe().view_revision != revision:
-                        raise ValueError(
-                            f"Aligned conditioning dataset {target} cannot share one prepared view across "
-                            f"{source.id} and {linked_source.id}. Use a separate conditioning dataset ID per source view."
-                        )
-                aligned_source = source
+                target_backend = init_backend["data_backend"]
+                if backend["type"] == "local" or (
+                    target_backend.format == "parquet"
+                    and all(
+                        getattr(source.data_backend, key) == getattr(target_backend, key)
+                        for key in ("source", "metadata", "subfolder", "manifest")
+                    )
+                ):
+                    revision = source.describe().view_revision
+                    for linked_source in linked:
+                        if linked_source is source:
+                            continue
+                        if (
+                            linked_source.uses_native_schedule is not True
+                            or linked_source.describe().view_revision != revision
+                        ):
+                            raise ValueError(
+                                f"Aligned conditioning dataset {target} cannot share one prepared view across "
+                                f"{source.id} and {linked_source.id}. Use a separate conditioning dataset ID per source view."
+                            )
+                    aligned_source = source
         init_backend["metadata_backend"] = create_metadata_provider(
             init_backend["id"],
             resolved_config,
@@ -2920,6 +2934,7 @@ class FactoryRegistry:
                 and has_prepared_catalogue
                 and metadata.dataset_type is DatasetType.IMAGE
                 and metadata.delete_problematic_images
+                and getattr(metadata, "on_demand_pair_id", None) is None
             ):
                 with self._dataset_startup_phase(init_backend["id"], "Image decode validation"):
                     init_backend["dataset_runtime"].exclude_unreadable_images(
@@ -3997,6 +4012,35 @@ class FactoryRegistry:
             ondemand_latents=ondemand_latents or getattr(self.model, "AUTOENCODER_CLASS", None) is None,
             requires_complete_view=needs_complete_view,
         )
+        links = backend.get("conditioning_data") or []
+        if isinstance(links, str):
+            links = [links]
+        if (
+            len(links) == 1
+            and backend["type"] == "webshart"
+            and webshart.get("format") == "parquet"
+            and webshart.get("sampling_policy")
+            and preparation.online_text
+            and preparation.ondemand_latents
+            and runtime.metadata_backend.delete_problematic_images
+        ):
+            for ref in data_backend_config:
+                options = ref.get("webshart") or {}
+                if (
+                    ref["id"] == links[0]
+                    and ref.get("type") == "webshart"
+                    and ref.get("conditioning_type") == "reference_strict"
+                    and not (ref.get("disabled") or ref.get("disable"))
+                    and options.get("format") == "parquet"
+                    and ref.get("source_dataset_id", runtime.id) == runtime.id
+                    and options.get("manifest") == webshart.get("manifest")
+                    and all(
+                        ref.get(key, options.get(key)) == backend.get(key, webshart.get(key))
+                        for key in ("source", "metadata", "subfolder")
+                    )
+                ):
+                    runtime.metadata_backend.on_demand_pair_id = ref["id"]
+                    break
         self._handle_bucket_operations(backend, init_backend, conditioning_type, preparation=preparation)
 
         self._create_dataset_and_sampler(backend, init_backend, conditioning_type)
@@ -4067,7 +4111,8 @@ class FactoryRegistry:
                     )
             logger.debug(f"Encoding images during training: {init_backend['vaecache'].vae_cache_ondemand}")
         self._move_text_encoders_for_vae_cache(self.accelerator.device)
-        init_backend["metadata_backend"].save_cache()
+        if not isinstance(init_backend["metadata_backend"], AlignedConditioningMetadata):
+            init_backend["metadata_backend"].save_cache()
 
         StateTracker.register_dataset(runtime)
         self.datasets[runtime.id] = runtime

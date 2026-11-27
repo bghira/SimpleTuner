@@ -108,6 +108,7 @@ class WebshartMetadataBackend(MetadataBackend):
     epoch_recrop_version = 1
     window_shards = 4
     maximum_canvas_size = None
+    on_demand_pair_id: str | None = None
     collect_exclusions = collect_exclusions
     _window_cache: _TrainingWindow | None = None
 
@@ -565,6 +566,46 @@ class WebshartMetadataBackend(MetadataBackend):
             pads = chain(replacements, cycle(images))
             refs = [ref if ref in images else next(pads) for ref in refs]
         return refs, images
+
+    def read_paired_batch(self, cursor, bucket, refs, reference):
+        """Drop both halves of an unreadable edit before resolving its instruction."""
+        target = self.data_backend
+        source = reference.data_backend
+        scope = sha256(json.dumps([target.columns, source.columns], sort_keys=True).encode()).hexdigest()[:16]
+        path = self.membership_path.with_suffix(f".pairs-{scope}.sqlite")
+
+        def decode(candidates):
+            shards = {target.shard_of(ref) for ref in candidates}
+            pins = {shard: target.dataset.source_revision_for_shard(shard) for shard in shards}
+            excluded = load_window_exclusions(path, pins)
+            wanted = list(dict.fromkeys(ref for ref in candidates if ref not in excluded))
+            if not wanted:
+                return {}, {}
+            targets = dict(zip(*target.read_image_batch(wanted), strict=True))
+            sources = dict(zip(*source.read_image_batch(list(targets)), strict=True)) if targets else {}
+            missing = [ref for ref in wanted if ref not in sources]
+            if missing:
+                with window_exclusion_db(path) as db:
+                    for ref in missing:
+                        shard = target.shard_of(ref)
+                        reason = "reference_decode" if ref in targets else "target_decode"
+                        db.execute("INSERT OR IGNORE INTO exclusions VALUES (?,?,?,?)", (shard, pins[shard], ref, reason))
+                        targets.pop(ref, None)
+                logger.warning("(id=%s) Excluded unreadable Webshart image pairs: %s", self.id, missing)
+            return targets, sources
+
+        # Keep each rank's scheduled batch count even if every pair in its slice is bad.
+        # A lookahead shares the immutable index but does not advance the checkpoint cursor.
+        probe = copy(cursor)
+        probe.prefill = None
+        for _ in range(cursor.batches):
+            targets, sources = decode(refs)
+            if targets:
+                replacements = cycle(targets)
+                return bucket, [ref if ref in targets else next(replacements) for ref in refs], targets, sources
+            probe.position %= probe.batches
+            bucket, refs = probe.next_batch()
+        raise ValueError(f"No decodable Webshart pairs remain for data rank {cursor.spec.dp_rank} in {self.id!r}.")
 
     def resolve_window_batch(self, cursor, bucket, refs):
         partition = cursor.partition

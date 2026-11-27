@@ -214,15 +214,28 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             rng = random.Random(f"{self.id}:{spec.seed}:{spec.epoch}:{spec.dp_rank}:{cursor.position}")
             partition = getattr(cursor, "partition", None)
             images = None
+            reference_images = None
             if partition is not None and self.epoch_provider.delete_problematic_images:
                 partition, bucket, refs, images = self.epoch_provider.resolve_window_batch(cursor, bucket, refs)
                 if not refs:
                     continue
+            elif isinstance(getattr(self.epoch_provider, "on_demand_pair_id", None), str):
+                (reference,) = self.dataset_runtime.conditioning_datasets
+                if (
+                    reference.id != self.epoch_provider.on_demand_pair_id
+                    or not reference.metadata_backend.shared_parquet_rows
+                ):
+                    raise ValueError(f"Dataset {self.id!r} requires an aligned Webshart reference column.")
+                bucket, refs, images, reference_images = self.epoch_provider.read_paired_batch(
+                    cursor, bucket, refs, reference
+                )
             view = DatasetReadView(state["view"], spec.epoch, spec.seed, partition)
             records = self._validate_and_yield_images_from_samples(refs, bucket, rng=rng, view=view)
             if images is not None:
                 for record in records:
                     record["decoded_training_image"] = images[record["image_path"]]
+                    if reference_images is not None:
+                        record["decoded_reference_image"] = reference_images[record["image_path"]]
             records[0]["dataset_continuation"] = state
             records[0]["dataset_read_view"] = view
             records[0]["caption_dropout_seed"] = rng.getrandbits(64)
@@ -858,9 +871,15 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
         outputs = list(samples)
 
-        def read_pair(dataset, sample_path, source_path):
+        def read_pair(dataset, sample_path, sample):
             return dataset.read_conditioning_sample(
-                sample_path, source=self.dataset_runtime, source_ref=source_path, source_view=view, model=self.model, rng=rng
+                sample_path,
+                source=self.dataset_runtime,
+                source_ref=sample["image_path"],
+                source_view=view,
+                model=self.model,
+                rng=rng,
+                decoded_image=sample.pop("decoded_reference_image", None),
             )
 
         if sampling_mode == "random" and len(conditioning_datasets) > 1:
@@ -885,7 +904,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 )
 
                 # Get the conditioning sample from the selected dataset
-                conditioning_sample = read_pair(selected_dataset, sample_path, sample["image_path"])
+                conditioning_sample = read_pair(selected_dataset, sample_path, sample)
                 if conditioning_sample is not None:
                     # Tag the sample with which dataset it came from for debugging
                     conditioning_sample._source_dataset_id = selected_dataset.id
@@ -897,7 +916,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                         if fallback_idx == selected_idx:
                             continue  # Skip the one we already tried
 
-                        conditioning_sample = read_pair(fallback_dataset, sample_path, sample["image_path"])
+                        conditioning_sample = read_pair(fallback_dataset, sample_path, sample)
                         if conditioning_sample is not None:
                             self.logger.warning(
                                 f"Sample {sample_path} not found in {selected_dataset.id}, "
@@ -923,7 +942,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 for sample in samples:
                     sample_path = self.dataset_runtime.pairing_key(sample["image_path"])
 
-                    conditioning_sample = read_pair(dataset, sample_path, sample["image_path"])
+                    conditioning_sample = read_pair(dataset, sample_path, sample)
                     if conditioning_sample is not None:
                         # Tag the sample with which dataset it came from
                         conditioning_sample._source_dataset_id = dataset.id
