@@ -1089,11 +1089,11 @@ TorchInductor の host wrapper を選択します。`cpp` が既定で dispatch 
 
 ### `--validation_preview`
 
-- **内容**: Tiny AutoEncoder を使って拡散サンプリング中の中間検証プレビューをストリーミングします
+- **内容**: サンプリング中の中間検証画像を、設定した `raw` Webhook に送信します。
 - **既定**: False
-- **理由**: 軽量な Tiny AutoEncoder でデコードしたプレビュー画像を Webhook で送信し、生成過程をリアルタイムに確認できます。完了まで待つ必要がありません。
+- **理由**: DeepFloyd IF のステージ I と II はノイズ除去途中の画像を送信します。任意のステージ III のアップスケーラは対象外です。
 - **注記**:
-  - Tiny AutoEncoder に対応するモデルファミリーのみ（例: Flux、SDXL、SD3）
+  - Cosmos2、Flux、SDXL、SD3 などの潜在空間モデルは、登録済みの Tiny AutoEncoder を使用します。
   - プレビュー画像を受け取る Webhook 設定が必要
   - `--validation_preview_steps` でプレビュー頻度を制御
 
@@ -1102,7 +1102,7 @@ TorchInductor の host wrapper を選択します。`cpp` が既定で dispatch 
 - **内容**: 検証プレビューのデコード/ストリーミング間隔
 - **既定**: 1
 - **理由**: 検証サンプリング中に中間潜在をどの頻度でデコードするかを制御します。値を大きくすると（例: 3）、Tiny AutoEncoder のオーバーヘッドを減らせます。
-- **例**: `--validation_num_inference_steps=20` と `--validation_preview_steps=5` の場合、生成中の 5、10、15、20 ステップで 4 枚のプレビューが届きます。
+- **例**: 20 ステップで間隔が 5 の場合、ステップ 1、5、10、15、20 でプレビューを送信します。
 
 ### `--evaluation_type`
 

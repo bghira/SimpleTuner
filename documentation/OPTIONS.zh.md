@@ -1091,11 +1091,11 @@ TRAINING_DYNAMO_BACKEND=inductor
 
 ### `--validation_preview`
 
-- **内容**：使用 Tiny AutoEncoder 在扩散采样中流式输出验证预览
+- **内容**：在采样过程中向已配置的 `raw` Webhook 发送中间验证图像。
 - **默认**：False
-- **原因**：实时预览验证图像生成过程。通过轻量 Tiny AutoEncoder 解码并通过 webhook 回调发送，使你无需等待完整生成。
+- **原因**：DeepFloyd IF 的阶段 I 和 II 发送当前的去噪中间图像。可选的阶段 III 超分辨率模型不发送预览。
 - **说明**：
-  - 仅适用于支持 Tiny AutoEncoder 的模型家族（如 Flux、SDXL、SD3）
+  - Cosmos2、Flux、SDXL 和 SD3 等潜空间模型使用已注册的 Tiny AutoEncoder。
   - 需要 webhook 配置以接收预览图像
   - 使用 `--validation_preview_steps` 控制预览频率
 
@@ -1104,7 +1104,7 @@ TRAINING_DYNAMO_BACKEND=inductor
 - **内容**：验证预览解码与流式输出的间隔
 - **默认**：1
 - **原因**：控制验证采样中解码中间潜变量的频率。设为更高值（如 3）可减少 Tiny AutoEncoder 解码开销。
-- **示例**：当 `--validation_num_inference_steps=20` 且 `--validation_preview_steps=5` 时，生成过程在 5、10、15、20 步各收到 1 张预览图，共 4 张。
+- **示例**：采样 20 步且间隔为 5 时，在第 1、5、10、15 和 20 步发送预览。
 
 ### `--evaluation_type`
 

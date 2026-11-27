@@ -377,7 +377,7 @@ class CrepaRegularizer:
 
         # Validate TAE availability if requested
         if self.use_tae and self.enabled and not self.uses_internal_teacher_features:
-            if model_foundation is not None and not model_foundation.supports_validation_preview():
+            if model_foundation is not None and model_foundation.get_validation_preview_spec() is None:
                 logger.warning(
                     f"crepa_use_tae=True but {model_foundation.NAME} does not support TAE. "
                     "Falling back to full VAE decoding."
@@ -1031,7 +1031,7 @@ class UrepaRegularizer:
 
         # Validate TAE availability if requested
         if self.use_tae and self.enabled:
-            if model_foundation is not None and not model_foundation.supports_validation_preview():
+            if model_foundation is not None and model_foundation.get_validation_preview_spec() is None:
                 logger.warning(
                     f"urepa_use_tae=True but {model_foundation.NAME} does not support TAE. "
                     "Falling back to full VAE decoding."

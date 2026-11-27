@@ -1112,11 +1112,11 @@ A lot of settings are instead set through the [dataloader config](DATALOADER.md)
 
 ### `--validation_preview`
 
-- **What**: Stream intermediate validation previews during diffusion sampling using Tiny AutoEncoders
+- **What**: Stream intermediate validation images to configured raw webhooks during sampling.
 - **Default**: False
-- **Why**: Enables real-time preview of validation images as they're being generated, decoded via lightweight Tiny AutoEncoder models and sent through webhook callbacks. This allows you to monitor the progression of validation samples step-by-step rather than waiting for the complete generation.
+- **Why**: DeepFloyd IF stages I and II send the current denoising image. The optional stage III upscaler is excluded.
 - **Notes**:
-  - Only available on model families with Tiny AutoEncoder support (e.g., Flux, SDXL, SD3)
+  - Latent models such as Cosmos2, Flux, SDXL, and SD3 use their registered Tiny AutoEncoder.
   - Requires webhook configuration to receive preview images
   - Use `--validation_preview_steps` to control how frequently previews are decoded
 
@@ -1125,7 +1125,7 @@ A lot of settings are instead set through the [dataloader config](DATALOADER.md)
 - **What**: Interval for decoding and streaming validation previews
 - **Default**: 1
 - **Why**: Controls how often intermediate latents are decoded during validation sampling. Setting this to a higher value (e.g., 3) reduces the overhead of running the Tiny AutoEncoder by only decoding every N sampling steps.
-- **Example**: With `--validation_num_inference_steps=20` and `--validation_preview_steps=5`, you'll receive 4 preview images during the generation process (at steps 5, 10, 15, 20).
+- **Example**: With 20 sampling steps and an interval of 5, previews are sent at steps 1, 5, 10, 15, and 20.
 
 ### `--evaluation_type`
 

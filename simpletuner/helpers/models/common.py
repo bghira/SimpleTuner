@@ -498,6 +498,8 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
     GLIGEN_LYCORIS_TARGET = ["GatedSelfAttentionDense", "GLIGENTextBoundingboxProjection"]
     VALIDATION_USES_NEGATIVE_PROMPT = False
     VALIDATION_USE_AUTOCAST = True
+    # RGB callback tensor name for each pipeline that denoises directly in pixel space.
+    PIXEL_PREVIEW_INPUTS = {}
     AUTO_LORA_FORMAT_DETECTION = False
     SUPPORTS_MUON_CLIP = False
     DDP_FIND_UNUSED_PARAMETERS = False
@@ -2502,7 +2504,7 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
         return getattr(self, "VALIDATION_PREVIEW_SPEC", None)
 
     def supports_validation_preview(self) -> bool:
-        return self.get_validation_preview_spec() is not None
+        return bool(self.PIXEL_PREVIEW_INPUTS) or self.get_validation_preview_spec() is not None
 
     def get_validation_preview_decoder(self):
         """
