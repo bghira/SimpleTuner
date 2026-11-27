@@ -941,7 +941,7 @@ _BLUEPRINTS: List[BackendBlueprint] = [
                 {
                     "id": "webshart.sampling_order",
                     "label": "training sample order",
-                    "description": "Shard-local Parquet sampling defaults to sequential order.",
+                    "description": "Shard-local sampling defaults to sequential order.",
                     "type": "select",
                     "advanced": True,
                     "options": [

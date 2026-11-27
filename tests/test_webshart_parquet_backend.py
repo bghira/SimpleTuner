@@ -260,8 +260,8 @@ class TestWebshartParquetBackend(unittest.TestCase):
                 with closing(runtime.open_epoch(spec)) as cursor:
                     cursor.load_state_dict(state)
                     _, refs = cursor.next_batch()
-                    resumed.advance.assert_called_once_with(runtime.data_backend.shard_of(refs[0]))
-            self.assertEqual([call.args[0] for call in first.advance.call_args_list], [0, 1])
+                    resumed.advance.assert_called_once_with(cursor.window * mb.window_shards)
+            self.assertEqual([call.args[0] for call in first.advance.call_args_list], [0])
 
     def test_prefill_concurrency_uses_a_separate_reader(self):
         backend = self.backend
@@ -365,6 +365,7 @@ class TestWebshartParquetBackend(unittest.TestCase):
                 self.position += 1
                 return "square", ["c", "d"]
 
+        metadata._replacement_batches = lambda cursor: WebshartMetadataBackend._replacement_batches(metadata, cursor)
         cursor = Cursor()
         for attempt in range(2):
             target.read_image_batch.reset_mock()

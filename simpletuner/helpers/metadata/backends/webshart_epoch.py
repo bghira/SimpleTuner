@@ -155,11 +155,43 @@ def _ordered_runs(pages, db, shard_order):
 def seeded_published_batches(pages, spec, shard_of):
     runs = pages.open_geometry() if isinstance(pages, IndexedMembership) else _shard_runs(pages, shard_of)
     with closing(runs):
-        if not pages.header.get("membership_exclusion_revision"):
-            return sum(
-                spec.batches_for(n) * frequency for n, frequency in runs.execute("SELECT n,count(*) FROM runs GROUP BY n")
+        counts = {}
+        for _, bucket, _, n in _ordered_runs(pages, runs, int):
+            if n >= spec.dp_size:
+                owned = (n + (spec.dp_size - 1 if spec.pad else 0)) // spec.dp_size
+                counts[bucket] = counts.get(bucket, 0) + owned * spec.dp_size
+        return sum(spec.batches_for(n) for n in counts.values())
+
+
+class PublishedShardWindows:
+    def __init__(self, source, shard_of, width):
+        self.source = source
+        self.shard_of = shard_of
+        self.width = width
+        self.pages = MembershipPages.open(source)
+        self.keys = list(self.pages.counts)
+        self.db = (
+            self.pages.open_geometry() if isinstance(self.pages, IndexedMembership) else _shard_runs(self.pages, shard_of)
+        )
+
+    def __call__(self, partition):
+        start = partition * self.width
+        bounds = (start, start + self.width)
+        if isinstance(self.pages, IndexedMembership):
+            runs = self.pages.shard_runs(self.db, shard_range=bounds)
+        else:
+            runs = self.db.execute(
+                "SELECT shard,bucket,start,n FROM runs WHERE shard>=? AND shard<? ORDER BY shard,bucket,start", bounds
             )
-        return sum(spec.batches_for(count) for _, _, _, count in _ordered_runs(pages, runs, int))
+        buckets = {}
+        for _, bucket, offset, n in runs:
+            key = self.keys[bucket]
+            buckets.setdefault(key, []).extend(self.pages.iter_refs(key, offset, n))
+        return self.pages.header["view_revision"], buckets
+
+    def close(self):
+        self.db.close()
+        self.source.close()
 
 
 class WebshartEpoch:
@@ -500,3 +532,168 @@ class WindowedWebshartEpoch:
         if self.prefill is not None:
             self.prefill.close()
         self.buckets = ()
+
+
+class ShardLocalBatches:
+    """Pack equal-aspect rows across shard windows, checkpointing only the incoming tails."""
+
+    version = "shard-carry-v1"
+
+    def __init__(self, spec, source, view, partition_count, open_partition, *, window_shards, prefill, shard_at):
+        self.spec, self.source, self.view = spec, source, view
+        self.partition_count, self.open_partition = partition_count, open_partition
+        self.window_shards, self.prefill, self.shard_at = window_shards, prefill, shard_at
+        self.position = self.window = self.batch_in_window = 0
+        self.partition = self.revision = None
+        self.incoming = {}
+        self.tails = {}
+        self.pins = {}
+        self.incoming_pins = {}
+        self._last_emitted = None
+        self.runs = []
+        self.ends = []
+        self.capacity = spec.batch_size if spec.shuffle_seed is not None else spec.batch_size * spec.dp_size
+
+    @property
+    def batches(self):
+        if isinstance(self.open_partition, PublishedShardWindows):
+            pages = self.open_partition.pages
+            if self.spec.shuffle_seed is not None:
+                return seeded_published_batches(pages, self.spec, self.open_partition.shard_of)
+            return sum(self.spec.batches_for(n) for n in pages.counts.values())
+        return None
+
+    def _partition_at(self, window):
+        if self.shard_at is None:
+            return window
+        return self.shard_at(window * self.window_shards) // self.window_shards
+
+    def _open_window(self):
+        self.partition = self._partition_at(self.window)
+        if self.prefill is not None:
+            self.prefill.advance(self.window * self.window_shards)
+        self.revision, buckets = self.open_partition(self.partition)
+        spec = self.spec
+        self.runs, self.ends, self.tails = [], [], {}
+        self.pins = {**self.incoming_pins, str(self.partition): self.revision}
+        total = 0
+        for key in sorted(self.incoming.keys() | buckets.keys()):
+            members = buckets.get(key, ())
+            count = len(members)
+            if spec.shuffle_seed is not None:
+                owned = members[spec.dp_rank :: spec.dp_size]
+                # Independent rank orders need equal contributions from every shard.
+                count = (count + (spec.dp_size - 1 if spec.pad else 0)) // spec.dp_size if count >= spec.dp_size else 0
+                members = owned
+            if count and spec.sampling_order == "shuffled":
+                seed = _key(spec.dataset_id, spec.seed, spec.epoch, self.partition, key)
+                members = [members[_permute(i, len(members), seed)] for i in range(len(members))]
+            prefix = self.incoming.get(key, ())
+            length = len(prefix) + count * (1 + spec.repeats)
+            unit = self.capacity * spec.accumulation
+            used = length // unit * unit
+            if self.window + 1 == self.partition_count and spec.pad:
+                used = length + (-length % unit)
+            if used:
+                self.runs.append((key, prefix, members, length))
+                total += used // self.capacity
+                self.ends.append(total)
+            if length > used:
+                self.tails[key] = [self._location(prefix, members, length, i) for i in range(used, length)]
+
+    def _location(self, prefix, members, length, i):
+        index = i % length
+        if index < len(prefix):
+            return prefix[index]
+        return self.partition, members[(index - len(prefix)) % len(members)]
+
+    def next_batch(self):
+        while self.window < self.partition_count:
+            if self.partition is None:
+                self._open_window()
+            if self.ends and self.batch_in_window < self.ends[-1]:
+                break
+            self.incoming = self.tails
+            self.incoming_pins = {str(p): self.pins[str(p)] for rows in self.tails.values() for p, _ in rows}
+            self.window += 1
+            self.partition = None
+            self.batch_in_window = 0
+        else:
+            if not self.position:
+                raise ValueError("Webshart dataset has no complete training batches in its shard windows.")
+            raise StopIteration
+        result = self._batch(self.batch_in_window, self.spec.dp_rank)
+        self.position += 1
+        self.batch_in_window += 1
+        self._last_emitted = self._checkpoint()
+        return result
+
+    def global_batch(self):
+        return self._batch(self.batch_in_window - 1, None)[1]
+
+    def _batch(self, step, rank):
+        index = bisect_right(self.ends, step)
+        bucket, prefix, members, length = self.runs[index]
+        start = (step - (self.ends[index - 1] if index else 0)) * self.capacity
+        size = self.capacity if rank is None else self.spec.batch_size
+        if rank is not None and self.spec.shuffle_seed is None:
+            start += rank * size
+        return bucket, [self._location(prefix, members, length, i)[1] for i in range(start, start + size)]
+
+    def state_dict(self):
+        return self._last_emitted or self._checkpoint()
+
+    def _checkpoint(self):
+        return dict(
+            version=self.version,
+            source=self.source,
+            view=self.view,
+            layout=self.spec.checkpoint_layout(),
+            position=self.position,
+            window=self.window,
+            batch_in_window=self.batch_in_window,
+            window_revision=self.revision,
+            incoming=self.incoming,
+            pins=self.incoming_pins,
+        )
+
+    def load_state_dict(self, state):
+        expected = self.state_dict()
+        if any(state.get(k) != expected[k] for k in ("version", "source", "view", "layout")):
+            raise ValueError("Webshart resume requires unchanged source, accepted view, sampling policy and layout.")
+        pos, slot, batch = (state[k] for k in ("position", "window", "batch_in_window"))
+        if (
+            any(type(v) is not int for v in (pos, slot, batch))
+            or not 0 <= slot < self.partition_count
+            or not 0 <= batch <= pos
+        ):
+            raise ValueError("Invalid Webshart window position.")
+        if (not pos and (slot or batch or state["window_revision"] is not None)) or (
+            pos and (not batch or (pos - batch) % self.spec.accumulation)
+        ):
+            raise ValueError("Invalid Webshart checkpoint boundary.")
+        incoming, pins = state["incoming"], state["pins"]
+        if (not pos and incoming) or any(len(rows) >= self.capacity * self.spec.accumulation for rows in incoming.values()):
+            raise ValueError("Invalid Webshart carry size.")
+        if {str(p) for rows in incoming.values() for p, _ in rows} != set(pins):
+            raise ValueError("Invalid Webshart carry revisions.")
+        for index, revision in pins.items():
+            if not 0 <= int(index) < self.partition_count or self.open_partition(int(index))[0] != revision:
+                raise ValueError("Webshart shard contents changed since the training checkpoint.")
+        self.position, self.window, self.batch_in_window = pos, slot, batch
+        self.partition = self.revision = None
+        self.incoming, self.incoming_pins = incoming, pins
+        if pos:
+            self._open_window()
+            if self.revision != state["window_revision"]:
+                raise ValueError("Webshart shard contents changed since the training checkpoint.")
+            if not self.ends or not 0 < batch <= self.ends[-1]:
+                raise ValueError("Invalid Webshart position within the prepared shard window.")
+        self._last_emitted = self._checkpoint()
+
+    def close(self):
+        if self.prefill is not None:
+            self.prefill.close()
+        self.runs.clear()
+        if isinstance(self.open_partition, PublishedShardWindows):
+            self.open_partition.close()

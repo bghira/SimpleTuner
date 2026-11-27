@@ -507,13 +507,15 @@ class WebshartDataBackend(BaseDataBackend):
             return prefill.shard_at, prefill
         return _shuffled_shard_order(self.num_shards(), seed).__getitem__, None
 
-    def sequential_prefill(self, window_shards, *, shuffle_seed=None):
+    def sequential_prefill(self, window_shards, *, shuffle_seed=None, group_size=1):
         # Webshart releases before the byte-bounded cursor use on-demand caching.
         if not hasattr(self.dataset, "sequential_prefill") or self.shard_cache_dir is None or Path(self.source).is_dir():
             return None
         options = {"active_shards": window_shards}
         if shuffle_seed is not None:
             options["shuffle_seed"] = shuffle_seed
+        if group_size != 1:
+            options["group_size"] = group_size
         downloads = os.environ.get("SIMPLETUNER_WEBSHART_PREFILL_DOWNLOADS")
         if downloads is None:
             return self.dataset.sequential_prefill(**options)
@@ -521,7 +523,7 @@ class WebshartDataBackend(BaseDataBackend):
         if downloads < 1:
             raise ValueError("SIMPLETUNER_WEBSHART_PREFILL_DOWNLOADS must be positive.")
         # Keep foreground I/O and the checkpointed dataset configuration independent.
-        reader = self.open_refresh_source().dataset
+        reader = self._open_source() if self.format == "tar" else self.open_refresh_source().dataset
         reader.enable_shard_cache(self.shard_cache_dir, self.shard_cache_gb, downloads)
         return reader.sequential_prefill(**options)
 

@@ -187,14 +187,19 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             self.consumed_state = None
             self.current_epoch = epoch
 
-    def _open_training_cursor(self):
+    def _open_training_cursor(self, checkpoint_version=None):
         if self.training_cursor is None:
             spec = self.epoch_provider.epoch_spec(
                 self.current_epoch,
                 self.batch_size,
                 occurrence_revision=self.dataset_runtime.occurrence_revision(StateTracker.get_args()),
             )
-            self.training_cursor = self.dataset_runtime.open_epoch(spec)
+            self.training_cursor = (
+                self.epoch_provider.open_checkpoint_epoch(spec, checkpoint_version)
+                if checkpoint_version is not None
+                and callable(getattr(type(self.epoch_provider), "open_checkpoint_epoch", None))
+                else self.dataset_runtime.open_epoch(spec)
+            )
             if self.consumed_state is None:
                 self.consumed_state = self.training_cursor.state_dict()
         return self.training_cursor
@@ -212,7 +217,11 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             state = cursor.state_dict()
             spec = cursor.spec
             rng = random.Random(f"{self.id}:{spec.seed}:{spec.epoch}:{spec.dp_rank}:{cursor.position}")
-            partition = getattr(cursor, "partition", None)
+            partition = (
+                getattr(cursor, "partition", None)
+                if getattr(self.epoch_provider, "_window_recipe", None) is not None
+                else None
+            )
             images = None
             reference_images = None
             if partition is not None and self.epoch_provider.delete_problematic_images:
@@ -364,7 +373,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             if self.training_cursor is not None:
                 self.training_cursor.close()
                 self.training_cursor = None
-            self._open_training_cursor().load_state_dict(saved)
+            self._open_training_cursor(saved.get("version")).load_state_dict(saved)
             self.consumed_state = saved
             self.validation_cursor.load_state_dict(previous_state.get("validation"))
             return
@@ -1153,7 +1162,11 @@ class MultiAspectSampler(torch.utils.data.Sampler):
     def __len__(self):
         if self.epoch_provider is not None:
             spec = self.epoch_provider.epoch_spec(self.current_epoch, self.batch_size)
-            count = self.epoch_provider.scheduled_batches(spec)
+            cursor = getattr(self, "training_cursor", None)
+            if cursor is not None and callable(getattr(type(self.epoch_provider), "open_checkpoint_epoch", None)):
+                count = self.epoch_provider.scheduled_batches(spec, checkpoint_cursor=cursor)
+            else:
+                count = self.epoch_provider.scheduled_batches(spec)
             if count is None:
                 return self.metadata_backend.runtime_args.max_train_steps * spec.accumulation
             return count

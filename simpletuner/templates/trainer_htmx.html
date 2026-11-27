@@ -3221,12 +3221,12 @@ function trainerComponent() {
                     if (samplingPolicy) webshart.sampling_policy = samplingPolicy;
                     else delete webshart.sampling_policy;
                     const samplingOrder = this._coerceString(options.sampling_order);
-                    if (format === 'parquet' && samplingPolicy === 'shard_local' && samplingOrder) {
+                    if (samplingPolicy === 'shard_local' && samplingOrder) {
                         webshart.sampling_order = samplingOrder;
                     } else {
                         delete webshart.sampling_order;
                     }
-                    if (format === 'parquet' && samplingPolicy === 'shard_local' && options.shuffle_seed != null && options.shuffle_seed !== '') {
+                    if (samplingPolicy === 'shard_local' && options.shuffle_seed != null && options.shuffle_seed !== '') {
                         webshart.shuffle_seed = options.shuffle_seed;
                     } else {
                         delete webshart.shuffle_seed;

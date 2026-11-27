@@ -5505,8 +5505,8 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
             saved = next(d for d in json.loads(config_path.read_text()) if d["id"] == "webshart-parquet")
             self.assertTrue(saved["webshart"]["optimize_captions"])
             self.assertNotIn("manifest", saved["webshart"])
-            self.assertNotIn("sampling_order", saved["webshart"])
-            self.assertNotIn("shuffle_seed", saved["webshart"])
+            self.assertEqual(saved["webshart"]["sampling_order"], "shuffled")
+            self.assertEqual(saved["webshart"]["shuffle_seed"], 0)
             self.assertNotIn("columns", saved["webshart"])
 
         self.for_each_browser("test_webshart_parquet_settings_edit_and_save", scenario)
