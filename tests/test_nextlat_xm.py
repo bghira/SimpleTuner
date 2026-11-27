@@ -134,6 +134,14 @@ class NextLatXmTests(unittest.TestCase):
                 torch.testing.assert_close(actual_winners, expected_winners)
                 torch.testing.assert_close(logits.grad, baseline.grad)
 
+    def test_nextlat_block_zero_selects_first_block(self):
+        config = SimpleNamespace(nextlat_enabled=True, nextlat_weight=1.0, nextlat_block_index=0)
+        regularizer = NextLatRegularizer(config, DummyAccelerator(), hidden_size=1, block_count=3)
+        self.assertEqual(regularizer.block_index, 0)
+        config.nextlat_block_index = -2
+        with self.assertRaisesRegex(ValueError, "nextlat_block_index"):
+            NextLatRegularizer(config, DummyAccelerator(), hidden_size=1, block_count=3)
+
     def test_nextlat_regularizer_computes_loss_from_captured_layer(self):
         config = SimpleNamespace(
             nextlat_enabled=True,

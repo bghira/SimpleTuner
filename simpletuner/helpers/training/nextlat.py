@@ -104,8 +104,9 @@ class NextLatRegularizer:
         if self.enabled and self.weight <= 0:
             raise ValueError("nextlat_weight must be greater than zero when NextLat is enabled.")
 
-        configured_block = int(_config_value(config, "nextlat_block_index") or -1)
-        self.block_index = block_count - 1 if configured_block < 0 else configured_block
+        configured_block = _config_value(config, "nextlat_block_index")
+        configured_block = -1 if configured_block is None else int(configured_block)
+        self.block_index = block_count - 1 if configured_block == -1 else configured_block
         if not 0 <= self.block_index < block_count:
             raise ValueError(f"nextlat_block_index must be within [-1, {block_count - 1}], got {configured_block}.")
 
