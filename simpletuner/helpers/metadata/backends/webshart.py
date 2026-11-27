@@ -722,11 +722,8 @@ class WebshartMetadataBackend(MetadataBackend):
         if spec.shuffle_seed is not None:
             shard_at, prefill = self.data_backend.seeded_shards(spec.rank_shuffle_seed)
         elif spec.sampling_order == "shuffled":
-            from webshart.parquet_prefill import GroupedShardOrder
-
             seed = (spec.seed + spec.epoch - 1) % (1 << 64)
-            prefill = self.data_backend.sequential_prefill(width, shuffle_seed=seed, group_size=width)
-            shard_at = prefill.shard_at if prefill else GroupedShardOrder(count, width, 0, seed).__getitem__
+            shard_at, prefill = self.data_backend.shuffled_windows(width, seed)
         else:
             prefill = self.data_backend.sequential_prefill(width)
         if self._window_recipe is not None:

@@ -263,6 +263,40 @@ class TestWebshartParquetBackend(unittest.TestCase):
                     resumed.advance.assert_called_once_with(cursor.window * mb.window_shards)
             self.assertEqual([call.args[0] for call in first.advance.call_args_list], [0])
 
+    def test_grouped_shuffle_matches_remote_prefill_and_keeps_the_partial_window_last(self):
+        from webshart.parquet import _shuffled_shard_order
+
+        backend = self.backend
+        width, count, seed = 4, 19, 17
+        groups = list(_shuffled_shard_order(count // width, seed))
+        expected = [group * width + offset for group in groups for offset in range(width)] + [16, 17, 18]
+        with patch.object(backend.dataset, "_shards", [{"size": 1}] * count):
+            shard_at, prefill = backend.shuffled_windows(width, seed)
+            self.assertIsNone(prefill)
+            self.assertEqual([shard_at(slot) for slot in range(count)], expected)
+            with (
+                patch.object(backend, "source", "s3://fixture"),
+                patch.object(backend.dataset._source_repo, "local", False),
+                patch.dict("os.environ", clear=True),
+            ):
+                shard_at, prefill = backend.shuffled_windows(width, seed)
+                with closing(prefill):
+                    self.assertEqual([shard_at(slot) for slot in range(count)], expected)
+                    acquired = []
+                    complete = Event()
+
+                    def acquire(shard):
+                        acquired.append(shard)
+                        if len(acquired) == width:
+                            complete.set()
+
+                    prefill.acquire = acquire
+                    prefill.parallelism = 1
+                    prefill.budget = width
+                    prefill.advance(0)
+                    self.assertTrue(complete.wait(5))
+                    self.assertEqual(acquired, expected[:width])
+
     def test_prefill_concurrency_uses_a_separate_reader(self):
         backend = self.backend
         backend.source = "s3://capture"

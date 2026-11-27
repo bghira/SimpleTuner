@@ -498,14 +498,35 @@ class WebshartDataBackend(BaseDataBackend):
         return dataset
 
     def seeded_shards(self, seed):
-        try:
-            from webshart.parquet import _shuffled_shard_order
-        except ImportError as exc:
-            raise ImportError("webshart.shuffle_seed requires Webshart 0.9.3 or newer.") from exc
+        from webshart.parquet import _shuffled_shard_order
+
         prefill = self.sequential_prefill(1, shuffle_seed=seed)
         if prefill is not None:
             return prefill.shard_at, prefill
         return _shuffled_shard_order(self.num_shards(), seed).__getitem__, None
+
+    def shuffled_windows(self, width, seed):
+        from webshart import parquet_prefill
+        from webshart.parquet import _shuffled_shard_order
+
+        count = self.num_shards()
+        if hasattr(parquet_prefill, "GroupedShardOrder"):
+            prefill = self.sequential_prefill(width, shuffle_seed=seed, group_size=width)
+            if prefill is not None:
+                return prefill.shard_at, prefill
+            return parquet_prefill.GroupedShardOrder(count, width, 0, seed).__getitem__, None
+
+        # Webshart 0.9.3 accepts an explicit order on the cursor, but not group_size on the dataset.
+        groups = count // width
+        order = [group * width + offset for group in _shuffled_shard_order(groups, seed) for offset in range(width)]
+        order.extend(range(groups * width, count))
+        reader = self.sequential_prefill(width)
+        if reader is None:
+            return order.__getitem__, None
+        prefill = parquet_prefill.SequentialShardPrefill(
+            reader.directory, reader.budget, reader.parallelism, order, reader.shard_size, reader.acquire, width
+        )
+        return prefill.shard_at, prefill
 
     def sequential_prefill(self, window_shards, *, shuffle_seed=None, group_size=1):
         # Webshart releases before the byte-bounded cursor use on-demand caching.

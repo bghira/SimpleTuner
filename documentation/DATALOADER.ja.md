@@ -1467,7 +1467,7 @@ Webshart データセットは `webshart` パッケージで WebDataset 形式�
 
 #### S3 の Parquet 画像バイト
 
-`webshart.format: "parquet"` で、ローカル、Hub、S3 互換ストレージの Parquet に埋め込まれた画像を読み込みます。S3 は `s3://bucket` または `s3://bucket/prefix`。任意の `webshart.manifest` はソースからの相対キャプチャ記述子です。SimpleTuner には Webshart 0.9.1 以降が必要です。
+`webshart.format: "parquet"` で、ローカル、Hub、S3 互換ストレージの Parquet に埋め込まれた画像を読み込みます。S3 は `s3://bucket` または `s3://bucket/prefix`。任意の `webshart.manifest` はソースからの相対キャプチャ記述子です。SimpleTuner には Webshart 0.9.3 以降が必要です。
 
 `webshart.columns` は `image`、`captions`、`width`、`height` をソース列名に対応させます。省略時は同名です。画像はバイナリ列または `bytes` を含む構造体です。`url_status != "ok"` や空の `stored_bytes` の行は物理行番号を変えずに除外されます。寸法のない行はバケット対象外です。元 URL は取得しません。SimpleTuner は終端マーカーを補って、一部の途切れた JPEG を修復できます。`delete_problematic_images` を有効にすると、ネイティブインデックスの準備中にデコードできなかったサンプルを除外します。無効の場合、バッチ読み込み時のデコード失敗で学習が停止し、該当サンプルが表示されます。
 

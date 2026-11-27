@@ -1465,7 +1465,7 @@ Webshart 数据集通过 `webshart` 包加载 WebDataset 风格的 tar shards。
 
 #### S3 上的 Parquet 图像字节
 
-设置 `webshart.format: "parquet"` 可读取本地、Hub 或 S3 兼容存储中 Parquet 分片内的图像字节。S3 地址为 `s3://bucket` 或 `s3://bucket/prefix`；可选的 `webshart.manifest` 是相对于数据源的捕获描述文件路径。SimpleTuner 需要 Webshart 0.9.1 或更高版本。
+设置 `webshart.format: "parquet"` 可读取本地、Hub 或 S3 兼容存储中 Parquet 分片内的图像字节。S3 地址为 `s3://bucket` 或 `s3://bucket/prefix`；可选的 `webshart.manifest` 是相对于数据源的捕获描述文件路径。SimpleTuner 需要 Webshart 0.9.3 或更高版本。
 
 `webshart.columns` 将 `image`、`captions`、`width`、`height` 映射到源列名；省略时使用这些默认名称。图像列可以是二进制数据或包含 `bytes` 的结构体。`url_status != "ok"` 或 `stored_bytes` 为空的捕获行会被排除，物理行号保持不变。缺少尺寸的行不参与分桶。不会请求原始 URL；SimpleTuner 可以通过恢复结束标记来修复部分截断的 JPEG。启用 `delete_problematic_images` 可在原生索引准备期间排除仍无法解码的样本。未启用时，批次加载中的解码失败会停止训练并指出对应样本。
 

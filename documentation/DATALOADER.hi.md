@@ -1467,7 +1467,7 @@ Webshart datasets `webshart` package के जरिए WebDataset-style tar sh
 
 #### S3 पर Parquet इमेज बाइट्स
 
-`webshart.format: "parquet"` से स्थानीय, Hub या S3 में संग्रहीत इमेज पढ़ें। `source` में `s3://bucket` या `s3://bucket/prefix` दें। वैकल्पिक `webshart.manifest` स्रोत के सापेक्ष कैप्चर विवरण फ़ाइल चुनता है। SimpleTuner के लिए Webshart 0.9.1 या नया संस्करण चाहिए।
+`webshart.format: "parquet"` से स्थानीय, Hub या S3 में संग्रहीत इमेज पढ़ें। `source` में `s3://bucket` या `s3://bucket/prefix` दें। वैकल्पिक `webshart.manifest` स्रोत के सापेक्ष कैप्चर विवरण फ़ाइल चुनता है। SimpleTuner के लिए Webshart 0.9.3 या नया संस्करण चाहिए।
 
 `webshart.columns` से `image`, `captions`, `width`, `height` को स्रोत कॉलम से जोड़ें; छोड़े गए नाम यही डिफ़ॉल्ट लेते हैं। इमेज बाइनरी कॉलम या `bytes` वाला स्ट्रक्चर हो सकती है। `url_status != "ok"` या खाली `stored_bytes` वाली पंक्तियाँ वास्तविक पंक्ति सूचकांक बदले बिना हटती हैं। आयाम रहित पंक्तियाँ बकेट में नहीं आतीं। मूल URL डाउनलोड नहीं होते। SimpleTuner अंत का मार्कर जोड़कर कुछ अधूरे JPEG ठीक कर सकता है। इंडेक्स वाली नेटिव तैयारी में उन नमूनों को बाहर रखने के लिए `delete_problematic_images` चालू करें जो फिर भी डिकोड नहीं होते। यह विकल्प बंद होने पर बैच लोड करते समय डिकोड विफल होने से प्रशिक्षण रुक जाता है और त्रुटि संदेश नमूने की पहचान बताता है।
 
