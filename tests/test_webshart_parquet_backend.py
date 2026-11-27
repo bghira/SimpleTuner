@@ -57,6 +57,43 @@ class TestWebshartParquetBackend(unittest.TestCase):
             None, "parquet", str(source), format="parquet", cache_dir=str(self.root / "cache")
         )
 
+    def test_fraction_limits_select_physical_rows_in_projected_and_windowed_scans(self):
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+        from simpletuner.helpers.metadata.preparation import TrainingPreparation
+        from simpletuner.simpletuner_sdk.server.services.cache_job_service import _CacheAcceleratorStub, _CacheArgsNamespace
+
+        for row, value in zip(self.rows, (1.0, None, 0.75), strict=True):
+            row["white_fraction"] = value
+        pq.write_table(pa.Table.from_pylist(self.rows), self.source / "part.parquet")
+        self._publish_capture_manifest()
+        args = _CacheArgsNamespace({"output_dir": str(self.root), "seed": 3, "max_train_steps": 10})
+        for policy in (None, "shard_local"):
+            config = {
+                "id": "fractions",
+                "type": "webshart",
+                "source": str(self.source),
+                "resolution": 64,
+                "resolution_type": "pixel",
+                "caption_strategy": "webshart",
+                "webshart": {"format": "parquet", "manifest": "capture.json", "cache_dir": str(self.root / str(policy))},
+                "filter_func": {"max_white_fraction": 0.75},
+            }
+            if policy:
+                config["webshart"]["sampling_policy"] = policy
+            with (
+                self.subTest(policy=policy),
+                closing(DatasetRuntime.from_config(config, args, _CacheAcceleratorStub(device="cpu"))) as runtime,
+            ):
+                if policy:
+                    request = TrainingPreparation(online_text=True, ondemand_latents=True, requires_complete_view=False)
+                    self.assertTrue(runtime.prepare_for_training(request))
+                    with closing(runtime.open_epoch(runtime.metadata_backend.epoch_spec(1, 1))) as cursor:
+                        refs = [ref for _, batch in iter(cursor.next_batch, None) for ref in batch]
+                    self.assertEqual([runtime.data_backend.parse_sample_id(ref).sample_idx for ref in refs], [2])
+                runtime.prepare_view()
+                with runtime.metadata_backend.open_preparation_view() as view:
+                    self.assertEqual([runtime.data_backend.parse_sample_id(ref).sample_idx for ref in view], [2])
+
     def test_seeded_shards_keep_rank_rows_disjoint_and_resume_in_prefetch_order(self):
         from importlib.metadata import version
 

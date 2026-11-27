@@ -109,12 +109,20 @@ class DatasetFilter:
             raise ValueError("filter_func must be an object.")
         self.config = dict(config)
         self.path = PathFilterSpec.from_config(self.config)
+        self.fraction_limits = {}
+        for field in ("white_fraction", "black_fraction"):
+            key = f"max_{field}"
+            if key in self.config:
+                limit = self.config[key]
+                if type(limit) not in (int, float) or not 0 <= limit <= 1:
+                    raise ValueError(f"filter_func.{key} must be a number between 0 and 1.")
+                self.fraction_limits[field] = float(limit)
         self.collection_values = None
         if "collection" in self.config:
             self.collection_values = frozenset(_normalise_item_values(self.config["collection"]))
 
     def active(self) -> bool:
-        return self.path_active() or any(key in self.config for key in _ROW_FILTER_KEYS)
+        return self.path_active() or bool(self.fraction_limits) or any(key in self.config for key in _ROW_FILTER_KEYS)
 
     def path_active(self) -> bool:
         return self.path.active()
@@ -122,7 +130,16 @@ class DatasetFilter:
     def matches_path(self, path: Any) -> bool:
         return self.path.matches(path)
 
+    def matches_fractions(self, item: Mapping[str, Any]) -> bool:
+        for field, maximum in self.fraction_limits.items():
+            value = item.get(field)
+            if type(value) not in (int, float) or not 0 <= value <= maximum:
+                return False
+        return True
+
     def matches_item(self, item: Mapping[str, Any], path: Any = None) -> bool:
+        if self.fraction_limits and not self.matches_fractions(item):
+            return False
         if self.collection_values is not None:
             collection_values = _normalise_item_values(item.get("collection"))
             if not any(value in self.collection_values for value in collection_values):

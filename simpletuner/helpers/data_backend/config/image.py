@@ -200,6 +200,8 @@ class ImageBackendConfig(BaseBackendConfig):
             config.huggingface_auto_load = hf_block.get("auto_load", backend_dict.get("auto_load"))
 
         if config.backend_type == "webshart":
+            if "filter_func" in backend_dict:
+                config.config["filter_func"] = backend_dict["filter_func"]
             validators.validate_webshart_sampling_policy(backend_dict.get("webshart"))
             validators.validate_webshart_sampling_order(backend_dict.get("webshart"))
             validators.validate_webshart_shuffle_seed(backend_dict.get("webshart"))

@@ -916,6 +916,18 @@ _BLUEPRINTS: List[BackendBlueprint] = [
                     "defaultValue": "tar",
                     "options": [{"value": "tar", "label": "Tar"}, {"value": "parquet", "label": "Parquet"}],
                 },
+                *[
+                    {
+                        "id": f"filter_func.max_{color}_fraction",
+                        "label": f"maximum {color} pixel fraction",
+                        "type": "number",
+                        "min": 0,
+                        "max": 1,
+                        "step": 0.01,
+                        "advanced": True,
+                    }
+                    for color in ("white", "black")
+                ],
                 {
                     "id": "webshart.sampling_policy",
                     "label": "sampling policy",

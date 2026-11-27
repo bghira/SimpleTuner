@@ -5009,6 +5009,7 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
                         "caption_strategy": "webshart",
                         "metadata_backend": "webshart",
                         "webshart": {"caption_key": "original"},
+                        "filter_func": {"path_include": "photos"},
                     }
                 ]
             ),
@@ -5049,6 +5050,13 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
             self.assertEqual(field.get_attribute("value"), "original")
             driver.execute_script("Alpine.store('trainer').hasUnsavedChanges = false;")
 
+            def set_limit(color, value):
+                control = driver.find_element(By.CSS_SELECTOR, f".dataset-list-item-expanded .webshart-max-{color}")
+                control.clear()
+                control.send_keys(value, Keys.TAB)
+
+            set_limit("white", "0.98")
+            set_limit("black", "0")
             for value, expected in [
                 ("long_caption", "long_caption"),
                 ("long_caption\nshort_caption", ["long_caption", "short_caption"]),
@@ -5068,6 +5076,10 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
                     persisted = next(
                         d for d in json.loads(config_path.read_text(encoding="utf-8")) if d["id"] == "webshart-captions"
                     )
+                    filters = {"path_include": "photos", "max_black_fraction": 0}
+                    if value == "long_caption":
+                        filters["max_white_fraction"] = 0.98
+                    self.assertEqual(persisted["filter_func"], filters)
                     self.assertEqual(persisted.get("webshart", {}).get("caption_key"), expected)
                     WebDriverWait(driver, 5).until(
                         lambda d: d.execute_script("return Alpine.store('trainer').hasUnsavedChanges === false;")
@@ -5076,6 +5088,8 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
                     select_tab("Storage")
                     field = WebDriverWait(driver, 10).until(visible_field)
                     self.assertEqual(field.get_attribute("value"), value)
+                    if value == "long_caption":
+                        set_limit("white", "")
 
         self.for_each_browser("test_webshart_caption_keys_edit_and_save", scenario)
 
