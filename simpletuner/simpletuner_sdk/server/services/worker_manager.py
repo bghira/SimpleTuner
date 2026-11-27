@@ -55,6 +55,8 @@ class WorkerManager:
         self._task: Optional[asyncio.Task] = None
         self._stop_event = asyncio.Event()
         self._dispatch_lock = asyncio.Lock()
+        self._last_health_check: Optional[datetime] = None
+        self._heartbeat_grace_until: Optional[datetime] = None
 
     async def start(self):
         """Start the background health check loop."""
@@ -93,9 +95,14 @@ class WorkerManager:
 
     async def _check_all_workers(self):
         """Check health of all workers."""
-        from ..models.worker import WorkerStatus
-
         now = datetime.now(timezone.utc)
+        # Use wall time so a suspended orchestrator can detect the gap on wake.
+        if self._last_health_check and now - self._last_health_check > max(
+            self.heartbeat_timeout, timedelta(seconds=2 * self.check_interval)
+        ):
+            self._heartbeat_grace_until = now + self.heartbeat_timeout
+            logger.warning("Health checks were paused. Allowing workers to reconnect until %s", self._heartbeat_grace_until)
+        self._last_health_check = now
         workers = await self.worker_repository.list_workers()
 
         for worker in workers:
@@ -117,6 +124,8 @@ class WorkerManager:
                 await self._handle_failed_launch(worker)
 
         elif worker.status in (WorkerStatus.IDLE, WorkerStatus.BUSY):
+            if self._heartbeat_grace_until and now < self._heartbeat_grace_until:
+                return
             if worker.last_heartbeat:
                 time_since_heartbeat = now - worker.last_heartbeat
                 if time_since_heartbeat > self.heartbeat_timeout:

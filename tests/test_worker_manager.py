@@ -688,6 +688,26 @@ class TestWorkerManager(unittest.IsolatedAsyncioTestCase):
 
         self.mock_worker_repository.list_workers.assert_called_once()
 
+    async def test_workers_can_reconnect_after_orchestrator_suspend(self) -> None:
+        before = datetime.now(timezone.utc)
+        wake = before + timedelta(hours=1)
+        first = self._create_worker(status=WorkerStatus.BUSY, last_heartbeat=before)
+        second = self._create_worker(worker_id="worker-2", status=WorkerStatus.BUSY, last_heartbeat=before)
+        self.mock_worker_repository.list_workers.return_value = [first, second]
+        manager = self.worker_manager
+        with (
+            patch("simpletuner.simpletuner_sdk.server.services.worker_manager.datetime") as clock,
+            patch.object(manager, "_handle_worker_offline", new_callable=AsyncMock) as offline,
+        ):
+            clock.now.side_effect = [before, wake, wake + timedelta(seconds=60), wake + timedelta(seconds=120)]
+            await manager._check_all_workers()
+            await manager._check_all_workers()
+            first.last_heartbeat = wake + timedelta(seconds=30)
+            await manager._check_all_workers()
+            offline.assert_not_awaited()
+            await manager._check_all_workers()
+            offline.assert_awaited_once_with(second)
+
     async def test_health_check_loop_stop_event(self) -> None:
         """Test health check loop respects stop event."""
         self.mock_worker_repository.list_workers.return_value = []
