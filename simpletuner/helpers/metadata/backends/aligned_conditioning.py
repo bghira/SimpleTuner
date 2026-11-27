@@ -38,6 +38,7 @@ class AlignedConditioningMetadata(MetadataBackend):
             inputs.append("configured")
         revision = hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
         self.description = replace(description, view_revision=revision, physical_rows=None)
+        self.shared_parquet_rows = getattr(self.data_backend, "format", None) == "parquet" and not generated
         self.generated = generated
         self.artifact_root = os.path.abspath(
             os.path.join(self.instance_data_dir, revision) if generated else self.instance_data_dir
@@ -117,6 +118,8 @@ class AlignedConditioningMetadata(MetadataBackend):
         return self.describe().accepted_samples
 
     def _target_ref(self, source_ref):
+        if self.shared_parquet_rows:
+            return source_ref
         if not self.generated:
             return conditioning_file_path(source_ref, self.artifact_root, self.dataset_config)
         relative_path = canonicalize_data_uri(source_ref).removeprefix("webshart://")
@@ -125,6 +128,8 @@ class AlignedConditioningMetadata(MetadataBackend):
         return os.path.join(self.artifact_root, relative_path + (".png" if self.first_frame else ""))
 
     def _source_ref(self, target_ref):
+        if self.shared_parquet_rows:
+            return target_ref
         relative = os.path.relpath(target_ref, self.artifact_root)
         if relative == ".." or relative.startswith(f"..{os.sep}"):
             raise ValueError("Conditioning artifact does not belong to the prepared source revision.")
@@ -132,6 +137,9 @@ class AlignedConditioningMetadata(MetadataBackend):
             return "webshart://" + (relative.removesuffix(".png") if self.first_frame else relative)
         candidates = self.source.data_backend.parquet_sample_refs_for_filename(relative, first_frame=self.first_frame)
         return next((ref for ref in candidates if self.source_metadata.admits_related_sample(ref)), None)
+
+    def caption_cache_entry(self, ref):
+        return self.data_backend.get_caption(ref)
 
     def conditioning_ref(self, pairing_key):
         self.describe()
@@ -143,6 +151,8 @@ class AlignedConditioningMetadata(MetadataBackend):
                     self.source_metadata._geometry_lookup(), self._publication, self._filtered, self._filter_scope
                 )
             contains = self._contains
+        if self.shared_parquet_rows:
+            return self.data_backend.conditioning_ref(pairing_key, admits=contains)
         if contains(canonicalize_data_uri(pairing_key)):
             return self._target_ref(pairing_key)
         return None

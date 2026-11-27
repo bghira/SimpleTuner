@@ -874,6 +874,11 @@ def collate_fn(batch, *, dataset=None):
                         vae_cache=reference_dataset.vae_cache,
                         dataset=reference_dataset,
                         view=reference_view,
+                        decoded_images=(
+                            dict(zip(_filepaths, (sample.image for sample in _examples), strict=True))
+                            if getattr(model, "AUTOENCODER_CLASS", None) is None
+                            else None
+                        ),
                     )
                     debug_log(
                         f"Conditioning latents computed: {len(_latents)} items with shapes: {[_latent.shape for _latent in _latents]}"
