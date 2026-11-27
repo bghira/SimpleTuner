@@ -166,6 +166,7 @@ class WebshartEpoch:
     version = 1
 
     def __init__(self, source, spec, shard_of, *, shard_at=None, shard_count=0, prefill=None):
+        self.shard_of = shard_of
         self.prefill = prefill
         self.prefill_position = None
         self.source = source
@@ -362,6 +363,11 @@ class WebshartEpoch:
             refs = self.pages.read_positions(self.keys[bucket], positions)
         else:
             refs = self.pages.read_positions(self.keys[bucket], positions, db=self.index)
+        if self.prefill is not None and self.spec.shuffle_seed is None:
+            first = min(self.shard_of(ref) for ref in refs)
+            if self.prefill_position is None or first > self.prefill_position:
+                self.prefill.advance(first)
+                self.prefill_position = first
         self.position += 1
         return self.keys[bucket], refs
 
