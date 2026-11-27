@@ -1129,7 +1129,11 @@ class WebshartMetadataBackend(MetadataBackend):
 
     def _metadata_for_entry(self, shard_metadata: dict, filename: str, entry: dict, sample_path: str) -> dict:
         file_metadata = shard_metadata.get(filename, {}) or {}
-        if self.data_backend.caption_key is not None and self.data_backend.format != "parquet":
+        if (
+            self.dataset_type is DatasetType.VIDEO
+            and self.data_backend.caption_key is not None
+            and self.data_backend.format != "parquet"
+        ):
             file_metadata = self.data_backend.get_sample_metadata(sample_path)
         width = entry.get("width", file_metadata.get("width"))
         height = entry.get("height", file_metadata.get("height"))
@@ -1196,6 +1200,17 @@ class WebshartMetadataBackend(MetadataBackend):
                 )
             else:
                 prepared = self._prepare_metadata(sample_path, sample_metadata, recipe)
+            if (
+                prepared is not None
+                and self.dataset_type is not DatasetType.VIDEO
+                and self.data_backend.format == "tar"
+                and self.data_backend.caption_key is not None
+                and sample_metadata.get("json_path")
+                and "json_metadata" not in sample_metadata
+            ):
+                payload = self.data_backend.get_sample_metadata(sample_path).get("json_metadata")
+                if payload:
+                    sample_metadata["json_metadata"] = prepared[1]["json_metadata"] = payload
             if (
                 prepared is not None
                 and require_captions
@@ -1269,7 +1284,12 @@ class WebshartMetadataBackend(MetadataBackend):
         self, shard_metadata: dict, entry: dict, sample_path: str, *, window_captions: dict[str, CaptionValue] | None = None
     ) -> bool:
         file_metadata = shard_metadata.get(str(entry["filename"]), {}) or {}
-        if self.data_backend.format == "parquet":
+        # A JSON member can override indexed caption fields. Read it only when its
+        # contents are absent from the index and this sample passed geometry filters.
+        indexed_caption = self.data_backend.caption_key is not None and (
+            file_metadata.get("json_metadata") is not None or not file_metadata.get("json_path")
+        )
+        if self.data_backend.format == "parquet" or (self.data_backend.format == "tar" and indexed_caption):
             caption = self.data_backend._caption_from_metadata(file_metadata)
             if window_captions is not None and caption:
                 window_captions[sample_path] = caption
