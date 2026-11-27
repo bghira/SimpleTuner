@@ -1030,6 +1030,15 @@ _BLUEPRINTS: List[BackendBlueprint] = [
                     "advanced": True,
                 },
                 {
+                    "id": "webshart.repacked_cache_gb",
+                    "label": "repacked image cache (GiB)",
+                    "description": "additional disk budget for small-page copies of Hub Parquet shards",
+                    "type": "number",
+                    "min": 0,
+                    "step": 1,
+                    "advanced": True,
+                },
+                {
                     "id": "webshart.parallel_downloads",
                     "label": "parallel downloads",
                     "description": "number of shard downloads webshart may run in parallel",

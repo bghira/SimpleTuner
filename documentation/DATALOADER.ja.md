@@ -1448,6 +1448,7 @@ Webshart データセットは `webshart` パッケージで WebDataset 形式�
 - `metadata` は任意で、captions を含む別 metadata location を指定できます。`webshart/conceptual-captions-12m-webdataset-metadata` のような Hugging Face metadata repo では repo id だけを渡します。Webshart は source shard の `data/` などのサブフォルダ構成に従います。
 - `metadata_backend` は `webshart`、`caption_strategy` は `webshart` または `instanceprompt` にします。
 - `webshart.cache_dir` は SimpleTuner metadata と Webshart caches を保存します。`shard_cache_gb` と `parallel_downloads` は Webshart の shard cache に渡されます。`shard_cache_gb` を `0` にすると、shard 全体の cache を無効にし、index 付き range read を維持します。
+- 画像をフラットなバイナリ列に格納した Hub の Parquet では、`webshart.repacked_cache_gb` で追加のディスク容量（GiB）を指定できます。Webshart は小さなページに再編したコピーを検証し、シャードキャッシュの `.repacked` に保存します。既定値は 0（無効）です。シャードキャッシュ、対応版の Webshart、PyArrow が必要です。キャッシュにない場合は元の Hub リビジョンから読み取れます。
 - リモート Parquet をウィンドウ単位で順次学習する場合、`sequential_prefill` 対応の Webshart は、次のシャードを追加すると `shard_cache_gb` を超えるところまで先読みします。共有キャッシュごとに 1 つのワーカーが最大 `parallel_downloads` 件を並列でダウンロードします。学習再開時は復元したウィンドウから開始し、読み終えたシャードをキャッシュから削除できるようにします。 再開時にバックグラウンドの同時ダウンロード数だけを調整するには、`SIMPLETUNER_WEBSHART_PREFILL_DOWNLOADS` を設定します。
 - `webshart.metadata_cache_dir` はシャードカタログとキャプチャマニフェストのインデックスを保存します。デフォルトは `webshart.cache_dir` 配下の `metadata_cache` です。
 - `webshart.shard_cache_dir` はダウンロード済みのシャードを保存します。デフォルトは `webshart.cache_dir` 配下の `shard_cache` です。

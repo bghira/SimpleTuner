@@ -87,6 +87,12 @@
                @input="touchConnectionField({{ storage_dataset }})"
                placeholder="25">
     </div>
+    <div class="col-md-4" x-show="{{ storage_dataset }}.webshart.format === 'parquet'">
+        <label class="form-label small">Hub Repacked Image Cache (GiB)</label>
+        <input type="number" class="form-control form-control-sm webshart-repacked-cache" min="0" step="any"
+               x-model.number="{{ storage_dataset }}.webshart.repacked_cache_gb"
+               @input="touchConnectionField({{ storage_dataset }})" placeholder="0">
+    </div>
     <div class="col-md-4">
         <label class="form-label small">Parallel Downloads</label>
         <input type="number" class="form-control form-control-sm" min="1" step="1"

@@ -3212,6 +3212,9 @@ function trainerComponent() {
                     if (Number.isFinite(shardCacheGb) && shardCacheGb >= 0) webshart.shard_cache_gb = shardCacheGb;
                     else delete webshart.shard_cache_gb;
                     const format = this._coerceString(dataset.webshart?.format);
+                    const repackedBudget = this._coerceFloat(options.repacked_cache_gb);
+                    if (format === 'parquet' && repackedBudget > 0) webshart.repacked_cache_gb = repackedBudget;
+                    else delete webshart.repacked_cache_gb;
                     if (format) webshart.format = format;
                     else delete webshart.format;
                     const samplingPolicy = this._coerceString(dataset.webshart?.sampling_policy);

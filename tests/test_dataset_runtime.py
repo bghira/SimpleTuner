@@ -157,6 +157,24 @@ class DatasetRuntimeTests(unittest.TestCase):
         runtime.config = {**runtime.config, "webshart": {**settings, "sampling_order": "shuffled"}}
         self.assertEqual(runtime.occurrence_revision(args), legacy_revision)
 
+    def test_repacked_cache_budget_preserves_target_and_conditioning_occurrences(self):
+        from simpletuner.helpers.metadata.preparation import DatasetDescription
+
+        target = {"image_column": "target"}
+        source = {"image_column": "source"}
+        self.runtime.config["webshart"] = target
+        reference = DatasetRuntime("ref", None, Mock(), {"webshart": source})
+        reference.metadata_backend.describe.return_value = DatasetDescription(view_revision="source-view")
+        self.runtime.conditioning_datasets = (reference,)
+        args = SimpleNamespace()
+        saved = self.runtime.occurrence_revision(args)
+        for config in (self.runtime.config["webshart"], reference.config["webshart"]):
+            config["repacked_cache_gb"] = 1024
+            self.assertEqual(self.runtime.occurrence_revision(args), saved)
+            self.assertEqual(config["repacked_cache_gb"], 1024)
+        reference.config["webshart"]["image_column"] = "other"
+        self.assertNotEqual(self.runtime.occurrence_revision(args), saved)
+
     def test_occurrence_revision_pins_binding_order_views_captions_and_dropout(self):
         from simpletuner.helpers.metadata.preparation import DatasetDescription
 

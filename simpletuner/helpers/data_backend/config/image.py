@@ -609,7 +609,15 @@ class ImageBackendConfig(BaseBackendConfig):
             if self.webshart_metadata is not None:
                 config["metadata"] = self.webshart_metadata
             webshart_config = config.setdefault("webshart", {})
-            for key in ("format", "manifest", "columns", "sampling_policy", "sampling_order", "shuffle_seed"):
+            for key in (
+                "format",
+                "manifest",
+                "columns",
+                "sampling_policy",
+                "sampling_order",
+                "shuffle_seed",
+                "repacked_cache_gb",
+            ):
                 if key in (self.webshart or {}):
                     webshart_config[key] = self.webshart[key]
             if self.webshart_cache_dir is not None:
