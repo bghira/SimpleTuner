@@ -19,7 +19,7 @@ def _load_dinov2_encoder(encoder_name: str) -> nn.Module:
     hub_dir = Path(torch.hub.get_dir())
     hub_dir.mkdir(parents=True, exist_ok=True)
     with FileLock(hub_dir / ".simpletuner-dinov2.lock"):
-        return torch.hub.load("facebookresearch/dinov2", encoder_name)
+        return torch.hub.load("facebookresearch/dinov2:main", encoder_name)
 
 
 def spatial_zscore(features: torch.Tensor, alpha: float = 1.0, eps: float = 1e-6) -> torch.Tensor:
