@@ -753,6 +753,50 @@ class TestWebshartCaptionKeyIntegration(unittest.TestCase):
         with patch.object(backend, "_read_sample_bytes", side_effect=AssertionError("image payload read")):
             self.assertEqual(backend.get_caption(sample_id), "unselected text caption")
 
+    def test_tar_image_geometry_skips_sidecar_until_caption_check(self):
+        self._write_index(embedded=False)
+        source = self._backend("short")
+        metadata = self._metadata_backend(source)
+        ref = self._sample_id(source)
+        entry = {"sample_idx": 0, "shard_idx": 0, "filename": "sample.jpg"}
+        index = source.get_shard_metadata(0)
+        with patch.object(source, "get_sample_metadata", wraps=source.get_sample_metadata) as read:
+            record = metadata._metadata_for_entry(index, "sample.jpg", entry, ref)
+            self.assertEqual(record["original_size"], (512, 512))
+            read.assert_not_called()
+            self.assertTrue(metadata._entry_has_caption(index, entry, ref))
+            read.assert_called_once_with(ref)
+
+    def test_rejected_tar_image_skips_sidecar_but_accepted_record_retains_json(self):
+        self._write_index(embedded=False)
+        source = self._backend("short")
+        metadata = self._metadata_backend(source)
+        ref = self._sample_id(source)
+        entry = {"sample_idx": 0, "shard_idx": 0, "filename": "sample.jpg"}
+        index = source.get_shard_metadata(0)
+        with patch.object(source, "get_sample_metadata", wraps=source.get_sample_metadata) as read:
+            with patch.object(metadata, "_prepare_metadata", return_value=None):
+                _, rejected, error = metadata._prepare_bucket_entry(index, entry, ref, True)
+            self.assertIsNone(error)
+            self.assertIsNone(rejected)
+            read.assert_not_called()
+            with patch.object(metadata, "_prepare_metadata", return_value=("512x512", {})):
+                record, (_, prepared), error = metadata._prepare_bucket_entry(index, entry, ref, True)
+            self.assertIsNone(error)
+            read.assert_called_once_with(ref)
+            self.assertEqual(record["json_metadata"], self.json_metadata)
+            self.assertEqual(prepared["json_metadata"], self.json_metadata)
+
+    def test_embedded_tar_caption_is_selected_from_open_shard(self):
+        source = self._backend(["named", "short"])
+        metadata = self._metadata_backend(source)
+        ref = self._sample_id(source)
+        index = source.get_shard_metadata(0)
+        captions = {}
+        with patch.object(source, "get_sample_metadata", side_effect=AssertionError("redundant TAR lookup")):
+            self.assertTrue(metadata._entry_has_caption(index, {"filename": "sample.jpg"}, ref, window_captions=captions))
+        self.assertEqual(captions[ref], ["named caption", "brief caption"])
+
     def test_custom_caption_json_is_available_before_video_geometry_preparation(self):
         self._write_index(embedded=False)
         data_backend = self._backend("short")
