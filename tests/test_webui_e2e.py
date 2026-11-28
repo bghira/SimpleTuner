@@ -158,6 +158,12 @@ class RemoteWorkerJobQueueTestCase(_TrainingWorkerFixture, WebUITestCase):
         headers = {"X-Worker-Token": f"{job_id}-token"}
         # An agent already running an older build still clears the stale error.
         requests.post(heartbeat_url, json=heartbeat, headers=headers, timeout=10).raise_for_status()
+        requests.post(
+            f"{self.base_url}/api/workers/job/{job_id}/status",
+            json={"status": "training"},
+            headers=headers,
+            timeout=10,
+        ).raise_for_status()
         job = requests.get(f"{self.base_url}/api/cloud/jobs/{job_id}", timeout=10).json()["job"]
         self.assertIsNone(job["error_message"])
         self.assertIsNone(job["completed_at"])
@@ -171,10 +177,15 @@ class RemoteWorkerJobQueueTestCase(_TrainingWorkerFixture, WebUITestCase):
             wait.until(EC.presence_of_element_located((By.ID, "job-queue-tab-content")))
             self.dismiss_onboarding(driver)
             driver.execute_script("Alpine.$data(document.querySelector('.dashboard-wrapper')).eventDockCollapsed = true;")
+            wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, ".filter-running"))).click()
             row = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, ".job-queue-item.job-running")))
+            self.assertEqual(row.find_element(By.CSS_SELECTOR, ".status-badge").text.lower(), "running")
+            self.assertTrue(row.find_element(By.CSS_SELECTOR, '[aria-label="Stop training run"]').is_enabled())
             driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", row)
             row.click()
             button = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, ".job-actions button")))
+            detail_status = driver.find_element(By.CSS_SELECTOR, ".job-details-card .status-badge")
+            self.assertEqual(detail_status.text.lower(), "running")
             driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", button)
             self.assertEqual(button.text, "View Logs")
             self.assertFalse(driver.find_elements(By.CSS_SELECTOR, ".error-section"))
