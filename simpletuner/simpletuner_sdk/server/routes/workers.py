@@ -17,7 +17,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field, FiniteFloat, StringConstraints, model_validator
+from pydantic import BaseModel, Field, FiniteFloat, StringConstraints, field_validator, model_validator
 
 from simpletuner.worker_protocol import WORKER_JOB_ACTIVE_STATUSES, WORKER_JOB_PROVIDERS, WORKER_LOG_TAIL_SIZE
 
@@ -92,6 +92,11 @@ class JobStatusUpdate(BaseModel):
     error: Optional[str] = None
     log_tail: str | None = Field(default=None, max_length=WORKER_LOG_TAIL_SIZE)
     validation: WorkerValidationUpdate | None = None
+
+    @field_validator("status")
+    @classmethod
+    def normalize_status(cls, status: str | None) -> str | None:
+        return "running" if status == "training" else status
 
 
 class WorkerDatasets(BaseModel):
@@ -558,7 +563,7 @@ def _record_worker_stats(job, worker, status: str, progress: dict | None, valida
     event = {
         "type": "training.status",
         "job_id": job.job_id,
-        "data": {"status": "running" if status == "training" else status, "worker": worker.name},
+        "data": {"status": status, "worker": worker.name},
         "progress": progress,
     }
     if validation is not None:
@@ -793,7 +798,7 @@ async def update_job_status(
     job_repo = get_job_repository()
 
     job = await _assigned_job(
-        job_repo, job_id, worker, reports_progress=bool(request.progress) and request.status in (None, "training", "running")
+        job_repo, job_id, worker, reports_progress=bool(request.progress) and request.status in (None, "running")
     )
     group = (job.metadata or {}).get("worker_ids", [])
     group_finished = False

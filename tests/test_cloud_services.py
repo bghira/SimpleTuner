@@ -110,6 +110,32 @@ class TestJobStore(unittest.IsolatedAsyncioTestCase):
         jobs = await self.store.list_jobs()
         self.assertEqual(len(jobs), 3)
 
+    async def test_existing_worker_training_status_migrates_to_running(self) -> None:
+        for job_id, provider, status in (
+            ("worker-group", "worker", "training"),
+            ("kubeflow-job", "kubeflow", "training"),
+            ("finished-worker", "worker", "completed"),
+        ):
+            await self.store.add_job(
+                UnifiedJob(
+                    job_id=job_id,
+                    job_type=JobType.LOCAL,
+                    provider=provider,
+                    status=status,
+                    config_name="train",
+                    created_at=datetime.now(timezone.utc).isoformat(),
+                )
+            )
+
+        repo = self.store._jobs
+        with repo.transaction() as conn:
+            conn.execute("UPDATE schema_version SET version = 5")
+        repo._init_schema()
+
+        running = await self.store.list_jobs(status="running")
+        self.assertEqual({job.job_id for job in running}, {"worker-group", "kubeflow-job"})
+        self.assertEqual((await self.store.get_job("finished-worker")).status, "completed")
+
     async def test_cleanup_old_jobs(self) -> None:
         """Test cleanup of old jobs."""
         old_date = (datetime.now(timezone.utc) - timedelta(days=100)).isoformat()

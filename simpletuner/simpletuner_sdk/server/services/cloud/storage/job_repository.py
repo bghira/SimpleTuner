@@ -19,8 +19,8 @@ from .base import BaseSQLiteStore, get_default_db_path
 logger = logging.getLogger(__name__)
 
 # Schema version for this repository
-# v5: Merged queue fields from QueueStore
-SCHEMA_VERSION = 5
+# v6: Normalize worker job status
+SCHEMA_VERSION = 6
 
 
 class JobRepository(BaseSQLiteStore):
@@ -220,6 +220,11 @@ class JobRepository(BaseSQLiteStore):
             """
             )
             logger.info("Queue fields merged into jobs table (v5 migration complete)")
+
+        if from_version < 6 <= to_version:
+            cursor.execute(
+                "UPDATE jobs SET status = 'running' WHERE status = 'training' AND provider IN ('worker', 'kubeflow')"
+            )
 
     async def add(self, job: UnifiedJob) -> bool:
         """Add a new job to the repository.
