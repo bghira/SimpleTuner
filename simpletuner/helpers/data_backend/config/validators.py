@@ -159,8 +159,8 @@ def validate_webshart_sampling_order(webshart) -> None:
         return
     if webshart["sampling_order"] not in ("sequential", "shuffled"):
         raise ValueError("webshart.sampling_order must be sequential or shuffled.")
-    if webshart.get("sampling_policy") != "shard_local" or webshart.get("format") != "parquet":
-        raise ValueError("webshart.sampling_order requires shard-local Parquet sampling.")
+    if webshart.get("sampling_policy") != "shard_local":
+        raise ValueError("webshart.sampling_order requires shard-local sampling.")
 
 
 def validate_webshart_shuffle_seed(webshart) -> None:
@@ -169,8 +169,8 @@ def validate_webshart_shuffle_seed(webshart) -> None:
     seed = webshart["shuffle_seed"]
     if type(seed) is not int or not 0 <= seed <= 2**53 - 1:
         raise ValueError("webshart.shuffle_seed must be an integer between 0 and 9007199254740991.")
-    if webshart.get("sampling_policy") != "shard_local" or webshart.get("format") != "parquet":
-        raise ValueError("webshart.shuffle_seed requires shard-local Parquet sampling.")
+    if webshart.get("sampling_policy") != "shard_local":
+        raise ValueError("webshart.shuffle_seed requires shard-local sampling.")
 
 
 def validate_webshart_caption_key(caption_key) -> None:

@@ -497,23 +497,21 @@ class WebshartDataBackend(BaseDataBackend):
             dataset.enable_repacked_cache(Path(self.shard_cache_dir) / ".repacked", self.repacked_cache_gb)
         return dataset
 
-    def seeded_shards(self, seed):
-        try:
-            from webshart.parquet import _shuffled_shard_order
-        except ImportError as exc:
-            raise ImportError("webshart.shuffle_seed requires Webshart 0.9.3 or newer.") from exc
-        prefill = self.sequential_prefill(1, shuffle_seed=seed)
+    def seeded_shards(self, seed, *, window_shards=1):
+        from webshart.parquet_prefill import shard_order
+
+        prefill = self.sequential_prefill(window_shards, shuffle_seed=seed)
         if prefill is not None:
             return prefill.shard_at, prefill
-        return _shuffled_shard_order(self.num_shards(), seed).__getitem__, None
+        order = shard_order(self.num_shards(), seed, group_size=window_shards, prefix_groups=0)
+        return order.__getitem__, None
 
     def sequential_prefill(self, window_shards, *, shuffle_seed=None):
-        # Webshart releases before the byte-bounded cursor use on-demand caching.
-        if not hasattr(self.dataset, "sequential_prefill") or self.shard_cache_dir is None or Path(self.source).is_dir():
+        if self.shard_cache_dir is None or Path(self.source).is_dir():
             return None
         options = {"active_shards": window_shards}
         if shuffle_seed is not None:
-            options["shuffle_seed"] = shuffle_seed
+            options.update(shuffle_seed=shuffle_seed, group_size=window_shards)
         downloads = os.environ.get("SIMPLETUNER_WEBSHART_PREFILL_DOWNLOADS")
         if downloads is None:
             return self.dataset.sequential_prefill(**options)
@@ -521,7 +519,7 @@ class WebshartDataBackend(BaseDataBackend):
         if downloads < 1:
             raise ValueError("SIMPLETUNER_WEBSHART_PREFILL_DOWNLOADS must be positive.")
         # Keep foreground I/O and the checkpointed dataset configuration independent.
-        reader = self.open_refresh_source().dataset
+        reader = self._open_source() if self.format == "tar" else self.open_refresh_source().dataset
         reader.enable_shard_cache(self.shard_cache_dir, self.shard_cache_gb, downloads)
         return reader.sequential_prefill(**options)
 

@@ -1449,16 +1449,16 @@ Webshart データセットは `webshart` パッケージで WebDataset 形式�
 - `metadata_backend` は `webshart`、`caption_strategy` は `webshart` または `instanceprompt` にします。
 - `webshart.cache_dir` は SimpleTuner metadata と Webshart caches を保存します。`shard_cache_gb` と `parallel_downloads` は Webshart の shard cache に渡されます。`shard_cache_gb` を `0` にすると、shard 全体の cache を無効にし、index 付き range read を維持します。
 - 画像をフラットなバイナリ列に格納した Hub の Parquet では、`webshart.repacked_cache_gb` で追加のディスク容量（GiB）を指定できます。Webshart は小さなページに再編したコピーを検証し、シャードキャッシュの `.repacked` に保存します。既定値は 0（無効）です。シャードキャッシュ、対応版の Webshart、PyArrow が必要です。キャッシュにない場合は元の Hub リビジョンから読み取れます。
-- リモート Parquet をウィンドウ単位で順次学習する場合、`sequential_prefill` 対応の Webshart は、次のシャードを追加すると `shard_cache_gb` を超えるところまで先読みします。共有キャッシュごとに 1 つのワーカーが最大 `parallel_downloads` 件を並列でダウンロードします。学習再開時は復元したウィンドウから開始し、読み終えたシャードをキャッシュから削除できるようにします。 再開時にバックグラウンドの同時ダウンロード数だけを調整するには、`SIMPLETUNER_WEBSHART_PREFILL_DOWNLOADS` を設定します。
+- リモートの TAR または Parquet データセットをウィンドウ単位で順次学習する場合、Webshart は、次のシャードを追加すると `shard_cache_gb` を超えるところまで先読みします。共有キャッシュごとに 1 つのワーカーが最大 `parallel_downloads` 件を並列でダウンロードします。学習再開時は復元したウィンドウから開始し、読み終えたシャードをキャッシュから削除できるようにします。 再開時にバックグラウンドの同時ダウンロード数だけを調整するには、`SIMPLETUNER_WEBSHART_PREFILL_DOWNLOADS` を設定します。
 - `webshart.metadata_cache_dir` はシャードカタログとキャプチャマニフェストのインデックスを保存します。デフォルトは `webshart.cache_dir` 配下の `metadata_cache` です。
 - `webshart.shard_cache_dir` はダウンロード済みのシャードを保存します。デフォルトは `webshart.cache_dir` 配下の `shard_cache` です。
 - キャッシュパスに `{global_rank}` を含めると、学習プロセスごとに別のディレクトリを使用します（単一プロセスではランク `0`）。準備済みのメタデータを共有するには、`webshart.shard_cache_dir` だけに `{env:CACHE_ROOT}/shards_{global_rank}` のようなパスを指定します。`shard_cache_gb` の上限はシャードディレクトリごとに適用されます。
 - シャードの順序が同じランク間でディスクキャッシュを共有するには、`webshart.shard_cache_dir` を `cache/shards/{rank_group:2}` に設定します。グローバルランク 0–1 はディレクトリ `0`、2–3 は `1` を使います。2 を目的のグループサイズに置き換えられます。ランクごとにシャードを独立にシャッフルする場合は、引き続きランク別のサブディレクトリを使います。
 - リモートの Parquet でシャード全体のキャッシュが有効な場合、各バックエンドは読み取りの合間にキャッシュ済みシャードのリーダーを 1 つ保持します。同時ダウンロードと、使用中のリーダーがロックしているシャードのために、`shard_cache_gb` を超える空き容量を確保してください。Webshart は古いシャードを削除する前に、ダウンロード内容を一時ファイルに書き込みます。
 - `webshart.sampling_policy=global` は準備済みの各アスペクト比バケット内でサンプルをシャッフルします。`shard_local` はストレージ上で近いサンプルからバッチを作り、DataComp のようなリモートデータセットでシャードキャッシュの入れ替えを抑えます。省略すると従来のサンプラーを使用します。
-- Parquet のシャードローカルサンプリングでは、`webshart.sampling_order` の既定値は `sequential` です。ストレージ順にシャードのウィンドウを処理し、各アスペクト比バケット内で元の行順を保ちます。シャード内のサンプルをシャッフルするときや、この設定が追加される前のチェックポイントから再開するときは `shuffled` を指定してください。再開時は同じ順序設定を使います。
+- TAR と Parquet のシャード局所サンプリングでは、`webshart.sampling_order` の既定値は `sequential` です。`shuffled` はウィンドウの順序と各アスペクト比バケット内の行をシャッフルします。余った行は次のウィンドウに引き継ぎ、エポック末にパディング設定を適用します。チェックポイントには保留中の行の参照を保存します。以前のチェックポイントは元の設定で再開してください。
 - データセット直下の `filter_func` に片方または両方の上限を指定できます。例：`"filter_func": {"max_white_fraction": 0.98, "max_black_fraction": 0.95}`。Webshart はバケット準備時にインデックスから 0～1 の `white_fraction` と `black_fraction` を読み取ります。指定した各項目の値が存在し、それぞれの上限以下なら画像を採用します。未計測または無効な値は、その項目に上限がある場合だけ除外の対象になります。未スキャンの画像も含めるには両方の上限を省略してください。
-- Webshart 0.9.3 以降では `webshart.shuffle_seed`（例：`42`）で、データ並列ランクとエポックごとに Parquet シャードの順序を個別にシャッフルできます。各ランクは各シャードのアスペクト比バケット内で自分に割り当てられた行だけを使い、反復とパディングもその範囲で行います。行数がランク数より少ないバケットはスキップします。先読みは学習と同じ順序で進みます。リモートシャードのキャッシュにはプロセスごとの `rank-N` サブディレクトリと容量上限を使用します。再開時はシードと並列構成を維持してください。
+- `webshart.shuffle_seed` を指定すると各ランクが独立した順序でシャードを巡回し、各バケットから重複しない行を使用します。シャード内の行数がランク数より少ないバケットは対象外です。先読みはランク別のキャッシュで同じ順序に従います。
 - インデックスがない Parquet 画像データセットで、`shard_local`、固定の `max_train_steps`、`data_backend_sampling=uniform`、オンデマンドのテキストと潜在表現のエンコードを設定すると、小さなシャードグループ単位で学習中にジオメトリを準備します。テキストはスケジュールされたバッチのみエンコードします。各グループの末尾では不完全なグローバルバッチを破棄します。既存のインデックス、グローバルシャッフル、自動重み付け、オフラインのキャッシュ準備では、インデックス化されたサンプル集合を使用します。
 - Webshart のネイティブサンプリングでは、`scan_for_errors` が準備済みビューの VAE エントリを上限のあるバッチで検査します。`vae_cache_scan_behaviour: recreate` を設定すると、不正な値や空間サイズを持つ読み込み済み潜在表現をアーティファクトストアから削除します。準備済みビューは不変です。
 - インデックスを使う前処理では、採用サンプルのインデックスをディスクに書き込みます。形状情報とインデックス用の空き容量を確保してください。ネイティブ VAE と条件画像のキャッシュキーにはソースの内容、前処理後の形状、エンコーダー設定を含みます。モデルの重みを変更した場合や従来のサンプラーから切り替える場合、画像キャッシュの再作成が必要になることがあります。キャプション埋め込みのキー形式は従来どおりです。
@@ -1467,7 +1467,7 @@ Webshart データセットは `webshart` パッケージで WebDataset 形式�
 
 #### S3 の Parquet 画像バイト
 
-`webshart.format: "parquet"` で、ローカル、Hub、S3 互換ストレージの Parquet に埋め込まれた画像を読み込みます。S3 は `s3://bucket` または `s3://bucket/prefix`。任意の `webshart.manifest` はソースからの相対キャプチャ記述子です。SimpleTuner には Webshart 0.9.1 以降が必要です。
+`webshart.format: "parquet"` で、ローカル、Hub、S3 互換ストレージの Parquet に埋め込まれた画像を読み込みます。S3 は `s3://bucket` または `s3://bucket/prefix`。任意の `webshart.manifest` はソースからの相対キャプチャ記述子です。SimpleTuner には Webshart 0.9.6 以降が必要です。
 
 `webshart.columns` は `image`、`captions`、`width`、`height` をソース列名に対応させます。省略時は同名です。画像はバイナリ列または `bytes` を含む構造体です。`url_status != "ok"` や空の `stored_bytes` の行は物理行番号を変えずに除外されます。寸法のない行はバケット対象外です。元 URL は取得しません。SimpleTuner は終端マーカーを補って、一部の途切れた JPEG を修復できます。`delete_problematic_images` を有効にすると、ネイティブインデックスの準備中にデコードできなかったサンプルを除外します。無効の場合、バッチ読み込み時のデコード失敗で学習が停止し、該当サンプルが表示されます。
 

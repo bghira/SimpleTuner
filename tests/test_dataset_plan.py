@@ -317,7 +317,7 @@ class DatasetSchedulingValidationTest(unittest.TestCase):
             (False, "parquet", "shard_local", False),
             (-1, "parquet", "shard_local", False),
             (2**53, "parquet", "shard_local", False),
-            (1, "tar", "shard_local", False),
+            (1, "tar", "shard_local", True),
             (1, "parquet", "global", False),
         ):
             with self.subTest(seed=seed, fmt=fmt, policy=policy):

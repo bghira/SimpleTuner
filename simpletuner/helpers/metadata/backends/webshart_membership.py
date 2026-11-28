@@ -262,14 +262,20 @@ class IndexedMembership(MembershipPages):
                 )
             return geometry_lookup(self.source.name, self.header, connection).read_positions(bucket, positions)
 
-    def shard_runs(self, db):
-        db.execute("CREATE TEMP TABLE bucket_order(bucket TEXT PRIMARY KEY, position INTEGER) WITHOUT ROWID")
+    def shard_runs(self, db, *, shard_range=None):
+        db.execute("CREATE TEMP TABLE IF NOT EXISTS bucket_order(bucket TEXT PRIMARY KEY, position INTEGER) WITHOUT ROWID")
         db.executemany(
-            "INSERT INTO bucket_order VALUES (?,?)", ((bucket, position) for position, bucket in enumerate(self.counts))
+            "INSERT OR IGNORE INTO bucket_order VALUES (?,?)",
+            ((bucket, position) for position, bucket in enumerate(self.counts)),
         )
         for shard, bucket, position, start, size in db.execute(
             "SELECT shard,bucket,position,start,n FROM runs JOIN bucket_order USING(bucket) "
-            "ORDER BY shard_order(shard),shard,position,start"
+            + (
+                "WHERE shard>=? AND shard<? ORDER BY shard,position,start"
+                if shard_range
+                else "ORDER BY shard_order(shard),shard,position,start"
+            ),
+            shard_range or (),
         ):
             if self._has_exclusions(bucket):
                 end = start + size

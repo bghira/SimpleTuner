@@ -35,6 +35,8 @@ from simpletuner.helpers.image_manipulation.training_sample import TrainingSampl
 from simpletuner.helpers.metadata.backends.base import MetadataBackend, get_cp_aware_dp_info
 from simpletuner.helpers.metadata.backends.webshart_epoch import (
     EpochSpec,
+    PublishedShardWindows,
+    ShardLocalBatches,
     WebshartEpoch,
     WindowedWebshartEpoch,
     seeded_published_batches,
@@ -304,7 +306,7 @@ class WebshartMetadataBackend(MetadataBackend):
         if self._window_transforms is not None:
             self._window_transforms.close()
             self._window_transforms = None
-        self._window_recipe = self._window_revision = self._window_cache = None
+        self._window_recipe = self._window_revision = self._window_cache = self._tar_catalogue = None
         self._accepted_geometry = None
         self._transforms = None
         if self._snapshot is not None:
@@ -397,7 +399,7 @@ class WebshartMetadataBackend(MetadataBackend):
             *(getattr(parallel, name, 1) for name in ("dp_replicate_size", "dp_shard_size", "tp_size")),
         )
         sampling_order = "shuffled"
-        if self.native_policy == "shard_local" and self.data_backend.format == "parquet":
+        if self.native_policy == "shard_local":
             sampling_order = (self.active_dataset_config.get("webshart") or {}).get("sampling_order") or "sequential"
         return EpochSpec(
             self.id,
@@ -452,7 +454,6 @@ class WebshartMetadataBackend(MetadataBackend):
         config = self.active_dataset_config
         if not (
             self.native_policy == "shard_local"
-            and self.data_backend.format == "parquet"
             and self.dataset_type is DatasetType.IMAGE
             and self._published is None
             and request.online_text
@@ -470,6 +471,8 @@ class WebshartMetadataBackend(MetadataBackend):
 
         recipe = self._geometry_recipe(config)
         settings = recipe.cache_settings()
+        if self.data_backend.format == "tar":
+            self._tar_catalogue = sha256(json.dumps(self.data_backend.dataset.shard_locations()).encode()).hexdigest()
         source = self._source_description()["source_revision"]
         caption = DatasetRuntime.caption_config(config, args)
         self._window_require_captions = caption["caption_strategy"] == "webshart" and caption["use_captions"]
@@ -484,7 +487,8 @@ class WebshartMetadataBackend(MetadataBackend):
             "caption_key": self.data_backend.caption_key,
             "filter": self.dataset_filter.config if self.dataset_filter is not None else None,
         }
-        self._window_transforms = self._open_transforms(settings, self.data_backend.dataset.source_revision_for_shard)
+        if self.data_backend.format == "parquet":
+            self._window_transforms = self._open_transforms(settings, self.data_backend.dataset.source_revision_for_shard)
         self._window_revision = sha256(
             json.dumps(make_public_config_serializable(rules), sort_keys=True).encode()
         ).hexdigest()
@@ -496,13 +500,19 @@ class WebshartMetadataBackend(MetadataBackend):
     def training_count_is_exact(self):
         return self._window_recipe is None
 
+    def _window_shard_revision(self, index):
+        if self.data_backend.format == "parquet":
+            return self.data_backend.dataset.source_revision_for_shard(index)
+        metadata = self.data_backend.get_shard_metadata(index)
+        return sha256(json.dumps(metadata, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
     def _open_training_partition(self, partition):
         window = self._window_cache
         if window is not None and window.partition == partition:
             return window
         start = self.window_shards * partition
         indices = range(start, min(start + self.window_shards, self.data_backend.num_shards()))
-        pins = [self.data_backend.dataset.source_revision_for_shard(shard) for shard in indices]
+        pins = [self._window_shard_revision(shard) for shard in indices]
         records, buckets, captions = {}, defaultdict(list), {}
         rows = self._scan_rows(
             (),
@@ -520,7 +530,8 @@ class WebshartMetadataBackend(MetadataBackend):
                 records[ref] = record
             else:
                 captions.pop(ref, None)
-        self._window_transforms.flush()
+        if self._window_transforms is not None:
+            self._window_transforms.flush()
         revision = sha256(json.dumps([pins, buckets], sort_keys=True).encode()).hexdigest()
         shard_pins = dict(zip(indices, pins, strict=True))
         excluded = (
@@ -606,21 +617,68 @@ class WebshartMetadataBackend(MetadataBackend):
                 logger.warning("(id=%s) Excluded unreadable Webshart image pairs: %s", self.id, missing)
             return targets, sources
 
-        # Keep each rank's scheduled batch count even if every pair in its slice is bad.
-        # A lookahead shares the immutable index but does not advance the checkpoint cursor.
-        probe = copy(cursor)
-        probe.prefill = None
-        for _ in range(cursor.batches):
+        def resolved(bucket, refs):
             targets, sources = decode(refs)
             if targets:
                 replacements = cycle(targets)
                 return bucket, [ref if ref in targets else next(replacements) for ref in refs], targets, sources
-            probe.position %= probe.batches
-            bucket, refs = probe.next_batch()
+
+        if batch := resolved(bucket, refs):
+            return batch
+        # Only a completely unreadable batch needs another rank-owned batch.
+        for bucket, refs in self._replacement_batches(cursor):
+            if batch := resolved(bucket, refs):
+                return batch
         raise ValueError(f"No decodable Webshart pairs remain for data rank {cursor.spec.dp_rank} in {self.id!r}.")
+
+    def _replacement_batches(self, cursor):
+        if not isinstance(cursor, ShardLocalBatches):
+            probe = copy(cursor)
+            probe.prefill = None
+            for _ in range(cursor.batches - 1):
+                probe.position %= probe.batches
+                yield probe.next_batch()
+            return
+        # Read the rest of this rank's schedule, then wrap to its consumed prefix.
+        with closing(self.open_epoch(cursor.spec)) as probe:
+            probe.load_state_dict(cursor.state_dict())
+            yield from iter(probe.next_batch, None)
+        with closing(self.open_epoch(cursor.spec)) as probe:
+            yield from islice(iter(probe.next_batch, None), cursor.position - 1)
 
     def resolve_window_batch(self, cursor, bucket, refs):
         partition = cursor.partition
+        if isinstance(cursor, ShardLocalBatches):
+
+            def decode(bucket, refs):
+                groups = defaultdict(list)
+                for i, ref in enumerate(refs):
+                    groups[self.data_backend.shard_of(ref) // self.window_shards].append((i, ref))
+                resolved, images = [None] * len(refs), {}
+                for owner, items in groups.items():
+                    replacements, pixels = self.read_window_batch(owner, bucket, [ref for _, ref in items])
+                    images.update(pixels)
+                    for (i, _), ref in zip(items, replacements):
+                        resolved[i] = ref
+                if images:
+                    pads = cycle(images)
+                    resolved = [ref if ref is not None else next(pads) for ref in resolved]
+                    return self.data_backend.shard_of(resolved[0]) // self.window_shards, bucket, resolved, images
+
+            if result := decode(bucket, refs):
+                return result
+            if cursor.spec.shuffle_seed is None:
+                # All ranks can skip an unreadable global batch. A carried tail on another
+                # rank may still supply a replacement for this rank's empty slice.
+                if result := decode(bucket, cursor.global_batch()):
+                    owner, bucket, valid, images = result
+                    start = cursor.spec.dp_rank * cursor.spec.batch_size
+                    return owner, bucket, valid[start : start + cursor.spec.batch_size], images
+                return partition, bucket, [], {}
+            for bucket, refs in self._replacement_batches(cursor):
+                if result := decode(bucket, refs):
+                    return result
+            raise ValueError(f"No decodable Webshart samples remain for data rank {cursor.spec.dp_rank} in {self.id!r}.")
         refs, images = self.read_window_batch(partition, bucket, refs)
         spec = cursor.spec
         if refs or spec.shuffle_seed is None:
@@ -645,7 +703,48 @@ class WebshartMetadataBackend(MetadataBackend):
         window = self._open_training_partition(partition)
         return window.revision, window.buckets
 
+    def open_checkpoint_epoch(self, spec, version):
+        if version in (WebshartEpoch.version, WindowedWebshartEpoch.version):
+            if self.data_backend.format == "tar" and not (self.active_dataset_config.get("webshart") or {}).get(
+                "sampling_order"
+            ):
+                spec = replace(spec, sampling_order="shuffled")
+            return self._open_legacy_epoch(spec)
+        return self.open_epoch(spec)
+
     def open_epoch(self, spec):
+        if spec.policy != "shard_local":
+            return self._open_legacy_epoch(spec)
+        width = self.window_shards
+        count = self.data_backend.num_shards()
+        shard_at = prefill = None
+        if spec.shuffle_seed is not None:
+            shard_at, prefill = self.data_backend.seeded_shards(spec.rank_shuffle_seed)
+        elif spec.sampling_order == "shuffled":
+            seed = (spec.seed + spec.epoch - 1) % (1 << 64)
+            shard_at, prefill = self.data_backend.seeded_shards(seed, window_shards=width)
+        else:
+            prefill = self.data_backend.sequential_prefill(width)
+        if self._window_recipe is not None:
+            read = self._window_buckets
+            source = self._source_description()["source_revision"]
+            view = self._window_revision
+        else:
+            f = self._open_membership()
+            try:
+                self._check_publication(MembershipPages.open(f))
+                f.seek(0)
+                read = PublishedShardWindows(f, self.data_backend.shard_of, width)
+            except BaseException:
+                f.close()
+                raise
+            source = read.pages.header.get("source_revision")
+            view = read.pages.header["view_revision"]
+        return ShardLocalBatches(
+            spec, source, view, ceil(count / width), read, window_shards=width, prefill=prefill, shard_at=shard_at
+        )
+
+    def _open_legacy_epoch(self, spec):
         shard_at, prefill = None, None
         if spec.shuffle_seed is not None:
             shard_at, prefill = self.data_backend.seeded_shards(spec.rank_shuffle_seed)
@@ -683,7 +782,9 @@ class WebshartMetadataBackend(MetadataBackend):
             source.close()
             raise
 
-    def scheduled_batches(self, spec):
+    def scheduled_batches(self, spec, *, checkpoint_cursor=None):
+        if isinstance(checkpoint_cursor, WebshartEpoch) and spec.shuffle_seed is not None:
+            return checkpoint_cursor.batches
         if self._window_recipe is not None:
             return None
         with self._open_membership() as source:
@@ -691,7 +792,11 @@ class WebshartMetadataBackend(MetadataBackend):
 
     def _source_description(self):
         if self.data_backend.format != "parquet":
-            return {}
+            return (
+                {"source_revision": self._tar_catalogue}
+                if getattr(self, "_tar_catalogue", None) and self._published is None
+                else {}
+            )
         dataset = self.data_backend.dataset
         return {"source_revision": dataset.fingerprint, "physical_rows": getattr(dataset, "physical_row_count", None)}
 
@@ -822,8 +927,14 @@ class WebshartMetadataBackend(MetadataBackend):
         if self._window_recipe is not None:
             if view.partition is None:
                 raise ValueError("A Webshart training shard window is required to read geometry.")
-            window = self._open_training_partition(view.partition)
-            records = [window.records.get(ref) for ref in refs]
+            by_partition = defaultdict(list)
+            for ref in refs:
+                by_partition[self.data_backend.shard_of(ref) // self.window_shards].append(ref)
+            found = {}
+            for owner, members in by_partition.items():
+                window = self._open_training_partition(owner)
+                found.update((ref, window.records.get(ref)) for ref in members)
+            records = [found[ref] for ref in refs]
         else:
             records = self._published_metadata_batch(refs)
         if view.epoch in (None, 1) or not self.recrops_lazily:
@@ -977,7 +1088,7 @@ class WebshartMetadataBackend(MetadataBackend):
         shard = metadata["webshart"]["shard_idx"]
         if self._window_recipe is not None:
             source_revision = self._source_description()["source_revision"]
-            content_revision = self.data_backend.dataset.source_revision_for_shard(shard)
+            content_revision = self._window_shard_revision(shard)
         else:
             source_revision = self._published.get("source_revision")
             content_revision = self._lookup.shard_revision(shard) if self._published.get("source_pins") else None

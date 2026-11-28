@@ -21,21 +21,21 @@
         <option value="global">Global shuffle</option>
         <option value="shard_local">Shard-local</option>
     </select>
+    <div class="mb-2" x-show="{{ storage_dataset }}.webshart.sampling_policy === 'shard_local'">
+        <label class="form-label small">Training sample order</label>
+        <select class="form-select form-select-sm webshart-sampling-order"
+                x-init="{{ storage_dataset }}.webshart.sampling_order ??= 'sequential'"
+                x-model="{{ storage_dataset }}.webshart.sampling_order"
+                @change="touchConnectionField({{ storage_dataset }})">
+            <option value="sequential">Sequential</option>
+            <option value="shuffled">Shuffled</option>
+        </select>
+        <label class="form-label small mt-2">Shard shuffle seed</label>
+        <input type="number" min="0" max="9007199254740991" step="1" class="form-control form-control-sm webshart-shuffle-seed"
+               x-model.number="{{ storage_dataset }}.webshart.shuffle_seed" @input="touchConnectionField({{ storage_dataset }})">
+        <div class="form-text small">Optional. Each data rank visits shards in its own reproducible order.</div>
+    </div>
     <div x-show="{{ storage_dataset }}.webshart.format === 'parquet'" class="mt-2">
-        <div class="mb-2" x-show="{{ storage_dataset }}.webshart.sampling_policy === 'shard_local'">
-            <label class="form-label small">Training sample order</label>
-            <select class="form-select form-select-sm webshart-sampling-order"
-                    x-init="{{ storage_dataset }}.webshart.sampling_order ??= 'sequential'"
-                    x-model="{{ storage_dataset }}.webshart.sampling_order"
-                    @change="touchConnectionField({{ storage_dataset }})">
-                <option value="sequential">Sequential</option>
-                <option value="shuffled">Shuffled</option>
-            </select>
-            <label class="form-label small mt-2">Shard shuffle seed</label>
-            <input type="number" min="0" max="9007199254740991" step="1" class="form-control form-control-sm webshart-shuffle-seed"
-                   x-model.number="{{ storage_dataset }}.webshart.shuffle_seed" @input="touchConnectionField({{ storage_dataset }})">
-            <div class="form-text small">Optional. Each data rank visits shards in its own reproducible order.</div>
-        </div>
         <label class="form-label small">Capture Manifest</label>
         <input class="form-control form-control-sm webshart-manifest" x-model="{{ storage_dataset }}.webshart.manifest" @input="touchConnectionField({{ storage_dataset }})" placeholder="combined/dataset.json">
         <div class="form-text small">Optional descriptor relative to the dataset source. Captured image bytes are read directly from Parquet.</div>

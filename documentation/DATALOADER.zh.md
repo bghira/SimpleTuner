@@ -1447,16 +1447,16 @@ Webshart 数据集通过 `webshart` 包加载 WebDataset 风格的 tar shards。
 - `metadata_backend` 必须为 `webshart`；`caption_strategy` 应为 `webshart` 或 `instanceprompt`。
 - `webshart.cache_dir` 存储 SimpleTuner metadata 与 Webshart caches。`shard_cache_gb` 和 `parallel_downloads` 会传给 Webshart 的 shard cache；将 `shard_cache_gb` 设为 `0` 可禁用整 shard cache，并保留基于索引的 range reads。
 - 对于以扁平二进制列存储图像的 Hub Parquet 分片，可用 `webshart.repacked_cache_gb` 指定额外的磁盘预算（GiB）。Webshart 会验证小数据页副本并将其保存在分片缓存的 `.repacked` 目录中。默认值为 0（关闭）。需启用源分片缓存，并安装支持此功能的 Webshart 和 PyArrow。缓存未命中时仍可从原 Hub 修订版本读取。
-- 按窗口顺序训练远程 Parquet 数据时，支持 `sequential_prefill` 的 Webshart 会依次预取后续分片，直到再加入一个分片就会超过 `shard_cache_gb`。每个共享缓存由一个工作进程负责，最多同时执行 `parallel_downloads` 个下载。恢复训练时从已保存的窗口开始，已用完的分片可被缓存淘汰。 恢复训练时，可以用 `SIMPLETUNER_WEBSHART_PREFILL_DOWNLOADS` 单独调整后台并发下载数。
+- 按窗口顺序训练远程 TAR 或 Parquet 数据集时，Webshart 会依次预取后续分片，直到再加入一个分片就会超过 `shard_cache_gb`。每个共享缓存由一个工作进程负责，最多同时执行 `parallel_downloads` 个下载。恢复训练时从已保存的窗口开始，已用完的分片可被缓存淘汰。 恢复训练时，可以用 `SIMPLETUNER_WEBSHART_PREFILL_DOWNLOADS` 单独调整后台并发下载数。
 - `webshart.metadata_cache_dir` 存放分片目录和采集清单索引。默认位于 `webshart.cache_dir` 下的 `metadata_cache`。
 - `webshart.shard_cache_dir` 存放已下载的分片。默认位于 `webshart.cache_dir` 下的 `shard_cache`。
 - 在缓存路径中使用 `{global_rank}` 可为每个训练进程分配独立目录（单进程时为 `0`）。如需共享已准备好的元数据，只需将 `webshart.shard_cache_dir` 设为 `{env:CACHE_ROOT}/shards_{global_rank}` 这样的路径。`shard_cache_gb` 限制分别应用于每个分片目录。
 - 对于按相同顺序访问分片的进程，可将 `webshart.shard_cache_dir` 设为 `cache/shards/{rank_group:2}`，让每对进程共享磁盘缓存。全局秩 0–1 使用目录 `0`，秩 2–3 使用目录 `1`，依此类推。可将 2 替换为所需的组大小。各秩独立打乱分片顺序时，仍会使用各自的子目录。
 - 为远程 Parquet 启用整分片缓存时，每个后端在两次读取之间保留一个已缓存分片的读取器。除 `shard_cache_gb` 外，还需为并发下载和仍被读取器锁定的分片预留磁盘空间。Webshart 先将下载内容写入临时文件，再清理旧分片。
 - 将 `webshart.sampling_policy` 设为 `global`，可在每个准备好的宽高比分桶内打乱样本顺序。设为 `shard_local` 时，批次优先从存储位置相近的样本组成，从而减少 DataComp 等远程数据集的分片缓存换入换出。省略此字段可保留现有采样器。
-- 使用 Parquet 分片局部采样时，`webshart.sampling_order` 默认为 `sequential`。此模式按存储顺序访问分片窗口，并在每个宽高比分桶内保留原始行顺序。若要在局部采样中打乱样本，或从引入此选项之前创建的检查点恢复，请设为 `shuffled`。恢复时请保持相同的顺序设置。
+- TAR 和 Parquet 的分片局部采样均默认使用 `webshart.sampling_order=sequential`。选择 `shuffled` 可打乱窗口顺序以及每个宽高比分桶内的行。未满批次的行会带入下一个窗口，在轮次结束时按设置丢弃或填充。检查点保存待用样本的引用。恢复旧检查点时请保留原配置。
 - 在数据集顶层的 `filter_func` 中设置一个或两个上限，例如 `"filter_func": {"max_white_fraction": 0.98, "max_black_fraction": 0.95}`。Webshart 在准备分桶时从索引读取 `white_fraction` 和 `black_fraction`，取值范围为 0 到 1。只有每个设置了上限的测量值都存在且小于或等于对应上限时，才会保留图像。未测量或无效的值仅在该项设置了上限时导致图像被跳过。省略两个上限可保留未经扫描的图像。
-- Webshart 0.9.3 及以上版本支持设置 `webshart.shuffle_seed`（例如 `42`），为每个数据并行进程和每轮训练独立打乱 Parquet 分片顺序。每个进程只使用各分片宽高比分桶中分配给自己的行，重复和填充也遵循此规则。行数少于数据并行进程数的分桶会被跳过。预取按训练顺序进行。每个进程在远程分片缓存中使用独立的 `rank-N` 子目录和容量限额。恢复时请保留相同的种子和分布式布局。
+- 设置 `webshart.shuffle_seed` 后，各数据并行进程按独立顺序访问分片，并从每个分桶中读取互不重叠的行。分片内行数少于进程数的桶会被跳过。预取在各进程的缓存子目录中遵循同一顺序。
 - 对于尚无索引的 Parquet 图像数据集，使用 `shard_local`、固定的 `max_train_steps`、`data_backend_sampling=uniform` 以及按需文本和潜变量编码时，训练会在访问每个小分片组时准备图像几何信息。文本编码仅对已调度的批次执行。每个分片组末尾不足一个全局批次的样本将被丢弃。已有索引、全局打乱、自动加权和离线缓存准备均使用已建立索引的样本集合。
 - 使用 Webshart 原生采样策略时，`scan_for_errors` 会按有界批次检查已准备视图中的 VAE 缓存条目。设置 `vae_cache_scan_behaviour: recreate` 可从制品存储中删除已读取且数值或空间尺寸无效的潜变量。已准备视图不可变。
 - 采用索引的预处理会将已接受样本的索引写入磁盘。请为几何信息和索引预留空间。原生 VAE 和条件图像缓存键包含源内容、预处理几何信息和编码器设置。更换模型权重或从旧采样器切换时可能需要重新生成这些图像缓存。文本嵌入键仍沿用原有格式。
@@ -1465,7 +1465,7 @@ Webshart 数据集通过 `webshart` 包加载 WebDataset 风格的 tar shards。
 
 #### S3 上的 Parquet 图像字节
 
-设置 `webshart.format: "parquet"` 可读取本地、Hub 或 S3 兼容存储中 Parquet 分片内的图像字节。S3 地址为 `s3://bucket` 或 `s3://bucket/prefix`；可选的 `webshart.manifest` 是相对于数据源的捕获描述文件路径。SimpleTuner 需要 Webshart 0.9.1 或更高版本。
+设置 `webshart.format: "parquet"` 可读取本地、Hub 或 S3 兼容存储中 Parquet 分片内的图像字节。S3 地址为 `s3://bucket` 或 `s3://bucket/prefix`；可选的 `webshart.manifest` 是相对于数据源的捕获描述文件路径。SimpleTuner 需要 Webshart 0.9.6 或更高版本。
 
 `webshart.columns` 将 `image`、`captions`、`width`、`height` 映射到源列名；省略时使用这些默认名称。图像列可以是二进制数据或包含 `bytes` 的结构体。`url_status != "ok"` 或 `stored_bytes` 为空的捕获行会被排除，物理行号保持不变。缺少尺寸的行不参与分桶。不会请求原始 URL；SimpleTuner 可以通过恢复结束标记来修复部分截断的 JPEG。启用 `delete_problematic_images` 可在原生索引准备期间排除仍无法解码的样本。未启用时，批次加载中的解码失败会停止训练并指出对应样本。
 
